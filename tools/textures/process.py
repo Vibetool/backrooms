@@ -98,6 +98,23 @@ SPEC = {
     # 目前仍不清楚代表什么」）——低对比度浮雕纹样，256 省包体
     "l15_pipe_glyph": dict(src="l15_pipe_glyph", size=256, kind="tile", mean_rgb=(225, 224, 219), chroma=0.35,
                            destripe=True, soften=0.2),
+    # Level 19：阁楼老旧地板（materials「地面由粉色绝缘材料和地板组合而成，地板嘎嘎作响」）——
+    # 木纹随机纹理走 destripe+soften，256 省包体（粉色绝缘材料另用顶点色小色块表现，不占贴图预算）
+    "l19_floor_attic": dict(src="l19_floor_attic", size=256, kind="tile", mean_rgb=(107, 90, 71), chroma=0.7,
+                            destripe=True, soften=0.3),
+    # Level 19：验收 medium#4 指出格线矮墙原来是无贴图纯色、像"灰白隔板"——补一张竖排旧木板墙面，
+    # 跟地板同一套棕调；木板缝走 destripe，去掉生成图自带的明暗渐变
+    "l19_wall_attic": dict(src="l19_wall_attic", size=256, kind="tile", mean_rgb=(74, 60, 45), chroma=0.7,
+                           destripe=True, soften=0.25),
+    # Level 18：幼儿园/日托所记忆场景的墙面（architecture「最常见的外观是幼儿园或日托所」，
+    # 原文没给材质颜色，按幼儿园常见的薄荷绿墙面+矮处手绘图案取值，unverified）；
+    # 矮处一排图案是规律重复花纹走 periodic，其余走 destripe+soften 去掉生成图自带的明暗渐变
+    "l18_wall_nursery": dict(src="l18_wall_nursery", size=256, kind="tile", mean_rgb=(176, 205, 182), chroma=0.75,
+                             periodic=True, destripe=True, soften=0.2),
+    # Level !（选中版本 wikidot-cn）：起始之室之后、走廊两侧的墙（materials「现场灰尘很厚，像非常老的建筑」
+    # 「墙上有划痕」）——积灰的浅灰褐墙面 + 不规则抓痕，随机纹理走 destripe+soften，256 省包体
+    "lrun_wall_scratched": dict(src="lrun_wall_scratched", size=256, kind="tile", mean_rgb=(158, 148, 132), chroma=0.5,
+                                destripe=True, soften=0.3),
 }
 JPEG_QUALITY = 82
 
