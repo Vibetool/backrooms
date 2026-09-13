@@ -497,7 +497,13 @@ function installHelpers() {
       g.add(holder);
       // 佝偻、四肢着地这些是骨骼的基础姿势，由动画每帧 pose 回去；陈列没有 animate，手动摆一次
       obj.traverse(o => { if (o.userData && o.userData.rig) A.anim.pose(o.userData.rig); });
-      const rec = { name, tris: A.trisOf(obj) };
+      const rec = { name, tris: A.trisOf(obj), draws: 0 };
+      obj.traverse(o => {
+        if (o.isInstancedMesh) { rec.draws++; return; }
+        if (!(o.isMesh || o.isSkinnedMesh) || !o.geometry) return;
+        const gg = o.geometry;
+        rec.draws += gg.groups && gg.groups.length ? gg.groups.length : 1;
+      });
       obj.traverse(o => {
         if (!o.isInstancedMesh) return;
         const gg = o.geometry;
@@ -876,8 +882,9 @@ async function runArch(browser, base) {
     await call(page, 'clearGallery');
     for (const p of parts) {
       if (p.error) { check('构件 ' + p.name + ' 能构建', false, p.error); continue; }
-      const ok = p.unitTris != null ? p.unitTris < 300 && p.tris < 3000 : p.tris < 3000;
+      const ok = p.unitTris != null ? p.unitTris < 120 && p.tris < 4000 : p.tris < 4000;
       check('构件 ' + p.name + ' 三角面在预算内', ok, p);
+      check('构件 ' + p.name + ' draw call ≤ 5', p.draws <= 5, p);
     }
   }
 

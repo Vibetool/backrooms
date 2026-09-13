@@ -276,8 +276,18 @@ armLen: 1   legLen: 1   headSize: 1   shoulders: 1   neck: 1
 head: 'round' | 'faceless'（无面：光滑拉长的蛋形）| 'box' | 'none'   hands: true   feet: true
 claws: 0（每只手几根爪，槽位 claw）   hair: 0（头发下垂长度，占身高比例，槽位 hair）
 face: null | glowFace 选项（贴在脸上的发光眼/牙，槽位 glow）
+detail: null | 'high' | 'low'（缺省按 BR.game.settings.quality，规则见 6.9）
+    'high'：躯干加胸廓/腰臀起伏（分段体，不是单段直筒）、肩颈过渡、肩/肘/膝关节球、手指（claws:0 且 hands 时；
+            claws>0 仍然只出爪不叠手指）、脚掌+脚跟分开两块
+    'low'：等同旧版本——单段直筒躯干、单块脚掌，没有关节球/手指，外观和性能都跟改动前一致
+features: false | true | { brow, nose, ears, jaw }（仅 head:'round' 且 detail:'high' 时生效，缺省关闭）
+    眉骨/鼻/耳/下颌，都挂在 head 骨骼、head 槽位，不占用额外 draw call
+clothes: false | true | { collar, cuffs, belt, pockets, creases }（仅 detail:'high' 时生效，缺省关闭）
+    领口/袖口/腰带/口袋/裤腿褶，都叠在躯干/四肢已有骨骼上、body 槽位
 extend(b, dims)：往骨架里加东西（见 6.6），dims = { H, hipY, kneeY, shoulderY, headY, headR, shoulderW, hipW, elbowY, handY }
-key：用了 extend 且闭包里有变量时必须给不同的 key（几何按 key 缓存）
+    （detail/features/clothes 只加形状，不改这些字段的公式和数值，已有 extend 不用因为这次改动调整坐标）
+key：用了 extend 且闭包里有变量时必须给不同的 key（几何按 key 缓存；detail 解析出的 'high'/'low' 也算进缓存键，
+    两档画质不会互相顶掉缓存几何）
 骨骼：hips spine head armL foreL armR foreR legL shinL legR shinR     槽位：body head hair claw glow
 ```
 
@@ -287,6 +297,10 @@ length: 1.1   height: 0.6（腿长）   girth: 0.2（躯干半径）   thin: 0..
 neckLen: 0.28   headSize: 0.2   snout: 0.12（口鼻长，0 = 扁脸）   jaw: true   tail: 0.4（长度，0 = 无尾）
 ears: 0（耳朵长度）   mane: 0（背上一排毛刺的长度，槽位 fur）
 eyes: null | { size, glow: true }（glow:false 用 eye 槽位的普通颜色）   face: glowFace 选项
+detail: null | 'high' | 'low'（规则同 6.1）
+    'high'：脊背加肋骨起伏（胸腔与骨盆之间两个交替鼓包）、腿部关节球、脚掌前缘趾爪、jaw:true 时嘴里加一圈小尖牙、
+            尾巴分节数从 3 增到 4
+    'low'：等同旧版本，没有以上细节
 骨骼：hips chest neck head jaw tail0..2 legFL shinFL legFR shinFR legBL shinBL legBR shinBR     槽位：body head fur eye glow
 ```
 
@@ -294,6 +308,10 @@ eyes: null | { size, glow: true }（glow:false 用 eye 槽位的普通颜色） 
 ```
 span: 0.5（翼展）   bodyLen: 0.28   bodyR: 0.045   wings: 0 | 2 | 4   wingChord: 0.6   legs: 6   antennae: 0.12
 eyes: null | { size, glow }
+detail: null | 'high' | 'low'（规则同 6.1）
+    'high'：胸腹之间加一段细腰（分节感）、触角改成两节链条（antennae>0 时，自动随 anim.sway 摆动）、
+            每条腿改成两段带一个弯折点（比直棍更像虫腿）、翅面加三条翅脉
+    'low'：等同旧版本——单节触角、直腿、无翅脉
 骨骼：body head wingL wingR wingL2 wingR2     槽位：body wing eye glow（wing 缺省双面半透明）
 ```
 大型飞行实体（女皇、禁卫级）用它放大；成群的小个体用 6.5 的 `swarm`。
@@ -302,23 +320,34 @@ eyes: null | { size, glow }
 ```
 limbCluster：count: 6   segments: 4   length: 1.0   radius: 0.06   tip: 0.012   spread: 0..1（0 竖直一束，1 向四周摊开）
              center: [0, 0.6, 0]   core: 0.22（中心肉团半径，0 = 无）   coreScale: [1,1,1]
+             detail: null | 'high' | 'low'（规则同 6.1）：'high' 在每节交界加一颗指节小球，
+                     每三条触手里有一条末端从光滑尖细收口换成三根小趾/爪叉开（肢体末端变化）
              骨骼：core t<i>_<k>（每条触手 k 节，自动随 anim.sway 摆动）
-silhouette： humanoid 的全部选项 + opacity: 0.82；所有槽位默认半透明黑（glow 槽位仍发光，可以只露眼睛）
+silhouette： humanoid 的全部选项（含 detail/features/clothes）+ opacity: 0.82
+             rimOpacity: opacity*0.55（新增可选，缺省即此值）：hair/claw 槽位单独换成更透的材质，边缘（发梢/爪尖）
+             比核心躯干更淡一层，做出"多层半透明"的渐隐边缘；不用 hair/claws 的调用外观不受影响
+             所有槽位默认半透明黑（glow 槽位仍发光，可以只露眼睛）
 ```
 
 ### 6.5 其他构件
 ```
 A.parts.glowFace(opts) → Mesh      黑暗里只有眼和牙的笑脸（笑魇）；面朝 -Z，中心在原点，自己设 position
     width: 0.3   eyes: 2   eyeSize / eyeGap / eyeY（缺省按 width 比例）   eyeShape: 'round' | 'slit' | 'tall'
+    eyeHighlight: false（新增可选）：每只眼加一颗偏眼角的小高光点，单独成形，凸出主眼轮廓
     smile: true   teeth: 12   rows: 2   smileWidth / smileY / curve / toothH   color: 0xffffff
+    toothShape: 'block' | 'fang'（新增可选）：'fang' 用小圆锥代替方块，牙齿变尖
+    gumLine: false（新增可选）：牙齿上缘贴一条薄牙龈脊
+    （以上四个新增参数缺省值等于旧行为，不传就和改动前长得一样）
 A.geo.glowFace(opts) → BufferGeometry   同上的几何，给自定义骨架 b.geo(...) 用（translate 到脸的位置）
 A.parts.orb({ radius: 0.08, color, halo: 0.7, own: false, y: 0 }) → Group   发光球 + 光晕；userData.orb = { core, halo, coreMat, haloMat }
 A.parts.halo({ size: 0.8, color, own, y }) → Sprite    加法混合光晕（代替真光源）
 A.parts.decal({ radius: 1, color, opacity: 0.9, wall: false, lumps: 9, seed: 1, look: 'lambert'|'glow' }) → Mesh   地面/墙面不规则斑块
 A.parts.swarm({ unit: 'bug'|'moth'|'rat'|'mote', geometry, material, count: 24（≤120）, radius: 1.4, height: 1.3, flying: true, scale: 1, color, flap, flapHz }, ctx) → Group
     一个 InstancedMesh；个体围着实体中心绕、攻击时收拢、数量随 hp 比例减少
-A.parts.hazmat(ctx, { full: false }) → Object3D   测试人/玩家外形（防化服 + 玩家当前皮肤色），拟态用
-    缺省是程序化仿制品（约 1k 面）；full: true 直接用测试人的 hazmat.glb（约 1.8 万面，超预算，只适合同屏最多一两只的实体）
+A.parts.hazmat(ctx, { full: false, detail: null }) → Object3D   测试人/玩家外形（防化服 + 玩家当前皮肤色），拟态用
+    缺省是程序化仿制品（约 1k 面，detail:'high' 时另加兜帽轮廓/目镜/两侧滤罐/胸前拉链条/腕踝胶带环/腰带小包/靴底，约 1.6k 面）；
+    full: true 直接用测试人的 hazmat.glb（约 1.8 万面，超预算，只适合同屏最多一两只的实体）
+    制服颜色槽位（body/head）保持可被 BR.skin 改色；面罩/滤罐/手套/靴子/腰带/胶带环固定在 gear 槽位，颜色不随皮肤变
 A.parts.rig(key, fn(b), { colors, look, mats }) → SkinnedMesh   完全自定义骨架（6.6）
 ```
 
@@ -361,6 +390,18 @@ A.mat.own(material)        克隆一份并标 entityOwned —— 只有需要每
 - 不要在 `build` 里 `new THREE.Mesh*Material`（每只一份材质，几十只就是几十份）；用 `A.mat` 或模块级缓存。实例独有的几何/材质把 `userData.entityOwned = true`。
 - 不要为每个关节挂单独的 Mesh；刚体附件确实需要时（如手里拿的东西）挂到 `rig.bones.<名字>` 下，每个多一个 draw call。
 - 重要实体可以走 Blender 出 GLB（`BR.assets.modelSync`），但 GLB 不能直接用 arch 的程序化动画；没有必要就用构件。
+
+### 6.9 精细度与性能预算（新增；这里给的数字是 6.1–6.5 构件的当前值，比第 10 节写的旧数字更新）
+- `detail: null | 'high' | 'low'`：6.1–6.4 的构件都支持这个可选参数。显式给 `'high'`/`'low'` 就直接用；缺省时
+  取 `BR.game.settings.quality`（设置里的画质开关，`'low'`/`'high'`），`'low'` 画质自动退回接近旧版本的简版
+  （单段直筒躯干、单块脚掌、单节触角/直腿、没有关节球/牙列/指节/手指）。不传 `detail` 的旧实体文件不用改代码：
+  桌面/`'high'` 画质下自动变精细，`'low'` 画质下和这次改动前长得一样、面数也基本一样。
+- 三角面预算：普通实体（`A.wrap` 默认 `budget`）≤ 4000（原 3000，`TRIS.normal`）；群体个体（`parts.swarm` 的
+  单个实例几何）≤ 120 三角面（原 300，`TRIS.swarmUnit`）。
+- draw call 预算：每只实体 ≤ 5（按材质槽位分组算，`TRIS.drawCalls`）；`A.wrap` 现在会在超过时打
+  `[arch] 模型 draw call … 超过 5` 的警告，和三角面超预算的警告一样，靠 `node tests/preview.mjs --arch` 的
+  构件陈列自检发现。这次新增的关节球/手指/衣着/五官/牙列/触角链/指节/翅脉等细节全部叠在人形/四足/昆虫/肢团
+  已有的 `body`/`head`（hazmat 是 `gear`）槽位上，不新增材质槽位，不会让 draw call 变多。
 
 ## 7. 动画（`def.anim`）
 

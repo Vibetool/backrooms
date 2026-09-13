@@ -49,7 +49,7 @@ const HEARING = { deaf: 0, poor: 5, normal: 12, keen: 22, acute: 40 };
 const AURA = { none: 0, faint: 0.08, mild: 0.25, strong: 0.6, severe: 1.2, crushing: 2.5 };
 // lightAt 阈值：entities.js 里 needsLight 低于 0.2 就看不见
 const LIGHT = { dark: 0.2, dim: 0.35, lit: 0.6 };
-const TRIS = { normal: 3000, swarmUnit: 300 };
+const TRIS = { normal: 4000, swarmUnit: 120, drawCalls: 5 };
 
 // ---------- 材质（BR.assets.material 缓存，全体实例共享） ----------
 function cachedMat(key, make) {
@@ -583,7 +583,10 @@ function cachedGeo(key, make) { if (!geoCache.has(key)) geoCache.set(key, make()
 // 发光的脸：眼睛 + 弧形两排牙（笑魇那种黑暗里只剩牙和眼）。面朝 -Z，中心在原点，尺寸都按 width 缩放
 function glowFaceGeo(o) {
   const T = THREE_();
-  o = Object.assign({ width: 0.3, eyes: 2, eyeSize: null, eyeGap: null, eyeY: null, eyeShape: 'round', smile: true, teeth: 12, rows: 2, smileWidth: null, smileY: null, curve: null, toothH: null }, o);
+  o = Object.assign({
+    width: 0.3, eyes: 2, eyeSize: null, eyeGap: null, eyeY: null, eyeShape: 'round', smile: true, teeth: 12, rows: 2, smileWidth: null, smileY: null, curve: null, toothH: null,
+    gumLine: false, eyeHighlight: false, toothShape: 'block',   // 新增可选：牙龈线 / 眼睛高光 / 尖牙形，缺省关闭，外观与旧版一致
+  }, o);
   const W = o.width, list = [];
   const es = o.eyeSize != null ? o.eyeSize : W * 0.12;
   const gap = o.eyeGap != null ? o.eyeGap : W * 0.42;
@@ -594,6 +597,7 @@ function glowFaceGeo(o) {
     if (o.eyeShape === 'slit') g.scale(1, 0.35, 1);
     else if (o.eyeShape === 'tall') g.scale(0.6, 1.4, 1);
     list.push(g.translate(x, ey, 0));
+    if (o.eyeHighlight) list.push(new T.CircleGeometry(es * 0.32, 6).rotateY(Math.PI).translate(x - es * 0.35, ey + es * 0.32, 0.002));   // 单独成形的小高光点，偏眼角一侧凸出主眼轮廓
   }
   if (o.smile && o.teeth > 0) {
     const sw = o.smileWidth != null ? o.smileWidth : W * 0.8;
@@ -601,10 +605,11 @@ function glowFaceGeo(o) {
     const cv = o.curve != null ? o.curve : W * 0.14;
     const th = o.toothH != null ? o.toothH : W * 0.09;
     const n = o.teeth, tw = sw / n * 0.78;
+    if (o.gumLine) list.push(new T.BoxGeometry(sw * 1.02, th * 0.22, W * 0.018).translate(0, sy + cv * -0.5 + th * 0.55, 0));   // 牙龈线：贴在牙齿上缘的一条薄脊
     for (let row = 0; row < Math.max(1, o.rows); row++) {
       for (let i = 0; i < n; i++) {
         const u = n === 1 ? 0 : i / (n - 1) - 0.5;
-        const g = new T.BoxGeometry(tw, th * (1 - 0.45 * Math.abs(2 * u)), W * 0.02);
+        const g = o.toothShape === 'fang' ? new T.ConeGeometry(tw * 0.5, th * (1 - 0.3 * Math.abs(2 * u)), 4) : new T.BoxGeometry(tw, th * (1 - 0.45 * Math.abs(2 * u)), W * 0.02);
         g.rotateZ(Math.atan(8 * cv * u / sw));   // 顺着嘴角的弧度倾斜
         list.push(g.translate(u * sw, sy + cv * (4 * u * u - 0.5) - row * th * 1.1, 0));
       }
@@ -649,8 +654,56 @@ const geo = {
 };
 
 // ---------- 模型构件 ----------
-const HUMANOID = { height: 1.8, thin: 0, bulk: 1, hunch: 0, pose: 'upright', armLen: 1, legLen: 1, headSize: 1, shoulders: 1, neck: 1, head: 'round', hands: true, feet: true, claws: 0, hair: 0, face: null };
+// 精细度：'high'/'low' 显式给就直接用；缺省跟 BR.game.settings.quality（'low' 时退回接近旧版本的简版，
+// 保手机低画质帧率）。每个构件入口只解析一次、写回 o.detail，几何缓存键因此按解析结果区分（同参数不同画质
+// 不会撞进同一份缓存几何），构建函数内部只看 o.detail 这个已解析好的字符串
+function resolveDetail(v) {
+  if (v === 'high' || v === 'low') return v;
+  const s = BR.game && BR.game.settings;
+  return s && s.quality === 'low' ? 'low' : 'high';
+}
+// 可选追加项统一解析：true = 全部打开；对象 = 挑着开（没列出的键当关闭）；假值 = 不加
+function resolveToggle(v, all) { return v === true ? all : (v && typeof v === 'object' ? v : null); }
+
+const HUMANOID_FEATURES_ALL = { brow: true, nose: true, ears: true, jaw: true };
+const HUMANOID_CLOTHES_ALL = { collar: true, cuffs: true, belt: true, pockets: true, creases: true };
+
+// 五官（仅 head:'round' 时可用）：眉骨、鼻、耳、下颌，全部挂在 head 骨骼、body 槽位，不新增材质槽位
+function buildFace(b, feats, hr, headY) {
+  const F = resolveToggle(feats, HUMANOID_FEATURES_ALL);
+  if (!F) return;
+  if (F.brow) for (const s of [-1, 1]) b.box('head', 'head', [hr * 0.4, hr * 0.09, hr * 0.16], [s * hr * 0.36, headY + hr * 0.24, -hr * 0.82]);
+  if (F.nose) b.cone('head', 'head', [0, headY + hr * 0.02, -hr * 0.95], [0, headY - hr * 0.14, -hr * 1.16], hr * 0.13, 4);
+  if (F.ears) for (const s of [-1, 1]) b.sphere('head', 'head', hr * 0.24, [s * hr * 0.98, headY, -hr * 0.05], [0.5, 1, 0.85], [6, 5]);
+  if (F.jaw) b.box('head', 'head', [hr * 0.62, hr * 0.26, hr * 0.48], [0, headY - hr * 0.82, -hr * 0.48]);
+}
+// 手指：claws:0 且 hands 时才加（claws>0 保留原来的爪造型，不重复叠手指），四指+一根拇指，body 槽位
+function buildFingers(b, bone, x, handY, H, th) {
+  const fw = 0.011 * H * th, fl = 0.05 * H;
+  for (let i = 0; i < 4; i++) b.box(bone, 'body', [fw, fl, fw], [x, handY - 0.06 * H, (i - 1.5) * 0.017 * H - 0.02 * H]);
+  b.box(bone, 'body', [fw * 1.1, fl * 0.7, fw * 1.1], [x + (x < 0 ? -1 : 1) * 0.02 * H, handY - 0.02 * H, 0.025 * H]);
+}
+// 衣着细节：领口/腰带叠在躯干骨骼上，袖口/口袋/裤腿褶叠在对应手臂/腿骨骼上，全部 body 槽位、不新增材质槽位
+function buildLimbClothes(b, C, L, x, hx, H, th, handY, hipY, kneeY) {
+  if (C.cuffs) b.limb('fore' + L, 'body', [x, handY + 0.045 * H, 0], [x, handY + 0.03 * H, 0], 0.026 * H * th, 0.03 * H * th, 6);
+  if (C.pockets) b.box('leg' + L, 'body', [0.014, 0.05 * H, 0.045 * H], [hx * 1.02, (hipY + kneeY) * 0.5, 0.03 * H]);
+  if (C.creases) for (let i = 0; i < 2; i++) {
+    const y = U.lerp(kneeY, 0.05 * H, (i + 1) / 3);
+    b.limb('shin' + L, 'body', [hx, y + 0.012 * H, 0], [hx, y - 0.008 * H, 0], 0.03 * H * th, 0.035 * H * th, 6);
+  }
+}
+function buildTorsoClothes(b, C, H, th, shY, hipY) {
+  if (C.collar) b.limb('spine', 'body', [0, shY + 0.014 * H, 0], [0, shY - 0.008 * H, 0], 0.036 * H * th, 0.045 * H * th, 8);
+  if (C.belt) b.limb('hips', 'body', [0, hipY + 0.016 * H, 0], [0, hipY - 0.012 * H, 0], 0.086 * H * th, 0.093 * H * th, 8);
+}
+
+const HUMANOID = {
+  height: 1.8, thin: 0, bulk: 1, hunch: 0, pose: 'upright', armLen: 1, legLen: 1, headSize: 1, shoulders: 1, neck: 1,
+  head: 'round', hands: true, feet: true, claws: 0, hair: 0, face: null,
+  detail: null, features: false, clothes: false,   // 新增可选参数，见 _TEMPLATE.md 6.1/6.9
+};
 function buildHumanoid(b, o) {
+  const hi = o.detail !== 'low';   // humanoid() 已经把 o.detail 解析成 'high'/'low'
   const H = o.height, th = (1 - 0.45 * U.clamp(o.thin, 0, 1)) * o.bulk;
   const dy = (o.legLen - 1) * 0.5 * H;
   const hipY = 0.5 * H * o.legLen, kneeY = 0.27 * H * o.legLen;
@@ -659,6 +712,7 @@ function buildHumanoid(b, o) {
   const shW = 0.105 * H * o.shoulders * (0.75 + 0.25 * th), hipW = 0.055 * H * (0.7 + 0.3 * th);
   const elbowY = shY - 0.01 * H - 0.18 * H * o.armLen, handY = elbowY - 0.19 * H * o.armLen;
   b.meta.dims = { H, hipY, kneeY, shoulderY: shY, headY, headR: hr, shoulderW: shW, hipW, elbowY, handY };
+  const C = hi ? resolveToggle(o.clothes, HUMANOID_CLOTHES_ALL) : null;
 
   b.bone('hips', null, [0, hipY, 0]);
   b.bone('spine', 'hips', [0, hipY + 0.08 * H, 0]);
@@ -673,27 +727,54 @@ function buildHumanoid(b, o) {
   b.bone('shinR', 'legR', [hipW, kneeY, 0]);
 
   b.box('hips', 'body', [0.19 * H * th, 0.09 * H, 0.11 * H * th], [0, hipY + 0.02 * H, 0]);
-  b.limb('spine', 'body', [0, hipY + 0.05 * H, 0], [0, shY + 0.02 * H, 0], 0.075 * H * th, 0.1 * H * th * o.shoulders, 8, 0.6);
+  if (hi) {
+    // 胸廓与腰臀起伏：腰部收窄、胸腔鼓起再收回肩线，比单段直筒躯干多一层体型轮廓（低画质保留原来的单段直筒）
+    const waistY = U.lerp(hipY + 0.05 * H, shY + 0.02 * H, 0.34), chestY = U.lerp(hipY + 0.05 * H, shY + 0.02 * H, 0.8);
+    const waistR = 0.062 * H * th, chestR = 0.108 * H * th * o.shoulders, topR = 0.09 * H * th * o.shoulders;
+    b.limb('spine', 'body', [0, hipY + 0.05 * H, 0], [0, waistY, 0], 0.078 * H * th, waistR, 8, 0.62);
+    b.limb('spine', 'body', [0, waistY, 0], [0, chestY, 0], waistR, chestR, 8, 0.72);
+    b.limb('spine', 'body', [0, chestY, 0], [0, shY + 0.02 * H, 0], chestR, topR, 8, 0.6);
+    b.sphere('spine', 'body', chestR * 0.96, [0, chestY - 0.015 * H, 0.006 * H], [1.05, 0.7, 0.6 * th], [8, 6]);
+    b.sphere('hips', 'body', 0.078 * H * th * 0.92, [0, hipY + 0.06 * H, 0], [1.08, 0.5, 0.95 * th], [8, 6]);
+    if (C) buildTorsoClothes(b, C, H, th, shY, hipY);
+  } else {
+    b.limb('spine', 'body', [0, hipY + 0.05 * H, 0], [0, shY + 0.02 * H, 0], 0.075 * H * th, 0.1 * H * th * o.shoulders, 8, 0.6);
+  }
   if (o.head !== 'none') {
     b.limb('head', 'body', [0, shY, 0], [0, neckTop + hr * 0.3, 0], 0.028 * H * th, 0.024 * H * th, 6);
+    if (hi) b.sphere('spine', 'body', 0.034 * H * th, [0, shY + 0.005 * H, 0], [1, 0.6, 1], [6, 4]);   // 肩颈过渡的锁骨隆起
     if (o.head === 'box') b.box('head', 'head', [hr * 1.7, hr * 2.1, hr * 1.8], [0, headY, 0]);
     else if (o.head === 'faceless') b.sphere('head', 'head', hr, [0, headY, 0], [0.86, 1.22, 0.92], [12, 10]);
     else b.sphere('head', 'head', hr, [0, headY, 0], [0.92, 1.08, 0.98], [10, 8]);
+    if (hi && o.head === 'round' && o.features) buildFace(b, o.features, hr, headY);
     if (o.hair > 0) b.limb('head', 'hair', [0, headY + hr * 1.1, hr * 0.15], [0, headY + hr - o.hair * H, hr * 0.35], hr * 1.02, hr * 0.75, 8);
     if (o.face) b.geo('head', 'glow', glowFaceGeo(Object.assign({ width: hr * 1.5 }, o.face)).translate(0, headY + hr * 0.1, -hr * 0.95));
   }
   for (const s of [-1, 1]) {
     const L = s < 0 ? 'L' : 'R', x = s * shW, hx = s * hipW;
     b.limb('arm' + L, 'body', [x, shY - 0.005 * H, 0], [x, elbowY, 0], 0.03 * H * th, 0.024 * H * th, 6);
+    if (hi) { b.sphere('arm' + L, 'body', 0.031 * H * th, [x, shY - 0.005 * H, 0], [1, 0.85, 1], [6, 4]); b.sphere('fore' + L, 'body', 0.025 * H * th, [x, elbowY, 0], null, [6, 4]); }   // 肩/肘关节球
     b.limb('fore' + L, 'body', [x, elbowY, 0], [x, handY + 0.02 * H, 0], 0.024 * H * th, 0.018 * H * th, 6);
-    if (o.hands) b.box('fore' + L, 'body', [0.035 * H * th + 0.01, 0.06 * H, 0.05 * H * th + 0.01], [x, handY - 0.005 * H, 0]);
+    if (o.hands) {
+      b.box('fore' + L, 'body', [0.035 * H * th + 0.01, 0.06 * H, 0.05 * H * th + 0.01], [x, handY - 0.005 * H, 0]);
+      if (hi && !o.claws) buildFingers(b, 'fore' + L, x, handY, H, th);
+    }
     for (let c = 0; c < o.claws; c++) {
       const cz = (c - (o.claws - 1) / 2) * 0.018 * H;
       b.cone('fore' + L, 'claw', [x, handY - 0.03 * H, cz], [x, handY - 0.1 * H, cz - 0.02 * H], 0.006 * H, 4);
     }
     b.limb('leg' + L, 'body', [hx, hipY, 0], [hx, kneeY, 0], 0.042 * H * th, 0.033 * H * th, 6);
+    if (hi) b.sphere('shin' + L, 'body', 0.034 * H * th, [hx, kneeY, 0], [1, 0.8, 1], [6, 4]);   // 膝关节球
     b.limb('shin' + L, 'body', [hx, kneeY, 0], [hx, 0.045 * H, 0], 0.032 * H * th, 0.022 * H * th, 6);
-    if (o.feet) b.box('shin' + L, 'body', [0.045 * H * th + 0.015, 0.035 * H, 0.12 * H], [hx, 0.0175 * H, -0.03 * H]);
+    if (o.feet) {
+      if (hi) {
+        b.box('shin' + L, 'body', [0.05 * H * th + 0.015, 0.03 * H, 0.15 * H], [hx, 0.015 * H, -0.05 * H]);   // 脚掌：更长更扁
+        b.box('shin' + L, 'body', [0.036 * H * th + 0.012, 0.038 * H, 0.05 * H], [hx, 0.019 * H, 0.03 * H]);  // 脚跟：更高更短
+      } else {
+        b.box('shin' + L, 'body', [0.045 * H * th + 0.015, 0.035 * H, 0.12 * H], [hx, 0.0175 * H, -0.03 * H]);
+      }
+    }
+    if (C) buildLimbClothes(b, C, L, x, hx, H, th, handY, hipY, kneeY);
   }
   // 姿势靠基础姿势实现：几何按直立建，佝偻/四肢着地只是骨骼的常驻旋转
   if (o.pose === 'crawl') {
@@ -717,12 +798,14 @@ function buildHumanoid(b, o) {
 }
 function humanoid(opts) {
   const o = Object.assign({}, HUMANOID, opts);
+  o.detail = resolveDetail(o.detail);
   const rec = rigRecord(geoKey('humanoid', o), b => buildHumanoid(b, o));
   return instRig(rec, resolveMats(o, { body: 0x6e675c, head: null, hair: 0x111111, claw: 0x2a2520, glow: 0xffffff }));
 }
 
-const QUAD = { length: 1.1, height: 0.6, girth: 0.2, thin: 0, neckLen: 0.28, headSize: 0.2, snout: 0.12, jaw: true, tail: 0.4, ears: 0, mane: 0, legThick: 1, eyes: null, face: null };
+const QUAD = { length: 1.1, height: 0.6, girth: 0.2, thin: 0, neckLen: 0.28, headSize: 0.2, snout: 0.12, jaw: true, tail: 0.4, ears: 0, mane: 0, legThick: 1, eyes: null, face: null, detail: null };
 function buildQuad(b, o) {
+  const hi = o.detail !== 'low';
   const th = 1 - 0.45 * U.clamp(o.thin, 0, 1);
   const G = o.girth * th, legH = o.height, L = o.length, hs = o.headSize;
   const hipZ = L * 0.42, chestZ = -L * 0.42, bodyY = legH + G * 0.35;
@@ -740,17 +823,32 @@ function buildQuad(b, o) {
   b.sphere('hips', 'body', G * 0.92, [0, bodyY, hipZ + G * 0.3], [1, 0.9, 1], [8, 6]);
   b.limb('chest', 'body', [0, bodyY, chestZ * 0.15], [0, bodyY + G * 0.1, chestZ - G * 0.1], G, G * 1.1, 8, 0.9);
   b.sphere('chest', 'body', G * 1.1, [0, bodyY + G * 0.1, chestZ - G * 0.1], [1, 0.95, 1], [8, 6]);
+  if (hi) {
+    // 分节脊背 + 肋骨起伏：胸腔和骨盆之间加两个大小交替的鼓包，比单段直筒脊背多几分肋骨轮廓
+    const midZ1 = U.lerp(hipZ + G * 0.3, chestZ * 0.15, 0.32), midZ2 = U.lerp(hipZ + G * 0.3, chestZ * 0.15, 0.66);
+    b.sphere('hips', 'body', G * 0.98, [0, bodyY + G * 0.05, midZ1], [1, 0.86, 1], [8, 6]);
+    b.sphere('hips', 'body', G * 0.86, [0, bodyY + G * 0.02, midZ2], [0.94, 0.82, 0.9], [6, 5]);
+  }
   b.limb('neck', 'body', neckBase, headC, G * 0.55, G * 0.42, 6);
   b.sphere('head', 'head', hs * 0.5, headC, [0.9, 0.85, 1.1], [10, 8]);
   if (o.snout > 0) b.box('head', 'head', [hs * 0.5, hs * 0.32, o.snout], [0, headC[1] - hs * 0.06, headC[2] - hs * 0.42 - o.snout * 0.5]);
   if (o.jaw) b.box('jaw', 'head', [hs * 0.45, hs * 0.12, o.snout + hs * 0.3], [0, headC[1] - hs * 0.28, headC[2] - hs * 0.28 - o.snout * 0.5]);
+  if (o.jaw && hi) {
+    // 嘴部牙列：上颚/下颚各三颗小尖牙，贴着 snout/jaw 前缘
+    const frontZ = headC[2] - hs * 0.42 - o.snout, jawFrontZ = headC[2] - hs * 0.28 - o.snout * 0.5;
+    for (let i = 0; i < 3; i++) {
+      const tx = (i - 1) * hs * 0.16;
+      b.cone('head', 'head', [tx, headC[1] - hs * 0.04, frontZ], [tx, headC[1] - hs * 0.16, frontZ - hs * 0.08], hs * 0.035, 4);
+      b.cone('jaw', 'head', [tx, headC[1] - hs * 0.24, jawFrontZ], [tx, headC[1] - hs * 0.13, jawFrontZ - hs * 0.06], hs * 0.03, 4);
+    }
+  }
   if (o.eyes) {
     const es = o.eyes.size || hs * 0.09;
     for (const s of [-1, 1]) b.sphere('head', o.eyes.glow === false ? 'eye' : 'glow', es, [s * hs * 0.22, headC[1] + hs * 0.1, headC[2] - hs * 0.4], null, [6, 4]);
   }
   if (o.face) b.geo('head', 'glow', glowFaceGeo(Object.assign({ width: hs * 0.9 }, o.face)).translate(0, headC[1], headC[2] - hs * 0.56 - o.snout));
   if (o.ears > 0) for (const s of [-1, 1]) b.cone('head', 'head', [s * hs * 0.25, headC[1] + hs * 0.3, headC[2]], [s * hs * 0.35, headC[1] + hs * 0.3 + o.ears, headC[2] + hs * 0.1], hs * 0.1, 4);
-  if (o.tail > 0) b.chain('tail', 'hips', [0, bodyY + G * 0.3, hipZ + G * 1.1], [0, 0.25, 1], 3, o.tail, G * 0.3, 0.01, 'body', 5);
+  if (o.tail > 0) b.chain('tail', 'hips', [0, bodyY + G * 0.3, hipZ + G * 1.1], [0, 0.25, 1], hi ? 4 : 3, o.tail, G * 0.3, 0.01, 'body', 5);
   if (o.mane > 0) {
     for (let i = 0; i < 8; i++) {
       const z = U.lerp(chestZ - G * 0.2, hipZ, i / 7), bone = z < chestZ * 0.15 ? 'chest' : 'hips';
@@ -765,33 +863,62 @@ function buildQuad(b, o) {
     b.bone('leg' + nm, parent, [x, top, z]);
     b.bone('shin' + nm, 'leg' + nm, [x, knee, kz]);
     b.limb('leg' + nm, 'body', [x, top, z], [x, knee, kz], G * 0.38 * lt, G * 0.24 * lt, 6);
+    if (hi) b.sphere('leg' + nm, 'body', G * 0.26 * lt, [x, knee, kz], [1, 0.85, 1], [6, 4]);   // 腿部关节球
     b.limb('shin' + nm, 'body', [x, knee, kz], [x, 0.03, z], G * 0.22 * lt, G * 0.15 * lt, 6);
-    b.box('shin' + nm, 'body', [G * 0.3 * lt + 0.01, 0.04, G * 0.45 * lt + 0.02], [x, 0.02, z - G * 0.08]);
+    const footZ = z - G * 0.08, footHalfD = (G * 0.45 * lt + 0.02) / 2;
+    b.box('shin' + nm, 'body', [G * 0.3 * lt + 0.01, 0.04, G * 0.45 * lt + 0.02], [x, 0.02, footZ]);
+    if (hi) {
+      // 爪与趾：脚掌前缘三根小趾爪
+      const toeZ = footZ - footHalfD;
+      for (let c = 0; c < 3; c++) {
+        const cx = x + (c - 1) * G * 0.14 * lt;
+        b.cone('shin' + nm, 'body', [cx, 0.045, toeZ], [cx, 0.008, toeZ - G * 0.14 * lt], G * 0.045 * lt, 4);
+      }
+    }
   }
   if (typeof o.extend === 'function') o.extend(b, b.meta.dims);
 }
 function quadruped(opts) {
   const o = Object.assign({}, QUAD, opts);
+  o.detail = resolveDetail(o.detail);
   const rec = rigRecord(geoKey('quad', o), b => buildQuad(b, o));
   return instRig(rec, resolveMats(o, { body: 0x5a5046, head: null, fur: 0x151210, eye: 0x111111, glow: 0xffffff }));
 }
 
-const INSECT = { span: 0.5, bodyLen: 0.28, bodyR: 0.045, wings: 2, wingChord: 0.6, legs: 6, antennae: 0.12, eyes: null };
+const INSECT = { span: 0.5, bodyLen: 0.28, bodyR: 0.045, wings: 2, wingChord: 0.6, legs: 6, antennae: 0.12, eyes: null, detail: null };
 function buildInsect(b, o) {
   const T = THREE_();
+  const hi = o.detail !== 'low';
   const r = o.bodyR, Lb = o.bodyLen, y = r * 1.6 + 0.02, half = o.span / 2;
   b.meta.dims = { y, bodyR: r, bodyLen: Lb, span: o.span };
   b.bone('body', null, [0, y, 0]);
   b.bone('head', 'body', [0, y, -Lb * 0.38]);
   b.sphere('body', 'body', r, [0, y, 0], [1, 0.95, 1.3], [8, 6]);
+  if (hi) b.limb('body', 'body', [0, y - r * 0.02, r * 0.06], [0, y - r * 0.08, Lb * 0.22], r * 0.56, r * 0.5, 6);   // 分节胸腹：胸/腹之间的细腰
   b.sphere('body', 'body', r * 0.95, [0, y - r * 0.1, Lb * 0.35], [0.9, 0.85, 2.2], [8, 6]);
   b.sphere('head', 'body', r * 0.7, [0, y + r * 0.1, -Lb * 0.38], null, [8, 6]);
   if (o.eyes) for (const s of [-1, 1]) b.sphere('head', o.eyes.glow === false ? 'eye' : 'glow', o.eyes.size || r * 0.3, [s * r * 0.45, y + r * 0.25, -Lb * 0.38 - r * 0.45], null, [6, 4]);
-  if (o.antennae > 0) for (const s of [-1, 1]) b.limb('head', 'body', [s * r * 0.3, y + r * 0.5, -Lb * 0.45], [s * o.antennae * 0.5, y + o.antennae * 0.8, -Lb * 0.45 - o.antennae * 0.6], 0.004, 0.002, 3);
+  if (o.antennae > 0) {
+    if (hi) {
+      // 触角分节：两节链条，自动带 anim.sway 摆动
+      for (const s of [-1, 1]) b.chain('ant' + (s < 0 ? 'L' : 'R'), 'head', [s * r * 0.3, y + r * 0.5, -Lb * 0.45], [s * 0.55, 0.9, -0.55], 2, o.antennae, 0.0045, 0.0015, 'body', 4);
+    } else {
+      for (const s of [-1, 1]) b.limb('head', 'body', [s * r * 0.3, y + r * 0.5, -Lb * 0.45], [s * o.antennae * 0.5, y + o.antennae * 0.8, -Lb * 0.45 - o.antennae * 0.6], 0.004, 0.002, 3);
+    }
+  }
   const pairs = Math.floor(o.legs / 2);
   for (let i = 0; i < pairs; i++) {
-    const z = (i - (pairs - 1) / 2) * r * 0.9;
-    for (const s of [-1, 1]) b.limb('body', 'body', [s * r * 0.8, y - r * 0.4, z], [s * (r * 0.8 + Lb * 0.35), 0.005, z + (i - (pairs - 1) / 2) * r * 0.8], 0.006, 0.003, 3);
+    const z = (i - (pairs - 1) / 2) * r * 0.9, z2 = z + (i - (pairs - 1) / 2) * r * 0.8;
+    for (const s of [-1, 1]) {
+      if (hi) {
+        // 腿分节：两段带一个弯折点，比一根直棍更像虫腿
+        const kx = s * (r * 0.8 + Lb * 0.18), ky = y - r * 0.15, kz = z + (z2 - z) * 0.5;
+        b.limb('body', 'body', [s * r * 0.8, y - r * 0.4, z], [kx, ky, kz], 0.006, 0.0045, 3);
+        b.limb('body', 'body', [kx, ky, kz], [s * (r * 0.8 + Lb * 0.35), 0.005, z2], 0.0045, 0.003, 3);
+      } else {
+        b.limb('body', 'body', [s * r * 0.8, y - r * 0.4, z], [s * (r * 0.8 + Lb * 0.35), 0.005, z2], 0.006, 0.003, 3);
+      }
+    }
   }
   const wingPairs = o.wings >= 4 ? 2 : o.wings >= 2 ? 1 : 0;
   for (let wi = 0; wi < wingPairs; wi++) {
@@ -800,18 +927,25 @@ function buildInsect(b, o) {
       const z = wi ? r * 1.2 : -r * 0.2, chord = half * o.wingChord * (wi ? 0.75 : 1);
       b.bone(nm, 'body', [s * r * 0.7, y + r * 0.6, z]);
       b.geo(nm, 'wing', new T.CircleGeometry(0.5, 12).rotateX(-Math.PI / 2).scale(half, 1, chord).translate(s * (r * 0.7 + half / 2), y + r * 0.6, z + (wi ? chord * 0.3 : 0)));
+      if (hi) for (let vi = 0; vi < 3; vi++) {
+        // 翅脉：三条从翅根到翅尖的细脊
+        const vr = 0.22 + vi * 0.3;
+        b.box(nm, 'wing', [half * 0.6, 0.001, chord * 0.02], [s * (r * 0.7 + half * vr), y + r * 0.6 + 0.001, z + (wi ? chord * 0.3 : 0)]);
+      }
     }
   }
   if (typeof o.extend === 'function') o.extend(b, b.meta.dims);
 }
 function insect(opts) {
   const o = Object.assign({}, INSECT, opts);
+  o.detail = resolveDetail(o.detail);
   const rec = rigRecord(geoKey('insect', o), b => buildInsect(b, o));
   return instRig(rec, resolveMats(o, { body: 0x4b3f33, wing: 0x8a7a62, eye: 0x111111, glow: 0xffffff }));
 }
 
-const CLUSTER = { count: 6, segments: 4, length: 1.0, radius: 0.06, tip: 0.012, spread: 0.8, center: [0, 0.6, 0], core: 0.22, coreScale: [1, 1, 1] };
+const CLUSTER = { count: 6, segments: 4, length: 1.0, radius: 0.06, tip: 0.012, spread: 0.8, center: [0, 0.6, 0], core: 0.22, coreScale: [1, 1, 1], detail: null };
 function buildCluster(b, o) {
+  const hi = o.detail !== 'low';
   const c = o.center;
   b.meta.dims = { center: c };
   b.bone('core', null, c);
@@ -821,12 +955,29 @@ function buildCluster(b, o) {
     const el = U.lerp(1.3, 0.1, U.clamp(o.spread, 0, 1)) + ((i % 3) - 1) * 0.35 * o.spread;
     const dir = [Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)];
     const from = [c[0] + dir[0] * o.core * 0.8, c[1] + dir[1] * o.core * 0.8, c[2] + dir[2] * o.core * 0.8];
-    b.chain('t' + i + '_', 'core', from, dir, o.segments, o.length, o.radius, o.tip, 'body', 5);
+    const names = b.chain('t' + i + '_', 'core', from, dir, o.segments, o.length, o.radius, o.tip, 'body', 5);
+    if (hi) {
+      const n = names.length, sl = o.length / o.segments;
+      for (let k = 1; k < n; k++) {
+        // 指节：每节交界处一颗略粗的小球，打破一整条光滑触手的单调感
+        const px = from[0] + dir[0] * sl * k, py = from[1] + dir[1] * sl * k, pz = from[2] + dir[2] * sl * k;
+        b.sphere(names[k], 'body', U.lerp(o.radius, o.tip, k / n) * 1.3, [px, py, pz], null, [5, 4]);
+      }
+      if (i % 3 === 0) {
+        // 肢体末端变化：每三条里有一条末端不是尖细收口，而是三根小趾/爪叉开
+        const ex = from[0] + dir[0] * o.length, ey = from[1] + dir[1] * o.length, ez = from[2] + dir[2] * o.length;
+        const ox = -dir[2], oz = dir[0], cl = sl * 0.8, tipR = o.tip * 1.6;
+        for (const s of [-1, 0, 1]) {
+          b.cone(names[n - 1], 'body', [ex, ey, ez], [ex + dir[0] * cl * 0.3 + ox * s * cl * 0.4, ey + dir[1] * cl * 0.3, ez + dir[2] * cl * 0.3 + oz * s * cl * 0.4], tipR, 4);
+        }
+      }
+    }
   }
   if (typeof o.extend === 'function') o.extend(b, b.meta.dims);
 }
 function limbCluster(opts) {
   const o = Object.assign({}, CLUSTER, opts);
+  o.detail = resolveDetail(o.detail);
   const rec = rigRecord(geoKey('cluster', o), b => buildCluster(b, o));
   return instRig(rec, resolveMats(o, { body: 0x5b3a3a, glow: 0xffffff }));
 }
@@ -931,17 +1082,27 @@ function hazmat(ctx, o) {
     }
   }
   const suit = BR.skin && has(BR.skin, 'color') ? BR.skin.color() : 0xd8b21f;
+  const hi = resolveDetail(o.detail) === 'high';
   return humanoid({
-    height: 1.8, bulk: 1.35, headSize: 1.3, neck: 0.4, key: 'hazmat_lite',
-    colors: { body: suit, head: suit, gear: 0x1b1b1d },
+    height: 1.8, bulk: 1.35, headSize: 1.3, neck: 0.4, key: 'hazmat_lite', detail: o.detail,
+    colors: { body: suit, head: suit, gear: 0x1b1b1d },   // body/head 是制服，跟着 BR.skin 变色；gear 固定深色，面罩/滤罐/手套/靴子/腰带不随皮肤变
     extend(b, d) {
       const hr = d.headR, hy = d.headY;
-      b.box('head', 'gear', [hr * 1.25, hr * 0.95, hr * 0.5], [0, hy - hr * 0.15, -hr * 0.8]);                           // 防毒面具
-      b.limb('head', 'gear', [0, hy - hr * 0.45, -hr * 1.0], [0, hy - hr * 0.5, -hr * 1.45], hr * 0.32, hr * 0.36, 8);    // 滤罐
+      if (hi) b.sphere('head', 'head', hr * 1.12, [0, hy + hr * 0.12, hr * 0.02], [1, 0.82, 1.05], [10, 8]);             // 兜帽轮廓：罩在头骨外一层，制服色（head 槽位）
+      b.box('head', 'gear', [hr * 1.25, hr * 0.95, hr * 0.5], [0, hy - hr * 0.15, -hr * 0.8]);                           // 面罩框
+      if (hi) for (const s of [-1, 1]) b.sphere('head', 'gear', hr * 0.28, [s * hr * 0.42, hy - hr * 0.1, -hr * 1.02], [1, 1, 0.6], [6, 5]);   // 目镜
+      if (hi) for (const s of [-1, 1]) b.limb('head', 'gear', [s * hr * 0.75, hy - hr * 0.35, -hr * 0.85], [s * hr * 0.8, hy - hr * 0.4, -hr * 1.25], hr * 0.22, hr * 0.25, 6);   // 两侧滤罐
+      else b.limb('head', 'gear', [0, hy - hr * 0.45, -hr * 1.0], [0, hy - hr * 0.5, -hr * 1.45], hr * 0.32, hr * 0.36, 8);                     // 低画质简版：单个中置滤罐
+      if (hi) b.box('spine', 'gear', [0.02, (d.shoulderY - d.hipY) * 0.68, 0.015], [0, (d.shoulderY + d.hipY) / 2, -d.headR * 0.95]);   // 胸前拉链条
+      if (hi) b.limb('hips', 'gear', [0, d.hipY + 0.02, 0], [0, d.hipY - 0.015, 0], d.hipW * 1.55, d.hipW * 1.62, 8);    // 腰带
+      if (hi) b.box('hips', 'gear', [0.05, 0.06, 0.045], [d.hipW * 0.75, d.hipY - 0.04, 0.04]);                          // 小包
       for (const s of [-1, 1]) {
         const L = s < 0 ? 'L' : 'R';
-        b.box('shin' + L, 'gear', [0.14, 0.13, 0.27], [s * d.hipW, 0.065, -0.03]);                                       // 靴子
+        if (hi) b.limb('fore' + L, 'gear', [s * d.shoulderW, d.handY + 0.05, 0], [s * d.shoulderW, d.handY + 0.035, 0], 0.024, 0.03, 6);   // 腕部胶带环
         b.box('fore' + L, 'gear', [0.09, 0.1, 0.1], [s * d.shoulderW, d.handY, 0]);                                      // 手套
+        if (hi) b.limb('shin' + L, 'gear', [s * d.hipW, 0.17, -0.03], [s * d.hipW, 0.155, -0.03], 0.05, 0.058, 6);       // 踝部胶带环
+        b.box('shin' + L, 'gear', [0.14, 0.13, 0.27], [s * d.hipW, 0.065, -0.03]);                                       // 靴子
+        if (hi) b.box('shin' + L, 'gear', [0.15, 0.02, 0.29], [s * d.hipW, 0.01, -0.03]);                                // 靴子鞋底
       }
     },
   });
@@ -984,12 +1145,22 @@ function wrap(model, o) {
   }
   root.traverse(x => { if (x.userData.swarm) u.swarm = x.userData.swarm; if (x.userData.orb && !u.orb) u.orb = x.userData.orb; });
   root.userData.arch = u;
-  // 普通实体 3k 预算不算 parts.swarm 的实例化个体：个体另有 TRIS.swarmUnit 预算（swarmPart 里查），几十个小个体共用一个 draw call
+  // 普通实体 4k 预算不算 parts.swarm 的实例化个体：个体另有 TRIS.swarmUnit 预算（swarmPart 里查），几十个小个体共用一个 draw call
   let tris = 0;
   root.traverse(x => { if (x.isMesh && x.geometry && !x.isInstancedMesh) tris += trisOfGeo(x.geometry); });
   tris = Math.round(tris);
   const limit = num(o.budget, TRIS.normal);
   if (tris > limit) once('budget:' + (o.label || '') + tris, () => console.warn('[arch] 模型三角面 ' + tris + ' 超预算 ' + limit, o.label || ''));
+  // draw call：按材质槽位分组算（geometry.groups.length），只数当前可见的形态；InstancedMesh（parts.swarm）本身就是 1 个
+  let draws = 0;
+  root.traverse(x => {
+    if (x.isInstancedMesh) { draws++; return; }
+    if (!(x.isMesh || x.isSkinnedMesh) || !x.geometry) return;
+    for (let p = x; p; p = p.parent) { if (p.visible === false) return; if (p === root) break; }
+    const g = x.geometry;
+    draws += g.groups && g.groups.length ? g.groups.length : 1;
+  });
+  if (draws > TRIS.drawCalls) once('draws:' + (o.label || '') + draws, () => console.warn('[arch] 模型 draw call ' + draws + ' 超过 ' + TRIS.drawCalls, o.label || ''));
   return root;
 }
 
@@ -1870,8 +2041,11 @@ function customRig(key, fn, o) {
 }
 function silhouette(o) {
   o = o || {};
-  return humanoid(Object.assign({ thin: 0.5, head: 'faceless', opacity: 0.82 }, o, {
+  const op = o.opacity != null ? o.opacity : 0.82;
+  const rimOp = o.rimOpacity != null ? o.rimOpacity : op * 0.55;   // 发梢/爪尖比核心躯干更透一层，边缘"多层半透明"的渐隐效果
+  return humanoid(Object.assign({ thin: 0.5, head: 'faceless', opacity: op }, o, {
     look: Object.assign({ body: 'shadow', head: 'shadow', hair: 'shadow', claw: 'shadow' }, o.look),
+    mats: Object.assign({ hair: mat.shadow(rimOp), claw: mat.shadow(rimOp) }, o.mats),
   }));
 }
 
