@@ -34,6 +34,9 @@
 | Z | 噪音诱饵与投掷物 | 迷彩爬行者失明靠听觉，原文弱点是「扔东西制造声响把它引开」 | 玩家可投掷背包物品 → 落点 `BR.bus.emit('noise', { x, z, loudness })`，`A.hearPlayer` 类感知同时响应噪音点 | js/game/player.js、js/game/items.js、js/entities/_archetypes.js |
 | AA | 隐身/瞬移表现、持久地面痕迹 | 观察者「被清楚察觉就消失」只能隐藏模型+改坐标；磨损者走过留下墨色腐蚀痕迹 | `A.fx.vanish(e)` / `A.fx.appear(e)`（淡出+粒子）；`BR.world.decal(x, z, { ttl })` 区块级贴花池（数量上限、随区块卸载） | js/entities/_archetypes.js、js/game/world.js |
 | AB | 骨架小钩子 | `A.ambush` 分不出扑空/扑中（迷彩爬行者「扑空才嚎叫」）；`A.guide` 不能穿墙（微光向导「穿过墙和物体」） | `A.ambush({ onMiss, onCatch })`；`A.guide({ noclip: true })` 走无碰撞移动 | js/entities/_archetypes.js |
+| AD | 模型上的文字与贴花 | Level 13「写着 235 的门」「残迹牌子上的字」只能用 HUD label 代替；Level 15 符文管道、各层据点招牌看不到具体文字 | `kit.prop.sign(b, x, z, rot, { text, font, color })` 用 CanvasTexture 画字（按文本缓存材质）；通用贴花 `kit.prop.decal({ texKey \| canvas })` | js/levels/_kit.js |
+| AE | 跨层持续的减益/状态 | Level 12「离开本层后一段时间难以与人正常交流」；Level 14 刑讯室/污染的后遗症 | `BR.effects` 支持 `persistAcrossLevels: true`，换层不清除；联机时同步对方可见的状态图标 | js/items/_effects.js、js/game/world.js、js/net/coop.js |
+| AF | 层级 env 动态值与工坊覆盖 | Level 12「离桌椅越远越糟」直接改 ENV 对象，工坊地图启用 env 覆盖时拷贝了一份，改动传不过去 | `env.sanityDrainMul` 等允许函数 `(ctx) => number`，player 每帧读；或 `BR.world.setEnvValue(key, v)` 统一改当前生效的 env | js/game/world.js、js/game/player.js、js/game/workshop.js |
 | AC | 杂项 | Level 10「土层只有 1 米、挖深了涌出蠕虫」没有挖掘动作；幸运纸鹤「被幸运的人吸引」没有运气属性；受眷鸟的化学感受器；Level 9「电器在本层不能用」没有按层禁用物品的标记；Level 11「车换了喷嘴和油泵就能开」没有载具、「在沙房间里睡着就会被传走」没有睡觉/静止判定、「没人看着时车辆挪位/广告换画」依赖 B 项 | 挖掘交互（铲子类物品）；`BR.player.luck`；`perception.smell` 扩展到信息素；层级 `env.disabledItemTags: ['electronic']`；载具（后期）；`BR.player.idleSec` 静止计时 | 多处，逐项评估 |
 
 执行建议：A、B、C、D、H、I 是跨层级高频需求，优先；E、F、G 主要服务 Level 0，但 Level 0 是入口层、玩家第一印象，建议同批做；J、K 放最后。

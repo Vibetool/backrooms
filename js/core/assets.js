@@ -244,7 +244,10 @@ BR.assets = {
 
   // draw(ctx2d, size)。size 用 2 的幂，WebGL1 下重复平铺和 mipmap 才正常。
   // 重复注册会覆盖：如果当前正显示旧兜底，立刻重画替换
-  registerProcedural(name, size, draw) {
+  // opts.noFile：仓库里本来就没有这张 jpg、只用程序化画法（层级文件里自带的贴图常这样）——加进 NO_FILE 跳过文件探测，
+  // 否则浏览器会把那次必然 404 的请求记成 console error（Level 14 彩绘玻璃就踩过）
+  registerProcedural(name, size, draw, opts) {
+    if (opts && opts.noFile) NO_FILE.add(name);
     procs.set(name, { size: size | 0 || 256, draw });
     const rec = records.get(name);
     if (rec && (rec.state === 'procedural' || rec.state === 'missing')) fallback(rec);

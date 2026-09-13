@@ -223,7 +223,8 @@ async function desktop(browser, base) {
   // 所以出生块周围一只实体都没有时换到实体多的 Level 1 验证自动刷怪
   const casEnts = await ev(page, async () => {
     if (BR.entities.count() === 0 && BR.levels.has('1')) await BR.world.goTo('1');
-    if (window.__br && __br.step) __br.step(1);
+    // Level 1 平均每块约 0.23 只实体：只推进 1 秒时建好的区块不多，偶尔一只都没刷到。多推进几步（最多 6 秒）让出生点周围区块建完再数
+    if (window.__br && __br.step) { __br.step(1); for (let i = 0; i < 25 && BR.entities.count() === 0; i++) __br.step(0.2); }
     return { lv: BR.game.levelId, n: BR.entities.count(), items: BR.items.list.length, statsHidden: document.querySelector('.hud-stats').hidden };
   });
   check('游玩：自动生成了实体，也刷了食物/杏仁水', casEnts.n > 0 && casEnts.items > 0, casEnts);

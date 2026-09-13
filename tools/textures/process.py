@@ -73,6 +73,31 @@ SPEC = {
     # 随机纹理不规律花纹，走 destripe+soften
     "l10_soil": dict(src="l10_soil", size=512, kind="tile", mean_rgb=(112, 90, 64), chroma=0.55,
                      destripe=True, soften=0.35),
+    # Level 13：走廊涂漆石膏墙（environment.colors「走廊漆成暗淡的白色或米色」）；随机纹理走 destripe+soften，256 省包体
+    "l13_wall_plaster": dict(src="l13_wall_plaster", size=256, kind="tile", mean_rgb=(198, 188, 165), chroma=0.55,
+                             destripe=True, soften=0.3),
+    # Level 13：走廊层压木/油毡地面（environment.materials「层压木或油毡，未区分墙或地」，取地面用途、暖褐色磨损地板）
+    "l13_floor_linoleum": dict(src="l13_floor_linoleum", size=256, kind="tile", mean_rgb=(150, 128, 96), chroma=0.6,
+                               destripe=True, soften=0.3),
+    # Level 16 文件1（雨林形态）地面：architecture「类似现实热带雨林的生态系统」，没有给具体地表颜色（unverified），
+    # 按典型雨林地被（湿土、落叶、苔藓）取暗绿褐色；随机纹理走 destripe+soften
+    "l16_moss_ground": dict(src="l16_moss_ground", size=256, kind="tile", mean_rgb=(58, 64, 40), chroma=0.7,
+                            destripe=True, soften=0.3),
+    # Level 16 文件2（冰原形态）地面：materials「冰（表面发光且反射率高）」——用偏白偏蓝色调表现高反射感，
+    # 随机裂纹纹理走 destripe+soften
+    "l16_ice_surface": dict(src="l16_ice_surface", size=256, kind="tile", mean_rgb=(206, 219, 230), chroma=0.5,
+                            destripe=True, soften=0.25),
+    # Level 14：走廊石膏墙（配图观察 Level14picture2，非原文文字——同一 fandom 页面配图，米色/桃色墙面）；
+    # 随机纹理走 destripe+soften，256 省包体
+    "l14_wall_hospital": dict(src="l14_wall_hospital", size=256, kind="tile", mean_rgb=(196, 168, 152), chroma=0.7,
+                              destripe=True, soften=0.45),
+    # Level 14：走廊反光地胶+红色标记（配图观察 Level14picture2，非原文文字——浅色反光地胶、红色标记线）
+    "l14_floor_hospital": dict(src="l14_floor_hospital", size=256, kind="tile", mean_rgb=(176, 172, 166), chroma=0.6,
+                               destripe=True, soften=0.25),
+    # Level 15：墙壁/天花板白色钢管上的花纹（materials「白色钢管，部分钢管上有看起来像蔓藤花纹的符号，
+    # 目前仍不清楚代表什么」）——低对比度浮雕纹样，256 省包体
+    "l15_pipe_glyph": dict(src="l15_pipe_glyph", size=256, kind="tile", mean_rgb=(225, 224, 219), chroma=0.35,
+                           destripe=True, soften=0.2),
 }
 JPEG_QUALITY = 82
 
