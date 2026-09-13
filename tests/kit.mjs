@@ -405,20 +405,24 @@ async function inWorld(browser, base) {
   check('未开放：出去再进来才再 toast 一次', t4 === t0 + 2, { toasts: t4 - t0 });
   await tp(S0.x, S0.z, 0, 0, 0.2);
 
-  // 范围内但层级文件还没注册（第二波开发期间常见）：同样只提示
+  // 范围内但层级文件还没注册（第二波开发期间常见）：同样只提示。
+  // 目标层按 BR.LEVEL_ORDER 里第一个还没注册的挑 —— 写死某一层的话，那一层做完注册后这条用例就会真的换层
   const unreg = await ev(page, s => {
+    const to = (BR.LEVEL_ORDER || []).find(id => !BR.levels.has(id));
+    if (to === undefined) return { skipped: true };
     const c = BR.world.chunkAt(s.x, s.z);
-    const e = { x: s.x + 2.2, y: 0, z: s.z - 2.2, radius: 0.8, to: '7', kind: 'door', label: '前往 Level 7', sealed: false, active: true };
+    const e = { x: s.x + 2.2, y: 0, z: s.z - 2.2, radius: 0.8, to, kind: 'door', label: '前往 Level ' + to, sealed: false, active: true };
     c.exits.push(e);
     const n0 = __kitSpy.toast.length;
     BR.player.x = e.x; BR.player.z = e.z; __br.step(0.1);
     const el = document.querySelector('.hud-prompt');
-    const r = { toasts: __kitSpy.toast.slice(n0), prompt: el && !el.hidden ? el.textContent : null, level: BR.game.levelId, tr: BR.world.transitioning };
+    const r = { to, toasts: __kitSpy.toast.slice(n0), prompt: el && !el.hidden ? el.textContent : null, level: BR.game.levelId, tr: BR.world.transitioning };
     c.exits.splice(c.exits.indexOf(e), 1);
     BR.player.x = s.x; BR.player.z = s.z; __br.step(0.1);
     return r;
   }, S0);
-  check('范围内未注册（Level 7）：提示 "Level 7 尚未开放"、不换层', unreg.toasts.length === 1 && unreg.toasts[0] === 'Level 7 尚未开放' && unreg.level === 'dev' && !unreg.tr, unreg);
+  check('范围内未注册（Level ' + (unreg.to || '全部已注册') + '）：提示"尚未开放"、不换层', unreg.skipped ||
+    (unreg.toasts.length === 1 && unreg.toasts[0] === 'Level ' + unreg.to + ' 尚未开放' && unreg.level === 'dev' && !unreg.tr), unreg);
 
   // ---------- 5b. active=false 跳过，setActive(true) 后生效；切出换层 ----------
   const off = await ev(page, n => {

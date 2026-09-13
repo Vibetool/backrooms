@@ -1016,7 +1016,8 @@ async function runScale(browser, base) {
   const want = { casual: 0.5, easy: 0, medium: 0.2, hard: 0.4, hell: 0.6 };
   const base0 = r.totals[0].total || 0;
   // 期望总数正比于 spawnFactor（同一份 entities 表、同一批区块），比值该和 spawnFactor 本身一致
-  const ok = r.entities.length === 0 || r.totals.every(t => Math.abs((t.total / base0) - (want[t.key] / want.casual)) < 1e-6);
+  // totals 是 toFixed(4) 过的显示值：密度很低的层（期望总数只有个位数）舍入误差会放大到 1e-5 量级，按 1e-3 的相对误差比较
+  const ok = r.entities.length === 0 || base0 === 0 || r.totals.every(t => Math.abs((t.total / base0) - (want[t.key] / want.casual)) < 1e-3);
   check('--scale ' + levelId + '：实体总数比值 = spawnFactor 比值（0.5:0:0.2:0.4:0.6）', ok, r.totals.map(t => t.key + '=' + t.total));
   console.log('PREVIEW_JSON ' + JSON.stringify({ scale: r }));
   process.exitCode = ok ? 0 : 1;

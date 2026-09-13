@@ -56,6 +56,12 @@ SPEC = {
     # Level 3：积灰灰色瓷砖地板（environment.materials「积灰的灰色瓷砖地板」），规律花纹走 periodic
     "l3_tile_gray": dict(src="l3_tile_gray", size=512, kind="tile", mean_rgb=(146, 145, 140), chroma=0.5,
                          periodic=True, destripe=True),
+    # Level 5：主厅/贝弗莉室的红木色配金色墙纸（environment.materials「墙纸为红木色和金色」），规律花纹走 periodic
+    "l5_wallpaper_hotel": dict(src="l5_wallpaper_hotel", size=512, kind="tile", mean_rgb=(112, 40, 34), chroma=1.0,
+                               periodic=True),
+    # Level 5：贝弗莉室小桌旁「红金色地毯」（environment.materials），花纹不规则走 destripe+soften
+    "l5_carpet_hotel": dict(src="l5_carpet_hotel", size=512, kind="tile", mean_rgb=(150, 78, 46), chroma=1.0,
+                            destripe=True, soften=0.3),
 }
 JPEG_QUALITY = 82
 
