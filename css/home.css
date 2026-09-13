@@ -65,6 +65,33 @@
 .home-play:active { transform: translateY(4px); box-shadow: 0 2px 0 #6b5816, 0 6px 14px rgba(20, 14, 0, .3); }
 .home-play:focus-visible { outline: 3px solid #fff4c4; outline-offset: 3px; }
 
+/* ---------- 「游玩」正上方：创意工坊 / 设置（次要按钮，WORKSHOP.md 第 9 节） ---------- */
+.home-secondary-actions {
+  position: absolute;
+  right: calc(24px + env(safe-area-inset-right));
+  /* 24 + 62（.home-play 默认高）+ 10 间距，随下面几个断点里 .home-play 的高度一起变 */
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  pointer-events: auto;
+  display: flex; flex-direction: column; align-items: stretch; gap: 10px;
+}
+.home-secondary-btn {
+  min-width: 130px; min-height: 44px;
+  padding: 0 20px;
+  font-size: 14px; font-weight: 700;
+  letter-spacing: .12em;
+  color: #f4ecd0;
+  background: rgba(255, 240, 190, .08);
+  border: 1px solid rgba(232, 197, 71, .45);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background-color .15s ease, border-color .15s ease;
+}
+.home-secondary-btn:hover { background: rgba(232, 197, 71, .16); border-color: #e8c547; }
+.home-secondary-btn:active { background: rgba(232, 197, 71, .26); }
+.home-secondary-btn:focus-visible { outline: 2px solid #e8c547; outline-offset: 2px; }
+/* 和 .home-play / .home-credit 一样：主页自己的弹层开着时收起，别跟弹窗叠在一起 */
+.home-root.is-open .home-secondary-actions { opacity: 0; visibility: hidden; }
+
 /* ---------- 左下署名 ---------- */
 .home-credit {
   position: absolute;
@@ -279,6 +306,8 @@
     border-radius: 16px 16px 0 0; border-bottom: 0;
     padding: 12px calc(16px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
   }
+  /* .home-play 这个断点里矮到 58px，次要按钮组跟着往下挪，别悬空留大缝 */
+  .home-secondary-actions { bottom: calc(92px + env(safe-area-inset-bottom)); }
 }
 
 /* 矮横屏手机：卡片挤一点，标题缩小 */
@@ -287,6 +316,7 @@
   .home-menu-btn { min-height: 58px; }
   .home-card { min-height: 70px; }
   .home-play { min-height: 54px; }
+  .home-secondary-actions { bottom: calc(88px + env(safe-area-inset-bottom)); gap: 8px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

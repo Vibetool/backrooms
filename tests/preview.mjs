@@ -5,7 +5,7 @@
 //   node tests/preview.mjs --arch      BR.arch 地基自检：十个骨架各跑一场 + 全部构件三角面/外观 + 噩梦模式打玩家 + 28 只实体的 AI/动画耗时
 //   node tests/preview.mjs --level-shots <id> [--mode test|casual|nightmare] [--shots N] [--out dir]
 //                          进层看关：出生点四个朝向 + N 个 spawnPoints/出口附近各一张，打印 draw call/三角面/区块/实体/物品/出口/env
-//   node tests/preview.mjs --scale <id>        数量比例自检：游玩满格与噩梦四档的期望实体总数比值应为 0.5:0.2:0.4:0.6:0.9
+//   node tests/preview.mjs --scale <id>        数量比例自检：游玩满格与噩梦四档的期望实体总数比值应为 0.5:0:0.2:0.4:0.6
 //
 // 所有模式启动时都会自动扫描 js/levels/L*.js、js/entities/*.js、js/items/*.js，把 index.html 里还没登记的脚本
 // 按"层级工具库之后 / 实体骨架之后 / js/items/_effects.js 之后"的顺序注入（下划线开头的支持文件在同组里排最前）：
@@ -1006,11 +1006,11 @@ async function runScale(browser, base) {
   if (!r.ok) { console.log('FAIL --scale：' + r.error); process.exitCode = 1; return; }
   console.log(`\n== --scale ${levelId}：chunkArea ${r.chunkArea} m²，实体类型 [${r.entities.join('、') || '（空）'}]，${r.chunks} 个区块坐标`);
   for (const t of r.totals) console.log(`   ${t.label}（spawnFactor ${t.factor}）：期望实体总数 ${t.total}`);
-  const want = { casual: 0.5, easy: 0.2, medium: 0.4, hard: 0.6, hell: 0.9 };
+  const want = { casual: 0.5, easy: 0, medium: 0.2, hard: 0.4, hell: 0.6 };
   const base0 = r.totals[0].total || 0;
   // 期望总数正比于 spawnFactor（同一份 entities 表、同一批区块），比值该和 spawnFactor 本身一致
   const ok = r.entities.length === 0 || r.totals.every(t => Math.abs((t.total / base0) - (want[t.key] / want.casual)) < 1e-6);
-  check('--scale ' + levelId + '：实体总数比值 = spawnFactor 比值（0.5:0.2:0.4:0.6:0.9）', ok, r.totals.map(t => t.key + '=' + t.total));
+  check('--scale ' + levelId + '：实体总数比值 = spawnFactor 比值（0.5:0:0.2:0.4:0.6）', ok, r.totals.map(t => t.key + '=' + t.total));
   console.log('PREVIEW_JSON ' + JSON.stringify({ scale: r }));
   process.exitCode = ok ? 0 : 1;
 }

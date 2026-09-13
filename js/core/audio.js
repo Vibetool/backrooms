@@ -19,6 +19,8 @@ let timer = 0;
 let suspendedByUs = false;
 const S = {
   master: 1,
+  ambientVol: 1,             // 环境层分组音量（设置面板用），unlock 前只记状态
+  sfxVol: 1,                 // 单次音效分组音量（设置面板用），unlock 前只记状态
   sanity: 1,
   ambientName: null,         // 期望的环境预设
   layer: null,               // 当前环境层
@@ -313,7 +315,9 @@ function baked(name) {
 function buildBuses(c) {
   const b = {};
   b.ambient = c.createGain();
+  b.ambient.gain.value = S.ambientVol;     // 设置面板的"背景音乐（环境音）音量"，unlock 前记在 S 里，这里补应用
   b.sfx = c.createGain();
+  b.sfx.gain.value = S.sfxVol;             // 设置面板的"音效音量"
   b.hallu = c.createGain();
   // 低 san 闷声：只作用于"外界"的声音，幻听不经过它，反差才明显
   b.lp = c.createBiquadFilter();
@@ -1781,7 +1785,9 @@ AMB.silence = () => {};
 
 // ---------- 环境切换 ----------
 const XFADE = 2.5;
-const ambLevel = name => AMB_LEVEL[name] !== undefined ? AMB_LEVEL[name] : 0.8;
+// 用户 2026-09-13：后室背景音要小一点 —— 所有环境预设整体再乘 0.5（约 -6dB），设置面板的环境音滑条仍是 0–100% 全程可调
+const AMB_BASE = 0.5;
+const ambLevel = name => AMB_BASE * (AMB_LEVEL[name] !== undefined ? AMB_LEVEL[name] : 0.8);
 function startAmbient(name, sec) {
   const now = ctx.currentTime;
   if (S.layer) { S.layer.stop(now, sec); S.layer = null; }
@@ -2051,6 +2057,22 @@ function setMaster(v) {
   if (bus) bus.master.gain.setTargetAtTime(S.master, ctx.currentTime, 0.04);
 }
 
+// 环境层（setAmbient 起的循环层）分组音量：bus.ambient 本来就是所有环境层汇总后的节点，直接当音量控制用
+function setAmbientVolume(v) {
+  v = +v;
+  if (!(v >= 0)) return;
+  S.ambientVol = clamp(v, 0, 1);
+  if (bus) bus.ambient.gain.setTargetAtTime(S.ambientVol, ctx.currentTime, 0.04);
+}
+
+// 单次音效（play() 播的脚步/拾取/受伤等）分组音量：bus.sfx 是所有音效声部的汇总节点
+function setSfxVolume(v) {
+  v = +v;
+  if (!(v >= 0)) return;
+  S.sfxVol = clamp(v, 0, 1);
+  if (bus) bus.sfx.gain.setTargetAtTime(S.sfxVol, ctx.currentTime, 0.04);
+}
+
 // player 每帧都调：这里只记值，滤波器和幻听在调度器里按变化量更新，免得每帧往 AudioParam 塞自动化事件
 function setSanity(v) {
   v = +v;
@@ -2151,6 +2173,7 @@ async function renderOffline(kind, name, seconds) {
 // ---------- 导出 ----------
 BR.audio = {
   unlock, setAmbient, play, setListener, setMaster, setSanity,
+  setAmbientVolume, setSfxVolume,
   get unlocked() { return !!ctx && ctx.state === 'running'; },
   get ctx() { return ctx; },               // 解锁前为 null；联机语音的 AnalyserNode 可复用同一个上下文
   presets: Object.keys(AMB),

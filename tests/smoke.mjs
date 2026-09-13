@@ -206,9 +206,10 @@ async function desktop(browser, base) {
   check('游玩开局：默认 Level 0、spawnFactor 0.5、不打玩家、无饥饿 san', cas.mode === 'casual' && cas.lv === '0' && cas.sf === 0.5 && !cas.atk && !cas.stats && cas.auto, cas);
   check('游玩开局：主页隐藏、HUD 显示、输入打开、皮肤带进 BR.game', !cas.homeShown && cas.hud && cas.inputOn && cas.skin === 'pink', cas);
   await ev(page, () => __br.step(1));
-  // Level 0 选中的是 wikidot-en「Threshold」，那一版没有确认的实体（entities 表为空），自动刷怪要换到有实体表的 Level 1 验证
+  // Level 0 选中的是 wikidot-en「Threshold」，那一版没有确认的实体，只有用户指定必须出现的细菌（rare 档，多数开局一只都刷不出来），
+  // 所以出生块周围一只实体都没有时换到实体多的 Level 1 验证自动刷怪
   const casEnts = await ev(page, async () => {
-    if (BR.world.current && !(BR.world.current.entities || []).length && BR.levels.has('1')) await BR.world.goTo('1');
+    if (BR.entities.count() === 0 && BR.levels.has('1')) await BR.world.goTo('1');
     if (window.__br && __br.step) __br.step(1);
     return { lv: BR.game.levelId, n: BR.entities.count(), items: BR.items.list.length, statsHidden: document.querySelector('.hud-stats').hidden };
   });
@@ -246,7 +247,7 @@ async function desktop(browser, base) {
   await page.click('.home-menu-btn.is-nightmare');
   await page.waitForTimeout(150);
   const cards = await page.$$eval('.home-card .home-card-desc', els => els.map(e => e.textContent));
-  check('噩梦难度卡片 20/40/60/90%', /20%/.test(cards[0]) && /40%/.test(cards[1]) && /60%/.test(cards[2]) && /90%/.test(cards[3]), cards);
+  check('噩梦难度卡片 0/20/40/60%', / 0%$/.test(cards[0]) && / 20%$/.test(cards[1]) && / 40%$/.test(cards[2]) && / 60%$/.test(cards[3]), cards);
   await shot(page, 'nightmare-cards');
   await page.click('.home-card-hell');
   await page.waitForFunction(() => BR.game.screen === 'playing', null, { timeout: 20000 });
@@ -255,7 +256,7 @@ async function desktop(browser, base) {
     mode: BR.game.mode, diff: BR.game.difficulty, sf: BR.game.spawnFactor, atk: BR.game.attackPlayers, stats: BR.game.statsEnabled,
     hp: BR.player.hp, hunger: BR.player.hunger, inv: BR.player.inventory.filter(Boolean).length,
   }));
-  check('噩梦地狱：spawnFactor 0.9、实体攻击玩家、有饥饿 san', nm.mode === 'nightmare' && nm.diff === 'hell' && nm.sf === 0.9 && nm.atk && nm.stats, nm);
+  check('噩梦地狱：spawnFactor 0.6、实体攻击玩家、有饥饿 san', nm.mode === 'nightmare' && nm.diff === 'hell' && nm.sf === 0.6 && nm.atk && nm.stats, nm);
   check('噩梦开局：新一局满血、背包清空', nm.hp === 100 && nm.inv === 0, nm);
   const statBar = await ev(page, () => {
     const el = document.querySelector('.hud-stats');

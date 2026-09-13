@@ -52,7 +52,7 @@ js/main.js             启动、状态机、主循环
 | 模式 | 实体攻击玩家 | 饥饿/san | 联机 | 实体数量（相对"正常后室"） |
 |---|---|---|---|---|
 | 游玩 casual | 否（友善 vs 有害仍互相作战） | 无 | 有 | 滑条 0–100% 映射到 0–50% |
-| 噩梦 简单/中等/困难/地狱 | 是 | 有 | 无 | 20% / 40% / 60% / 90% |
+| 噩梦 简单/中等/困难/地狱 | 是 | 有 | 无 | 0% / 20% / 40% / 60% |
 | 测试 test | 否（但会攻击测试人；友善 vs 有害仍互相作战） | 无 | 无 | 不自动生成，测试面板手动放出 |
 
 - 饥饿 < 20 → 移速 ×0.5；饥饿 = 0 → 移速 ×1/3（`BR.speedMulFromHunger`）。
@@ -445,3 +445,8 @@ clearAll()                             清除全部实体和测试人
 数据文件：`data/lore-choices.json`（每个层级/实体/物品随机选中的来源）、`data/entity-index.json`（实体清单、各层环境危害）、`data/item-spawn.json`（物品建议密度与出现层级）、`data/credits.json`（署名）。
 
 测试：`tests/smoke.mjs`（单机流程）、`tests/coop.mjs`（双浏览器联机）、`tests/items.mjs`（物品）、`tests/kit.mjs`（层级工具库）、`tests/preview.mjs`（按层级/实体出截图与统计，第二波验收用）、`tests/phys.test.js`。
+
+## 14. 创意工坊与设置（2026-09-13 新增）
+
+需求、数据格式、钩子与界面约定见 **WORKSHOP.md**。要点：`BR.workshop`（js/game/workshop.js，地图数据 + 本机存储 + 钩子，未激活时所有钩子为空操作）、`BR.workshopUI`（js/ui/workshop.js）、`BR.settingsUI`（js/ui/settings.js）；
+`game:start` 新增 `workshop` 字段；`_kit.js` 的 gridWalls / exit / Builder.finish 各有一个工坊钩子；`audio.js` 新增 `setAmbientVolume`、`setSfxVolume`；`coop.js` 新增 `setVoiceVolume` 与 `workshopMap` 同步。

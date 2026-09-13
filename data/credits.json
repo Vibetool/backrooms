@@ -603,6 +603,13 @@
       "title": "High-quality meat",
       "site": "wikidot-cn",
       "url": "https://backrooms-wiki-cn.wikidot.com/level-5"
+    },
+    {
+      "kind": "entity",
+      "id": "bacteria",
+      "title": "Bacteria（三个 wiki 来源均未收录；形象致敬 Kane Pixels《The Backrooms》录像系列，程序化还原，不含 wiki 文本）",
+      "site": null,
+      "url": null
     }
   ]
 }

@@ -118,10 +118,11 @@ BR.MODES = {
     coop: false,
     autoSpawn: true,
     difficulties: [
-      { key: 'easy',   zh: '简单', spawnFactor: 0.2 },
-      { key: 'medium', zh: '中等', spawnFactor: 0.4 },
-      { key: 'hard',   zh: '困难', spawnFactor: 0.6 },
-      { key: 'hell',   zh: '地狱', spawnFactor: 0.9 },
+      // 用户 2026-09-13 调整：简单/中等/困难/地狱 = 正常后室实体数量的 0% / 20% / 40% / 60%（原为 20/40/60/90）
+      { key: 'easy',   zh: '简单', spawnFactor: 0 },
+      { key: 'medium', zh: '中等', spawnFactor: 0.2 },
+      { key: 'hard',   zh: '困难', spawnFactor: 0.4 },
+      { key: 'hell',   zh: '地狱', spawnFactor: 0.6 },
     ],
   },
 };

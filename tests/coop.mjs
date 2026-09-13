@@ -536,6 +536,8 @@ async function run(browser, base) {
   await step('4 开局同步', async () => {
     await A.click('.coop-lobby .coop-close');
     await sleep(150);
+    // 默认起始层已改成 Level 0（选中版本几乎没有实体），第 6 项要比对实体快照，所以固定从 dev 层开局
+    await ev(A, () => { BR.game.settings.startLevel = 'dev'; });
     await A.click('.home-dialog-casual .home-btn-primary');
     const aPlay = await waitFor(A, () => BR.game.screen === 'playing', null, 20000);
     seed = await ev(A, () => BR.game.seed >>> 0);

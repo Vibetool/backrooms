@@ -654,7 +654,9 @@ function spawnForChunk(level, chunkKey, spawnPoints, rng) {
 
   for (const entry of table) {
     if (!entry || !entry.type) continue;
-    const count = BR.stochasticRound(BR.expectedEntityCount(num(entry.officialPer1000m2, 0), area, factor), rng);
+    // 工坊 densityMul：未激活时恒为 1，字节不变；编辑态或 autoEntities=false 时为 0（不刷层级自带实体）
+    const wsMul = BR.workshop && typeof BR.workshop.densityMul === 'function' ? BR.workshop.densityMul('entities', entry.type) : 1;
+    const count = BR.stochasticRound(BR.expectedEntityCount(num(entry.officialPer1000m2, 0), area, factor) * wsMul, rng);
     if (count <= 0) continue;
     const def = BR.entityTypes.get(entry.type);
     if (!def) {

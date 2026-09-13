@@ -1391,6 +1391,7 @@
         "wikidot-cn",
         "fandom"
       ],
+      "userOverride": "外观按用户指定：漂浮的白色笑脸，在道路中间穿梭，身后一片漆黑",
       "conflicts": [
         "对光的反应：wikidot-en/cn 被光吸引、会追逐光源，建议关灯、扔光源当诱饵；fandom 光是弱点，照到会疼痛退缩，手电筒或亮房间可击退。",
         "致命弱点：wikidot-en/cn 用驱笑剂令其撤退/失去知觉；fandom 着火会溶解至死。",
@@ -1654,6 +1655,16 @@
       "en": "Woodlin",
       "zh": "木灵",
       "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/woodlin.json"
+    },
+    "bacteria": {
+      "candidates": [],
+      "userOverride": "三个来源都没收录，按用户要的著名形象做（Kane Pixels 录像里的细菌）：比人高的瘦长黑色人形、手臂过膝、头部无五官且会纵向裂开露齿、抽搐甩头、尖啸、狂奔追人",
+      "conflicts": [],
+      "source": null,
+      "method": "none-loaded",
+      "en": "Bacteria",
+      "zh": "细菌",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/bacteria.json"
     }
   },
   "items": {

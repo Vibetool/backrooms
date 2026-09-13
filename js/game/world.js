@@ -49,7 +49,12 @@ function chunkKey(cx, cz) { return cx + ',' + cz; }
 // 两个 16 位偏移拼成安全整数：|cx| < 32768 个区块，按 24 m 算是 780 km，走不到头
 function numKey(cx, cz) { return (cx + 32768) * 65536 + (cz + 32768); }
 function cheb(ax, az, bx, bz) { return Math.max(Math.abs(ax - bx), Math.abs(az - bz)); }
-function loadRadius() { return Math.max(0, num(BR.config.world && BR.config.world.loadRadius, 2) | 0); }
+function loadRadius() {
+  // 工坊编辑态：把可编辑范围（map.radius 圈区块）一次性全载入，不是围着玩家流式加载
+  const w = BR.workshop;
+  if (w && w.editing && w.active) return Math.max(0, num(w.active.radius, 3) | 0);
+  return Math.max(0, num(BR.config.world && BR.config.world.loadRadius, 2) | 0);
+}
 function sceneOf() { return (BR.gfx && BR.gfx.scene) || null; }
 
 function isCoopGuest() {
@@ -113,6 +118,7 @@ function buildChunk(cx, cz) {
 
 function spawnItems(c) {
   if (!has(BR.items, 'spawn')) return;
+  if (BR.workshop && BR.workshop.editing) return;   // 编辑态不刷物品
   const pts = c.spawnPoints;
   const used = new Uint8Array(pts.length);
   let free = pts.length;
@@ -125,8 +131,9 @@ function spawnItems(c) {
     }
     // 每种物品各派生一条随机流，与几何那条完全分开：调物品密度不会改地形，调一种也不挪另一种
     const rng = U.rng(S.levelSeed, c.cx, c.cz, 'items', type);
-    // 所有模式都刷食物和杏仁水，数量不乘 spawnFactor
-    const n = BR.stochasticRound(entry.per1000m2 * S.chunkArea / 1000, rng);
+    // 所有模式都刷食物和杏仁水，数量不乘 spawnFactor；工坊地图再乘一道 densityMul（未激活时恒为 1，字节不变）
+    const wsMul = BR.workshop && typeof BR.workshop.densityMul === 'function' ? BR.workshop.densityMul('items', type) : 1;
+    const n = BR.stochasticRound(entry.per1000m2 * S.chunkArea / 1000 * wsMul, rng);
     for (let k = 0; k < n && free > 0; k++) {
       let i = Math.floor(rng() * pts.length);
       while (used[i]) i = (i + 1) % pts.length;   // 被占了就顺延，两件东西不叠在同一个点
@@ -248,7 +255,9 @@ function pushLights() {
   if (!has(BR.gfx, 'setLightSources')) return;
   const list = [];
   chunks.forEach(c => { for (let i = 0; i < c.lights.length; i++) list.push(c.lights[i]); });
-  BR.gfx.setLightSources(list);
+  // 工坊 lightMul/flicker/blackout：未激活时原样返回同一个数组引用，不新建对象
+  const out = has(BR.workshop, 'lightTransform') ? BR.workshop.lightTransform(list) : list;
+  BR.gfx.setLightSources(out);
   S.lightsPushed = true;
 }
 
@@ -355,16 +364,32 @@ function updateDeepest(id) {
 // 环境、环境音、层级名放在 start 里：首次进入和 goTo 走同一条路，main 不用再补一遍
 function present(level) {
   const env = level.env || {};
-  if (has(BR.gfx, 'applyEnv')) BR.gfx.applyEnv(env, BR.game.settings ? BR.game.settings.visibility : undefined);
+  // 工坊地图固定了能见度（settings.visibility != null）时不跟玩家的滑条设置，其余情况不变
+  const fixedVis = has(BR.workshop, 'fixedVisibility') ? BR.workshop.fixedVisibility() : null;
+  const vis = fixedVis != null ? fixedVis : (BR.game.settings ? BR.game.settings.visibility : undefined);
+  if (has(BR.gfx, 'applyEnv')) BR.gfx.applyEnv(env, vis);
   // 没写 audio 也要显式静音，否则上一层的环境音会一直带过来
   if (has(BR.audio, 'setAmbient')) BR.audio.setAmbient(env.audio || 'silence');
   if (has(BR.hud, 'levelTitle')) BR.hud.levelTitle(level);
 }
 
+// 工坊 envOverride 钩子：未激活时原样返回同一个引用，level 不用包一层，逐字节行为不变；
+// 激活时包一层原型链（同 safeLevel 的写法），env 之外的字段（buildChunk、entities…）都照原型链读到原层级
+function envWrappedLevel(rawLevel) {
+  if (!has(BR.workshop, 'envOverride')) return rawLevel;
+  const base = rawLevel.env || {};
+  const ov = BR.workshop.envOverride(base);
+  if (ov === base) return rawLevel;
+  const lv = Object.create(rawLevel);
+  lv.env = ov;
+  return lv;
+}
+
 function startSync(levelId, seed) {
   const id = String(levelId);
-  const level = BR.levels.get(id);
-  if (!level) throw new Error('[world] 未注册的层级：' + id);
+  const rawLevel = BR.levels.get(id);
+  if (!rawLevel) throw new Error('[world] 未注册的层级：' + id);
+  const level = envWrappedLevel(rawLevel);
 
   clear();
   if (typeof seed === 'number' && isFinite(seed)) BR.game.seed = seed >>> 0;
@@ -382,7 +407,8 @@ function startSync(levelId, seed) {
   // enter 在建区块之前：层级可以在这里设 groundFn、预算全层数据
   callHook('enter');
 
-  const sp = readSpawn(level);
+  let sp = readSpawn(level);
+  if (has(BR.workshop, 'spawnOverride')) sp = BR.workshop.spawnOverride(sp) || sp;
   S.spawn = sp;
   S.spawnCx = Math.floor(sp.x / S.size);
   S.spawnCz = Math.floor(sp.z / S.size);

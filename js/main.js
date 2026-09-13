@@ -82,11 +82,20 @@ function pickLevel(p, settings) {
   return all.length ? String(all[0].id) : want;
 }
 
+// payload.workshop：mapId（本机地图，字符串）或联机客机收到的地图对象（不查本机存储）。
+// 没有就返回 null——主页正常开局的路径完全不变
+function resolveWorkshopMap(p) {
+  if (p.workshop == null) return null;
+  if (typeof p.workshop === 'string') return has(BR.workshop, 'get') ? BR.workshop.get(p.workshop) : null;
+  return typeof p.workshop === 'object' ? p.workshop : null;
+}
+
 function onGameStart(payload) {
   const p = payload || {};
   const g = BR.game;
   const mode = BR.MODES[p.mode] ? p.mode : 'casual';
   const M = BR.MODES[mode];
+  const wsMap = resolveWorkshopMap(p);
 
   // 原地合并而不是换新对象：hud 的能见度滑条、gfx 每帧都按引用读 BR.game.settings
   if (!g.settings || typeof g.settings !== 'object') g.settings = {};
@@ -98,9 +107,13 @@ function onGameStart(payload) {
     const list = M.difficulties || [];
     difficulty = list.some(d => d.key === p.difficulty) ? p.difficulty : (list[0] && list[0].key);
   }
-  // 联机客机必须用房主给的种子，不能重新随机，否则两边世界不一样
-  const seed = typeof p.seed === 'number' && isFinite(p.seed) ? p.seed >>> 0 : (Math.random() * 4294967296) >>> 0;
-  const levelId = pickLevel(p, settings);
+  // 联机客机必须用房主给的种子，不能重新随机，否则两边世界不一样；工坊地图种子/层级定死，覆盖掉随机种子和主页选的层
+  const seed = wsMap ? (wsMap.seed >>> 0)
+    : typeof p.seed === 'number' && isFinite(p.seed) ? p.seed >>> 0 : (Math.random() * 4294967296) >>> 0;
+  const levelId = wsMap ? String(wsMap.baseLevel) : pickLevel(p, settings);
+  // 先激活/停用工坊地图，world.start 之前——world.js 的 spawnOverride/envOverride 等钩子读的是 BR.workshop.active
+  if (wsMap) safe('workshop', 'activate', wsMap, { editing: false });
+  else safe('workshop', 'deactivate');
 
   g.mode = mode;
   g.difficulty = difficulty;
@@ -165,6 +178,7 @@ function onGameHome() {
   safe('entities', 'clear');
   safe('items', 'clear');
   safe('effects', 'clear');   // 物品时效效果（js/items/_effects.js）：回主页时加速、毒发、画面效果都要停
+  safe('workshop', 'deactivate');
   safe('hud', 'show', false);
   safe('death', 'hide');
   safe('test', 'close');
@@ -201,6 +215,7 @@ function tick(dt, render) {
     safe('world', 'update', dt);
     safe('entities', 'update', dt);
     safe('items', 'update', dt);
+    safe('workshop', 'update', dt);   // 地图未激活或在编辑态时是空操作，见 js/game/workshop.js
   }
   // 联机每帧都要跑（主页大厅里建房、暂停、结算时也要收发），且必须在 endFrame 之前读 V 键
   safe('coop', 'update', dt);

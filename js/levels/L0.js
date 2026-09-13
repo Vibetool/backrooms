@@ -295,8 +295,13 @@ BR.levels.register({
   // entities[]：entity-index.json 里没有任何 levels 含 "0" 的确认实体；选中版本 entityDensityOverall
   // = "none（未确认）"——生存难度标注 Unconfirmed Entities，只有「黑影尾随」的目击传闻，原文没写攻击方式，
   // entity-index.json 的 hazards 备注也说明它「适合做成视觉和音效现象，不做可交互实体」。
-  // 按 WAVE2.md 第 4 节「版本说没有实体 → entities: []，不为了热闹加实体」处理；黑影/被注视感在 update() 里做成偶发现象
-  entities: [],
+  // 按 WAVE2.md 第 4 节「版本说没有实体 → entities: []，不为了热闹加实体」处理；黑影/被注视感在 update() 里做成偶发现象。
+  // bacteria 是例外：用户要求著名实体细菌必须出现（形象按 Kane Pixels 录像，见 js/entities/bacteria.js）。
+  // 三个 wiki 来源都没收录它，没有 spawnLevels 可查，按 _TEMPLATE.md 第2节规则落到「没写层级 → 加进 Level 0」——
+  // 录像里它本来就出没在黄色房间里。密度没有来源数字，取 densityWords 最低档 rare，保持 Level 0 空旷孤独的基调
+  entities: [
+    { type: 'bacteria', officialPer1000m2: BR.config.densityWords.rare },
+  ],
   items: [
     { type: 'almond_water', per1000m2: 1.2 },                    // data/item-spawn.json：不限层级最常见补水物；选中版本称本层这批「被污染」，但没有单独的「被污染杏仁水」道具类型，仍按通用杏仁水刷（用户规则：所有模式都刷）
     { type: 'almond_water_blue', per1000m2: 0.06 },               // data/item-spawn.json：彩色瓶稀有，蓝色最常见

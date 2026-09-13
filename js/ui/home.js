@@ -947,6 +947,20 @@ function buildDom() {
   const play = button('home-play', root, '游玩');
   play.addEventListener('click', () => { tryUnlockAudio(true); openLayer('menu'); });
 
+  // 「游玩」正上方竖排两个次要按钮：创意工坊、设置（WORKSHOP.md 第 9 节）。
+  // 两个模块都是独立文件，可能还没接进 index.html，这里只做存在性判断，不存在就提示"制作中"而不是报错。
+  const secondary = mk('div', 'home-secondary-actions', root);
+  const workshopBtn = button('home-secondary-btn', secondary, '创意工坊');
+  workshopBtn.addEventListener('click', () => {
+    if (BR.workshopUI && typeof BR.workshopUI.open === 'function') BR.workshopUI.open();
+    else if (BR.hud && typeof BR.hud.toast === 'function') BR.hud.toast('创意工坊制作中', 1600);
+  });
+  const settingsBtn = button('home-secondary-btn', secondary, '设置');
+  settingsBtn.addEventListener('click', () => {
+    if (BR.settingsUI && typeof BR.settingsUI.open === 'function') BR.settingsUI.open();
+    else if (BR.hud && typeof BR.hud.toast === 'function') BR.hud.toast('设置制作中', 1600);
+  });
+
   const credit = button('home-credit', root, '设定来自 Backrooms Wiki（CC BY-SA 3.0）');
   credit.addEventListener('click', () => openLayer('credits'));
 

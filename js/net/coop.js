@@ -529,11 +529,14 @@ function onSkin(key) {
 function sendWorld() {
   if (!S.active || S.role !== 'host' || !inCasualWorld()) return;
   const P = BR.player, lv = String(BR.game.levelId);
+  // 房主如果在工坊地图里，把整张地图对象带给客机：客机没有本机存储里那份，靠这个激活同一张图（第 9 节）
+  const wsMap = BR.workshop && BR.workshop.active && !BR.workshop.editing ? BR.workshop.active : undefined;
   send({
     t: 'world', seed: BR.game.seed >>> 0, levelId: lv,
     settings: Object.assign({}, BR.game.settings),
     picked: S.taken.levelId === lv ? Array.from(S.taken.ids) : [],
     at: P && isNum(P.x) && isNum(P.z) ? { x: r2(P.x), y: r2(P.y - eyeHeight()), z: r2(P.z), yaw: r3(P.yaw || 0) } : null,
+    workshopMap: wsMap,
   });
 }
 
@@ -569,7 +572,11 @@ function startAsGuest(m, lv, seed) {
   closeLobby();
   S.startingAsGuest = true;
   try {
-    BR.bus.emit('game:start', { mode: 'casual', difficulty: null, settings, seed, levelId: lv, coop: { role: 'guest' } });
+    // 客机激活房主同步来的地图对象（不写本机存储）：main.js 的 onGameStart 认 workshop 字段，是对象就直接用
+    BR.bus.emit('game:start', {
+      mode: 'casual', difficulty: null, settings, seed, levelId: lv, coop: { role: 'guest' },
+      workshop: m.workshopMap || undefined,
+    });
   } finally {
     S.startingAsGuest = false;
   }
@@ -1236,6 +1243,8 @@ BR.coop = {
   get peerSpeaking() { return S.peerLevel; },
   get peerName() { return S.peerName; },
   get phase() { return S.phase; },
+  // 联机对方当前渲染位置（插值后），房主用来判断自己 + 对方谁先进工坊放置实体的触发圈；没有有效样本时 null
+  get peer() { return S.active && R.samples.length ? { x: R.cur.x, y: R.cur.y, z: R.cur.z } : null; },
   get code() { return (BR.net && BR.net.code) || null; },
 };
 

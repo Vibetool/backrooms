@@ -674,6 +674,8 @@ function flickerOf(src) {
 Builder.prototype.finish = function () {
   if (this._done) throw new Error('[kit] 同一个 builder 只能 finish 一次');
   this._done = true;
+  // 工坊钩子：合并几何前让工坊把新增出口、自由墙摆进去；_wsHelper 标记的内部一次性 builder（noclipPatch 那种）跳过
+  if (!this._wsHelper && BR.workshop && typeof BR.workshop.decorate === 'function') BR.workshop.decorate(this);
   const group = new THREE.Group();
   group.name = 'chunk ' + (this.level ? this.level.id : '?') + ' ' + this.cx + ',' + this.cz;
   let tris = 0;
@@ -796,6 +798,7 @@ class Grid {
     this.pillars = [];
     this.rooms = [];
     this._dirty = false;                  // setWall 加过墙：gridWalls 之前要再打通一次，否则可能把格子围死
+    this._wsEdited = false;               // BR.workshop.applyGrid 编辑过：gridWalls 整个跳过 reconnect
     this._rr = [b.seed, b.cx, b.cz];      // reconnect 默认随机流的种子：不碰层级的 rng，加一堵墙不会让后面的灯/地标全挪位
     this._gen(b, o);
   }
@@ -979,6 +982,22 @@ class Grid {
     return true;
   }
 
+  // 工坊专用：绕过 setWall 的边界保护（区块交界线上的边也允许改，两侧区块各自应用同一个 key）。
+  // 只供 BR.workshop.applyGrid 调用；标记 _wsEdited 让 gridWalls 跳过自动 reconnect——创作者故意封路是合法的
+  _wsSetWall(axis, i, j, on) {
+    const cols = this.cols, rows = this.rows;
+    if (axis === 'v') {
+      if (!(i >= 0 && i <= cols && j >= 0 && j < rows)) return false;
+      this.v[i * rows + j] = on ? 1 : 0; this.lockV[i * rows + j] = 1;
+    } else {
+      if (!(j >= 0 && j <= rows && i >= 0 && i < cols)) return false;
+      this.h[j * cols + i] = on ? 1 : 0; this.lockH[j * cols + i] = 1;
+    }
+    if (on) this.pillars = this.pillars.filter(p => this.vertexFree(p.i, p.j));
+    this._wsEdited = true;
+    return true;
+  }
+
   // 并查集：按随机顺序拆掉连接不同连通块的未锁定内部墙，直到整块格子互通。
   // 每条边界至少有开口 + 块内全连通 ⇒ 整个无限世界连通，玩家不会被关死
   reconnect(rng) {
@@ -1045,8 +1064,11 @@ function eachRun(arr, off, n, fn) {
 // 边界线上只画朝向本块的半堵墙（邻块画另一半），两半贴合处的面互相挡住，看不见
 function gridWalls(b, g, opts) {
   const o = opts || {};
-  // 层级用 setWall 加过墙（门洞旁补墙、围地标）：生成时的连通性可能被破坏，画墙前自动再打通一次（锁定的墙不拆）
-  if (g._dirty) g.reconnect();
+  // 工坊钩子：不在工坊地图里（BR.workshop.active 为空）时什么都不做，现有层级行为不变
+  if (BR.workshop && typeof BR.workshop.applyGrid === 'function') BR.workshop.applyGrid(b, g);
+  // 层级用 setWall 加过墙（门洞旁补墙、围地标）：生成时的连通性可能被破坏，画墙前自动再打通一次（锁定的墙不拆）。
+  // 工坊编辑过这块 grid 时整个跳过：创作者故意封路是合法的，编辑器负责在出生点被围死时警告
+  if (g._dirty && !g._wsEdited) g.reconnect();
   const H = num(o.height, b.height);
   const T = num(o.thickness, 0.2 * 4 / 3), ht = T / 2;   // 用户要求墙在原 0.2m 基础上加厚 1/3
   const key = o.matKey || 'kit:prop';
@@ -1714,7 +1736,16 @@ const prop = {
 // =====================================================================
 // 范围外（不在 LEVEL_ORDER、也不是 dev）自动 sealed：实物照摆，world 只提示"Level X 尚未开放"，绝不改道
 function exit(b, opts) {
-  const o = opts || {};
+  let o = opts || {};
+  // 工坊钩子：每次调用按顺序编个稳定 key（区块生成只吃 rng，调用顺序固定，联机两边算出的 key 一样）。
+  // exitOverride 返回 null → 这个出口整个不建；返回新 opts → 按新的建；返回 undefined（含未激活工坊地图）→ 不变
+  const wsN = (b._wsExitN = (b._wsExitN || 0) + 1);
+  const wsKey = (b.level ? b.level.id : '') + '@' + b.cx + ',' + b.cz + '#' + wsN;
+  if (BR.workshop && typeof BR.workshop.exitOverride === 'function') {
+    const ov = BR.workshop.exitOverride(b, wsKey, o);
+    if (ov === null) return null;
+    if (ov !== undefined) o = ov;
+  }
   const kind = o.kind || 'zone';
   const x = num(o.x, 0), z = num(o.z, 0), rot = num(o.rot, 0);
   const parts = {};
@@ -1748,6 +1779,7 @@ function exit(b, opts) {
   });
   b.pop();
   h.parts = parts;
+  h.desc.key = wsKey;   // 出口描述带上 key（第 4 节）：工坊靠它认哪个出口被移动/删除/是自己加的
   return h;
 }
 
@@ -1774,6 +1806,7 @@ function noclipPatch(b, o) {
   // 先按区块本地坐标算好顶点（world UV 与真墙对齐），再搬进独立 mesh
   const tmp = new Builder(b.ctx, b.cx, b.cz, b.rng, { height: b.height });
   tmp._T = b._T;
+  tmp._wsHelper = true;   // 内部一次性小 builder，不是这块区块真正的 builder：finish() 时不重复跑工坊 decorate
   tmp.box(0, 0, 0, w, h, t, key, { faces: 'all', solid: false, color: o.color });
   const r = tmp.finish();
   const mesh = r.group.children[0];

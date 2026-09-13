@@ -1431,6 +1431,15 @@
       "levels": [
         "20"
       ]
+    },
+    {
+      "key": "bacteria",
+      "en": "Bacteria",
+      "zh": "细菌",
+      "levels": [
+        "0"
+      ],
+      "hostilityInLevels": "0 hostile（wikidot-en/wikidot-cn/fandom 三源均未收录，见 backrooms-research/entities/bacteria.json；按用户指定的著名形象实现：Kane Pixels 录像里的瘦长黑色人形追猎者，见 data/lore-choices.json entities.bacteria.userOverride；数值非设定）"
     }
   ],
   "incompleteLevels": [
