@@ -1,0 +1,1446 @@
+{
+  "entities": [
+    {
+      "key": "hound",
+      "en": "Hound",
+      "zh": "猎犬",
+      "number": "8",
+      "levels": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "9",
+        "11",
+        "20"
+      ],
+      "hostilityInLevels": "1 hostile（犬形人态，直视眼睛并制造噪声可吓退）；2 hostile（一头猛冲，不必保存体力）；3 hostile（捕杀被抓住的人）；4 hostile（看见人就被激怒，用爪牙攻击，一直直视可让它暂时退开，嚎叫代表危险升高）；5 unknown（只列了名字）；9 unknown（只列了名字，似乎害怕邻里守望）；11 varies（第 11 效应能安抚它，但靠近或挑衅可能失效，有人因此死亡）；20 hostile（撕碎雅各布；鼹鼠洞失败时刷出 4 条；进不了游戏房间）"
+    },
+    {
+      "key": "smiler",
+      "en": "Smiler",
+      "zh": "笑魇",
+      "number": "3",
+      "levels": [
+        "1",
+        "2",
+        "3",
+        "8",
+        "9"
+      ],
+      "hostilityInLevels": "1 hostile（发光兽面，被光吸引，发现猎物后也会被声音吸引；关灯或扔出光源当诱饵）；2 hostile（一头猛冲）；3 hostile（捕杀被抓住的人）；8 hostile（巨臂林地的掠食者）；9 unknown（只列了名字，似乎害怕邻里守望）"
+    },
+    {
+      "key": "skin_stealer",
+      "en": "Skin-Stealer",
+      "zh": "窃皮者",
+      "number": "10",
+      "levels": [
+        "1",
+        "2",
+        "3",
+        "5",
+        "9",
+        "20"
+      ],
+      "hostilityInLevels": "1 hostile（白色人形，披着受害者的皮伪装，互动够久后袭击，智力低；对话可识破）；2 hostile（一头猛冲）；3 hostile（捕杀被抓住的人）；5 unknown（只列了名字）；9 unknown（只列了名字，似乎害怕邻里守望）；20 unknown（只列了名字）"
+    },
+    {
+      "key": "clump",
+      "en": "Clump",
+      "zh": "肢团",
+      "number": "5",
+      "levels": [
+        "1",
+        "2",
+        "3",
+        "20"
+      ],
+      "hostilityInLevels": "1 hostile（一团肢体，没有视觉，循声高速冲向猎物）；2 hostile（一头猛冲）；3 hostile（捕杀被抓住的人）；20 hostile（探险日志中杀死约瑟夫）"
+    },
+    {
+      "key": "duller",
+      "en": "Duller",
+      "zh": "钝人",
+      "number": "6",
+      "levels": [
+        "1",
+        "3",
+        "4"
+      ],
+      "hostilityInLevels": "1 hostile（在墙里切行并突袭，附近有刺耳声或沙沙声时远离墙壁）；3 hostile（捕杀被抓住的人）；4 hostile（深灰无脸，手臂穿墙把人拖进去；被注意到会无声逃走；回避杏仁水和存放杏仁水的地方）"
+    },
+    {
+      "key": "growler",
+      "en": "Growler",
+      "zh": "啼物",
+      "number": "130",
+      "levels": [
+        "1",
+        "5",
+        "20"
+      ],
+      "hostilityInLevels": "1 hostile（由线缆组成，力大智低；朝头顶扔重物干扰后逃跑，被攻击时扯断头部线缆）；5 unknown（只列了名字）；20 unknown（只列了名字）"
+    },
+    {
+      "key": "nguithrxurh",
+      "en": "Nguithr'xurh",
+      "zh": "Nguithr'xurh（未译）",
+      "number": "16",
+      "levels": [
+        "1",
+        "5",
+        "8",
+        "20"
+      ],
+      "hostilityInLevels": "1 hostile（天花板上的昆虫，守在发光球状蛛网周围；不要从网下走；敌对是根据回避建议推断的）；5 unknown（只列了名字）；8 hostile（巨臂林地的掠食者，页面拼写为 Nguithr'xhurs）；20 unknown（只列了名字）"
+    },
+    {
+      "key": "wrangler",
+      "en": "Wrangler",
+      "zh": "牧蛇",
+      "number": "75",
+      "levels": [
+        "1",
+        "5",
+        "8",
+        "20"
+      ],
+      "hostilityInLevels": "1 hostile（能钻进墙里的巨蛇，用身体催眠；墙或天花板振动时安静离开）；5 unknown（有人在锅炉房看到过）；8 hostile（凿穿岩石捕猎，成年个体能切行；一般长一英里以上，有一条约 70 英里长）；20 hostile（打爆小行星游戏失败的惩罚之一，会刷出来）"
+    },
+    {
+      "key": "wretch",
+      "en": "Wretch",
+      "zh": "悲尸",
+      "number": "15",
+      "levels": [
+        "1",
+        "3",
+        "8",
+        "9"
+      ],
+      "hostilityInLevels": "1 hostile（攻击性强的不死人形，智力低，绝不要互动）；3 hostile（捕杀被抓住的人）；8 hostile（像僵尸，低声喊救命，接触会传染）；9 unknown（没写行为，原文说 many Wretches）"
+    },
+    {
+      "key": "deathmoth",
+      "en": "Deathmoth",
+      "zh": "死亡飞蛾",
+      "number": "4",
+      "levels": [
+        "3",
+        "5",
+        "8",
+        "9",
+        "20"
+      ],
+      "hostilityInLevels": "3 hostile（雄性和雌性都在，捕杀被抓住的人）；5 varies（大量筑巢，占满大厅；雌性很危险，但一般待在巢里不出来）；8 varies（捕食性，雌性领地意识强）；9 unknown（只列了名字，似乎害怕邻里守望，尤其是 Watchers）；20 unknown（只列了名字，从 Level 2 大规模迁来）"
+    },
+    {
+      "key": "faceling",
+      "en": "Faceling",
+      "zh": "无面灵",
+      "number": "9",
+      "levels": [
+        "3",
+        "11",
+        "20"
+      ],
+      "hostilityInLevels": "3 hostile（捕杀被抓住的人）；11 unknown（和猎犬并列本层最多的实体，受第 11 效应影响；守卫曾射杀一只靠近的幼体）；20 unknown（只列了名字）"
+    },
+    {
+      "key": "burster",
+      "en": "Burster",
+      "zh": "爆酸者",
+      "number": "11",
+      "levels": [
+        "3"
+      ],
+      "hostilityInLevels": "3 hostile（捕杀被抓住的人，没有更多描述）"
+    },
+    {
+      "key": "death_rat",
+      "en": "Death Rat",
+      "zh": "尸鼠",
+      "number": "24",
+      "levels": [
+        "5",
+        "8",
+        "9"
+      ],
+      "hostilityInLevels": "5 unknown（只列了名字）；8 unknown（大量栖息在罗特尼斯穴顶，倒挂排泄，借数百条通风管道去其他层级，没写攻击性）；9 unknown（只列了名字）"
+    },
+    {
+      "key": "woodlin",
+      "en": "Woodlin",
+      "zh": "木灵",
+      "number": "45",
+      "levels": [
+        "5"
+      ],
+      "hostilityInLevels": "5 unknown（只列了名字）"
+    },
+    {
+      "key": "watcher",
+      "en": "Watcher",
+      "zh": "观察者",
+      "number": "38",
+      "levels": [
+        "5"
+      ],
+      "hostilityInLevels": "5 unknown（只列了名字）。不是 Entity 96 邻里守望里的 Watchers"
+    },
+    {
+      "key": "ant",
+      "en": "Ants",
+      "zh": "蚂蚁",
+      "number": "89",
+      "levels": [
+        "5"
+      ],
+      "hostilityInLevels": "5 unknown（只有目击报告，没写行为）"
+    },
+    {
+      "key": "samantha",
+      "en": "Samantha",
+      "zh": "萨曼莎",
+      "number": "26",
+      "levels": [
+        "5"
+      ],
+      "hostilityInLevels": "5 unknown（偶尔在主厅游荡；想接近她一定要带优质的肉）"
+    },
+    {
+      "key": "thing_on_level_7",
+      "en": "The Thing On Level 7",
+      "zh": "七层之物",
+      "levels": [
+        "7"
+      ],
+      "hostilityInLevels": "7 hostile（顶级掠食者，唯一个体，已杀光海里其他生命；在午夜带和深渊上层活动，眼睛怕光；速度、力量、侦测都和 Tiny 相当；页面没写外形，也没有编号）"
+    },
+    {
+      "key": "tiny",
+      "en": "Tiny",
+      "zh": "小小",
+      "number": "720",
+      "levels": [
+        "7"
+      ],
+      "hostilityInLevels": "7 hostile（唯一个体，只在日光带和暮色带活动，常待在通往 Level 9 的石柱环附近；听觉极强，怕巨响；能交流，但只应在入口房间或岛上交流）"
+    },
+    {
+      "key": "arachnid",
+      "en": "The Arachnids",
+      "zh": "八层之蛛 / 蛛形纲生物",
+      "number": "39",
+      "levels": [
+        "8",
+        "9"
+      ],
+      "hostilityInLevels": "8 hostile（蜘蛛、蝎子、螨虫等，领地性强，成千上万占满成片区域；可能巨大化、剧毒、再生、抗火；不会游泳，跳进水里能躲）；9 unknown（有目击，似乎是从 Level 8 游荡过来的）。合并依据：Level 9 页称 Entity 39 来自 Level 8；Level 8 页没写编号"
+    },
+    {
+      "key": "scit",
+      "en": "Scit",
+      "zh": "旱虾",
+      "number": "20",
+      "levels": [
+        "8"
+      ],
+      "hostilityInLevels": "8 unknown（巨臂林地里大量存在，没写行为）"
+    },
+    {
+      "key": "dunk",
+      "en": "Dunk (sub-species)",
+      "zh": "灌篮崽（亚种）",
+      "number": "12",
+      "levels": [
+        "8"
+      ],
+      "hostilityInLevels": "8 unknown（巨臂林地里的亚种，大量存在，没写行为）"
+    },
+    {
+      "key": "light_guide",
+      "en": "Light Guide",
+      "zh": "微光向导",
+      "number": "35",
+      "levels": [
+        "8",
+        "16"
+      ],
+      "hostilityInLevels": "8 friendly（蓝绿色光球，在空中打拍子，召唤旅人去另一座洞穴，住在氙弹珠里）；16 friendly（只在文件 2 形态下大量出现；带流浪者找杏仁水和补给，帮忙避开危险实体；两个以上会合力帮忙）"
+    },
+    {
+      "key": "camo_crawler",
+      "en": "Camo Crawler",
+      "zh": "迷彩爬行者",
+      "number": "31",
+      "levels": [
+        "8"
+      ],
+      "hostilityInLevels": "8 hostile（四条手臂的盲眼掠食者，靠嗅觉找猎物；会狂怒尖叫，抓起巨石砸地）"
+    },
+    {
+      "key": "curabitur_bird",
+      "en": "Curabitur Bird",
+      "zh": "受眷鸟",
+      "number": "37",
+      "levels": [
+        "8"
+      ],
+      "hostilityInLevels": "8 unknown（新莫维勒窟里的捕食者，吃昆虫）"
+    },
+    {
+      "key": "jerry",
+      "en": "Jerry",
+      "zh": "杰瑞",
+      "number": "7",
+      "levels": [
+        "9"
+      ],
+      "hostilityInLevels": "9 unknown（只列了名字；链接在 trimmed 命名空间）"
+    },
+    {
+      "key": "transporter",
+      "en": "Transporter",
+      "zh": "传送者",
+      "number": "13",
+      "levels": [
+        "9"
+      ],
+      "hostilityInLevels": "9 unknown（只列了名字）"
+    },
+    {
+      "key": "warning_kite",
+      "en": "Warning Kite",
+      "zh": "警告风筝",
+      "number": "22",
+      "levels": [
+        "9"
+      ],
+      "hostilityInLevels": "9 unknown（只列了名字）"
+    },
+    {
+      "key": "frayed",
+      "en": "The Frayed",
+      "zh": "磨损者",
+      "number": "21",
+      "levels": [
+        "9"
+      ],
+      "hostilityInLevels": "9 unknown（有目击，似乎是从 Level 8 游荡过来的；链接在 trimmed 命名空间）"
+    },
+    {
+      "key": "neighborhood_watch",
+      "en": "The Neighborhood Watch (Watchers / Striders / Swimmers)",
+      "zh": "邻里守望（守望者 / 挺进者 / 水泳者）",
+      "number": "96",
+      "levels": [
+        "9"
+      ],
+      "hostilityInLevels": "9 hostile（本层最有名的特有实体，攻击任何活物。Watcher：会飘的巨大眼球，瞳孔射出的光束能把活物化成灰，常规武器无效。Strider：六条约 8 英尺长的附肢，速度可达 90 mph，能伸进屋里抓人，远程武器有效，但开枪或用火盐会引来其他实体。Swimmer：狗那么大，在水里活动，缠住人拖进水里淹死。每 1 个 Watcher 附近约有 3 个 Strider。靠近会毁坏电子设备；带着 Pockets 进来会立刻暴露位置。猎犬、笑魇、窃皮者、死亡飞蛾似乎都怕它们）"
+    },
+    {
+      "key": "observer",
+      "en": "The Observer",
+      "zh": "观察者",
+      "levels": [
+        "9"
+      ],
+      "hostilityInLevels": "9 unknown（只列为本层特有实体，没有链接也没有描述）。和 Level 5 的 Entity 38 中文同名，但无法确认是同一个，所以没合并"
+    },
+    {
+      "key": "lucky_crane",
+      "en": "Lucky Crane",
+      "zh": "幸运纸鹤",
+      "number": "46",
+      "levels": [
+        "11"
+      ],
+      "hostilityInLevels": "11 unknown（只列了名字，出现得较少）"
+    },
+    {
+      "key": "hunter",
+      "en": "The Hunter (Patient Zero)",
+      "zh": "猎手（零号病人）",
+      "levels": [
+        "14"
+      ],
+      "hostilityInLevels": "14 hostile（唯一目的是猎杀所有流浪者，整层都会追着人跑；全身漆黑、不定形，长着许多带尖牙小口的章鱼状触手，能放出并指挥感染体；据说会把人拖到刑讯室床上慢慢杀死，和它对视就没救；它靠近时人会突然恐惧、气温骤降、空气变浓且有毒；原是注射了 14 号化合物的研究员 Lawrence R. Afton；本体速度没写）"
+    },
+    {
+      "key": "infecting_agent",
+      "en": "Infecting Agent",
+      "zh": "感染体",
+      "levels": [
+        "14"
+      ],
+      "hostilityInLevels": "14 hostile（从猎手触手上的小口放出的水蛭或蠕虫状生物，贴地爬得极快，嘴里几排剃刀般的利齿，会喷腐蚀性酸液或毒素，无条件听猎手的命令）"
+    },
+    {
+      "key": "imprint",
+      "en": "Imprint",
+      "zh": "印记",
+      "levels": [
+        "17"
+      ],
+      "hostilityInLevels": "17 neutral（像鬼魂，复刻以前流浪者在本层的走动路线，无法互动，不造成物理伤害；但看见它会非常痛苦，直视双眼会昏迷，看太久可能变成悲尸；被模仿的人离开或死亡时消失，24 到 72 小时后在其进入点重新出现）"
+    },
+    {
+      "key": "plush_dino",
+      "en": "The Plush Dino",
+      "zh": "毛绒恐龙",
+      "number": "198",
+      "levels": [
+        "18"
+      ],
+      "hostilityInLevels": "18 friendly（本层唯一实体；平时休眠，感觉到有人被困时约 20 秒后激活，变粉并长出腿去带路，常带水和食物送人；会讨抱抱，爱睡觉，不会说话；页面说不确定它能否伤人，因为它会影响人的情绪）"
+    },
+    {
+      "key": "partygoer",
+      "en": "Partygoer",
+      "zh": "派对客",
+      "number": "C-233",
+      "levels": [
+        "fun"
+      ],
+      "hostilityInLevels": "fun hostile（绝大部分派对客住在享乐层；用彩色气球、儿童笑声、生日蛋糕引人入圈套，人数占优时先包围再动手；嘴在手臂末端，被咬后会被 PTG-A 转化；平时和常人一样走，追人时约 1 m/s 且能跑很久；会跟着切出追人；由派对之主教唆。另有少数中立个体不受派对之主影响）"
+    },
+    {
+      "key": "shadow_worker",
+      "en": "Shadowy workers in overalls (Backrooms Remodeling Co)",
+      "zh": "穿工装的影子工人（后室装修公司）",
+      "levels": [
+        "1"
+      ],
+      "hostilityInLevels": "1 neutral（只出现在衔尾段；漫无目的地修补建筑，完全无视其他生命，也不回答问题；埋头干活已导致多起意外，建议远离他们和他们的装置）"
+    }
+  ],
+  "hazards": [
+    {
+      "level": "0",
+      "name": "黑影尾随 / 被注视感（Dark figures, unconfirmed）",
+      "note": "流浪者声称看见黑影在走廊间跟着自己，并觉得有人在盯着看。原文说实体是否存在未知，也没有攻击描述。适合做成视觉和音效现象，不做可交互实体"
+    },
+    {
+      "level": "1",
+      "name": "手臂 Arms",
+      "note": "灯光熄灭时从通风管道和裂缝里伸出来抓人。熄灯期间要留意身后和头顶的声音，用光照射应对。它是定点伏击，和灯光闪烁事件绑定"
+    },
+    {
+      "level": "1",
+      "name": "爬菌 Crawlers（Entity 17）",
+      "note": "致病真菌，经未密封的液体和感染体传播，会在短时间内占据感染者的意识。不要喝、不要碰未密封的液体"
+    },
+    {
+      "level": "2",
+      "name": "窗户 Windows（Entity 2）",
+      "note": "本层变种：玻璃后面像是层级里被掏空的一块，窗后的影子人形更立体，扭曲的手臂能伸得更远"
+    },
+    {
+      "level": "2",
+      "name": "生物管道 The Biological Pipeline",
+      "note": "藏在爬行空间的某些交汇处，是一条 20 到 200 公里长的活体管道。吞进去的东西要几小时不动才开始被碱液（DuPont–Bayer solution）消化，所以穿行其中很少丧命。实体普遍回避这些管道，可以用来甩掉追兵。刺伤、枪击、手雷造成的重伤能让它流血致死"
+    },
+    {
+      "level": "3",
+      "name": "爬菌生长 Crawlers（Entity 17）",
+      "note": "页面只说在这里发现了爬菌在生长，没写行为"
+    },
+    {
+      "level": "3",
+      "name": "疫疾 The Disease（Entity 19）",
+      "note": "湿度高，很容易传播；建议穿过隧道时保持卫生"
+    },
+    {
+      "level": "4",
+      "name": "未涂黑的窗户 The Windows（Entity 2）",
+      "note": "大多数窗户已被涂黑，没涂黑的就是陷阱：窗里显示熟悉但扭曲的景象，用低语和手势引诱，再伸手把人拖进去"
+    },
+    {
+      "level": "6",
+      "name": "地下霉菌 Mold",
+      "note": "地下区域湿度高，霉菌大量生长，是本层唯一有记录的生命。原文没说它有害，适合只做成环境表现"
+    },
+    {
+      "level": "8",
+      "name": "焦油之手 Hands of Tar",
+      "note": "粘稠的焦油池（最高 95°C）遍布岩洞，池里伸出人手把受害者拖进去窒息而死。原数据已注明这是危险描述，不是独立实体"
+    },
+    {
+      "level": "9",
+      "name": "残缺者之雾 The Mangled（Entity 63）",
+      "note": "它随雾出现：气温骤降，城镇上空起浓烟云，出现高到看不见顶的黑柱，伴随雷鸣、气压变化和约两分钟的周期性地震。触手会把人卷上高空；它离开后路中间留下大坑。体型报告互相矛盾，不确定是单一个体还是一个物种。因为是天气级别的存在，更适合做成事件型危害"
+    },
+    {
+      "level": "10",
+      "name": "土壤蠕虫团 Wormlike entities",
+      "note": "土壤只有 1 米深，下面全是蠕虫。挖超过 1 米时它们会迅速涌出，让人滑倒摔伤、弄坏衣物，还可能往皮肤里钻。挖浅坑没事，还能收集蠕虫。威胁指数 Class 1（Safe）"
+    },
+    {
+      "level": "14",
+      "name": "伪装成窗户的实体 Windows（Entity 2）",
+      "note": "页面提醒窗户可能是伪装的实体，透过窗户看房间时要小心。按实体页的说法，它会从窗框伸出肢体把人拖进去"
+    },
+    {
+      "level": "14",
+      "name": "锈蚀医疗设备（来自 items）",
+      "note": "锈蚀的机器、手术刀、注射器等偶尔会突然启动、出故障伤人，比如手术刀乱飞；乱动医院设备可能被送到 Level 268"
+    },
+    {
+      "level": "17",
+      "name": "无害窗户 Innocuous Windows",
+      "note": "本层两种实体之一，几乎无害：可以安全地从窗帘往里看，窗后的影子不能攻击，有人靠近就消失。上层发光的门窗到底是窗户变种还是光本身就是实体，没有定论。适合做成无害的环境现象"
+    },
+    {
+      "level": "19",
+      "name": "橙色的光芒 The Orange Glow",
+      "note": "部分地板下透出的微弱暖光，像火焰。它让人觉得舒适平静，从而把人吸引过去，然后直接提取、改变记忆；还曾经感染人脑，传播关于它自己的知识。受影响的人越来越痴迷、越来越病重。页面说不清它有没有知觉，也没有编号"
+    },
+    {
+      "level": "20",
+      "name": "玻瑞阿斯 Boreas",
+      "note": "一层蓝色血肉球壳包住整颗行星，看起来就像天空；上面有一万只眼睛盯着人，一万张长满獠牙的嘴会吐橙色黏液。艾萨克接触它之后再无活动记录。天花板也会不定时掉下橙色果冻状物质，目前没发现危害"
+    },
+    {
+      "level": "20",
+      "name": "攀岩失败：液态痛苦灌满房间（来自 items）",
+      "note": "攀岩游戏失败时，液态痛苦（Object 48）会淹没房间；本页没写具体效果"
+    }
+  ],
+  "loreOnly": [
+    "1 — 瘟疫地精 Plague Goblins：只在脚注里被举例为刀斧能吓跑的小型实体，没说在本层出现",
+    "1 — 未命名利爪生物：叙事里的一次遭遇（门上留下爪痕和泡沫状液体），没指明种类",
+    "3 — 监狱栅栏后的奇怪人形：M.E.G. 已归为幻觉或谣言",
+    "4 — 笑魇 Smiler（Entity 3）：只有一个人声称见过，没有证据；页面说本层只有猎犬和钝人能被观测到",
+    "5 — Entity 18：隐藏引用，实体段落后一段口吻突变的文字邀请读者去“办公室”，没写名字",
+    "6 — 地下生物（未命名）：只在附录里出现一句，说暴雪大到最强的地下生物都不敢上地面",
+    "6 — 窃皮者 Skin-Stealer：附录人物 Ali 额头旧伤的来源，没说这次遭遇发生在本层",
+    "7 — 暮色带类人骸骨（大颌、长利齿、鳍状腿）：只有骸骨，没说是否与七层之物有关",
+    "8 — 无眼鱼、虾米、蝾螈：多维之路溪流里没有编号的小生物，只是生态描写",
+    "8 — 节肢动物和昆虫（泛称）：罗特尼斯、新莫维勒窟、巨臂林地的环境小生物，只是生态描写",
+    "8 — 卡维戈斯特小镇原居民：小镇已废弃，没有生命迹象（原本约 500 人）",
+    "11 — 活体披萨 Living Pizzas（Level 458 专属实体）：页面只用它举例，说连通层级的专属实体有可能流落到本层",
+    "15 — 猎犬 Hound（Entity 8）：只有焚化房里一大堆尸体，页面说本层至今没发现任何实体",
+    "fun — 派对之主 Party Lord：层级页没提到它，实体页只说它教唆派对客，没说它在享乐层",
+    "! — 实体群遗骸：没有活着的实体，只有骨头、裂开的骨头和墙地上绝望的啃咬划痕；传说它们曾聚在起始之室锁着的门后",
+    "! — 笑魇（推测）以及蜥蜴、鸟、蛇：只出现在角色闲聊里，有人猜其中一具骨头是笑魇的，被人反驳"
+  ],
+  "items": [
+    {
+      "en": "Almond Water",
+      "zh": "杏仁水（0 地毯浸液里的被污染；2 管道里的被污染；4 有灰/绿/红/蓝色变种；8 水池里的可安全饮用；15 页面明说整层没有，所以没列）",
+      "levels": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "8",
+        "9",
+        "17",
+        "20",
+        "fun"
+      ]
+    },
+    {
+      "en": "Liquid Pain (Object 48)",
+      "zh": "液态痛苦 / 苦痛汁液（3 装进胶囊当弹弓弹药；20 攀岩失败时灌满房间）",
+      "levels": [
+        "0",
+        "3",
+        "20"
+      ]
+    },
+    {
+      "en": "Candy (Object 5)",
+      "zh": "糖果",
+      "levels": [
+        "3"
+      ]
+    },
+    {
+      "en": "Firesalt (Object 15)",
+      "zh": "火盐（9 只在对付 Entity 96 时提到，没说能在本层找到）",
+      "levels": [
+        "3",
+        "9"
+      ]
+    },
+    {
+      "en": "Royal Rations (Object 16)",
+      "zh": "皇家口粮",
+      "levels": [
+        "3"
+      ]
+    },
+    {
+      "en": "Squirt Gun (Object 19)",
+      "zh": "滋水枪（装不同液体就成了不同的远程武器）",
+      "levels": [
+        "1",
+        "3"
+      ]
+    },
+    {
+      "en": "Lightning In a Bottle (Object 42)",
+      "zh": "瓶装闪电",
+      "levels": [
+        "3"
+      ]
+    },
+    {
+      "en": "Frvyo Jades",
+      "zh": "福友玉（发光提示附近有实体）",
+      "levels": [
+        "1"
+      ]
+    },
+    {
+      "en": "Warpberries",
+      "zh": "迁跃浆果（逃脱必死局面，但会长时间无法离开刚到的层级）",
+      "levels": [
+        "1"
+      ]
+    },
+    {
+      "en": "Moth Jelly (Object 6)",
+      "zh": "飞蛾果冻",
+      "levels": [
+        "17"
+      ]
+    },
+    {
+      "en": "Memory Jar (Object 7)",
+      "zh": "记忆罐",
+      "levels": [
+        "20"
+      ]
+    },
+    {
+      "en": "Pockets (Object 51)",
+      "zh": "口袋（维度口袋饰品；带进 Level 9 会立刻引来邻里守望）",
+      "levels": [
+        "9"
+      ]
+    },
+    {
+      "en": "Level Key (Object 2)",
+      "zh": "层级密钥（页面没说能在本层找到）",
+      "levels": [
+        "16"
+      ]
+    },
+    {
+      "en": "Xenon Marbles (Object 69)",
+      "zh": "氙弹珠（微光向导的居所）",
+      "levels": [
+        "8"
+      ]
+    },
+    {
+      "en": "PTG-B",
+      "zh": "PTG-B 逆转液/疫苗（逆转派对客转化，越晚效果越差）",
+      "levels": [
+        "fun"
+      ]
+    },
+    {
+      "en": "DuPont–Bayer solution",
+      "zh": "DuPont–Bayer 碱液（生物管道分泌，几秒内溶解成年人）",
+      "levels": [
+        "2"
+      ]
+    },
+    {
+      "en": "Compound 14",
+      "zh": "14 号化合物（只出现在记录抄本里，没说本层能找到）",
+      "levels": [
+        "14"
+      ]
+    },
+    {
+      "en": "Pyroil",
+      "zh": "燃油（Level 8 事件中烧巨型牧蛇用了上百吨）",
+      "levels": [
+        "8"
+      ]
+    },
+    {
+      "en": "G9",
+      "zh": "G9",
+      "levels": [
+        "8"
+      ]
+    },
+    {
+      "en": "Canned / jarred food",
+      "zh": "罐装/瓶装食物",
+      "levels": [
+        "1"
+      ]
+    },
+    {
+      "en": "Canned tuna (opened)",
+      "zh": "打开的金枪鱼罐头（拿出层级可能很快腐烂）",
+      "levels": [
+        "19"
+      ]
+    },
+    {
+      "en": "Water bottles",
+      "zh": "水瓶",
+      "levels": [
+        "19"
+      ]
+    },
+    {
+      "en": "Cooked gammon on a plate",
+      "zh": "盘装熟熏肉",
+      "levels": [
+        "19"
+      ]
+    },
+    {
+      "en": "Water and food",
+      "zh": "水和食物（15 储藏室里有很多食物；18 毛绒恐龙带来）",
+      "levels": [
+        "15",
+        "18"
+      ]
+    },
+    {
+      "en": "Pre-packaged microwavable meals",
+      "zh": "预包装微波餐（冰箱定期补货）",
+      "levels": [
+        "13"
+      ]
+    },
+    {
+      "en": "Chocolate bars",
+      "zh": "巧克力棒",
+      "levels": [
+        "20"
+      ]
+    },
+    {
+      "en": "Soda / soft drinks",
+      "zh": "苏打水/软饮料（5 贝弗莉室里的饮料；14 发霉的软饮料瓶，里面的液体已变质）",
+      "levels": [
+        "5",
+        "14",
+        "20"
+      ]
+    },
+    {
+      "en": "Hot chocolate",
+      "zh": "热巧克力",
+      "levels": [
+        "20"
+      ]
+    },
+    {
+      "en": "Space-themed beverage bottles",
+      "zh": "太空主题饮料瓶",
+      "levels": [
+        "20"
+      ]
+    },
+    {
+      "en": "Cake",
+      "zh": "蛋糕",
+      "levels": [
+        "fun"
+      ]
+    },
+    {
+      "en": "Cookies",
+      "zh": "饼干",
+      "levels": [
+        "fun"
+      ]
+    },
+    {
+      "en": "Wheat",
+      "zh": "小麦",
+      "levels": [
+        "10"
+      ]
+    },
+    {
+      "en": "Barley",
+      "zh": "大麦",
+      "levels": [
+        "10"
+      ]
+    },
+    {
+      "en": "Lake / pit water",
+      "zh": "湖水/水坑水（可安全饮用）",
+      "levels": [
+        "10"
+      ]
+    },
+    {
+      "en": "Snow",
+      "zh": "雪（煮沸后相对安全）",
+      "levels": [
+        "2"
+      ]
+    },
+    {
+      "en": "High-quality meat",
+      "zh": "优质的肉（接近萨曼莎时要带）",
+      "levels": [
+        "5"
+      ]
+    },
+    {
+      "en": "Worms (collectable)",
+      "zh": "蠕虫（可收集，用途没写）",
+      "levels": [
+        "10"
+      ]
+    },
+    {
+      "en": "Crowbar",
+      "zh": "撬棍",
+      "levels": [
+        "1"
+      ]
+    },
+    {
+      "en": "Knife",
+      "zh": "刀（14 刑讯室柜子里的不锈钢刀具和剃刀片）",
+      "levels": [
+        "1",
+        "3",
+        "14",
+        "15"
+      ]
+    },
+    {
+      "en": "Axe",
+      "zh": "斧头",
+      "levels": [
+        "1"
+      ]
+    },
+    {
+      "en": "Spear",
+      "zh": "长矛",
+      "levels": [
+        "15"
+      ]
+    },
+    {
+      "en": "Guns",
+      "zh": "枪（枪声会招来更多实体；15 页面明说没找到枪，所以没列）",
+      "levels": [
+        "1"
+      ]
+    },
+    {
+      "en": "Machete",
+      "zh": "砍刀",
+      "levels": [
+        "1"
+      ]
+    },
+    {
+      "en": "Matches / lighter",
+      "zh": "火柴/打火机",
+      "levels": [
+        "1",
+        "3"
+      ]
+    },
+    {
+      "en": "Flashlight / headlight",
+      "zh": "手电筒/头灯（6 进入本层就熄灭；8 亮度从 100 流明掉到约 12 流明）",
+      "levels": [
+        "1",
+        "3",
+        "6",
+        "8"
+      ]
+    },
+    {
+      "en": "Wire cutters",
+      "zh": "断线钳",
+      "levels": [
+        "3"
+      ]
+    },
+    {
+      "en": "Misc. weapons and supplies",
+      "zh": "其他杂项武器和用品",
+      "levels": [
+        "3"
+      ]
+    },
+    {
+      "en": "Makeshift slingshot",
+      "zh": "临时弹弓（实体骨头加电线和橡皮筋）",
+      "levels": [
+        "3"
+      ]
+    },
+    {
+      "en": "Makeshift brick materials",
+      "zh": "临时砖块材料（碎牙刷、鞋带、塑料马蹄铁、胶水瓶）",
+      "levels": [
+        "3"
+      ]
+    },
+    {
+      "en": "Explosives",
+      "zh": "炸药（炸出临时掩体）",
+      "levels": [
+        "2"
+      ]
+    },
+    {
+      "en": "Radio / walkie-talkie / electronic devices",
+      "zh": "无线电/对讲机/电子设备（2、6 失灵；17 舰桥上的设备已停用）",
+      "levels": [
+        "2",
+        "6",
+        "17"
+      ]
+    },
+    {
+      "en": "Video camera",
+      "zh": "摄像机",
+      "levels": [
+        "2"
+      ]
+    },
+    {
+      "en": "Heavily damaged film camera",
+      "zh": "严重损坏的胶片相机（图注道具）",
+      "levels": [
+        "6"
+      ]
+    },
+    {
+      "en": "Bandages / gauze",
+      "zh": "绷带/纱布",
+      "levels": [
+        "1",
+        "14"
+      ]
+    },
+    {
+      "en": "Antiseptics, soap, hand sanitizer",
+      "zh": "消毒剂、肥皂、手消毒液",
+      "levels": [
+        "1"
+      ]
+    },
+    {
+      "en": "Antibiotics",
+      "zh": "抗生素",
+      "levels": [
+        "14"
+      ]
+    },
+    {
+      "en": "Painkillers",
+      "zh": "止痛药",
+      "levels": [
+        "14"
+      ]
+    },
+    {
+      "en": "Clothing",
+      "zh": "衣物（1 保暖衣物和合适的鞋；13 自动生成的旧衣；20 冬装）",
+      "levels": [
+        "1",
+        "13",
+        "20"
+      ]
+    },
+    {
+      "en": "Yarn",
+      "zh": "纱线（可用来标记回程）",
+      "levels": [
+        "1"
+      ]
+    },
+    {
+      "en": "Notebook and pen",
+      "zh": "笔记本和笔",
+      "levels": [
+        "1"
+      ]
+    },
+    {
+      "en": "Watch",
+      "zh": "手表",
+      "levels": [
+        "1"
+      ]
+    },
+    {
+      "en": "Phone charger",
+      "zh": "手机充电器",
+      "levels": [
+        "1"
+      ]
+    },
+    {
+      "en": "Sleeping bag",
+      "zh": "睡袋",
+      "levels": [
+        "1"
+      ]
+    },
+    {
+      "en": "Portable stove / camping gear",
+      "zh": "便携炉具/露营装备",
+      "levels": [
+        "1"
+      ]
+    },
+    {
+      "en": "Backpack",
+      "zh": "背包",
+      "levels": [
+        "1"
+      ]
+    },
+    {
+      "en": "Junk / hazardous crate contents",
+      "zh": "板条箱里的垃圾或危险物（边缘锋利的玩具、死老鼠、化学品、易爆物、碎玻璃、固态氮）",
+      "levels": [
+        "1"
+      ]
+    },
+    {
+      "en": "Crate planks",
+      "zh": "板条箱木板（燃料）",
+      "levels": [
+        "1"
+      ]
+    },
+    {
+      "en": "Level 201 VHS tape",
+      "zh": "Level 201 入口录像带（1 标着 Mach+；11 可找到或买到）",
+      "levels": [
+        "1",
+        "11"
+      ]
+    },
+    {
+      "en": "Computer",
+      "zh": "电脑（1 小径办公室里的老电脑/回溯机器；15 Avalon 2.4，能连 I.L.N.；17 舰桥上的电脑已失效）",
+      "levels": [
+        "1",
+        "15",
+        "17"
+      ]
+    },
+    {
+      "en": "Tablet (M.E.G.-type)",
+      "zh": "M.E.G. 平板（可进入层级数据库）",
+      "levels": [
+        "19"
+      ]
+    },
+    {
+      "en": "Cell phones and glasses (victims' belongings)",
+      "zh": "遇难者遗物：手机、眼镜",
+      "levels": [
+        "9"
+      ]
+    },
+    {
+      "en": "Rope / ladder",
+      "zh": "绳索/梯子（需自带）",
+      "levels": [
+        "7"
+      ]
+    },
+    {
+      "en": "Diving gear",
+      "zh": "潜水装备",
+      "levels": [
+        "7"
+      ]
+    },
+    {
+      "en": "Boat",
+      "zh": "船",
+      "levels": [
+        "7"
+      ]
+    },
+    {
+      "en": "Noise-making objects",
+      "zh": "能制造巨响的物品（可短暂压制 Tiny）",
+      "levels": [
+        "7"
+      ]
+    },
+    {
+      "en": "Books",
+      "zh": "书籍（5 失落大厅协会的书籍和地图；7 来源不明的书；13 随机作者的旧书）",
+      "levels": [
+        "5",
+        "7",
+        "13"
+      ]
+    },
+    {
+      "en": "\"A Different Kind of Urban\" (book)",
+      "zh": "《A Different Kind of Urban》新居民指南",
+      "levels": [
+        "11"
+      ]
+    },
+    {
+      "en": "Scraps of rusted metal",
+      "zh": "生锈的金属碎片",
+      "levels": [
+        "7"
+      ]
+    },
+    {
+      "en": "Religious objects",
+      "zh": "宗教物品（和神爱之繁生交易的前提）",
+      "levels": [
+        "4"
+      ]
+    },
+    {
+      "en": "Strange items with no practical use (sold by T.B.D.)",
+      "zh": "T.B.D. 卖的无用奇特物品",
+      "levels": [
+        "4"
+      ]
+    },
+    {
+      "en": "Unfinished Mahjong game",
+      "zh": "未打完的麻将",
+      "levels": [
+        "5"
+      ]
+    },
+    {
+      "en": "Food and room service (Home Hotel)",
+      "zh": "家常酒店的食物和客房服务",
+      "levels": [
+        "5"
+      ]
+    },
+    {
+      "en": "Contaminated pipe liquids",
+      "zh": "被污染的管道液体",
+      "levels": [
+        "2"
+      ]
+    },
+    {
+      "en": "Viscous tar-like fluid (inside pipes)",
+      "zh": "管道里的焦油状粘液",
+      "levels": [
+        "6"
+      ]
+    },
+    {
+      "en": "Recovered Diary: My Findings No. 7",
+      "zh": "寻获日记《My Findings No. 7》",
+      "levels": [
+        "2"
+      ]
+    },
+    {
+      "en": "Hallucinatory furnishings",
+      "zh": "幻象陈设（雪茄、毒品、喝剩的酒、画），真假存疑",
+      "levels": [
+        "2"
+      ]
+    },
+    {
+      "en": "M.E.G. markers",
+      "zh": "M.E.G. 标牌（约每 50 米一块，分解得很快）",
+      "levels": [
+        "8"
+      ]
+    },
+    {
+      "en": "Battery-powered heater",
+      "zh": "电池驱动发热器",
+      "levels": [
+        "8"
+      ]
+    },
+    {
+      "en": "Caving suit",
+      "zh": "岩洞工作服",
+      "levels": [
+        "8"
+      ]
+    },
+    {
+      "en": "Naturally formed stone instruments",
+      "zh": "天然石质乐器",
+      "levels": [
+        "8"
+      ]
+    },
+    {
+      "en": "Occult artifacts",
+      "zh": "蒙面教会遗址里的受诅咒之物",
+      "levels": [
+        "8"
+      ]
+    },
+    {
+      "en": "Furniture and appliances",
+      "zh": "家具与家电（9 需要电的都用不了；11 照明、暖气、水龙头能用）",
+      "levels": [
+        "9",
+        "11"
+      ]
+    },
+    {
+      "en": "Television",
+      "zh": "电视（播放复古节目）",
+      "levels": [
+        "13"
+      ]
+    },
+    {
+      "en": "Kitchen utensils",
+      "zh": "厨房用具",
+      "levels": [
+        "13"
+      ]
+    },
+    {
+      "en": "Vehicles",
+      "zh": "车辆（没燃料，换零件后能开，常被用来搭路障）",
+      "levels": [
+        "11"
+      ]
+    },
+    {
+      "en": "Presses",
+      "zh": "presses（B.N.T.G. 塑料币）",
+      "levels": [
+        "11"
+      ]
+    },
+    {
+      "en": "Level 222 brochures",
+      "zh": "Level 222 宣传册",
+      "levels": [
+        "11"
+      ]
+    },
+    {
+      "en": "Military recruitment posters",
+      "zh": "征兵海报（摸一下就被送到 Level 49）",
+      "levels": [
+        "11"
+      ]
+    },
+    {
+      "en": "Arcade machines (in obtuse places)",
+      "zh": "位置奇怪的街机（互动后去 Level 25）",
+      "levels": [
+        "11"
+      ]
+    },
+    {
+      "en": "Sand-covered room",
+      "zh": "铺满沙子的房间（在里面睡一觉，醒来就在 Level 48）",
+      "levels": [
+        "11"
+      ]
+    },
+    {
+      "en": "Free basic food ingredients and clothes (Capital)",
+      "zh": "首都免费发放的基础食材和衣物",
+      "levels": [
+        "11"
+      ]
+    },
+    {
+      "en": "Paid luxuries (Capital)",
+      "zh": "首都付费商品",
+      "levels": [
+        "11"
+      ]
+    },
+    {
+      "en": "Auto-produced goods",
+      "zh": "自动生产的商品",
+      "levels": [
+        "11"
+      ]
+    },
+    {
+      "en": "Chessboard with two chairs",
+      "zh": "棋盘与两把椅子（只在无人房间自然生成，摸棋盘去 Level 157）",
+      "levels": [
+        "13"
+      ]
+    },
+    {
+      "en": "Orange soda cup and polystyrene takeaway tub",
+      "zh": "橙色汽水杯、泡沫外卖盒（配图道具，来自 Level 11）",
+      "levels": [
+        "13"
+      ]
+    },
+    {
+      "en": "Crumpled magazines and brochures",
+      "zh": "皱巴巴的杂志和古怪宣传册",
+      "levels": [
+        "14"
+      ]
+    },
+    {
+      "en": "Old test tubes containing liquid",
+      "zh": "盛有液体的旧试管",
+      "levels": [
+        "14"
+      ]
+    },
+    {
+      "en": "Old and damaged surgery equipment",
+      "zh": "破旧损坏的手术器械",
+      "levels": [
+        "14"
+      ]
+    },
+    {
+      "en": "Rusty hospital equipment",
+      "zh": "锈蚀医疗设备（偶尔突然启动伤人）",
+      "levels": [
+        "14"
+      ]
+    },
+    {
+      "en": "Little kid posters",
+      "zh": "儿童海报",
+      "levels": [
+        "14"
+      ]
+    },
+    {
+      "en": "Extra supplies",
+      "zh": "储藏室的额外物资（种类没写）",
+      "levels": [
+        "14"
+      ]
+    },
+    {
+      "en": "T.14.R.G. supply stockpile",
+      "zh": "T.14.R.G. 物资储备（位置没写）",
+      "levels": [
+        "14"
+      ]
+    },
+    {
+      "en": "Scanner image (recovered file)",
+      "zh": "扫描仪图像（推测是层级连接图）",
+      "levels": [
+        "15"
+      ]
+    },
+    {
+      "en": "Steel rods",
+      "zh": "钢棒",
+      "levels": [
+        "15"
+      ]
+    },
+    {
+      "en": "Random cargo",
+      "zh": "集装箱里的随机物资（从食品到军用物资）",
+      "levels": [
+        "17"
+      ]
+    },
+    {
+      "en": "Maps of The Frontrooms / server boxes",
+      "zh": "前厅地图 / 服务器机箱（舰桥）",
+      "levels": [
+        "17"
+      ]
+    },
+    {
+      "en": "Engine room clutter",
+      "zh": "轮机舱杂物（会绊倒人，被挪动后会瞬移回原处）",
+      "levels": [
+        "17"
+      ]
+    },
+    {
+      "en": "Cataloged objects",
+      "zh": "已有记录的物品（箱子里种类繁多）",
+      "levels": [
+        "19"
+      ]
+    },
+    {
+      "en": "Handheld game consoles / small arcade devices",
+      "zh": "手持游戏机/小型街机（传送到 Level 40 或 Level 212）",
+      "levels": [
+        "19"
+      ]
+    },
+    {
+      "en": "Trinkets",
+      "zh": "小饰品",
+      "levels": [
+        "19"
+      ]
+    },
+    {
+      "en": "Wood",
+      "zh": "木料",
+      "levels": [
+        "10"
+      ]
+    },
+    {
+      "en": "Nails",
+      "zh": "钉子",
+      "levels": [
+        "10"
+      ]
+    },
+    {
+      "en": "Building structural elements",
+      "zh": "建筑结构件",
+      "levels": [
+        "10"
+      ]
+    },
+    {
+      "en": "Orange jelly-like substance",
+      "zh": "橙色果冻状物质（从天花板掉落，目前没发现危害）",
+      "levels": [
+        "20"
+      ]
+    }
+  ],
+  "incompleteLevels": [
+    "0 — fandom 版（已加载，未选中）entities 为空；environment/exits 齐全",
+    "4 — fandom 版（已加载，未选中）entities 为空；environment/exits 齐全",
+    "11 — fandom 版（已加载，未选中）entities 为空；environment/exits 齐全",
+    "12 — wikidot-en 与 wikidot-cn（均已加载，选中 wikidot-cn）entities 为空，页面称 M.E.G. 无实体记录；environment/exits 齐全",
+    "13 — wikidot-en（选中）与 wikidot-cn（均已加载）entities 为空，页面标注 Non-Entity Hazards；environment/exits 齐全",
+    "15 — fandom 版（已加载，未选中）entities 为空；environment/exits 齐全",
+    "19 — fandom 版（已加载，未选中）entities 为空；environment/exits 齐全",
+    "20 — fandom 版（已加载，未选中）entities 为空；environment/exits 齐全"
+  ]
+}

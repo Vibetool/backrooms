@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<!-- viewport-fit=cover：刘海屏上 env(safe-area-inset-*) 才有真实值；禁缩放，双指/双击缩放会把 HUD 和摇杆一起放大 -->
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0b0a07">
+<meta name="format-detection" content="telephone=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>后室 · The Backrooms</title>
+<!-- 空图标：省掉一次必然 404 的 /favicon.ico 请求 -->
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="css/base.css">
+<!-- 各 UI 模块缺 link 时会自己注入，这里直接引用，免得首屏晚一拍才有样式 -->
+<link rel="stylesheet" href="css/game.css">
+<link rel="stylesheet" href="css/home.css">
+<link rel="stylesheet" href="css/coop.css">
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="ui"></div>
+
+<!-- 顺序见 ARCHITECTURE.md 第 1 节：库 → 核心 → 游戏模块 → 层级/实体/物品注册 → 联机 → 主页 → main -->
+<script src="vendor/three.min.js"></script>
+<script src="vendor/GLTFLoader.js"></script>
+<script src="vendor/BufferGeometryUtils.js"></script>
+<script src="js/core/base.js"></script>
+<script src="js/core/assets.js"></script>
+<script src="js/core/audio.js"></script>
+<script src="js/core/gfx.js"></script>
+<script src="js/core/input.js"></script>
+<script src="js/core/phys.js"></script>
+<script src="js/game/items.js"></script>
+<script src="js/game/player.js"></script>
+<script src="js/game/world.js"></script>
+<script src="js/game/entities.js"></script>
+<!-- 实体共用地基 BR.arch（行为骨架/模型构件/动画），所有 js/entities/<type>.js 都排在它后面 -->
+<script src="js/entities/_archetypes.js"></script>
+<!-- chunk1：层级 0-3 需要的实体，来源版本见 data/lore-choices.json entities -->
+<script src="js/entities/burster.js"></script>
+<script src="js/entities/clump.js"></script>
+<script src="js/entities/deathmoth.js"></script>
+<script src="js/entities/duller.js"></script>
+<script src="js/entities/faceling.js"></script>
+<script src="js/entities/growler.js"></script>
+<script src="js/entities/hound.js"></script>
+<script src="js/entities/nguithrxurh.js"></script>
+<script src="js/entities/shadow_worker.js"></script>
+<script src="js/entities/skin_stealer.js"></script>
+<script src="js/entities/smiler.js"></script>
+<script src="js/entities/wrangler.js"></script>
+<script src="js/entities/wretch.js"></script>
+<script src="js/game/hud.js"></script>
+<script src="js/game/death.js"></script>
+<script src="js/game/skin.js"></script>
+<script src="js/game/testmode.js"></script>
+<script src="js/levels/_kit.js"></script>
+<!-- chunk1：按 BR.LEVEL_ORDER 顺序 -->
+<script src="js/levels/L0.js"></script>
+<script src="js/levels/L1.js"></script>
+<script src="js/levels/L2.js"></script>
+<script src="js/levels/L3.js"></script>
+<script src="js/levels/Ldev.js"></script>
+<script src="js/entities/_dev_hostile.js"></script>
+<script src="js/entities/_dev_friendly.js"></script>
+<script src="js/entities/test_dummy.js"></script>
+<script src="js/items/_kit.js"></script>
+<script src="js/items/_effects.js"></script>
+<script src="js/items/almond_water.js"></script>
+<script src="js/items/antibiotics.js"></script>
+<script src="js/items/antiseptics.js"></script>
+<script src="js/items/bandages.js"></script>
+<script src="js/items/candy.js"></script>
+<script src="js/items/canned_food.js"></script>
+<script src="js/items/canned_tuna.js"></script>
+<script src="js/items/chocolate_bar.js"></script>
+<script src="js/items/cooked_gammon.js"></script>
+<script src="js/items/cookies.js"></script>
+<script src="js/items/firesalt.js"></script>
+<script src="js/items/food_ration.js"></script>
+<script src="js/items/high_quality_meat.js"></script>
+<script src="js/items/hot_chocolate.js"></script>
+<script src="js/items/lightning_in_a_bottle.js"></script>
+<script src="js/items/liquid_pain.js"></script>
+<script src="js/items/microwave_meal.js"></script>
+<script src="js/items/moth_jelly.js"></script>
+<script src="js/items/painkillers.js"></script>
+<script src="js/items/partygoer_cake.js"></script>
+<script src="js/items/ptg_b.js"></script>
+<script src="js/items/royal_rations.js"></script>
+<script src="js/items/soft_drink.js"></script>
+<script src="js/items/space_beverage.js"></script>
+<script src="js/items/warpberries.js"></script>
+<script src="js/items/water_bottle.js"></script>
+<script src="js/net/net.js"></script>
+<script src="js/net/coop.js"></script>
+<script src="js/ui/home.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

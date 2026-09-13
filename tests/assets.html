@@ -1,0 +1,153 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>assets 自测</title>
+<style>
+  body { margin: 0; background: #1c1c1c; color: #ddd; font: 12px/1.4 monospace; }
+  #gl { width: 640px; height: 360px; display: block; }
+  #top { display: flex; gap: 8px; padding: 8px; }
+  #log { white-space: pre-wrap; flex: 1; max-height: 360px; overflow: auto; }
+  #grid { display: flex; flex-wrap: wrap; gap: 10px; padding: 8px; }
+  .cell { display: flex; flex-direction: column; gap: 2px; }
+  .pair { display: flex; gap: 2px; }
+  .pair canvas { width: 200px; height: 200px; }
+</style>
+<div id="top"><canvas id="gl" width="640" height="360"></canvas><div id="log"></div></div>
+<div id="grid"></div>
+<script src="../vendor/three.min.js"></script>
+<script src="../vendor/GLTFLoader.js"></script>
+<script src="../vendor/BufferGeometryUtils.js"></script>
+<script src="../js/core/base.js"></script>
+<script src="../js/core/assets.js"></script>
+<script>
+// 素材模块自测：file:// 打开看程序化兜底，http 打开看真实贴图。
+// 每格左图 = 2×2 平铺后接缝交汇处的原尺寸裁切（查接缝），右图 = 整张缩略
+(function () {
+'use strict';
+const BR = window.BR;
+const logEl = document.getElementById('log');
+function log() { logEl.textContent += Array.from(arguments).join(' ') + '\n'; }
+['error', 'warn', 'info'].forEach(k => {
+  const orig = console[k].bind(console);
+  console[k] = function () { log('[' + k + ']', Array.from(arguments).map(String).join(' ')); orig.apply(null, arguments); };
+});
+window.addEventListener('error', e => log('[uncaught]', e.message));
+
+const NAMES = ['wallpaper_l0', 'carpet_l0', 'carpet_light', 'ceiling_tile', 'ceiling_light',
+  'light_panel', 'concrete', 'concrete_wet', 'metal', 'noise'];
+
+// ---- 三维小房间：故意在 init 之前拿贴图，走"占位图先上传 → 换成真图/兜底"这条路径 ----
+const canvas = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, preserveDrawingBuffer: true });
+renderer.outputEncoding = THREE.sRGBEncoding;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0b08);
+const cam = new THREE.PerspectiveCamera(70, 640 / 360, 0.05, 100);
+cam.position.set(-1.2, 1.62, 3.2);
+cam.lookAt(0.6, 1.5, -3);
+scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+const lamp = new THREE.PointLight(0xfff6dc, 0.9, 14);
+lamp.position.set(0, 2.5, 0);
+scene.add(lamp);
+
+const A = BR.assets;
+const mat = (key, tex, basic) => A.material(key, () => basic
+  ? new THREE.MeshBasicMaterial({ map: tex })
+  : new THREE.MeshLambertMaterial({ map: tex }));
+function plane(w, h, m, x, y, z, rx, ry) {
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), m);
+  mesh.position.set(x, y, z); mesh.rotation.set(rx || 0, ry || 0, 0);
+  scene.add(mesh);
+}
+const H = 2.8, S = 8;
+plane(S, S, mat('t:floor', A.texture('carpet_l0', { repeat: [4, 4] })), 0, 0, 0, -Math.PI / 2);
+plane(S, S, mat('t:ceil', A.texture('ceiling_tile', { repeat: [S / 1.2, S / 1.2] })), 0, H, 0, Math.PI / 2);
+const wallMat = mat('t:wall', A.texture('wallpaper_l0', { repeat: [S / 1.5, H / 1.5] }));
+plane(S, H, wallMat, 0, H / 2, -S / 2);
+plane(S, H, wallMat, -S / 2, H / 2, 0, 0, Math.PI / 2);
+plane(S, H, wallMat, S / 2, H / 2, 0, 0, -Math.PI / 2);
+const panelMat = mat('t:panel', A.texture('light_panel'), true);
+for (const [x, z] of [[0, 0], [0, -2.4], [-2.4, -1.2], [2.4, -1.2]]) plane(0.6, 0.6, panelMat, x, H - 0.01, z, Math.PI / 2);
+plane(1.2, 1.2, mat('t:conc', A.texture('concrete_wet', { repeat: [1, 1] })), 2.2, 0.01, 1.4, -Math.PI / 2);
+renderer.render(scene, cam);  // 首帧：此时贴图还是占位图
+
+const gl = renderer.getContext();
+function glErrors() { const out = []; let e; while ((e = gl.getError()) !== gl.NO_ERROR) out.push(e); return out; }
+
+const t0 = performance.now();
+A.init().then(() => {
+  log('init 用时', Math.round(performance.now() - t0), 'ms');
+  renderer.render(scene, cam);
+  log('换图后 GL 错误:', JSON.stringify(glErrors()));
+
+  const a = A.texture('concrete', { repeat: [2, 2] });
+  const b = A.texture('concrete', { repeat: [2, 2] });
+  const c = A.texture('concrete', { repeat: [3, 1] });
+  const d = A.texture('noise', { linear: true });
+  log('同 repeat 复用:', a === b, '| 不同 repeat 共享 Source:', a.source === c.source,
+    '| linear 编码:', d.encoding === THREE.LinearEncoding, '| 默认 sRGB:', a.encoding === THREE.sRGBEncoding,
+    '| RepeatWrapping:', a.wrapS === THREE.RepeatWrapping);
+  log('material 只调一次 factory:', A.material('t:floor', () => { throw new Error('不该调用'); }) !== null);
+
+  // 平铺接缝处相邻像素差 ÷ 图内相邻像素差：≈1 表示接缝和普通相邻像素一样平滑
+  // （天花板龙骨/灯板边框压在边上时会明显小于 1，属正常）
+  function seamRatio(img) {
+    const s = img.naturalWidth || img.width;
+    const c = document.createElement('canvas');
+    c.width = c.height = s;
+    const g = c.getContext('2d');
+    g.drawImage(img, 0, 0);
+    let d;
+    try { d = g.getImageData(0, 0, s, s).data; } catch (e) { return '（图被污染，读不了）'; }
+    const L = i => d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
+    let inX = 0, inY = 0, edX = 0, edY = 0;
+    for (let y = 0; y < s; y++) {
+      for (let x = 0; x < s - 1; x++) inX += Math.abs(L((y * s + x + 1) * 4) - L((y * s + x) * 4));
+      edX += Math.abs(L(y * s * 4) - L((y * s + s - 1) * 4));
+    }
+    for (let x = 0; x < s; x++) {
+      for (let y = 0; y < s - 1; y++) inY += Math.abs(L(((y + 1) * s + x) * 4) - L((y * s + x) * 4));
+      edY += Math.abs(L(x * 4) - L(((s - 1) * s + x) * 4));
+    }
+    const n = s * (s - 1);
+    return 'x=' + ((edX / s) / (inX / n || 1)).toFixed(2) + ' y=' + ((edY / s) / (inY / n || 1)).toFixed(2);
+  }
+
+  NAMES.forEach(n => {
+    const img = A.texture(n).image;
+    log(n.padEnd(14), A.sourceOf(n).padEnd(11), ((img.naturalWidth || img.width) + 'px').padEnd(6), '接缝比', seamRatio(img));
+    const cell = document.createElement('div');
+    cell.className = 'cell';
+    cell.innerHTML = `<div>${n} · ${A.sourceOf(n)}</div>`;
+    const pair = document.createElement('div');
+    pair.className = 'pair';
+    const size = img.naturalWidth || img.width;
+    // 左：四份拼起来取交汇点周围 size/2 见方，原尺寸像素
+    const seam = document.createElement('canvas');
+    seam.width = seam.height = size / 2;
+    const sg = seam.getContext('2d');
+    for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) sg.drawImage(img, -size / 4 + (i - 1) * size + size, -size / 4 + (j - 1) * size + size);
+    const full = document.createElement('canvas');
+    full.width = full.height = 200;
+    full.getContext('2d').drawImage(img, 0, 0, 200, 200);
+    pair.appendChild(seam); pair.appendChild(full);
+    cell.appendChild(pair);
+    document.getElementById('grid').appendChild(cell);
+  });
+
+  // 覆盖注册：正在显示兜底图的名字应立刻换成新画法
+  A.registerProcedural('metal', 64, (g, s) => { g.fillStyle = '#f0f'; g.fillRect(0, 0, s, s); });
+  const m = A.texture('metal');
+  log('覆盖 metal 兜底后尺寸:', m.image.width, '(期望', A.sourceOf('metal') === 'procedural' ? 64 : '文件尺寸', ')');
+  renderer.render(scene, cam);
+  log('再渲染 GL 错误:', JSON.stringify(glErrors()));
+
+  return A.model('__not_exist__').then(
+    () => log('模型缺失却 resolve 了 —— 不对'),
+    err => log('模型缺失正确 reject:', err.message.slice(0, 40)));
+}).then(() => {
+  log('modelSync 缺失返回 null:', A.modelSync('__not_exist__') === null);
+  log('DONE');
+  document.title = 'done';
+});
+})();
+</script>

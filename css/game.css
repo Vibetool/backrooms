@@ -1,0 +1,1143 @@
+/* 后室 · HUD 与死亡结算样式
+   归属：HUD 与结算模块。hud.js / death.js 自己在 #ui 里建 DOM，这里只写 hud- / death- 前缀选择器
+   视觉：发黄的 VHS / 监控录像 OSD —— 等宽数字、半透明深色底、轻微红蓝色散描边，不用渐变
+   兼容：带 env() / min() / clamp() 的声明前面先写一条普通值，老内核（旧 X5 等）不认后一条时保留前一条
+   z-index（ARCHITECTURE 第 11 节）：HUD 30，暂停 / 结算 60，toast 90
+   触屏避让（input.js 的控件位置）：右上 48px 暂停键 → 顶部状态条左右各留 72px；
+   右下动作按钮最左到 right:174px、最高到 bottom:178px → 背包栏右缘留 190px */
+
+/* ========== 公共 ========== */
+.hud-root,
+.hud-toasts,
+.hud-pause,
+.death-root {
+  --hud-fg: #f2e7b4;
+  --hud-dim: rgba(242, 231, 180, 0.68);
+  --hud-accent: #e7c14a;
+  --hud-accent-hi: #f3d266;
+  --hud-bad: #ff5b3d;
+  --hud-ink: #1b1606;
+  --hud-panel: rgba(16, 13, 5, 0.58);
+  --hud-line: rgba(231, 193, 74, 0.34);
+  /* 等宽字体没有汉字，后面接中文字体让浏览器逐字回退 */
+  --hud-mono: ui-monospace, Menlo, Consolas, "Liberation Mono", "Courier New", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", monospace;
+  --hud-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Segoe UI", sans-serif;
+  /* 红蓝错位一像素 = 录像带色散；再压一层黑影，贴在亮黄墙纸上也读得清 */
+  --hud-shadow: 1px 0 rgba(255, 60, 40, 0.32), -1px 0 rgba(60, 200, 255, 0.2), 0 1px 3px rgba(0, 0, 0, 0.85);
+  font-family: var(--hud-sans);
+  font-size: 14px;
+  line-height: 1.35;
+  color: var(--hud-fg);
+  text-shadow: var(--hud-shadow);
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.hud-root, .hud-root *,
+.hud-toasts, .hud-toasts *,
+.hud-pause, .hud-pause *,
+.death-root, .death-root * {
+  box-sizing: border-box;
+}
+
+/* 下面给元素设了 display，作者样式会盖掉 UA 的 [hidden]{display:none}，JS 全靠 hidden 属性开关 */
+.hud-root[hidden], .hud-root [hidden],
+.hud-toasts [hidden],
+.hud-pause[hidden], .hud-pause [hidden],
+.death-root[hidden], .death-root [hidden] {
+  display: none !important;
+}
+
+@keyframes hud-blink {
+  50% { opacity: 0.25; }
+}
+
+@keyframes hud-pulse {
+  50% { opacity: 0.62; }
+}
+
+/* ========== HUD 根 ========== */
+.hud-root {
+  position: fixed;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  overflow: hidden;
+  /* 整层不挡触摸和点击，摇杆 / 视角滑动区在下面 z-index 20；只有背包格子单独打开 */
+  pointer-events: none;
+}
+
+/* ========== 顶部状态条（san / 饥饿 / HP，仅噩梦模式） ========== */
+.hud-top {
+  position: absolute;
+  top: 8px;
+  top: calc(8px + env(safe-area-inset-top, 0px));
+  left: 16px;
+  left: calc(16px + env(safe-area-inset-left, 0px));
+  right: 16px;
+  right: calc(16px + env(safe-area-inset-right, 0px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* 触屏右上角有暂停键；左右对称留白，状态条才能保持居中 */
+.hud-touch .hud-top {
+  left: 72px;
+  left: calc(72px + env(safe-area-inset-left, 0px));
+  right: 72px;
+  right: calc(72px + env(safe-area-inset-right, 0px));
+}
+
+.hud-stats {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+  max-width: 480px;
+  padding: 5px 10px 7px;
+  background: var(--hud-panel);
+  border: 1px solid var(--hud-line);
+  border-radius: 3px;
+}
+
+.hud-stat {
+  flex: 1 1 0;
+  min-width: 0;
+  --hud-stat-color: var(--hud-fg);
+}
+
+.hud-stat-san { --hud-stat-color: #9ed2c4; }
+.hud-stat-hunger { --hud-stat-color: #e3b04b; }
+.hud-stat-hp { --hud-stat-color: #ece5c6; }
+
+.hud-stat-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px;
+  font-family: var(--hud-mono);
+  line-height: 17px;
+  white-space: nowrap;
+}
+
+.hud-stat-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--hud-dim);
+}
+
+.hud-stat-val {
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-bar {
+  position: relative;
+  height: 6px;
+  margin-top: 2px;
+  overflow: hidden;
+  background: rgba(242, 231, 180, 0.14);
+}
+
+/* hud.js 只写 transform: scaleX，不动 width，避免每帧回流 */
+.hud-bar-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 100%;
+  transform-origin: 0 50%;
+  background: var(--hud-stat-color);
+  transition: transform 0.25s linear, background-color 0.2s;
+}
+
+/* 饥饿 20 的刻度线：过了这条移速减半，玩家要能提前看到 */
+.hud-stat-hunger .hud-bar::after {
+  content: "";
+  position: absolute;
+  left: 20%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255, 91, 61, 0.85);
+}
+
+.hud-stat.hud-bad { --hud-stat-color: var(--hud-bad); }
+.hud-stat.hud-bad .hud-stat-val { color: var(--hud-bad); }
+
+.hud-stat.hud-blink .hud-stat-label,
+.hud-stat.hud-blink .hud-stat-val {
+  animation: hud-blink 1s steps(1, end) infinite;
+}
+
+/* 挨打：条抖一下、底色闪红，时长与 hud.js 的 HIT_MS 一致 */
+.hud-stat.hud-hit { animation: hud-hit 0.35s linear; }
+.hud-stat.hud-hit .hud-bar { background-color: rgba(255, 91, 61, 0.45); }
+
+@keyframes hud-hit {
+  0% { transform: translateX(-3px); }
+  20% { transform: translateX(3px); }
+  40% { transform: translateX(-2px); }
+  60% { transform: translateX(1px); }
+  100% { transform: none; }
+}
+
+.hud-warn {
+  margin-top: 6px;
+  padding: 2px 10px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--hud-mono);
+  font-size: 13px;
+  color: #ffd28a;
+  background: rgba(60, 22, 8, 0.66);
+  border: 1px solid rgba(255, 140, 60, 0.5);
+  border-radius: 2px;
+}
+
+.hud-warn.hud-warn-severe {
+  color: #fff;
+  background: rgba(150, 26, 12, 0.78);
+  border-color: var(--hud-bad);
+  /* 整行闪会读不清，只做半透明呼吸 */
+  animation: hud-pulse 1.2s steps(1, end) infinite;
+}
+
+/* ========== 左上角：层级 / 模式 / REC 计时 ========== */
+.hud-info {
+  position: absolute;
+  top: 8px;
+  top: calc(8px + env(safe-area-inset-top, 0px));
+  left: 12px;
+  left: calc(12px + env(safe-area-inset-left, 0px));
+  max-width: 320px;
+  max-width: min(320px, calc(100vw - 120px));
+  padding: 5px 10px 6px;
+  background: var(--hud-panel);
+  border-left: 2px solid var(--hud-accent);
+  font-size: 13px;
+}
+
+.hud-info-level,
+.hud-info-mode {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hud-info-level { font-weight: 700; letter-spacing: 0.04em; }
+.hud-info-mode { font-size: 12px; color: var(--hud-dim); }
+
+.hud-info-rec {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  min-width: 0;
+  font-family: var(--hud-mono);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.hud-rec-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff3b2f;
+  box-shadow: 0 0 6px rgba(255, 59, 47, 0.8);
+  animation: hud-blink 1.6s steps(1, end) infinite;
+}
+
+.hud-rec-label { font-weight: 700; letter-spacing: 0.08em; color: #ff6a55; }
+.hud-rec-time { font-variant-numeric: tabular-nums; }
+
+.hud-rec-coop {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-left: 2px;
+  padding: 0 5px;
+  font-family: var(--hud-sans);
+  color: var(--hud-accent);
+  border: 1px solid var(--hud-line);
+}
+
+/* 窄屏开着状态条时左上角会和居中的状态条撞上，挪到状态条 + 饥饿警告下面 */
+@media (max-width: 1179px) {
+  .hud-root.hud-stats-on .hud-info {
+    top: 80px;
+    top: calc(80px + env(safe-area-inset-top, 0px));
+  }
+}
+
+/* ========== 准星与互动提示 ========== */
+.hud-cross {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border: 0 solid var(--hud-accent);
+  border-radius: 50%;
+  background: rgba(242, 231, 180, 0.85);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+  transition: width 0.12s, height 0.12s, margin 0.12s, background-color 0.12s, border-width 0.12s;
+}
+
+/* 对准可拾取物：点变成圈，和提示文字一起告诉玩家"现在按有用" */
+.hud-cross.hud-cross-on {
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  border-width: 2px;
+  background: transparent;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+
+.hud-prompt {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  margin-top: 28px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100vw - 24px);
+  padding: 4px 12px;
+  white-space: nowrap;
+  background: var(--hud-panel);
+  border: 1px solid var(--hud-line);
+  border-radius: 3px;
+}
+
+.hud-key {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  font-family: var(--hud-mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--hud-fg);
+  text-shadow: none;
+  background: rgba(242, 231, 180, 0.1);
+  border: 1px solid var(--hud-fg);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+}
+
+.hud-prompt-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hud-touch .hud-prompt { font-size: 15px; }
+
+/* ========== 层级大标题 ========== */
+.hud-title {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 28%;
+  padding: 0 16px;
+  text-align: center;
+}
+
+.hud-title-name {
+  font-family: var(--hud-mono);
+  font-size: 40px;
+  font-size: clamp(28px, 7vw, 64px);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: 0.16em;
+  /* 字距会在末尾多留一格，左边补回来才真正居中 */
+  padding-left: 0.16em;
+  text-shadow: 3px 0 rgba(255, 50, 40, 0.45), -3px 0 rgba(50, 200, 255, 0.3), 0 2px 10px rgba(0, 0, 0, 0.9);
+}
+
+.hud-title-sub {
+  margin-top: 8px;
+  font-size: 18px;
+  font-size: clamp(15px, 3.2vw, 24px);
+  letter-spacing: 0.3em;
+  padding-left: 0.3em;
+}
+
+.hud-title-class {
+  display: inline-block;
+  margin-top: 10px;
+  padding: 1px 10px;
+  font-family: var(--hud-mono);
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  color: var(--hud-accent);
+  background: var(--hud-panel);
+  border: 1px solid var(--hud-line);
+}
+
+/* 动画名必须叫 hud-title：hud.js 靠这个名字的 animationend 收起标题 */
+.hud-title.hud-title-play { animation: hud-title 5.2s linear forwards; }
+
+@keyframes hud-title {
+  0% { opacity: 0; transform: translateX(-6px) skewX(-8deg); }
+  3% { opacity: 0.9; transform: translateX(5px) skewX(6deg); }
+  6% { opacity: 0.45; transform: translateX(-2px); }
+  9% { opacity: 1; transform: none; }
+  78% { opacity: 1; transform: none; }
+  80% { opacity: 0.4; transform: translateX(4px); }
+  82% { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: none; }
+}
+
+@media (max-height: 520px) {
+  .hud-title { top: 26%; }
+  .hud-title-name { font-size: 30px; }
+  .hud-title-sub { margin-top: 4px; font-size: 15px; }
+  .hud-title-class { margin-top: 6px; }
+}
+
+/* ========== 背包栏 ========== */
+.hud-inv {
+  --hud-slot: 56px;
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.hud-inv-name {
+  max-width: calc(100vw - 24px);
+  margin-bottom: 6px;
+  padding: 1px 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  background: var(--hud-panel);
+  border: 1px solid var(--hud-line);
+  border-radius: 2px;
+}
+
+.hud-inv-row {
+  display: flex;
+  gap: 6px;
+}
+
+.hud-slot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--hud-slot);
+  height: var(--hud-slot);
+  margin: 0;
+  padding: 4px;
+  overflow: hidden;
+  font: inherit;
+  color: var(--hud-fg);
+  text-shadow: inherit;
+  background: var(--hud-panel);
+  border: 1px solid var(--hud-line);
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  /* 整个 HUD 里唯一接收点击的东西 */
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
+.hud-slot:active { transform: scale(0.94); }
+
+.hud-slot-num {
+  position: absolute;
+  left: 4px;
+  top: 3px;
+  font-family: var(--hud-mono);
+  font-size: 12px;
+  line-height: 1;
+  color: var(--hud-dim);
+}
+
+.hud-slot-icon {
+  display: block;
+  width: 72%;
+  height: 72%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+/* 缺图标时的文字兜底，最多两行 */
+.hud-slot-text {
+  display: block;
+  max-width: 100%;
+  max-height: 2.3em;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.15;
+  text-align: center;
+  word-break: break-all;
+}
+
+.hud-slot-count {
+  position: absolute;
+  right: 4px;
+  bottom: 3px;
+  font-family: var(--hud-mono);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.hud-slot.hud-slot-empty {
+  background: rgba(16, 13, 5, 0.34);
+  border-style: dashed;
+}
+
+/* 选中用内描边，不改边框宽度，免得格子内容跳一像素 */
+.hud-slot.hud-slot-sel {
+  background: rgba(58, 46, 12, 0.72);
+  border-color: var(--hud-accent);
+  box-shadow: inset 0 0 0 1px var(--hud-accent), 0 0 0 1px rgba(0, 0, 0, 0.6);
+}
+
+.hud-slot.hud-slot-sel .hud-slot-num { color: var(--hud-accent); }
+
+.hud-touch .hud-inv { --hud-slot: 52px; }
+
+/* 触屏横屏小手机：居中会压到右下按钮组，改成右缘贴着按钮组左侧 */
+@media (max-width: 719px) {
+  .hud-touch .hud-inv {
+    --hud-slot: 46px;
+    left: auto;
+    right: 190px;
+    right: calc(190px + env(safe-area-inset-right, 0px));
+    transform: none;
+    align-items: flex-end;
+  }
+  .hud-touch .hud-inv-row { gap: 4px; }
+}
+
+/* 触屏竖屏：一排 5 格塞不进按钮组左边，改成左下 3+2 两排；
+   待机摇杆画在离底边 24% 高度处，两排格子 + 物品名的高度在它下面 */
+@media (max-width: 559px) {
+  .hud-touch .hud-inv {
+    --hud-slot: 48px;
+    left: 8px;
+    left: calc(8px + env(safe-area-inset-left, 0px));
+    right: auto;
+    bottom: 10px;
+    bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    align-items: flex-start;
+  }
+  .hud-touch .hud-inv-row {
+    display: grid;
+    grid-template-columns: repeat(3, var(--hud-slot));
+    gap: 4px;
+  }
+  .hud-touch .hud-inv-name { max-width: calc(100vw - 200px); }
+}
+
+/* 320px 宽：3 格 × 44 + 间距 + 左边距正好 140 = 屏宽 − 180 */
+@media (max-width: 359px) {
+  .hud-touch .hud-inv {
+    --hud-slot: 44px;
+    left: 4px;
+    left: calc(4px + env(safe-area-inset-left, 0px));
+  }
+  .hud-touch .hud-inv-row { gap: 2px; }
+}
+
+/* 死亡时 HUD 还在结算层下面：准星和提示收掉，背包压暗且不可点 */
+.hud-dead .hud-cross,
+.hud-dead .hud-prompt,
+.hud-dead .hud-inv-name {
+  display: none;
+}
+
+.hud-dead .hud-inv { opacity: 0.4; }
+.hud-dead .hud-slot { pointer-events: none; }
+
+/* ========== toast（挂在 #ui 下，不在 hud-root 里，HUD 隐藏时也能显示） ========== */
+.hud-toasts {
+  position: fixed;
+  z-index: 90;
+  left: 50%;
+  top: 50%;
+  /* 准星 + 互动提示下面，背包栏上面 */
+  margin-top: 84px;
+  transform: translateX(-50%);
+  width: 520px;
+  max-width: calc(100vw - 32px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.hud-toast {
+  max-width: 100%;
+  padding: 5px 14px;
+  overflow-wrap: anywhere;
+  background: rgba(16, 13, 5, 0.8);
+  border: 1px solid var(--hud-line);
+  border-left: 3px solid var(--hud-accent);
+  border-radius: 2px;
+  animation: hud-toast-in 0.18s ease-out;
+}
+
+.hud-toast.hud-toast-bump { animation: hud-toast-bump 0.3s ease-out; }
+/* 时长与 hud.js 的 TOAST_OUT_MS（280ms）一致；写在 bump 后面，同优先级时后者生效 */
+.hud-toast.hud-toast-out { animation: hud-toast-out 0.28s ease-in forwards; }
+
+@keyframes hud-toast-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes hud-toast-bump {
+  0% { background-color: rgba(84, 66, 14, 0.92); border-color: #f3d266; }
+}
+
+@keyframes hud-toast-out {
+  to { opacity: 0; transform: translateY(-4px); }
+}
+
+/* 横屏手机高度不够：中间下方会压到背包栏，改到右上暂停键下面 */
+@media (max-height: 520px) {
+  .hud-toasts {
+    top: 78px;
+    top: calc(78px + env(safe-area-inset-top, 0px));
+    margin-top: 0;
+    left: auto;
+    right: 16px;
+    right: calc(16px + env(safe-area-inset-right, 0px));
+    transform: none;
+    width: auto;
+    max-width: 42vw;
+    align-items: flex-end;
+  }
+}
+
+/* ========== 暂停菜单 ========== */
+.hud-pause {
+  position: fixed;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 60;
+  display: flex;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px;
+  padding: calc(16px + env(safe-area-inset-top, 0px)) calc(16px + env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) calc(16px + env(safe-area-inset-left, 0px));
+  background-color: rgba(10, 8, 3, 0.68);
+  /* 扫描线：硬边重复纹理，不是过渡色 */
+  background-image: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.22) 0, rgba(0, 0, 0, 0.22) 1px, transparent 1px, transparent 3px);
+  pointer-events: auto;
+}
+
+/* margin:auto 居中：内容比屏幕高时自动退化成可滚动，align-items:center 会把顶部裁掉 */
+.hud-pause-panel {
+  margin: auto;
+  width: 100%;
+  max-width: 360px;
+  padding: 16px 20px;
+  background: rgba(22, 18, 7, 0.94);
+  border: 1px solid var(--hud-line);
+  border-top: 3px solid var(--hud-accent);
+  border-radius: 3px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+}
+
+.hud-pause-tag {
+  font-family: var(--hud-mono);
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  color: var(--hud-accent);
+  animation: hud-blink 1.4s steps(1, end) infinite;
+}
+
+.hud-pause-title {
+  margin-top: 4px;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.hud-pause-sub {
+  margin: 4px 0 12px;
+  font-size: 13px;
+  color: var(--hud-dim);
+}
+
+.hud-pause-sub > div {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hud-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 50px;
+  margin: 10px 0 0;
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--hud-fg);
+  text-shadow: none;
+  background: rgba(242, 231, 180, 0.06);
+  border: 1px solid rgba(242, 231, 180, 0.45);
+  border-radius: 3px;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  touch-action: manipulation;
+  transition: background-color 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.hud-btn:active { transform: translateY(1px); }
+.hud-btn:focus:not(:focus-visible) { outline: none; }
+.hud-btn:focus-visible { outline: 2px solid var(--hud-accent); outline-offset: 2px; }
+
+.hud-btn-primary {
+  color: var(--hud-ink);
+  background: var(--hud-accent);
+  border-color: var(--hud-accent);
+}
+
+/* 「返回主页」第一次点只进入确认态：变红闪烁，提醒会丢掉整局 */
+.hud-btn-home.hud-btn-confirm {
+  color: #fff;
+  background: rgba(170, 34, 18, 0.9);
+  border-color: var(--hud-bad);
+  animation: hud-pulse 0.9s steps(1, end) infinite;
+}
+
+@media (hover: hover) {
+  .hud-btn:hover { background-color: rgba(242, 231, 180, 0.14); }
+  .hud-btn-primary:hover { background-color: var(--hud-accent-hi); }
+  .hud-btn-home.hud-btn-confirm:hover { background-color: rgba(196, 40, 22, 0.95); }
+}
+
+.hud-vis {
+  display: block;
+  margin-top: 14px;
+  cursor: pointer;
+}
+
+.hud-vis-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 14px;
+}
+
+.hud-vis-label { letter-spacing: 0.08em; }
+
+.hud-vis-val {
+  font-family: var(--hud-mono);
+  color: var(--hud-accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 轨道只有 6px，但整个 input 高 44px，手指点得中 */
+.hud-range {
+  display: block;
+  width: 100%;
+  height: 44px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.hud-range:focus:not(:focus-visible) { outline: none; }
+.hud-range:focus-visible { outline: 2px solid var(--hud-accent); outline-offset: 2px; }
+
+.hud-range::-webkit-slider-runnable-track {
+  height: 6px;
+  background: rgba(242, 231, 180, 0.22);
+  border: 1px solid rgba(242, 231, 180, 0.35);
+}
+
+.hud-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px;
+  height: 30px;
+  margin-top: -13px;
+  background: var(--hud-accent);
+  border: 2px solid var(--hud-ink);
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(242, 231, 180, 0.6);
+}
+
+.hud-range::-moz-range-track {
+  height: 6px;
+  background: rgba(242, 231, 180, 0.22);
+  border: 1px solid rgba(242, 231, 180, 0.35);
+}
+
+.hud-range::-moz-range-progress {
+  height: 6px;
+  background: var(--hud-accent);
+}
+
+.hud-range::-moz-range-thumb {
+  width: 16px;
+  height: 26px;
+  background: var(--hud-accent);
+  border: 2px solid var(--hud-ink);
+  border-radius: 2px;
+}
+
+.hud-pause-hint {
+  margin-top: 10px;
+  font-size: 12px;
+  text-align: center;
+  color: var(--hud-dim);
+}
+
+@media (max-height: 520px) {
+  .hud-pause-panel { padding: 12px 16px; }
+  .hud-pause-title { font-size: 20px; }
+  .hud-pause-sub { margin-bottom: 6px; }
+  .hud-btn { min-height: 44px; margin-top: 8px; }
+  .hud-vis { margin-top: 8px; }
+}
+
+/* ========== 死亡结算（death.js） ========== */
+.death-root {
+  position: fixed;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 60;
+  display: flex;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 20px;
+  padding: calc(44px + env(safe-area-inset-top, 0px)) calc(20px + env(safe-area-inset-right, 0px)) calc(20px + env(safe-area-inset-bottom, 0px)) calc(20px + env(safe-area-inset-left, 0px));
+  background-color: rgba(12, 5, 2, 0.86);
+  background-image: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.28) 0, rgba(0, 0, 0, 0.28) 1px, transparent 1px, transparent 3px);
+  /* 暗角用内阴影做，不用径向渐变 */
+  box-shadow: inset 0 0 160px rgba(0, 0, 0, 0.85);
+  pointer-events: auto;
+}
+
+/* 录像带跟踪不良的亮带缓慢下滚；fixed 定位不撑大滚动区域 */
+.death-root::before {
+  content: "";
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 70px;
+  background: rgba(242, 231, 180, 0.045);
+  pointer-events: none;
+  animation: death-track 7s linear infinite;
+}
+
+@keyframes death-track {
+  from { transform: translateY(-80px); }
+  to { transform: translateY(100vh); }
+}
+
+.death-osd {
+  position: fixed;
+  z-index: 1;
+  top: 12px;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  left: 16px;
+  left: calc(16px + env(safe-area-inset-left, 0px));
+  display: flex;
+  gap: 12px;
+  font-family: var(--hud-mono);
+  font-size: 14px;
+  letter-spacing: 0.1em;
+  pointer-events: none;
+}
+
+.death-osd-stop {
+  color: var(--hud-bad);
+  animation: hud-blink 1.2s steps(1, end) infinite;
+}
+
+.death-osd-time { font-variant-numeric: tabular-nums; }
+
+.death-panel {
+  position: relative;
+  z-index: 1;
+  margin: auto;
+  width: 100%;
+  max-width: 480px;
+  text-align: center;
+}
+
+.death-root.death-in .death-panel { animation: death-in 0.5s ease-out both; }
+
+@keyframes death-in {
+  from { opacity: 0; transform: scale(1.04); }
+  to { opacity: 1; transform: none; }
+}
+
+.death-tag {
+  display: inline-block;
+  padding: 2px 10px;
+  font-family: var(--hud-mono);
+  font-size: 13px;
+  letter-spacing: 0.16em;
+  color: #ffb09e;
+  background: rgba(90, 16, 6, 0.5);
+  border: 1px solid rgba(255, 91, 61, 0.55);
+}
+
+.death-title {
+  margin-top: 14px;
+  font-size: 48px;
+  font-size: clamp(36px, 10vw, 64px);
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: 0.3em;
+  padding-left: 0.3em;
+  color: #f6e9c0;
+  text-shadow: 3px 0 rgba(255, 40, 30, 0.55), -3px 0 rgba(40, 200, 255, 0.3), 0 3px 14px rgba(0, 0, 0, 0.9);
+}
+
+.death-root.death-in .death-title { animation: death-glitch 0.9s steps(1, end) 0.1s both; }
+
+@keyframes death-glitch {
+  0% { opacity: 0; }
+  10% { opacity: 1; transform: translateX(-5px) skewX(10deg); }
+  22% { transform: translateX(4px); }
+  34% { transform: none; }
+  60% { transform: translateX(-2px) skewX(-4deg); }
+  66% { transform: none; }
+  100% { opacity: 1; transform: none; }
+}
+
+.death-cause {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 9px 14px;
+  text-align: left;
+  background: rgba(16, 13, 5, 0.66);
+  border-left: 3px solid var(--hud-bad);
+}
+
+.death-cause-label {
+  flex: none;
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  color: var(--hud-dim);
+}
+
+.death-cause-text {
+  min-width: 0;
+  font-size: 18px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.death-stats {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+  margin: 10px 0 0;
+  padding: 0;
+  background: var(--hud-line);
+  border: 1px solid var(--hud-line);
+}
+
+.death-stat {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 14px;
+  background: rgba(16, 13, 5, 0.9);
+}
+
+.death-stat-label {
+  flex: none;
+  margin: 0;
+  font-size: 13px;
+  color: var(--hud-dim);
+}
+
+.death-stat-val {
+  min-width: 0;
+  margin: 0;
+  font-family: var(--hud-mono);
+  font-size: 15px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.death-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.death-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 60px;
+  margin: 0;
+  padding: 8px 16px;
+  font: inherit;
+  color: var(--hud-fg);
+  text-shadow: none;
+  background: rgba(242, 231, 180, 0.06);
+  border: 1px solid rgba(242, 231, 180, 0.5);
+  border-radius: 3px;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  touch-action: manipulation;
+  transition: opacity 0.25s, background-color 0.12s;
+}
+
+.death-btn-main {
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: 0.2em;
+  padding-left: 0.2em;
+}
+
+.death-btn-sub {
+  margin-top: 2px;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  opacity: 0.8;
+}
+
+.death-btn-continue {
+  min-height: 68px;
+  color: var(--hud-ink);
+  background: var(--hud-accent);
+  border-color: var(--hud-accent);
+}
+
+.death-btn:active { transform: translateY(1px); }
+.death-btn:focus:not(:focus-visible) { outline: none; }
+.death-btn:focus-visible { outline: 2px solid var(--hud-fg); outline-offset: 3px; }
+
+@media (hover: hover) {
+  .death-btn-continue:hover { background-color: var(--hud-accent-hi); }
+  .death-btn-home:hover { background-color: rgba(242, 231, 180, 0.14); }
+}
+
+/* 刚弹出的保护期：按钮压暗且不接收点击（death.js 里还有一道时间判断兜底） */
+.death-root:not(.death-armed) .death-btn {
+  opacity: 0.4;
+  pointer-events: none;
+  cursor: default;
+}
+
+.death-hint {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--hud-dim);
+}
+
+/* 宽屏两个按钮并排 */
+@media (min-width: 640px) and (min-height: 521px) {
+  .death-panel { max-width: 560px; }
+  .death-actions { flex-direction: row; }
+  .death-btn { flex: 1 1 0; }
+  .death-btn-continue { flex-grow: 1.5; }
+}
+
+/* 横屏手机：三项统计横排、按钮并排，一屏放下不用滚 */
+@media (max-height: 520px) {
+  .death-root {
+    padding-top: 36px;
+    padding-top: calc(36px + env(safe-area-inset-top, 0px));
+  }
+  .death-panel { max-width: 680px; }
+  .death-title { margin-top: 6px; font-size: 30px; }
+  .death-cause { margin-top: 8px; padding: 6px 12px; }
+  .death-cause-text { font-size: 16px; }
+  .death-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 8px; }
+  .death-stat { flex-direction: column; align-items: flex-start; gap: 1px; padding: 6px 10px; }
+  .death-stat-val { font-size: 14px; text-align: left; }
+  .death-actions { flex-direction: row; margin-top: 12px; }
+  .death-btn,
+  .death-btn-continue { flex: 1 1 0; min-height: 52px; }
+  .death-hint { margin-top: 8px; }
+}
+
+/* ========== 减弱动效 ========== */
+/* hud.js 用同一条媒体查询判断：减弱时不等 animationend，按计时器收起标题 */
+@media (prefers-reduced-motion: reduce) {
+  .hud-title.hud-title-play,
+  .hud-toast,
+  .hud-toast.hud-toast-bump,
+  .hud-toast.hud-toast-out,
+  .hud-stat.hud-hit,
+  .hud-stat.hud-blink .hud-stat-label,
+  .hud-stat.hud-blink .hud-stat-val,
+  .hud-warn.hud-warn-severe,
+  .hud-rec-dot,
+  .hud-pause-tag,
+  .hud-btn-home.hud-btn-confirm,
+  .death-root::before,
+  .death-osd-stop,
+  .death-root.death-in .death-panel,
+  .death-root.death-in .death-title {
+    animation: none !important;
+  }
+  .hud-toast.hud-toast-out { opacity: 0; }
+  .death-root::before { display: none; }
+  .hud-bar-fill,
+  .hud-cross,
+  .death-btn,
+  .hud-btn {
+    transition: none;
+  }
+}

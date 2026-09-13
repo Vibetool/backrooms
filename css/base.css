@@ -1,0 +1,87 @@
+/* 后室 · 页面底座：全屏画布 + UI 挂载点。只写 html/body/#gl/#ui 和 main.js 自己的 boot- 前缀 */
+
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #0b0a07;
+  color: #f3ead2;
+  /* 西文先走系统无衬线，中文按平台依次落到苹方 / 思源 / 雅黑 / Noto，保证安卓 WebView 也有中文字形 */
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    "PingFang SC", "Hiragino Sans GB", "Source Han Sans SC", "Noto Sans CJK SC", "Microsoft YaHei", "WenQuanYi Micro Hei", sans-serif;
+  font-size: 16px;
+  line-height: 1.4;
+  /* 手机：禁下拉刷新 / 橡皮筋回弹、双击缩放、长按选字和系统菜单 */
+  overscroll-behavior: none;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* 输入框要能正常选字、粘贴房号 */
+input, textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+#gl {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  z-index: 0;
+  outline: none;
+  touch-action: none;
+}
+
+/*
+ * #ui 故意不定位、不设 z-index、不设尺寸：
+ * - 定位元素（尤其 fixed）会自成层叠上下文，里面 HUD 30 / 结算 60 / toast 90 就没法和 gfx 挂在 body 上的
+ *   低 san 覆盖 10、闪屏 40、淡入淡出 55 按第 11 节交错排序；
+ * - 子节点全是 position:fixed，#ui 自身高度为 0，不会盖住画布抢走点击（指针锁定、主页点人都靠点画布）；
+ * - 也不能设 pointer-events:none：它会被继承，没显式写 auto 的弹层按钮就点不动了；
+ * - 不能有 transform / filter / perspective，否则子节点的 fixed 会相对它定位。
+ */
+#ui {
+  position: static;
+}
+
+/* main.js 启动失败（WebGL 不可用等）时的提示，只在出错时创建 */
+.boot-error {
+  position: fixed;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(24px + env(safe-area-inset-top, 0px)) 24px calc(24px + env(safe-area-inset-bottom, 0px));
+  background: #0b0a07;
+  box-sizing: border-box;
+}
+.boot-error-card {
+  max-width: 420px;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #f3ead2;
+}
+.boot-error-title {
+  margin: 0 0 8px;
+  font-size: 20px;
+  color: #e7c24a;
+}
+.boot-error-detail {
+  margin-top: 12px;
+  font-size: 12px;
+  color: #a89f86;
+  word-break: break-all;
+}

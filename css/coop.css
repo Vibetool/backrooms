@@ -1,0 +1,119 @@
+/* 后室 · 联机：大厅弹窗（z 80）、麦克风按钮与说话角标（z 35）、兜底 toast（z 90）。z-index 规则见 ARCHITECTURE.md 第 11 节 */
+
+/* ---------- 大厅弹窗 ---------- */
+.coop-lobby {
+  position: fixed; left: 0; top: 0; right: 0; bottom: 0; z-index: 80;
+  display: flex; align-items: center; justify-content: center;
+  box-sizing: border-box; padding: 16px;
+  padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px))
+           max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  background: rgba(8, 7, 3, .74); pointer-events: auto;
+  color: #f3e9b5; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  -webkit-user-select: none; user-select: none;
+}
+.coop-lobby[hidden], .coop-lobby [hidden], .coop-hud [hidden] { display: none !important; }
+.coop-card {
+  width: 420px; max-width: 100%; max-height: 100%; overflow-y: auto; box-sizing: border-box;
+  padding: 16px 18px; border-radius: 14px; background: #1d1a0c;
+  border: 1px solid rgba(232, 214, 127, .35); box-shadow: 0 12px 40px rgba(0, 0, 0, .6);
+  -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+}
+.coop-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.coop-title { margin: 0; font-size: 20px; font-weight: 700; color: #f6e27a; letter-spacing: 1px; }
+.coop-sub { margin: 2px 0 12px; font-size: 12px; color: #b9ad78; }
+.coop-note {
+  margin: 0 0 12px; padding: 8px 10px; border-radius: 8px; font-size: 13px;
+  background: rgba(200, 80, 55, .16); border: 1px solid rgba(220, 110, 85, .5); color: #ffc2b0;
+}
+.coop-field { display: block; margin: 0; }
+.coop-label { display: block; margin-bottom: 4px; font-size: 13px; color: #cfc38c; }
+.coop-input {
+  width: 100%; height: 44px; box-sizing: border-box; padding: 0 12px; border-radius: 8px;
+  border: 1px solid #6b6135; background: #0f0d06; color: #fff5cc;
+  font-size: 16px; /* 小于 16px 时 iOS 聚焦会自动放大页面 */
+  -webkit-user-select: text; user-select: text; outline: none;
+}
+.coop-input:focus { border-color: #e8d67f; }
+.coop-input:disabled { opacity: .5; }
+.coop-code-input { text-transform: uppercase; letter-spacing: 4px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+.coop-section { margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(232, 214, 127, .16); }
+.coop-section-title { margin: 0 0 8px; font-size: 13px; color: #cfc38c; }
+.coop-row { display: flex; align-items: center; gap: 8px; }
+.coop-row .coop-input { flex: 1; min-width: 0; }
+.coop-row-end { justify-content: flex-end; flex-wrap: wrap; }
+.coop-btn {
+  min-height: 44px; min-width: 44px; padding: 0 16px; box-sizing: border-box; border-radius: 8px;
+  border: 1px solid #c9b86a; background: #2b2714; color: #f3e9b5;
+  font: 600 15px/1 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+}
+.coop-btn:disabled { opacity: .45; cursor: default; }
+.coop-btn-primary { background: #d9c35c; border-color: #e8d67f; color: #1d1a0b; }
+.coop-btn-danger { background: transparent; border-color: #b0553f; color: #f0b3a3; }
+.coop-wide { width: 100%; }
+.coop-close { padding: 0; border: none; background: transparent; font-size: 26px; color: #cfc38c; }
+.coop-hostbox { margin-top: 4px; }
+.coop-code {
+  flex: 1; font: 700 30px/1.2 ui-monospace, Menlo, Consolas, monospace; letter-spacing: 6px; color: #fff1a8;
+  -webkit-user-select: text; user-select: text;
+}
+.coop-hint { margin: 6px 0 0; font-size: 12px; color: #a99f70; }
+.coop-confirm {
+  margin-top: 10px; padding: 12px; border-radius: 10px;
+  background: rgba(217, 195, 92, .1); border: 1px solid rgba(217, 195, 92, .4);
+}
+.coop-confirm p { margin: 0 0 10px; font-size: 13px; line-height: 1.6; white-space: pre-line; }
+.coop-peer-line { margin: 0; font-size: 15px; color: #fff1a8; }
+.coop-status { margin: 12px 0 0; min-height: 20px; font-size: 13px; color: #d8cd99; white-space: pre-line; }
+.coop-status.coop-err { color: #ff9f86; }
+.coop-status.coop-ok { color: #b5e39c; }
+.coop-foot { display: flex; justify-content: flex-end; margin-top: 12px; }
+
+/* ---------- 麦克风按钮与说话角标 ---------- */
+.coop-hud {
+  position: fixed; left: 0; top: 0; right: 0; bottom: 0; z-index: 35; pointer-events: none;
+  font: 14px/1.2 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  -webkit-user-select: none; user-select: none;
+}
+/* 桌面放右上角；触屏时右上角是 input 的暂停按钮（48px），往下让开 */
+.coop-mic {
+  position: absolute; top: 12px; right: 12px;
+  top: calc(12px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px));
+  display: flex; align-items: center; gap: 6px; height: 44px; min-width: 44px; box-sizing: border-box;
+  padding: 0 12px; border-radius: 22px; border: 2px solid rgba(255, 240, 170, .55);
+  background: rgba(22, 19, 8, .6); color: #fff5cc; font-size: 14px; font-weight: 600;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .7); pointer-events: auto; cursor: pointer;
+  touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+}
+.coop-mic-txt { white-space: nowrap; }
+.coop-mic .coop-mic-ico { opacity: .55; }
+.coop-mic.coop-on { background: rgba(196, 64, 44, .85); border-color: rgba(255, 205, 185, .9); color: #fff; }
+.coop-mic.coop-on .coop-mic-ico { opacity: 1; }
+.coop-mic.coop-busy { opacity: .7; }
+.coop-mic-key {
+  padding: 2px 5px; border-radius: 4px; border: 1px solid rgba(255, 245, 204, .5);
+  font: 600 11px/1 ui-monospace, Menlo, Consolas, monospace; text-shadow: none;
+}
+.coop-touch .coop-mic { top: 72px; top: calc(72px + env(safe-area-inset-top, 0px)); }
+.coop-touch .coop-mic-key { display: none; }
+
+.coop-talk {
+  position: absolute; top: 64px; right: 12px;
+  top: calc(64px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+}
+.coop-touch .coop-talk { top: 124px; top: calc(124px + env(safe-area-inset-top, 0px)); }
+.coop-badge {
+  padding: 5px 10px; border-radius: 12px; background: rgba(22, 19, 8, .66); color: #fff5cc;
+  font-size: 13px; border: 1px solid rgba(255, 240, 170, .35); white-space: nowrap;
+}
+.coop-badge-me { border-color: rgba(255, 150, 120, .8); }
+.coop-badge-peer { border-color: rgba(160, 225, 140, .8); }
+
+/* HUD 模块缺席（自测页）时的兜底 toast */
+.coop-toast {
+  position: fixed; left: 50%; bottom: 120px; z-index: 90; transform: translateX(-50%);
+  max-width: 86vw; padding: 8px 14px; border-radius: 10px; background: rgba(12, 10, 4, .88);
+  color: #fff5cc; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  pointer-events: none;
+}

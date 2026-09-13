@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>输入模块自测</title>
+<style>
+  /* 自测页自己的壳子，模拟 index.html + base.css 应有的设置 */
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #15130b; color: #f3e9b5;
+    overscroll-behavior: none; touch-action: manipulation; -webkit-user-select: none; user-select: none;
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  #gl { position: fixed; left: 0; top: 0; width: 100%; height: 100%; display: block; }
+  #ui { position: fixed; left: 0; top: 0; right: 0; bottom: 0; pointer-events: none; }
+  .test-panel { position: fixed; z-index: 40; left: 8px; top: 8px;
+    left: calc(8px + env(safe-area-inset-left, 0px)); top: calc(8px + env(safe-area-inset-top, 0px));
+    max-width: 46vw; padding: 8px 10px; border-radius: 8px; background: rgba(0, 0, 0, .62); pointer-events: auto; }
+  .test-panel pre { margin: 6px 0 0; font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; }
+  .test-panel button { min-height: 36px; margin: 0 6px 4px 0; padding: 0 10px; border-radius: 6px;
+    border: 1px solid #c9b86a; background: #2b2714; color: #f3e9b5; font-size: 13px; }
+  .test-panel label { display: block; }
+  .test-overlay { position: fixed; z-index: 60; left: 0; top: 0; right: 0; bottom: 0; display: flex;
+    flex-direction: column; gap: 10px; align-items: center; justify-content: center;
+    background: rgba(10, 9, 5, .72); pointer-events: auto; }
+  .test-overlay[hidden] { display: none; }
+  .test-overlay button { min-height: 52px; padding: 0 30px; border-radius: 10px; border: 2px solid #e8d67f;
+    background: #d9c35c; color: #1d1a0b; font-size: 18px; font-weight: 700; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="ui"></div>
+
+<div class="test-panel">
+  <label>灵敏度 <input id="t-sens" type="range" min="0.2" max="3" step="0.1"> <span id="t-sens-v"></span></label>
+  <pre id="t-out"></pre>
+</div>
+<div class="test-overlay" id="t-overlay">
+  <div id="t-msg">主页（输入禁用）</div>
+  <button id="t-go" type="button">开始</button>
+</div>
+
+<script src="../js/core/base.js"></script>
+<script src="../js/core/input.js"></script>
+<script>
+(function () {
+  'use strict';
+  const BR = window.BR, I = BR.input;
+  const $ = id => document.getElementById(id);
+  const canvas = $('gl'), g = canvas.getContext('2d');
+  // mic(V)、testmenu(T) 在暂停时也会记录，可以在暂停遮罩下按来验证
+  const EDGES = ['interact', 'use', 'pause', 'drop', 'slot1', 'slot2', 'slot3', 'slot4', 'slot5', 'mic', 'testmenu'];
+  const log = [];
+  let yaw = 0, pitch = 0, px = 0, pz = 0, last = 0;
+
+  I.init(canvas);
+
+  $('t-sens').value = I.sensitivity;
+  $('t-sens-v').textContent = I.sensitivity.toFixed(1);
+  $('t-sens').addEventListener('input', e => {
+    I.sensitivity = e.target.value;
+    $('t-sens-v').textContent = I.sensitivity.toFixed(1);
+  });
+
+  // 模拟 main 的暂停流程：暂停时 enabled=false；「继续」在点击里 lock()，Esc 继续则锁不上，需要再点一下画面
+  function pause() { I.enabled = false; $('t-msg').textContent = '已暂停'; $('t-go').textContent = '继续'; $('t-overlay').hidden = false; }
+  function resume(withLock) { $('t-overlay').hidden = true; I.enabled = true; if (withLock) I.lock(); }
+  $('t-go').addEventListener('click', () => resume(true));
+
+  function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(window.innerWidth * dpr);
+    canvas.height = Math.round(window.innerHeight * dpr);
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  function draw() {
+    const W = window.innerWidth, H = window.innerHeight;
+    g.fillStyle = '#2a2512'; g.fillRect(0, 0, W, H);
+    // 假全景：竖线随 yaw 平移，地平线随 pitch 上下
+    const horizon = H / 2 - pitch * H * 0.5;
+    g.fillStyle = '#c9b458'; g.fillRect(0, 0, W, horizon);
+    g.fillStyle = '#8f7f3a'; g.fillRect(0, horizon, W, H - horizon);
+    const step = W / 8, off = ((-yaw / (Math.PI / 4)) * step) % step;
+    g.strokeStyle = 'rgba(40,34,14,.55)'; g.lineWidth = 2;
+    for (let x = off - step; x < W + step; x += step) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, horizon); g.stroke(); }
+    // 准星
+    g.strokeStyle = '#fff'; g.lineWidth = 1.5;
+    g.beginPath(); g.moveTo(W / 2 - 8, H / 2); g.lineTo(W / 2 + 8, H / 2); g.moveTo(W / 2, H / 2 - 8); g.lineTo(W / 2, H / 2 + 8); g.stroke();
+    // 移动向量
+    const cx = W / 2, cy = H - 70;
+    g.strokeStyle = 'rgba(255,255,255,.5)'; g.beginPath(); g.arc(cx, cy, 40, 0, Math.PI * 2); g.stroke();
+    g.fillStyle = I.sprint ? '#ff7a4a' : '#fff';
+    g.beginPath(); g.arc(cx + I.move.x * 40, cy - I.move.y * 40, 6, 0, Math.PI * 2); g.fill();
+  }
+
+  function frame(ts) {
+    const dt = Math.min(0.1, (ts - last) / 1000 || 0);
+    last = ts;
+    if (I.enabled) {
+      const l = I.consumeLook();
+      yaw += l.dx;
+      pitch = BR.util.clamp(pitch - l.dy, -1.4, 1.4);
+      const sp = I.sprint ? BR.config.player.sprint : BR.config.player.walk;
+      const s = Math.sin(yaw), c = Math.cos(yaw);
+      px += (I.move.x * c + I.move.y * s) * sp * dt;
+      pz += (I.move.x * s - I.move.y * c) * sp * dt;
+    }
+    for (const a of EDGES) if (I.pressed(a)) log.unshift((ts / 1000).toFixed(2) + 's ' + a);
+    log.length = Math.min(log.length, 8);
+    if (I.pressed('pause')) { if (I.enabled) pause(); else if (!$('t-overlay').hidden && $('t-go').textContent === '继续') resume(false); }
+    draw();
+    $('t-out').textContent =
+      'isTouch ' + I.isTouch + '  enabled ' + I.enabled + '  locked ' + I.locked + '\n' +
+      'move ' + I.move.x.toFixed(2) + ', ' + I.move.y.toFixed(2) + '  sprint ' + I.sprint + '\n' +
+      'yaw ' + yaw.toFixed(2) + '  pitch ' + pitch.toFixed(2) + '\n' +
+      'pos ' + px.toFixed(1) + ', ' + pz.toFixed(1) + '\n' +
+      'held use ' + I.held('use') + '  interact ' + I.held('interact') + '\n' +
+      '— 边沿 —\n' + log.join('\n');
+    I.endFrame();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

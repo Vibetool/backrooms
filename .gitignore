@@ -1,0 +1,9 @@
+node_modules/
+.DS_Store
+*.blend1
+tests/output/
+.vibetool_key
+tools/textures/raw/
+__pycache__/
+tools/wave2/
+tools/preview_hazmat.png

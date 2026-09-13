@@ -1,0 +1,2083 @@
+{
+  "rule": "有冲突时用 SystemRandom 从已加载版本中随机选一个整体采用，不混合；无冲突取信息最全的版本",
+  "generatedAt": "2026-09-12T13:33:32.752239+00:00",
+  "levels": {
+    "0": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "标题与别称：wikidot-en 为 Threshold（别称 The Yellow Hell），wikidot-cn 为「教学关卡」，fandom 为 The Lobby。",
+        "等级描述词：wikidot-en 为 1 级 Safe/Secure/Unconfirmed Entities；fandom 为 Class 1 Safe/Unstable/Devoid of Entities；wikidot-cn 为等级 1，描述词为空。",
+        "实体：wikidot-en 称是否存在实体未知，有黑影尾随的说法；wikidot-cn 称没有任何实体，但警告你以为的流浪者都不是人类；fandom 称没有实体，目击都是幻觉。",
+        "出口数量：wikidot-en 只有扑进闪烁的墙到 Level 1；wikidot-cn 只有切出到 Level 1；fandom 有 5 个出口（渐变到 Level 1 车库、破墙到 139、破地板到 27 或 The Void、紧急出口到 14、玻璃推拉门到 13），外加马尼拉房间到 Level 1/2。",
+        "马尼拉房间：wikidot-en 只有一间无名小房间能互相看见，不是出口；wikidot-cn 称马尼拉房间可以相遇、是死路、有 M.E.G. 文档；fandom 称它是单盏橙色暗灯的休息点，久留能到 Level 1 或 2，没提能遇见他人。",
+        "入口：wikidot-cn 独有 Level 283 堡垒里的霉味木门；fandom 称从 The Frontrooms 进入且多个层级可达，并认为与水有关的事故最常见；wikidot-en 为跌出现实和后室各处的隐藏入口。",
+        "结构变体：只有 wikidot-en 有拱门区、柱厅、坑洞区、断电区、红房间和 Peripheral Shift；wikidot-cn 只有罕见的红墙纸暗灯房间；fandom 都没有，但独有吊顶上方约 1 米高的夹层。",
+        "红房间：wikidot-en 为闭环、靠近就会幽闭偏执、进去几乎出不来；wikidot-cn 只写红墙纸加昏暗灯光、不要靠近；fandom 没有。",
+        "规模：wikidot-cn 引言称约六亿平方英里；wikidot-en 称无限；fandom 只说广阔。",
+        "同行者分离：wikidot-en 的孤立效应让并肩进入的人也永远找不到对方，一切沟通无效；wikidot-cn 称小组会失散直到退出本层；fandom 称几乎不可能找到其他流浪者。",
+        "灯光与嗡声：wikidot-cn 为无规律闪烁、恒定频率嗡鸣；wikidot-en 为音量随机剧烈波动、可致听力损伤，且有无灯的断电区；fandom 为持续嗡声导致偏头痛，马尼拉房间是橙色暗灯。",
+        "地毯液体：wikidot-en 列出盐水、半咸水、杏仁水、Liquid Pain、福尔马林、DNA 浆液；wikidot-cn 为非水的未知液体、含胸膜液痕迹；fandom 只说不能饮用，另提到家具压痕。",
+        "地毯颜色：wikidot-en 明确说地毯实际是棕米色、照片里显黄；wikidot-cn 与 fandom 没描述地毯颜色。",
+        "墙纸图案：fandom 日志称墙纸满是箭头和竖线；wikidot-en 与 wikidot-cn 只描述颜色（wikidot-en 另有剥落露出深红）。",
+        "异常声音：wikidot-en 为低语、熟悉的声音呼唤、墙后抓挠；wikidot-cn 为灯噪增大后骤停、未知语言人声、昆虫吱吱声；fandom 只有马尼拉房间墙后的低语。",
+        "独有机制：wikidot-cn 独有 CO₂ 稳定上升、指南针/GPS 失效、无线电失真、7 种幻觉清单；wikidot-en 独有 Peripheral Shift；fandom 独有偏头痛、马尼拉房间附近感官钝化、墙和地板可以打破。",
+        "物品：wikidot-en 有杏仁水（被污染）和 Liquid Pain；wikidot-cn 有 M.E.G. 文档；fandom 没有物品。",
+        "据点与群体：wikidot-en 提到 Base Alpha；wikidot-cn 提到 M.E.G.（文档）；fandom 只有 M.E.G. 日志徽标。",
+        "气味：wikidot-en 与 wikidot-cn 都有腐臭的潮湿地毯；fandom 没提气味。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-0",
+      "title": "Level 0 - \"Threshold\"",
+      "method": "random-on-conflict",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-0.json"
+    },
+    "1": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "别称：wikidot-en/cn 为 \"Habitable Zone\"/“宜居地带”；fandom 为 \"Parking Zone\"。",
+        "等级描述：wikidot-en/cn 为 1 级“Safe and Secure + Presence of Anomalous Resources”；fandom 为 Class 1“Safe / Stable / Minimal Entity Count”。",
+        "空间结构：wikidot 为无限的停车场/仓库式“过道”＋迷宫式“小径”，分 6 个区段（天鹰/跃金/哥特/衔尾/花园/传说）；fandom 为有定距楼梯间和零星车辆的立体停车场，特殊区为 Maintenance Halls 和 Luxury Lots，没有区段。",
+        "熄灯机制：wikidot 的“闪烁”是全层所有灯同时熄灭，开始与持续时间不可预测；fandom 的停电按区域发生，持续数分钟到数天，Maintenance Halls 不停电，Luxury Lots 通常一小时内恢复。",
+        "熄灯时的避难点：wikidot 为小径（实体极少进入，可开灯）；fandom 为 Maintenance Halls（供电不受影响、实体较少，但不宜久留）。",
+        "照明策略：wikidot 严禁闪烁时在过道开灯（笑魇趋光）；fandom 建议在黑暗区携带手电筒吓退实体。",
+        "温度：wikidot 只说过道闷热潮湿、小径室温宜人，没有数字；fandom 给出平均 30–35 °C，雾区明显降温。",
+        "雾：fandom 有杏仁水水坑蒸发形成的浓雾（Luxury Lots 常见）；wikidot-en/cn 没有雾。",
+        "水坑性质：wikidot 为不洁死水/漏水、不宜饮用（有塑料死水味）；fandom 为永不干涸的杏仁水水坑，其中混有伪水坑实体。",
+        "声音：wikidot 有管道金属撞击声与隆隆声、闪烁时寂静、各实体的特征声；fandom 未描述环境声。",
+        "规模：fandom 说大小约与 Level 0 相同；wikidot 只说墙延伸数英里、小径数公里、“极为庞大”，未与 Level 0 比较。",
+        "实体名单：wikidot-en/cn 为 Arms、Clumps、Crawlers、Dullers、Growlers、Hounds、Nguithr'xurh、Skin-Stealer、Smilers、Wrangler、Wretches，另有衔尾段施工者；fandom 为 Facelings、Clumps、Hounds、Dullers、Deathmoths，另有本层独有的 False Puddles 与 Paintings。三站共有的只有 Clumps、Hounds、Dullers。",
+        "实体密度：fandom 标注 \"Minimal Entity Count\"；wikidot 称“Common Entity List”、多数为掠食者，没有实体数量描述（wikidot-cn 还在图注里称钝人为“常见”）。",
+        "画作：wikidot 中地板上的画在无人注视时消失，部分画是去 Level 24/389（中文站另有 739）的通道，本身无害；fandom 中多数画是会把人拖进画里的活体实体。",
+        "板条箱：wikidot 的箱子在背后或闪烁后出现、无人注视即消失，跃金段最多，含福友玉/滋水枪/迁跃浆果等；fandom 的箱子不定时生成/消失，Luxury Lots 更多，内含杏仁水、罐头、武器，有时只有 Liquid Pain。",
+        "本层独有资源：fandom 有车辆合金 tripse 可做武器/护甲/交易；wikidot 没有车辆与 tripse。",
+        "据点：wikidot 为 M.E.G. Base Alpha、Trader's Keep/Vault、Hippocrates-1、Cornucopia、Tom's Diner、速切玩家报名点（Camp Amber 为历史）；fandom 为 Backroom Colonists Base Blink、M.E.G. Base First Light、Cultus Sancti、The Raiders（已陷落）。M.E.G. 据点名字不同：Base Alpha 与 Base First Light。",
+        "从 Level 0 进入：wikidot 为切出穿墙；fandom 为走上一段楼梯（另可从 Frontrooms 直接切入、从 Level 13 不稳定地板切入）。",
+        "去 The Hub：wikidot 只说“按特定顺序穿过门和过道”；fandom 给出完整路线（上两段楼梯再下来→左走廊→右走廊→B 门→A 门）。",
+        "去 Level 2：wikidot 为朝管道与仪表盘逐渐出现的方向走（平滑阈界）；fandom 为继续经楼梯/走廊探索，或穿过未上锁的门。",
+        "出口数量：wikidot 列出二十多个（22、154、159、218、389、998、998.2、19、38、128、352、800、24、201、305、710、817 及子层级 1.1/1.2/√2/1.5）；fandom 只有 Level 2、Level 0、The Hub、Level 188（切出带插座的墙）。",
+        "wikidot-cn 与 wikidot-en 出口不同：中文站多了 Level 740“反应堆之墟”（比四周墙面稍冷、位置不定的门）和 Level 739“欲望之沙”（跃入山顶有枯树的岩石岛屿画），英文站现行版本没有这两条。",
+        "wikidot-cn 与 wikidot-en 入口不同：中文站的平滑阈界入口里缺少英文站的 Level 38“Fold Point”（沿故障感逐渐减弱的混凝土厅/走廊进入）。",
+        "wikidot-cn 与 wikidot-en 措辞不同：从 Level 2 进入，英文为回到“blander”（更单调）的走廊，中文为“颜色较白的走廊”；M.E.G. 巡逻队服装，英文为“bright lime yellow”（亮青柠黄），中文为“明亮淡黄”；Nguithr'xurh 的蛛网中文多了“耀眼”一词。",
+        "危险：wikidot 独有花园段植物化、衔尾段施工者、会消失的门锁；fandom 独有生锈钢筋致破伤风、Luxury Lots 高压插座（可达 1 吉瓦）、伪水坑。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-1",
+      "title": "Level 1 - “宜居地带”",
+      "method": "random-on-conflict",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-1.json"
+    },
+    "10": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "昵称：wikidot-en 为「Bumper Crop」，fandom 为「The Bumper Crop」，wikidot-cn 为「丰裕」。",
+        "难度体系：wikidot-en/cn 是生存等级 Class 1，附逃离 2/5、环境 1/5、实体 0/5 三项子评分；fandom 是 Threat Index Class 1，标 Safe / Stable / Minimal Entity Count，没有逃离难度。",
+        "作物：wikidot-en 和 fandom 写小麦加大麦田，wikidot-cn 正文只写麦田/小麦，没提大麦（只有署名区有一张「大麦地」配图）。",
+        "入口：只有 wikidot-en 列出「通过 Level 25 的街机进入」，wikidot-cn 和 fandom 只有 Level 9、Level 11 两个入口。",
+        "出口 Level 184：wikidot-en（走进 canola 油菜地块）和 wikidot-cn（走进「芥花籽」地块）都有，fandom 没有这个出口。",
+        "fandom 独有两个出口：越过边界到 Level 35，以及走得足够远逐渐到 Level 83；wikidot-en/cn 都没有。",
+        "据点：wikidot-en/cn 写 M.E.G. 只把本层当中转或临时工作地、没有前哨、建前哨被判为浪费资源；fandom 不提 M.E.G.，反而说建前哨的计划正在进行、本层是定居首选候选地。",
+        "小麦：wikidot-en/cn 写 M.E.G. 过去定期收割、近期因营养担忧停止，面粉可作增稠剂；fandom 只说小麦大麦看起来能吃、营养属性待调查，没有收割历史也没有增稠剂用途。",
+        "水体位置：wikidot-en 为「低于同一海拔」，fandom 为「处在同一海拔」，wikidot-cn 为「广布于低地」。",
+        "湖边地貌：wikidot-en/cn 写湖泊周围开垦较少、是成片泥土和草地，fandom 没有这一句。",
+        "木材来源：wikidot-en 和 fandom 说树篱中的树木中等硬度可当木材，wikidot-cn 说的是灌木丛硬度足以当木材。",
+        "不腐烂小麦情节：wikidot-en/cn 有母亲装新木门阶、一条蠕虫来吃小麦又掉头离开的细节，fandom 两者都没有。",
+        "虚弱感：wikidot-en 是母亲一直抱怨虚弱，并强调小麦是全家唯一的食物；wikidot-cn 和 fandom 是叙述者本人想到自己吃了多少后意识到比平常虚弱。",
+        "回忆结局：wikidot-en/cn 写父母某夜煮粥时倒地、叙述者被糊粥的烟呛醒后带狗逃向湖边；fandom 没有这段结局。",
+        "Level 4 细节：wikidot-en/cn 说狗在 Level 4 不停抓窗户，fandom 说狗受不了 Level 4 的雨声。",
+        "叙事框架：fandom 页顶有 Notice，说明摘录来自对一位匿名女性的访谈、条目待更新；wikidot-en/cn 没有这段说明。",
+        "署名：wikidot-en/cn 署名 scutoid studios 与 egglord（原作者 u/Hertz3241，前重写者 Stretchsterz，cn 译者东方时雨）；fandom 署名 Egglord1 与 scutoid，并注明第二张图由 DALL-E 2 生成。"
+      ],
+      "source": "fandom",
+      "url": "https://web.archive.org/web/20251216090901/https://backrooms.fandom.com/wiki/Level_10",
+      "title": "Level 10: \"The Bumper Crop\"",
+      "method": "random-on-conflict",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-10.json"
+    },
+    "11": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "副名不同：英文站「The City That Never Sleeps」，中文站「无垠城市」，fandom「Concrete Jungle」（标语 The endless cityscape）。",
+        "等级不同：英文站生存难度 2（Safe / Unsecure / Low Entity Count）；中文站等级 1（描述词未显示）；fandom 威胁指数 Class 2e Environmental（Safe / Unstable / Devoid of Life）。",
+        "有无生命：英文站和中文站都是有人定居、有实体活动的城市；fandom 完全没有生命，没有实体、没有团体，连植物都会几分钟内腐烂。",
+        "人口不同：英文站全层约 129,500 人（首都 45,000）；中文站「Level 11 的公民」约 12,000 人，另有各团体人数；fandom 为零。",
+        "城市风格不同：英文站是平淡的西方城市，街区网格整齐；中文站由前厅城市地标（纽约、芝加哥、洛杉矶、圣路易斯、多伦多）拼成，楼可以漂浮叠放；fandom 以现代东方都市风格为主，越远越偏西方和后苏联风格，草率、非欧几里得，楼缝不到 1 米。",
+        "布局不同：英文站和中文站是开阔城市；fandom 是长马路加窄缝构成的迷宫，路牌文字无意义。",
+        "重力：中文站说重力对建筑无效（漂浮、叠放、错位）；fandom 说部分区域重力不同（推测有超高密度结构）；英文站没有重力异常。",
+        "光照：中文站永远白天，路灯有亮有灭；fandom 烟雾笼罩、交通灯无规律频闪；英文站不描述光照（室内照明可用，老建筑会换卤素灯）。",
+        "空气与气候：中文站温暖干燥；fandom 烟雾含一氧化碳和氮氧化物；英文站不提气候。",
+        "声音：fandom 有老化建筑的金属吱嘎和呻吟声；中文站只有激进电台的 80 年代流行音乐；英文站只说外表安静，未描述声音。",
+        "建筑可进入性：英文站约 1/3 建筑不可破坏、不可进入，窗户像黑色镜面，开放建筑家具稀少、设施能用；中文站内部与家具随机，有的空有的满，有不通往任何地方的楼梯和高处的门；fandom 内部不通风、迷宫化，门后是平墙，许多楼是空心或灌满混凝土。",
+        "车辆：英文站是停着的无燃料车，无人观察时挪位，换其他层的喷油嘴和油泵后能开；中文站是随机汽车模型沿街驶来后缓缓停下、熄火不能用，偶尔载 1–4 个无面灵；fandom 没有车，只有轮胎痕。",
+        "第 11 效应：英文站让敌对实体较不愿意攻击，挑衅可打破，部分实体免疫；中文站让无面灵和猎犬表现为普通行人和狗并主动沟通；fandom 没有这个效应。",
+        "实体名单：英文站是无面灵、猎犬最多，幸运纸鹤较少，Living Pizzas 等连通层专属实体可能出现，没有原生实体；中文站是无面灵、猎犬常见，死亡飞蛾、爬菌、笑魇几乎没有，邻里守望、观察者、碾压者从 Level 9 游荡而来，另有阿尔戈斯和拉尔夫常驻；fandom 没有实体。",
+        "主要危险：英文站是隐蔽的单程出口和迷路、随机切出；中文站是关闭后仍有辐射的核电站（相距约 800 公里）；fandom 是烟雾污染、结构老化和方向错乱。",
+        "独有设定：核电站辐射、Wi-Fi、杏仁水、M.E.G. 安全保障团的「伤害无效区」只见于中文站；自动产业链、无人观察时切出、街景流动、7000 年历史只见于英文站；植物加速腐烂和污染烟雾只见于 fandom。",
+        "枢纽地位：英文站称本层连通几乎所有层级（列入口 27 条、出口 32 条）；中文站入口 13 条、出口 28 条；fandom 只有入口 2 条、出口 5 条。",
+        "团体构成：英文站是首都、Malt Marters、M.E.G.、琥珀营、B.N.T.G. 新时代广场、U.E.C. 底比斯、U.B.D.S. 总部、G.P.D.、I.M.B.H.、永恒资料库、The Lost 新新阿姆斯特丹；中文站是 M.E.G. Beta 基地、阿尔戈斯之眼、琥珀营前哨、叛乱 07 号站、无人机监视小队、家常酒店、杰瑞的追随者、包裹侦察兵、AEA、激进电台、麦芽糖市场、永恒资料库 011-Θ；fandom 没有团体。",
+        "永恒资料库：英文站总部位置刻意保密（推测在高密度区地下或跨数栋摩天楼）；中文站 011-Θ 在西侧一栋翻新银行里，两侧挂巨大横幅，2017 年建立，至少 300 人。",
+        "U.B.D.S.：英文站在本层有总部摩天楼，2004 年成立；中文站只是一个约 38 人的新前哨「包裹侦察兵」。",
+        "琥珀营：英文站是离 Base Beta 不远的教育中心，逐渐疏远 M.E.G.；中文站是没有固定地点、四处游走的前哨，受 Beta 基地协助。",
+        "发现史：英文站说有 7000 多年人类居住史，M.E.G. 是近代第 36 个发现它的大团体，2016 年初才入驻；中文站说 2016 年流浪者跟着 Level 9 标志误入后才被发现；fandom 没有历史。",
+        "Level 9 路线：英文站跟着带箭头的路牌，普遍说 100 或 200 英里但通常更短，200 英里上限未证实；中文站约 100–200 英里，必须一直有目的地跟着标志走；fandom 没有 Level 9 连接。",
+        "Level 10 连接：英文站是 Level 10 的任意沥青路走得够远就到 11（单向列入）；fandom 是 Level 10 的土路通 11，本层小巷接长土路回 Level 10（双向）；中文站没有 Level 10 连接。",
+        "去 Level 12：英文站要切进长得像窗户实体的窗户（危险）；中文站是某些特定窗户；fandom 是极其狭窄的区域。",
+        "下水道/井盖：英文站松动或敞开的下水道格栅通 Level 34 或 218；中文站下水道排放口通 Level 34；fandom 撬开井盖下去通 Level 2。",
+        "去 Level 0–4：中文站说一些建筑通 Level 0、1、2、3、4、196；英文站没有这些出口；fandom 只有井盖通 Level 2。",
+        "商场出口：英文站特定商场通 Level 33、122、159，且商场入口双向对应；中文站找到任一商场就通 Level 33。",
+        "Level 178：英文站是穿地面切出；中文站是进入远处的町家房子。",
+        "Level 55：英文站是招牌「Frivolous Frank's Fabulous Frozen Food」的超市（罕见），且 Level 55 正门通本层超市；中文站是小巷有概率通 Level 55。",
+        "Level 25：英文站 Level 25 里 Leaders 造的街机通 11，本层怪位置街机通回 25；中文站只有 Level 25 的黄色街机柜通 11，没有反向出口。",
+        "Level 78：英文站是从显示城市景色的舷窗切进来；中文站是进入一个气闸。",
+        "Level 122：英文站是形似商场出口的区域；中文站是钻进垃圾桶。",
+        "Level 52：英文站是 Level 52 的洞穴通往本层（入口）；中文站是本层 M. David High School 棕色砖楼通往 Level 52（出口）。",
+        "Level 119：英文站是本层供水店通往 Level 119（出口）；中文站是 Level 119 有门通往本层（入口）。",
+        "机场：英文站任何机场通 Level 212；中文站 Level 11 与 Level 9 之间的机场通 Level 36。",
+        "Level 34：中文站同时列为入口（门）和出口（下水道排放口）；英文站只有下水道格栅通 34 或 218 的出口。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-11",
+      "title": "Level 11 - \"The City That Never Sleeps\"",
+      "method": "random-on-conflict",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-11.json"
+    },
+    "12": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "生存难度：wikidot-en 与 wikidot-cn 都是 Class 0（子描述为空）；fandom 没有标注任何生存等级，改用区域危险字母 S/M/D。",
+        "整体结构：两个 wikidot 版本是一个白色小房间连着无限白色深渊；fandom 是 7 个区域串联的线性路线（白房间→世纪中叶住宅→500 米间距的房屋平原→路灯停车场驾车→柱林与房屋墙→楼梯迷宫→矩形房间与电梯）。",
+        "实体：两个 wikidot 版本没有实体（M.E.G. 无记录）；fandom 有敌对实体 Seers（眼睛与从电视、路灯中出现的手臂）。",
+        "物品：两个 wikidot 版本没有物品；fandom 有医疗包、菜刀和一辆可驾驶的白色轿车。",
+        "离开方式与出口：两个 wikidot 版本靠开门仪式（坐椅约 15 分钟、进仿制门、等恰好 1 小时）随机去 Level 1/4/10/19/23/25/34/287；fandom 靠电梯去 Level 13（上行防火门）或 Level 6.1、Level 11（下行键盘电梯），按错数字进 The Void。",
+        "入口：两个 wikidot 版本称可参照 Level 11 的窗户实体切入；fandom 的 Level 12 页面没写入口，Fandom Level 11 页面称是 Level 11 的狭窄区域。",
+        "起始房间：wikidot 开局就有桌子、椅子和一扇锁着的普通门，桌下有洞；fandom 起始房间一开始是空的，之后依次出现书桌、椅子、顶灯、金库门。",
+        "录制异常：wikidot 为白图/噪点，传到其他设备变无色 SMPTE 测试画面并屏蔽文件名；fandom 为电视雪花加静电嗡鸣，并附一段环境音频。",
+        "声音：wikidot 没写环境声音；fandom 有电视静电嗡鸣和听不清的男声，幸存者又称什么都听不到。",
+        "灯光：wikidot 只写明亮；fandom 有按序出现的顶灯、逐渐变暗、只有四臂路灯能用，以及昏暗的矩形房间。",
+        "精神影响：wikidot 为记忆模糊、离桌椅越远越糟、出层后恢复；fandom 为梦境般认知下降、感官剥夺致疯，另有照镜致盲。",
+        "重写作者：wikidot-en 为 Stretchsterz 与 Liryn；wikidot-cn 署名 Stretchsterz 重写、Azamo 编排（可能译自英文站较早的修订版）；fandom 为 AlwaysWandering。",
+        "日志人名：wikidot-en 为 Cmdr. Harris（指挥官）和成功开门的队员 Gab；wikidot-cn 为 Harris 中校和队员 Gav。",
+        "进入白色区域的开口：wikidot-en 写 nooks（凹角/壁龛），wikidot-cn 译为「角落」。",
+        "Level 11 入口细节：wikidot-en Level 11 页面说是长得像窗户实体的窗户、切入有危险；wikidot-cn Level 11 页面只说某些特定窗户会通往 Level 12。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-12",
+      "title": "Level 12 - \"矩阵\"",
+      "method": "random-on-conflict",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-12.json"
+    },
+    "13": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "设定根本不同：wikidot-en 与 wikidot-cn 是同一篇《The Boiling Frogs / 温水煮青蛙》（20 世纪公寓楼），fandom 是完全不同的《Vitrum Madness》（漂浮在雾天中的玻璃温室走廊）。",
+        "生存等级：wikidot-en/cn 为 2e 环境类（Unsafe/不安全、Secure/稳定、Non-Entity Hazards/非实体危害），fandom 为 Threat Index Class 1（Safe、Stable、Psychological Hazards）。",
+        "安全性标签相反：wikidot-en/cn 标「Unsafe/不安全」，fandom 标「Safe」。",
+        "实体：wikidot-en/cn 没有任何实体；fandom 有 Phyllodoce vitrum（约 500 只，75–1000），并推测有一个未记录的音乐源实体。",
+        "主要危险：wikidot-en/cn 是慢性倦怠加上住满十年后消失（除自杀和意外外死亡风险极低）；fandom 是食物和植物里的灰色毒液（几分钟内肺衰竭致死）以及 Vitrum Madness 幻觉。",
+        "天气与温度：wikidot-en/cn 是室内，没有天气温度描述；fandom 有每小时降雨、每周暴风雨、恒温 15–20°C 和无规律的昼夜循环。",
+        "灯光：wikidot-en 为「dimly lit」加图片 alt 里的稀疏荧光灯；wikidot-cn 正文完全没有光源描述（「dimly lit」被译成形容材质的「色泽昏暗」）；fandom 为 LED 灯（日记称多彩）加天光（入夜天空泛橙）。",
+        "材质：wikidot-en 为 plaster + laminated wood or linoleum；wikidot-cn 译为石膏、胶合板或油毯；fandom 为不可摧毁的玻璃墙、玻璃或木板隔断、凹凸的石质步道。",
+        "色彩：wikidot-en/cn 为暗淡的白色或米色，外加特殊的深黄墙和红门；fandom 为多彩的花卉温室外观、橙色夜空、灰色毒液。",
+        "声音：wikidot-en/cn 只有电视节目和邻居噪音；fandom 有来源不明的派对音乐、持续雨声、机房或老机器的嗡鸣。",
+        "人与社区：wikidot-en/cn 有大量常住居民和 B.N.T.G. 免费住宅计划（第 283 层，2019 年 7 月启动），附录中 M.E.G./B.N.T.G./C.B.S. 参与救援；fandom 称没有已知社区，前哨驻地不留任何痕迹。",
+        "同行人数：fandom 规定只能单人进入，多人同行时出口一律失效；wikidot-en/cn 没有这一限制，多人同住、组团采访。",
+        "切出（noclip）：wikidot-en/cn 可以切入深黄墙到 Level 289；fandom 称本层无法正常切出。",
+        "入口：wikidot-en/cn 来自 Level 12/21/62/151/210/215/683/979/2-FR；fandom 来自 Level 0/4/5/7/9/11/12/35/81/671；两边都有 Level 12，但方式不同（白色楼梯或无特征门 vs 周围外观变化）。",
+        "出口：wikidot-en/cn 通往 Level 0/70/114/157/208/235/275/280/289/327/387/395/410；fandom 已确认的只有 Level 14 和 Level 45，另有未证实的 Level 1/909/996/The Void/173（Level 0 在 wikidot 是出口，在 fandom 是入口）。",
+        "物品：wikidot-en/cn 是自动补货的微波餐、电视、旧书旧衣、会传送的棋盘；fandom 是致命的植物、食物和灰色毒液，有杏仁水气味的雨、LED 灯和花店道具。",
+        "时间线：fandom 首次遭遇为 1934-04-30（附带 1981 年、1997 年文档）；wikidot-en/cn 记录 2019 年 7 月启动计划、2020 年和 2022 年访谈、2022-06-28 附录。",
+        "wikidot-en 与 wikidot-cn 的 Level 215 酒店名不同：英文「Harbour Oyster Hotel」，中文译「港畔酒店」。",
+        "wikidot-en 与 wikidot-cn 的 Patrick Brunel 访谈参与者标注相反：英文页标 Maiden-Helen Trevithick 为受访者、Patrick 为采访者，中文页标 Maiden-Helen 为采访者、Patrick 为受访者（对话内容与中文标注一致）。",
+        "wikidot-en 与 wikidot-cn 的入口概述措辞不同：英文说入口「incredibly innocuous」（毫不起眼），中文译作「都极其安全」。",
+        "页面版本：wikidot-en 为 rev 26（2026-08-22 编辑，+49），wikidot-cn 为版本 23（2026-07-17 编辑，+83）；中文页注明英文站 2026-05-20 起换用新等级组件、中文站不跟进，两站的等级显示今后可能分化。",
+        "fandom 页面自身有矛盾：称有 11 个已确认入口却只列出 10 条；称本层无法正常切出，但待确认出口 Level 1 需要切过地板；称电子设备都不能运作，但又列出 LED 灯。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-13",
+      "title": "Level 13 - \"The Boiling Frogs\"",
+      "method": "random-on-conflict",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-13.json"
+    },
+    "14": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "标题/昵称：wikidot-en 为“Paradise”，wikidot-cn 为“天堂”（是 en 的译文），fandom 为“Inhospitality”，是完全不同的另一套层级设定。",
+        "生存难度：wikidot-en/cn 为 Class 5（组件显示自定义名“Paradise/天堂：美丽·宁静·完美”），fandom 为 Class 4（Unsafe / Unstable / Dangerous Entities and Hazards）。",
+        "环境类型：wikidot 两版都是夜间森林绿洲（猩红草、瀑布、星空、月光），fandom 是无限分段的废弃医院（阴暗走廊、各类病房、刑讯室）。",
+        "光照：wikidot 两版是星光和月光的永夜，没有人工光源；fandom 是阴暗的室内走廊，文字只提到一盏灯、手术灯和发光窗户。",
+        "声音：wikidot-en 写一片嘈杂(cacophony)、森林低语、孩子嚎叫、夜间歌声；wikidot-cn 把 cacophony 译成“尖啸”；fandom 是持续的远处脚步声和低语。",
+        "气味：wikidot 两版都没提；fandom 有浓重的消毒水味和腐烂味。",
+        "温度：wikidot 两版都没提；fandom 写 The Hunter 靠近时气温骤降。",
+        "主要威胁：wikidot 两版是模因/精神诱惑（夺走思考、诱人留下变成土里的尸骨）；fandom 是实体追杀加环境危害（器械暴走、地板塌陷、放射性污染房间、伪装窗户）。",
+        "实体：wikidot 两版只有无名的孩子们和歌声/集体“我们”；fandom 有 The Hunter（Patient Zero）、Infecting Agents 和伪装成窗户的实体（Entity 2）。",
+        "孩子们的队形：wikidot-en 为 line up in rows（好几排），wikidot-cn 为“排成一列”。",
+        "尸骨描写：wikidot-en 说客人们在冥想(meditate)、毫无痛苦；wikidot-cn 只说他们没有之前料想的痛苦，没有冥想姿态。",
+        "孩子们的要求：wikidot-en 为 surrender yourself（交出自己），wikidot-cn 为“听其号令”。",
+        "盛宴一句：wikidot-en 为你来时会办盛宴，因为想欢迎你；wikidot-cn 为有一场饕餮盛宴等着“我们”，没有欢迎你的意思。",
+        "树枝：wikidot-en 树枝向上伸，像要够星空；wikidot-cn 为枝叶伸展，仿佛要碰到你。",
+        "星空：wikidot-en 为 eternally starlit（永远星光满天，暗示永夜）；wikidot-cn 为“无垠闪耀的星空”，没有“永恒”的意思。",
+        "访谈中看到的人：wikidot-en 为 everyone I know and have ever known（所有认识和曾经认识的人）；wikidot-cn 为“所有我认识的或不认识的人”。",
+        "访谈中提到的传播媒介：wikidot-en 采访者说这种事不会发生在 database（数据库）；wikidot-cn 译成“基地”。",
+        "标签：wikidot-en 为 forested/horror/settlement/sd-class-5；wikidot-cn 为 开阔性/林地/模因/欺骗性/精神影响/述记影响/生存难度5（没有 settlement 对应标签）；fandom 分类为 Cluster I/Class 4/Dangerous Levels。",
+        "物品：wikidot 两版没有物品；fandom 有绷带、抗生素、止痛药、杂志、饮料瓶、试管、刀具剃刀、14号化合物、物资储备等。",
+        "据点：wikidot 两版只有孩子们的“社区”（加上做访谈的 M.E.G.）；fandom 为 T.14.R.G. 研究组（20 人，只有 4 人逃出，其余推定死亡）。",
+        "入口：wikidot 两版没有具体层级（只说继续前进；Theo 在脑中戳洞穿过去；起因是读了墙上文字）；fandom 为 Level 13 / 130 / 39 / 0.01，并固定落在接待室。",
+        "出口：wikidot 两版没有出口（你不用操心这个），Theo 拒绝透露离开方式；fandom 有 Level 777 / 130 / 15 / 16 / 268 五条出口。",
+        "规模：wikidot 两版没写规模（cn 有“开阔性”标签）；fandom 明确为无限分段。"
+      ],
+      "source": "fandom",
+      "url": "https://web.archive.org/web/2025/https://backrooms.fandom.com/wiki/Level_14",
+      "title": "Level 14: \"Inhospitality\"",
+      "method": "random-on-conflict",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-14.json"
+    },
+    "15": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "生存分级：wikidot-en 与 wikidot-cn 均为生存难度 0，fandom 为 Threat Index Class 1e - Environmental（Safe / Stable / Minimal Non-Entity Hazards）。",
+        "墙体材质：wikidot 两站为白色或灰色混凝土配白色钢构件，fandom 为铝合金、复合材料、不锈钢等白色轻质建材，地面为陶瓷偶有地毯或防滑涂层（其附录笔记又写成偏白棕褐色墙体配格栅地面）。",
+        "钢构件：wikidot-en 写白色钢梁，其上阿拉伯式花纹仅为装饰；wikidot-cn 写白色钢管，蔓藤花纹符号含义不明。",
+        "尸体与血迹：wikidot 两站遍布身穿实验服、有干涸血迹的人类尸体和猎犬尸体堆，fandom 称层级完全没有生命，未提及任何尸体或血迹。",
+        "死因与枪伤：wikidot-en 称死者使用多种武器互相激烈打斗、部分尸体有枪伤，wikidot-cn 称死者与未知东西战斗、大部分尸体有枪伤。",
+        "资源：wikidot-en 储藏室有食物、水或多种设备，wikidot-cn 只写包含很多食物的储藏室，fandom 称层级缺乏资源、没有食物和水。",
+        "通讯：wikidot 两站的电脑能连接 I.L.N. 与外界通讯，fandom 称电子通讯设备失效、无 Wi-Fi、无法与任何人互动。",
+        "隔离机制：fandom 有类似 Level 0 的隔离效应（两名流浪者无法相遇），wikidot 两站没有这一规则，且提到有死者建立的营地遗迹。",
+        "据点：wikidot 两站有 Enric 设在控制室的营地（约两年），fandom 称因隔离效应无法建立任何前哨，完全没有 Enric。",
+        "外部团体：wikidot-en 只说 Enric 联系各团体，wikidot-cn 明确写联系 M.E.G.，Cygnus Order 只出现在 wikidot 两站；fandom 中 M.E.G. 是在 1990 年代破解通风区块编码的主角。",
+        "入口：wikidot 两站只有一次性的 Level 10 墙壁事件（记录史上仅一次），fandom 列出五个入口（Level 3 门把手电击、Level 3 开大量门、Level 14 未来风门、Level 24 切出理论、Level 10 罕见白墙）。",
+        "Level 10 墙壁是否重复出现：wikidot 两站称只发生过一次，fandom 称罕见但可作为常规入口。",
+        "入口门行为：wikidot 两站称门在两天后自行关闭、墙消失，fandom 附录笔记称门在叙述者进入后立刻消失在身后的墙里。",
+        "出口：wikidot 两站只有一个未验证、不建议探索的太空虚空门框，fandom 列出九个出口（Level 3、16、80、58/6、14、4、11、0.8、69）。",
+        "门框出口距离：wikidot-en 为距主营地两小时路程，wikidot-cn 为距基地差不多两公里。",
+        "门框出口风险：wikidot-en 提到加固门防止失压、门框可能造成辐射，wikidot-cn 两者都没提，只说 Enric 被要求离开该区域。",
+        "门框与雷达的对应：wikidot-en 称对应中心形状到右侧小圆的绿线，wikidot-cn 只说有一条绿线与该房间相连。",
+        "终端画面：wikidot 两站的终端显示同步雷达扫描图（形状、绿线、橙色轨迹），fandom 的显示屏播放其他层级与实体的影像，控制面板提示需 Level 5 权限改变现实。",
+        "照明：wikidot 两站为墙面、天花板、地面的大灯发出诡异光芒并有无光漆黑区，fandom 为强烈 LED 灯组，会随耗电冒火花、闪烁、短路直至全面停电。",
+        "声音：wikidot 两站为机房内机器的引擎声，fandom 为持续嗡嗡声、远处哔哔声、墙后来源不明的原始引擎声以及停电时的心跳滴答声。",
+        "机器：wikidot 两站的机器有的在工作（如生产钢棒）、有的已爆炸损坏，fandom 的机器内部中空、没有电源、非异常。",
+        "fandom 独有的生理与环境规则：自我清洁、非欧几何、暂时性心动过缓、停电区 CO2 升高、AQHI 1.00、恒温；wikidot 两站均无这些内容。",
+        "温度：wikidot 两站未提及，fandom 正文称各走廊恒温，附录笔记描述寒冷空气。",
+        "房间类型：wikidot 两站为引擎室、实验室、宿舍、厨房、控制室、储藏室，fandom 为 The Facility、讲堂、灰色储藏间、类似商场的宽敞区域和经 L 形走廊进入的侧室。",
+        "作者与版本：wikidot-en 署名 Anonymous User 重写，wikidot-cn 译自署名 Ross Dear 的重写（原作者相同：u/Hugorrr、u/incomplete-sentanc、KingSheep17），fandom 为 KingSheep17 原作、SkyCityXD3 与 Usasop2134、WindXD 相继重写的完全不同的版本。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-15",
+      "title": "Level 15 - \"未来走廊\"",
+      "method": "random-on-conflict",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-15.json"
+    },
+    "16": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn"
+      ],
+      "conflicts": [
+        "层级主题完全不同：wikidot-en/wikidot-cn 是会整体转换地形的户外自然层（雨林 ↔ 冰原，“Altered Topography / 地形转变”），fandom 是无限重复的废弃精神病院（“J. Barry Mental Asylum”）。",
+        "生存等级：wikidot-en/cn 是 File 1 = 0、File 2 = unknown；fandom 的等级没有拿到（unverified）。",
+        "实体：wikidot-en/cn 只有友好的 Light Guides / 微光向导（只在冰原形态、大量出现）；fandom 是敌对的 Wretches、态度不定的 Facelings 和 Windows（另有未证实的 Insanities）。",
+        "入口：wikidot-en/cn 是在 Level 75 触碰类铜液态金属或橙色镓斑块；fandom 是在 Level 15 穿过医院门（另有未证实的“在 Level 14 走太远”）。",
+        "出口：wikidot-en/cn 只通往 Level 46（爬覆沙的树或站上覆沙的冰层）；fandom 通往 Level 0.7、3、4、14、17（另有未证实的 Level -16）。",
+        "基地：wikidot-en/cn 没有任何基地，也没出现 M.E.G.；fandom 有约 30 人的 M.E.G. 前哨 Asylum Archivers，中心区还有多处定居点。",
+        "物品：wikidot-en/cn 只提到层级密钥（Level Key）；fandom 的储物柜里有杏仁水、食物、医疗用品，递归区有医院设备。",
+        "灯光：wikidot-en/cn 是自然光（永远黎明或约 13 小时昼夜循环，冰面发光）；fandom 室内阴暗、靠窗外日光和出口指示牌照明，局部是蓝绿色灯光，室外永远是白天。",
+        "温度：wikidot-en/cn 是恒定 21°C（雨林）或 6–10°C（冰原）；fandom 没有给温度。",
+        "特殊机制：wikidot-en/cn 是地形整体转换、低重力（只在雨林形态）、光球预警和密钥转向；fandom 是空间自我重复、按距离分区和精神危害。",
+        "声音：wikidot-en/cn 没提任何声音；fandom 有半掩门后传出的 Wretches 怪声。",
+        "wikidot-en 与 wikidot-cn（后者是前者的译本）内容一致，只有细节差异：中文层级页用“层级密钥”，中文 Object 2 页叫“层级钥匙”；雨林形态的基地说法，英文是“理论上可行但有健康隐患”，中文摘要有一次偏向“不建议常驻”（原文措辞 unverified）。",
+        "fandom 内部的搜索摘要互相矛盾（2003-03-31 被发现 vs 2003-05-12 切入 vs 1988-09-16 失踪；主要实体是 Wretches + Facelings vs Facelings + Insanities），可能混入了旧版本或其他 Fandom 分站。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-16",
+      "title": "Level 16 - \"地形转变\"",
+      "method": "random-on-conflict",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-16.json"
+    },
+    "17": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "船的类型：wikidot-en 与 wikidot-cn 是埃塞克斯级海军航空母舰内部；fandom 是巨型货运船（cargo carrier / cargo ship），没有航母设定。",
+        "规模：wikidot-en/cn 是无限迷宫；fandom 是占地数十万平方米、有明确上下分区的有限船体。",
+        "名称：wikidot-en 为 The Carrier，wikidot-cn 为 航空母舰，fandom 为 Abandoned Carrier。",
+        "页面状态：wikidot-en 正式页 /level-17 已 404，内容只保留在 trimmed:level-17（标注 in-rewrite）；wikidot-cn 仍是正式页（标签 原文重写中）；fandom 是 Skyvory 的重写版（原作者 Smbfanexe）。",
+        "印记加剧条件：wikidot-en 为与其对视眼睛；wikidot-cn 为持续注视 1 小时；fandom 为直视双眼即昏迷，看太久则变成 Wretch。",
+        "印记后果：wikidot-en/cn 为昏迷 3-4 小时、极端时脑死亡；fandom 没有昏迷时长也没有脑死亡，改为 Wretch 化后凭空消失（推测传送到随机层级）。",
+        "印记行为：只有 fandom 写了鬼魂外形、复刻过往流浪者移动、不模仿说话、无法交互、24-72 小时后在进入点重现；wikidot-en/cn 只说是分身。",
+        "实体种类数：wikidot-en/cn 只有 1 种（印记）；fandom 有 2 种（印记 + Innocuous Windows）。",
+        "上层光的效果：wikidot-en/cn 为肺部逐渐充水；fandom 为像溺水一样窒息，并讨论发光门窗是 Windows 变种还是光本身为实体。",
+        "入口：wikidot-en/cn 只有 Level 7 水下光源 → 潜艇压载舱式房间；fandom 为 Level 16 走廊渐变（主入口）、各层远处的破旧货船、Level 41 岸边打捞船、Level 54 二楼的门，完全没有 Level 7 光源。",
+        "出口数量：wikidot-en 三个（Level 11 红色金属门、被淹走廊 → Level 7、罕见稳定出口 → Level 18）；wikidot-cn 两个（没有 Level 18）；fandom 七个列表出口，另在描述段有船体舱门 → Level 7。",
+        "Level 11 出口：wikidot-en/cn 有上层红色金属门通往 Level 11；fandom 完全没有 Level 11 出口。",
+        "Level 18 出口：wikidot-en 未说明方式、称罕见；wikidot-cn 不作为出口；fandom 为在本层睡觉即可，且是主出口。",
+        "被淹走廊：wikidot-en 为单向出口，通往 Level 7 地表房间；wikidot-cn 只说连接 Level 7；fandom 须在其中停留或行走足够久才会被传送。",
+        "环境细节：只有 fandom 给出金属走廊、蓝地板、白墙、管道、荧光灯、天花板电线、水声、摇晃、层级缓慢移动；wikidot-en/cn 未描述材质、颜色、照明或声音。",
+        "区域：fandom 有自清洁舱室、豪华补给舱室、导航舰桥、货舱集装箱、船体舱门、轮机舱；wikidot-en/cn 只有下层、上层、被淹走廊、红色金属门。",
+        "物品：wikidot-en/cn 未提任何物品；fandom 有杏仁水、Moth Jelly、集装箱随机物资、舰桥设备等。",
+        "翻译差异：wikidot-cn 把入口房间的 ballast（压载舱）译作 镇流器，与 wikidot-en 原意不同。"
+      ],
+      "source": "fandom",
+      "url": "https://web.archive.org/web/20251231001018/https://backrooms.fandom.com/wiki/Level_17",
+      "title": "Level 17: “Abandoned Carrier\"",
+      "method": "random-on-conflict",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-17.json"
+    },
+    "18": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "昵称：wikidot-en 为 \"Memories\"，wikidot-cn 为 \"回忆\"，fandom 为 \"Nostalgic Memories\"。",
+        "生存分级：wikidot-en/cn 为生存难度 1，没有描述词；fandom 为 Class Ψ（Safe / Unstable / Moderate Mental Hazards），并归入 Dangerous 分类。",
+        "记忆年龄段：wikidot-en/cn 为 2-5 岁的幼年期；fandom 为 \"early adolescence\"（青春期早期）。",
+        "空间结构：wikidot-en/cn 是单个记忆场景（学前班/日托所/卧室/教室/游乐场）；fandom 是多个记忆片段悬浮在低重力黑色虚空中、靠跳跃来回移动，还包括住宅、公园、汽车，可在室内也可在室外。",
+        "没有合适记忆时：wikidot-en/cn 为空的虚空且无影响；fandom 称对过去没有美好回忆的人可能感到与自己脱节。",
+        "声音：wikidot-en/cn 的核心特征是念出遗憾/错误的低语声；fandom 没有低语，只有偏执效应里传闻的幻听/幻视，页面另外内嵌 Daisy Bell 歌曲和环境音音频。",
+        "危险程度：wikidot-en/cn 称没有威胁、提供全部生存物资、永久留下也无害；fandom 有孤独绝望、十分钟剧痛坠落、无法睡眠，偏执效应让世界变黑、记忆变成创伤，还必须不停喝杏仁水。",
+        "实体：wikidot-en/cn 只有一只罕见的友好实体 The Plush Dino（Entity 198）；fandom 是常见的未命名实体，会跟着流浪者走但不伤人，没有 Plush Dino。",
+        "物品：wikidot-en/cn 是 The Plush Dino 带来的食物和水；fandom 是漂浮在虚空里的杏仁水、提灯/光源，以及唯一能带出本层的照片。",
+        "据点：wikidot-en/cn 为 The Children（20-25 人，不喜欢 Plush Dino）；fandom 为 The Lost Crew（约 28 人，愿意带路）和 Upset Teenagers，同时又声称无法建立聚落。",
+        "入口：wikidot-en/cn 为没有固定入口（记忆涌现时进入）加上罕见的 Level 17 入口；fandom 为在 Level 17 睡觉（睡觉是唯一的进入方式）或在 Level 897 温室亮黄灯时进入。",
+        "出口：wikidot-en/cn 为转身到 Level 19，或跟随 The Plush Dino 去任意层级；fandom 为进入黑暗走廊到 Level 19、掉进虚空在入睡处醒来，另有通往 Level !/492、956、56、Fun、82、The Room、142 的出口。",
+        "光照与时间：fandom 有旅行 1-2 天后变黑、需要提灯的阶段，并且无法睡眠、时间与外界无关；wikidot-en/cn 都没有这些描述。",
+        "过敏：wikidot-en 称过敏被未知方式抑制；wikidot-cn 译文丢掉了\"过敏\"，对应句变成被唤醒的记忆效应可以通过未知方法抑制。",
+        "Plush Dino 能否被伤害：wikidot-en 说不知道能否伤害到这只玩偶（\"harm is possible to the plush\"）；wikidot-cn 译为不知道它是否可能伤害人。",
+        "陪伴：wikidot-en 说层级本身据称\"享受\"（\"enjoy\"）有人陪伴；wikidot-cn 译为人们都知道\"享受\"这些陪伴。",
+        "页面状态与署名：wikidot-en 有\"过时\"通知，二次重写署名 yoyoflux；wikidot-cn 只有待重写标签，二次重写署名 YellowISlol，译者 Dr Wingdings。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-18",
+      "title": "Level 18 - “回忆”",
+      "method": "random-on-conflict",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-18.json"
+    },
+    "19": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "核心设定完全不同：wikidot-en/cn 是形状随机的阁楼（Attic Floorboards / 阁楼），fandom 是 90 年代郊区酒店式的走廊迷宫（The Abyss Inn）。",
+        "昵称不同：wikidot-en 为 Attic Floorboards（阁楼地板），wikidot-cn 译为“阁楼”，fandom 为 Abyss Inn。",
+        "等级不同：wikidot-en/cn 为生存难度 2 且无子标签；fandom 为 Threat Index Class 1，标 Safe、Unstable、Devoid of Entities，归入 Class 1e 环境类。",
+        "光照不同：wikidot 是来源不明的极微弱光加部分地板下的橙色暖光；fandom 是高电阻、低电流导致昏暗的电灯泡，部分区域全黑，没有橙光。",
+        "危险机制不同：wikidot 有物品约 1/100 迅速腐朽、恶心偏执幻觉昏厥、Orange Glow 改写记忆并感染心智；fandom 没有这些，只有空间循环迷路、充电无效和通讯干扰。",
+        "物品不同：wikidot 箱子里有食物、异常物品和可传送的掌机/小型街机；fandom 明确说没有任何生存物资。",
+        "破损门出口的第一个目标层级不同：wikidot-en 为 Level 289，wikidot-cn 为 Level -2（其余 5/12/20 相同）。",
+        "入口不同：wikidot 为 Level 1 的洞（Base Alpha 旁 1 个 + 另外 15 个）、Level 18 刚到时转身离开、Level 183 下水道旧井口；fandom 为 Level 18/20 的黑暗走廊、Level 25 异常街机柜、Level 28 踩穿地板、Level 27/30/37 的长走廊。",
+        "出口不同：wikidot 通往 38/202/432/654（掉进不发光地板）、289或-2/5/12/20（破门）、40/212（掌机）、140（边界）；fandom 通往 20（久留或长走廊）、21（墙裂口）、332（开门罕见）、366（STAFF ONLY 门）。",
+        "通往 Level 20 的方式不同：wikidot 是穿过破损的门，fandom 是久留或走门少、交叉口少的长走廊。",
+        "实体方面：wikidot 没有编号实体，但有是否有知觉不明、会主动吸引和感染心智的 Orange Glow；fandom 明确 Devoid of Entities。",
+        "页面叙事不同：wikidot-en/cn 是 12 版 M.E.O.D. 修订档案，讲 Jacob Gareths 被橙光感染的过程；fandom 附的是 S.R. Cunningham 的酒店走廊日记。",
+        "wikidot-cn 修订 1 把英文“还剩入口和出口没写”误译成“我刚才找到了出口，准备离开这里”。",
+        "wikidot-cn 正式条目把 cataloged, anomalous objects 译成“已有记录的物品”（丢了“异常”），把 blacking out 译成“昏迷”。",
+        "Level 1 入口位置表述不同：wikidot-en 是 Base Alpha 北出口外，wikidot-cn 是 Alpha 基地北边不远处。",
+        "署名不同：wikidot-en 为 Boring Talking，先由 1000Dumplings 重写，最初作者 u/BendyBoi3393；wikidot-cn 写原作者为 1000Dumplings，没提 u/BendyBoi3393；fandom 为 WindXD 重写，原作者 The Great and Almighty Schicksalhaft。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-19",
+      "title": "Level 19 - “阁楼”",
+      "method": "random-on-conflict",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-19.json"
+    },
+    "2": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "别称：wikidot-en 为「Abandoned Utility Halls」，wikidot-cn 为其译名「废弃公共带」，fandom 为「Pipe Dreams」。",
+        "生存等级：wikidot-en / wikidot-cn 为 3 级（无描述词）；fandom 为 Threat Index Class 2（Unsafe / Stable / Low Entity Count）。",
+        "门：wikidot 两站墙上遍布各色门（默认白/灰/奶油色钢门），大量出口靠特定门；fandom 称层级内找不到任何门，出口在爬行空间。",
+        "实体密度：wikidot 两站实体种类多且常见（笑魇几乎成为主要实体、肢团最常见之一）；fandom 为 Low Entity Count，远离入口的区域没有实体报告。",
+        "温度：wikidot 两站只说部分区域异常炎热（会切到 Level 127），没有数值；fandom 蒸汽管区 60–100 °C、通风口区较冷、湿度极端、某些月份下雪、地面结冰。",
+        "灯光：wikidot 两站为嗡嗡作响的工业白/橙色串联荧光灯，一断一片（3x3–6x6），大停电后有紫色应急灯；fandom 没有灯具描述，只提黑暗区域和霓虹灯。",
+        "几何：wikidot 两站转角严格 45°、走廊长度≈5 m 倍数、空间稳定可测绘；fandom 空间不实时移动，但走廊上下起伏、越远越复杂，常见幻觉性布局变化（Clockwork Theory）。",
+        "地质：fandom 有频繁地震和结构坍塌；wikidot 两站没有。",
+        "管道内容：wikidot 两站油桶/管道装的是各种异常液体（杏仁水、腰果水、记忆汁液等），停电后管道积存发出腐肉味；fandom 水管液体被锈和病原体污染，是后室多数疫情的源头。",
+        "核心历史事件：wikidot 两站为 B.N.T.G. 电池短路引发的两年大停电（及 Macchina、Aiding Stragglers 等团体史）；fandom 没有这些，只有1762年日记。",
+        "聚落：wikidot 两站有 B.N.T.G. 的 Office Space EL3A、铁路和多个历史团体；fandom 称没有主要基地，只有小团体用炸药开凿的临时掩体，且从未确认遇到其他团队。",
+        "实体名单：wikidot 两站有死亡飞蛾、杰瑞、无面灵、悲尸、Nguithr'xurhs、尸鼠、人制品售货机、牧蛇、Photoshop、啼物、欺诈鸟（及已灭绝的机巧子民）；fandom 独有 The Biological Pipeline。",
+        "Windows：wikidot 两站写窗户在走廊尽头、不可靠近、停电时被当路标；fandom 写窗后是层级里的掏空区域而非虚空，影子更有实体感，手臂触及更远。",
+        "Skin-Stealers：wikidot 两站写大停电后已完全离开 Level 2；fandom 仍列为本层现存实体。",
+        "与现实的关系：fandom 称 Level 2 是从正常现实切出能到达的最远层级；wikidot 两站只说许多人直接从前厅切入 Level 2。",
+        "入口：三版只有 Level 1、Level 8（通风口）和 Level 11 重合，而 Level 11 的方式不同（wikidot 为缺内部的建筑门，fandom 为掀开下水道井盖）；其余入口互不重合（wikidot：52/287/2.2/43/84/127/141/158/173/309/480/522/997；fandom：17/41/111/138/139/154/264/维护区）。",
+        "出口：wikidot 两站以颜色/材质区分的门为主（1/3/4、31、127、137、70、283、101、126、141、175、811、998、997、The Hub、606、38、64、158、902、189）；fandom 为消防出口→1/3/477、金色 Φ 门→Level Phi、特定走廊→4/27、下水道隧道→34、霓虹灯→699。",
+        "wikidot-en（第92版，2026-08-01）有 Level 916 的入口和出口；wikidot-cn（第59版，2026-01-05）两者都没有。",
+        "wikidot-cn 入口条目标题为 Level 52 / Level 287，正文却写「Level -4.1」/「Level -1」（旧编号残留）；wikidot-en 正文与标题一致。",
+        "牧蛇出现频率：wikidot-en 原句「a less than uncommon sight」语义含糊；wikidot-cn 译为「较为罕见」。",
+        "Nguithr'xurhs：wikidot-en 称饥饿或胆大时捕食人类「not uncommon」，且本层只有「体型较小」的个体；wikidot-cn 译为「也不常尝试」，并写「仅有少量个体」（大小变成了数量）。",
+        "走廊宽度：wikidot-en 称有时只容体型较大者双肩勉强通过；wikidot-cn 误译为「挤进并肩而立的大型建筑之中」，丢失宽度参照。",
+        "灯光类比：wikidot-en 为 Level 0–4 之间的荧光灯；wikidot-cn 写「0层与Level 44层间」（疑为笔误）。",
+        "协济迷失者覆灭时间：wikidot-en 为2013年；wikidot-cn 译为「在M.E.G.存在的首年间」，没有写年份。",
+        "人制品售货机位置：wikidot-en 为死胡同走廊尽头或无机械墙面；wikidot-cn 为「无法通行的管道末端」或无机械墙面。",
+        "补给箱内容：wikidot-en 为「livable materials」（生活物资）；wikidot-cn 为「可加工材料」。",
+        "Growlers 频率：wikidot-en 为 semi-common；wikidot-cn 为「常见」。"
+      ],
+      "source": "fandom",
+      "url": "https://web.archive.org/web/20251117020519/https://backrooms.fandom.com/wiki/Level_2",
+      "title": "Level 2: \"Pipe Dreams\"",
+      "method": "random-on-conflict",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-2.json"
+    },
+    "3": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "生存等级：wikidot-en 与 wikidot-cn 都是 Class 4；fandom 是 Threat Index Class 2（Unsafe / Unstable / Low Entity Count）。",
+        "别名：wikidot-en 为 Electrical Station；wikidot-cn 为“发电站”；fandom 为 The Electrical Station。",
+        "墙/地/天花板：wikidot-en 为颜色不一的砖墙 + 积灰混凝土地面 + 天花板昏暗荧光灯；wikidot-cn 为积灰棕色砖 + 灰色瓷砖地板 + 全金属天花板；fandom 不写墙地材质，强调成组的变压器、导体电路、工业风扇和四处连线。",
+        "温度：wikidot-en 约 66–93°F（18–33°C）且空气闷；wikidot-cn 平均 66–93°F，但会突然升高，最高记录 135°F（57°C），部分区域潮湿厚重；fandom 上层 90–115°F（32.2–46.1°C），下层隧道骤降到零度以下。",
+        "管道内容物：wikidot-en 为滚烫的黑色淤泥神经毒素（接触二度烧伤、吸入致脑损伤、非地球物质）；wikidot-cn 为黑色粘稠剧毒液体（烟雾损害神经、2–3 度烧伤、成分不明）；fandom 多为沸水（含产孢细菌不可饮用），少数为空或装其他物质。",
+        "栅栏：wikidot-en 为不可摧毁的金属栅栏，封锁层级绝大部分，少数栅门可撬锁；wikidot-cn 为 2012 年发现的锈蚀监狱栅栏，无法拆除或打开，封锁部分区域；fandom 没有栅栏。",
+        "布局与规模：wikidot-en 布局固定但尺寸极不一致（14 英寸宽窄道到数英里宽开阔区），大小未知；wikidot-cn 为类 Level 0 的曲折走廊，估计面积约 3.5 亿平方英里；fandom 布局在无人观察时会变化、离入口越远越复杂，并有下层镜像圆形隧道网。",
+        "实体密度：wikidot-en 为超智能敌对实体组成旅团，近乎每天攻击基地（high）；wikidot-cn 为大量危险实体，长距离穿行几乎必遇（high）；fandom 为尚无确认实体、只有目击，标 Low Entity Count（low）。",
+        "实体名单：wikidot-en 为 8 种（猎犬、无面灵、悲尸、死亡飞蛾、窃皮者、笑魇、肢团、尸鼠），外加 Entity 71 事件；wikidot-cn 为 11 种（多出钝人、爆酸者、爬菌、疫疾，没有尸鼠）；fandom 只有死亡飞蛾和悲尸的未确认目击。",
+        "实体智力：只有 wikidot-en 有“超智能实体”设定（无面灵会武术和造工具、尸鼠读写英语、窃皮者会 A2 英语等），并称圣所天使雕像能吓退所有实体；wikidot-cn 和 fandom 都没有这些设定。",
+        "死亡飞蛾：wikidot-en 为雌雄都攻击人、免疫驱虫剂、Praetorian 占 40% 以上、传闻 3 只女王；wikidot-cn 只写雄性和雌性都栖息于此；fandom 只写在暗走廊尽头有未确认目击。",
+        "悲尸：wikidot-en 为在本层非常罕见、身体不融化、能跑能用武器；wikidot-cn 为与其他实体一起栖息捕猎；fandom 为下层隧道中的未确认目击，推测本层是悲惨循环高发地。",
+        "Wi-Fi：wikidot-en 称 Base Gamma 拥有全后室最强 Wi-Fi；wikidot-cn 称整个 Level 3 是 Wi-Fi 最强的层级，稳定在 3–4 格；fandom 未提。",
+        "Gamma 基地：wikidot-en 为 2014 年建立、数千永久居民、三大分区 + 地下隧道、4 次突破事件；wikidot-cn 为约 300 名特工 + 避难住客，用临时砖块和弹弓，后室武装最强基地；fandom 为没有任何成功据点（高失踪率）。",
+        "其他基地：wikidot-en 为 Storage Unit、Blue Salvation、Scylla Colony（称仅四个团体成功建立基地）；wikidot-cn 另有未确认的蒙面女郎基地，且称 U.E.C. 锡拉基地目的是采集资源（wikidot-en 称 U.E.C. 对物资兴趣不大，专做实体实验）；fandom 没有基地。",
+        "B.N.T.G. 基地：wikidot-en 称 Storage Unit 有约 150 名员工、当铺和博物馆，与 M.E.G. 紧密合作；wikidot-cn 称存储设施约 150 名成员、开放贸易但价格离谱、访客停留不到一小时。",
+        "入口：wikidot-en 为 Level 2 的门、Level 4/5 非 Entity 81 电梯、Level 11 砖内饰建筑；wikidot-cn 为 Level 2 未上锁的门、Level 4/5 电梯、Level 10 地堡、Level 11 电力站外观建筑、Level 13 锈管、地铁；fandom 为 Level 2 长走廊、Level 5/19 挂小标牌的门口、Level 23 机械旁切出、Level 92 通道、子层级，且现实世界无法直接进入。",
+        "出口：wikidot-en 为电梯随机去 4 或 5、Base Gamma 的门回 Level 11、进入汽车去 Level 69；wikidot-cn 为电梯去 4/5、木门去 Level 31、坐电力房汽车前座昏迷后在 Level 69 醒来；fandom 为电梯多数去 Level 4、少数去 Level 5，暗通道去 Level 6，梯子加井盖到 Level 11 街道，隧道去子层级。",
+        "去 Level 69 的方式：wikidot-en 为偶尔出现的有汽车的房间，进入汽车；wikidot-cn 为电力房中的汽车，坐前座会失去知觉；fandom 没有这个出口。",
+        "去 Level 11 的方式：wikidot-en 为 Base Gamma 内的门（入口方向为 Level 11 砖内饰建筑）；wikidot-cn 只把 Level 11 作为入口（电力站外观建筑）；fandom 为梯子通到 Level 11 街道井盖（出口）。",
+        "特殊区域：wikidot-en 有发电机房、装配线、锅炉房、圣所；wikidot-cn 只有电力房（含锅炉电力房）；fandom 有电气室和下层公用隧道。",
+        "独有异常：wikidot-en 有紫化、恐惧热点幻听、神秘艺术品与日记、天使神像安全区、无人机越栏失联；wikidot-cn 有栅栏密集区恐惧与人形幻影、机械自燃爆炸且电源关不掉、爬菌生长和疫疾传播；fandom 有移动几何、分组失踪、无源恒定电力、零下不结冰的隧道水。",
+        "资源：wikidot-en 称所有“多实例”物品都大量出现、装配线生产、占 M.E.G. 资源约 70%；wikidot-cn 列出杏仁水、糖果、苦痛汁液、火盐、皇家口粮、滋水枪、瓶装闪电和刀、打火机等；fandom 未提任何资源，只说管道水不可饮用。",
+        "灯光：wikidot-en 为天花板昏暗荧光灯，极暗区域只有单个小灯泡，机械故障致闪烁；wikidot-cn 为走廊黑暗，电力房只靠发电机光，偶见不寻常的荧光灯；fandom 为荧光灯分布不均，局部停电几分钟到数小时。",
+        "声音：wikidot-en 有弱化的 Level 0 嗡嗡声、电流声、液体声以及热点幻听；wikidot-cn 为机器轰鸣和液体流动声；fandom 未写声音。",
+        "发现与可达性：wikidot-en 称 2008 年由 Team Overseer 发现，是 M.E.G. 发现的第 4 个层级；wikidot-cn 称 Level 3 是后室第 4 层、流浪者通常最早遇到的层级之一，2012 年拍到栅栏；fandom 称无法从现实世界直接进入，未提发现时间。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-3",
+      "title": "Level 3 - “发电站”",
+      "method": "random-on-conflict",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-3.json"
+    },
+    "4": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "生存难度：wikidot-en 与 wikidot-cn 均为 Class 1；fandom 抓取文本中未见等级标识，只称没有固有危险、是安全避风港。",
+        "实体：两个 wikidot 站称只观测到 Hounds 与 Dullers，另有一例未证实的 Smiler 目击；fandom 称完全没有敌对生命，只有人类、植物和微生物。",
+        "窗户：两个 wikidot 站称大多数窗户被涂黑，未涂黑的窗户是陷阱（链接 Entity 2）；fandom 的窗户是能看见室外暴雨和浓雾假天空的普通玻璃窗，未称其为陷阱。",
+        "家具：两个 wikidot 站称几乎完全没有家具；fandom 称开阔区无家具（地毯有压痕），但小房间群里有办公桌和台式电脑，还有隔间。",
+        "环境细节：两个 wikidot 站完全没写灯光、声音、温度、天气和面积；fandom 给出失灵的荧光灯、雨声与管道声、12–18°C、室外持续暴雨与浓雾、约 120,000 km²。",
+        "补给来源：两个 wikidot 站为饮水机、自动售货机和杏仁水喷泉；fandom 只有自动售货机，并额外提供 Greek Fire 等物品。",
+        "据点：两个 wikidot 站为 M.E.G. Base Omega（M.E.G. 第二主基地）、Amor Incrementum（约 10 人的敌对教团）、T.B.D.（6 人）；fandom 为 M.E.G. Base Opportunity（估计数万人）、B.A.S.、S.R.C.（约 433 人），没有 Amor Incrementum 与 T.B.D.。",
+        "入口来源：两个 wikidot 站为 The Hub、Level 3、Level 2、Level 283；fandom 为 Level 3、30、54、16、34、37、47，没有 The Hub、Level 2、Level 283。",
+        "从 Level 3 进入的方式：两个 wikidot 站是乘电梯；fandom 是穿过标有 office sector 的金属门。",
+        "通往 Level 5/6 的方式：两个 wikidot 站为办公室风格楼梯（英文站另有电梯）；fandom 中 Level 5 走播放古典音乐的门，Level 6 走活板门和天花板检修口，而楼梯只会回到同一层。",
+        "其他出口：两个 wikidot 站有通回 Level 3 的电梯和通往 Level 71 的地下室楼梯；fandom 为 The Void、Level 197、156、14、332、Level 4.3 等，没有 Level 3 和 Level 71。",
+        "出口规则：两个 wikidot 站称出口失去视线后可能消失；fandom 没有这条规则，而是称大多数非常规出口通往 The Void。",
+        "电梯去向（英文站与中文站翻译差异）：英文站说出口有楼梯和偶尔的电梯，部分电梯甚至通回 Level 3；中文站写成大多为楼梯，有时以通向 Level 3 的电梯出现（电梯只写了去 Level 3）。",
+        "T.B.D. 交易方向（英文站与中文站翻译差异）：英文站说他们只接受奇怪、没功能的物件作为交易品；中文站说他们只售卖没有实际用途的奇特物品。",
+        "Level 283 入口（英文站与中文站翻译差异）：英文站为坠入 The Pit；中文站为掉入海洋球池。",
+        "窗户陷阱的警告强度（英文站与中文站翻译差异）：英文站要求不惜一切代价避开；中文站只说应该尽量避开。",
+        "原作者署名：英文站为 u/M654zy；中文站为 u/M654z。",
+        "英文站称此层是会面与找补给的最佳地点，并建议先囤积杏仁水；按抓取结果，中文站描述段未见这两句（unverified）。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-4",
+      "title": "Level 4 - \"废弃办公室\"",
+      "method": "random-on-conflict",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-4.json"
+    },
+    "5": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "生存等级：wikidot-en 和 wikidot-cn 是 Class 2，fandom 是 Class 5（Unsafe / Unsecure / Unconfirmed Entity Sightings）。",
+        "区域结构：wikidot 是三个固定主区域（主厅、贝弗莉室、锅炉房）加传闻中的大堂房间；fandom 是完整豪华酒店（休息厅、舞厅、客房、餐厅、健身房、泳池）加维修大厅，没有主厅、贝弗莉室、大堂房间。",
+        "实体存在：wikidot 列出 11 种已知实体，并说本层是死亡飞蛾的中心巢穴之一；fandom 说所有实体都是未证实传闻，知名探险家从没报告过实体。",
+        "实体名单：fandom 独有 Wretches 和 Predatory Windows；wikidot 独有 Woodlins、Watchers、Nguithr'xurh、Growlers、Deathrats、Entity 89、Wrangler、Samantha；三个来源共有的只有 Hounds、Skin-Stealers、Deathmoths。",
+        "实体行为：fandom 统称传闻实体胆小、躲藏、除非被激怒否则被动；wikidot 暗示（中文站明说）雌性死亡飞蛾危险，其余实体没写行为。",
+        "Entity 130 命名：英文站链接文字是 Growlers，中文站同一链接译作“啼物”；Entity 75 英文站为 Wrangler，中文站译作“牧蛇”。",
+        "入口数量：wikidot-en 有 10 个入口，含 Level 25 的街机；wikidot-cn 只有 9 个，没有 Level 25；fandom 只有 Level 4 的华丽古典音乐门和随机切入。",
+        "出口：wikidot 有 11 个出口（Level 3、4、6、9、40、63、78、84、98、171、427）；fandom 有 7 条（Level 6、子层级、13、188、330.5、666、909），两边只共有 Level 6。",
+        "去 Level 6 的方法：wikidot 是深入锅炉房、承受极端高温；fandom 是走进维修大厅里显示纯黑的空门洞。",
+        "与 Level 4 的连接：wikidot 是老式楼梯，可以原路返回；fandom 是一扇装饰华丽、传出不安古典音乐的门，只写为入口。",
+        "音乐：wikidot 是复古唱片机和扬声器随机播放 smooth jazz；fandom 是忽远忽近的爵士氛围音乐，页面还嵌了循环背景音频。",
+        "团体：wikidot 有 M.E.G. 哨所 Housekeeping、Homely Hotel、The Originals、The Lost Hall Society；fandom 有 The Originals、ERC 的 Outpost Hotel、Backroom Colonists 的 Base Deimos/Phobos，并明说 M.E.G. 在本层没有前哨。",
+        "The Originals：wikidot 约 31 人、驻扎在贝弗莉室、只收 1300–1940 年代的人、列 4 名知名成员；fandom 约 50 人、四处游牧、不限年代，多列 John White、Solomon Northup、Jimmy Hoffa，并提到新成员来自 1906、1912、1931 年的事件。",
+        "The Lost Hall Society 位置：wikidot-en 说遗迹在 Level 5.3；wikidot-cn 说在本层靠近图书馆的一侧，没提 Level 5.3。",
+        "M.E.G. 哨所职能措辞：wikidot-en 是帮流浪者穿过锅炉房；wikidot-cn 是帮想离开锅炉房的流浪者。",
+        "主要危险：wikidot 是电梯 13 层以上、锅炉房高温和实体；fandom 是原因不明的大量离奇死亡（口吐泡沫、姿势扭曲）、理智流失和可能转化为 Wretches。",
+        "杏仁水：wikidot 里它在锅炉房管道里流动、漏水，没写用途；fandom 里它是对抗理智流失的必需补给，放在用餐区。",
+        "锅炉房：wikidot 是温度高、表面干、充满蒸汽、杏仁水滴落、熔炉里有低语，能从贝弗莉室的门直接到达；fandom 是又热又干、有烟味、布满蛛网的高顶长走廊，锅炉像人脸，只能强行打开罕见的“staff only”门进去。",
+        "时间异常：fandom 写了没有昼夜循环、时间流速异常、钟表失效；wikidot 两站都没写时间异常。",
+        "墙面和画：wikidot 写明红木色配金色墙纸，传闻墙纸有人脸；fandom 只说墙纸像人脸，另外强调画着石化人脸和邪神的肖像画，没给颜色。",
+        "子层级：wikidot-en 提到 Level 5.3；fandom 提到 Level 5.1 并说随机切出可去子层级；wikidot-cn 没提子层级。",
+        "电梯细节：wikidot-en 的古董电梯是铜笼（copper cage），wikidot-cn 译作“铜栏杆”；fandom 没提电梯。",
+        "贝弗莉室照明：wikidot-en 说大吊灯照亮中央小桌，wikidot-cn 说巨大吊灯照亮整个房间。",
+        "雌性死亡飞蛾：wikidot-cn 多写了雌性“相当危险”且在本层“确实更加常见”；wikidot-en 只说雌性数量多但留在巢里。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-5",
+      "title": "Level 5 - “恐怖旅馆”",
+      "method": "random-on-conflict",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-5.json"
+    },
+    "6": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "环境类型：wikidot-en/cn 是无尽的狭窄混凝土走廊，全在室内，像隔音室一样安静；fandom 是地表的荒芜苔原和野外（山峰、山谷、巨石、方尖碑、枯萎植被），加上地下几米的破败管道走廊和更深处的洞穴。",
+        "生存难度：wikidot-en/cn 都是 pending，描述词为空；fandom 是 Class Pending，另有 Exit 4/5（出口稀少）、Environment 3/5（中度危险）、Entities ?/5（无法确定）。",
+        "光与电：wikidot-en/cn 只说层内无光、带入光源失效；fandom 说火和手电一进入就熄灭，电子设备和无线电也全部失效，地下有破裂失效的荧光灯，还有能通往 Level 7 的异常光源和明亮走廊。",
+        "可见度：wikidot-en/cn 完全看不见，只能摸着走；fandom 附录里暴雪夜能看几米，人物看得到湖、楼梯井和明亮走廊。",
+        "幻听内容：wikidot-en 是窸窣爬行声、呼吸、低语；wikidot-cn 把 scuttling 译作碎步声，另为呼吸声、呢喃；fandom 是远处鸟鸣和回荡的听不清人声。",
+        "找出口的线索：wikidot-en/cn 循微弱海浪声找楼梯井；fandom 没有海浪声，靠走得够远或找异常光源。",
+        "气味：wikidot-en/cn 正文没有气味（只有地图标注「闻起来像血」）；fandom 有黄褐草恶臭、地下腐烂恶臭、管道液体的腐肉味。",
+        "温度与天气：wikidot-en/cn 只说墙体冰冷（cn 作冰凉），去 Level 129 的门极冷；fandom 正文是苔原、地下高湿，附录有暴雪、结冰的湖和严寒冻伤。",
+        "心理机制：wikidot-en/cn 是几分钟后开始偏执焦虑、觉得只有自己看不见，纸条推演第 3 小时丧失理性；fandom 是缺觉加孤立造成精神剥夺、现实解体、微睡眠，大多数人屈服于 Roth Syndrome。",
+        "实体与人群：wikidot-en/cn 称未发现实体，但有约 4 人的声音模仿社区（Mimicry/模仿者）、传闻中的单人前哨（The World's Quietest Room/世界静极之屋，带电灯开关），纸条里还有像人手人声的袭击者；fandom 只有霉菌，附录提到地下生物和 Skin-Stealer，没有任何社区或前哨。",
+        "M.E.G.：wikidot-en/cn 的档案纸条里，M.E.G. 特工在入口外救走伤者；fandom 没有提到 M.E.G.。",
+        "入口：wikidot-en/cn 是 Level 5 锅炉房和 Level 4 Base Omega 附近；fandom 是穿过 Level 5 的锅炉和 Level 6.1 的生锈门，没有 Level 4 入口。",
+        "出口：wikidot-en/cn 是楼梯井到 Level 7、罕见的极冷大门到 Level 129、被电线绊倒到 Level 6.1；fandom 是被倒下的树枝绊倒到 Level 6.1、进洞到 Level 8、走得够远或找到异常光源到 Level 7，没有 Level 129，多了 Level 8。",
+        "去 Level 7 的形式：wikidot-en/cn 是往下的楼梯井；fandom 附录是先下地下楼梯井，再穿过明亮走廊尽头的门，坠入 Level 7 的海洋。",
+        "物品：wikidot-en/cn 没有补给，只有传闻中的电灯开关；fandom 附录里有从结冰湖中取的杏仁水，地下管道里有焦油状液体。",
+        "wikidot-en 与 wikidot-cn 是同一版本（Bart0nius 版）的原文和译文，差异只在措辞和页面状态：去 Level 129 的门 en 为 metal door、cn 为铁门；社区名 Mimicry 在 cn 为模仿者；en 挂过时横幅并标 to-rewrite，cn 没有，且 cn 多了「切行困难」「封闭性」「精神影响」等标签。"
+      ],
+      "source": "fandom",
+      "url": "https://web.archive.org/web/20251224183310/https://backrooms.fandom.com/wiki/Level_6",
+      "title": "Level 6: \"Lights Out\"",
+      "method": "random-on-conflict",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-6.json"
+    },
+    "7": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn"
+      ],
+      "conflicts": [
+        "层级本体：wikidot-en/cn 是头顶有混凝土天花板、没有固定光源的无限室内海洋，外加一个侧嵌进天花板的入口房间；fandom（摘要）是一座漂浮在无尽多雾超纯水面上、静止不动的锈蚀金属地堡，头顶是永远阴沉的天空。",
+        "生存等级：wikidot-en/cn 为 4；fandom（摘要）为 Threat Index Class 3（Exit Difficulty 4/5、Environmental Risk 4/5、Entity Presence 1/5）。",
+        "实体数量：wikidot-en/cn 有 The Thing On Level 7 与 Tiny 两个独特实体；fandom（摘要）中 The Thing on Level 7 是唯一已知实体，没有 Tiny。",
+        "The Thing 外形：wikidot-en 本层页没有外形描述；wikidot-cn 所链接的旧实体页 old:entity-20 写的是约 11,000 米长、会排焦油、只猎移动物体的黑色蛇形巨兽；fandom（摘要）写的是头尾从未被看到、器官错位、体内胶状且满是寄生虫的巨大海兽。",
+        "The Thing 威胁方式：wikidot-en/cn 为怕光、杀光海中生命、必须避免对抗的掠食者；fandom（摘要）认为它可能意识不到人类，致死多来自受惊逃逸时掀起的巨浪，而非蓄意攻击。",
+        "温度：wikidot-en/cn 只说海水极冷，但除非长期暴露否则不致命；fandom（摘要）给出恒定 4°C，且地堡内及膝积水会导致失温。",
+        "光照与深度结构：wikidot-en/cn 为昏暗自然光，并按深度分为日光带/暮色带(~1 km)/午夜带(再下 ~3 km)/深渊(>7 km)；fandom（摘要）没有深度分带，只有地堡附近几米深的浅海床和突然垂直下落的断崖。",
+        "重力异常：wikidot-en/cn 只发生在入口门廊（一靠近就改变重力方向、坠入海中）；fandom（摘要）是海域局部重力轴偏转，形成垂直浪墙与倒悬海面，汇聚水流还能把物质弹射到其他层级。",
+        "入口房间/起点内饰：wikidot-en/cn 为铺地毯并积着水洼深浅的水、书架、咖啡桌、单把椅子、荧光吊灯；fandom（摘要）为黑暗锈蚀的金属舱室，里面有金属上下铺、折叠椅、简易书架，积水及膝，摇晃的楼梯通往金属舱口。",
+        "入口：wikidot-en/cn 为 Level 6 楼梯（唯一已知）加 Level 8 水坑传闻；fandom（摘要）为在 Level 6 游荡够久后过渡到地堡、乘船、Level 5.1 活板门、Level 6.66 向上隧道、Level 8.5 深于 3 米的全氟碳液池。",
+        "出口：wikidot-en/cn 为 Level 8（海底山洞穴）、Level 9（西 150 米水下管道石柱阵中的木门）、Level 83（深渊中昏迷）、Level 880（乘船西行，未证实）；fandom（摘要）为 Level 4（No Exit 门）、Level 7.1（游泳时脚被锈金属质感之物碰到）、Level 833（被皮划艇环绕的漂浮现代主义房屋）以及深处重力区弹射。",
+        "据点：wikidot-en/cn 有 Fort Surrender/臣服堡垒（4–9 名崇拜 The Thing 的敌对居民）；fandom 摘要中未见任何据点。",
+        "水与空气：wikidot-en/cn 未描述水质，但海面空气能延长屏气；fandom（摘要）为增强浮力的超纯水，空气中的雾是 The Thing 排出的骨屑与有机残渣，未提屏气。",
+        "物品：fandom（摘要）有可食用的 The Thing 肉（生吃安全、加热会激活寄生虫）；wikidot-en/cn 本层没有任何食物类物品，关键物品是返程用的绳索/梯子。",
+        "屏气时长（en↔cn 翻译差异）：wikidot-en 为「某些情况下接近 30 分钟」；wikidot-cn 为「通常能达到 30 分钟或更久」。",
+        "暮色带水压（en↔cn）：wikidot-en 为「相当强」；wikidot-cn 为「已变得极大」。",
+        "两实体约定的措辞（en↔cn）：wikidot-en 称两者维持「相互确保毁灭」式约定；wikidot-cn 只说两者达成一致、不在各自领域外狩猎。",
+        "页面状态（en↔cn）：wikidot-en 顶部挂有过时提示（最后编辑 2026-03-10）；wikidot-cn 没有过时提示（版本 15，最后编辑 2026-04-11）。",
+        "实体链接（en↔cn↔fandom）：wikidot-en 本层页没有给 The Thing 链接或编号；wikidot-cn 本层页把七层之物链接到 old:entity-20；fandom 也把它编为 Entity 20。",
+        "Tiny 时间线（wikidot 两站各自的内部矛盾）：本层页记为 2019-04-18 出现，Tiny 实体页记为 2019 年 6 月被发现。",
+        "Tiny 的长矛材质（en↔cn 实体页）：英文实体页为骨制；中文实体页为疑似巨型生物牙齿制成。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-7",
+      "title": "Level 7 - \"Thalassophobia\"",
+      "method": "random-on-conflict",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-7.json"
+    },
+    "8": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn"
+      ],
+      "conflicts": [
+        "生存等级：wikidot-en / wikidot-cn 为 Class 4（极难逃离、极端环境风险、极多敌意存在），fandom 为 Threat Index Class 3（出口 3/5、环境 3/5、实体 2/5）。",
+        "条目本体：wikidot-en 与 wikidot-cn 是同一篇 C-Graph/Kai4C 重写（中文为 Ambersight 译本），fandom 是完全不同的独立条目（The Burrows、Mortisdoptera、Troglosidae），没有 9th Road、M.E.G. 据点和各生态区。",
+        "昵称：wikidot-en 为复数 Cave Systems，wikidot-cn 为“岩洞系统”，fandom 为单数 Cave System。",
+        "规模：wikidot-en 写已探索区域长约 60 英里、半径 2.5 英里，wikidot-cn 把同一数字写成“高约 60 英里”，fandom 称规模实际上无法测量。",
+        "出口：wikidot 两站列出 8 个有明确目的地的出口（Level 9/2/41或91/75/93/203/205/69），fandom 称没有经过验证的可靠出口，只有目的地不明的小隧道、竖洞和危险的水体路线。",
+        "入口：wikidot 两站为 Level 103、2.1、135、4.1、283（外加 9th Road 起于 Level 6 水池），fandom 为 Level 6 的破洞、Level 7 深处、Level 85 天坑。",
+        "水体：wikidot 两站是可安全饮用的杏仁水（会突发洪水，Hyperspace Lane 为普通水），fandom 是停滞、多细菌、远低于 0°C 仍为液态且溺亡频发、应避开的冰水。",
+        "温度：wikidot 两站多数区域 10–15°C，部分区域 ≥43°C，Handyland 18–23°C（英文站），fandom 为整体严寒。",
+        "光照策略：wikidot 两站手电衰减到约 12 流明但仍是必需品，另有多处生物发光与极光，fandom 建议不带手电以免引来趋光的 Mortisdoptera。",
+        "主要生物：wikidot 两站的主要威胁是 Wranglers/牧蛇、魔法强化的蛛形纲、Wretches/悲尸等十余种实体，fandom 的主要生命形式是 Mortisdoptera（明确说不是 Deathmoths）和非蜘蛛的 Troglosidae。",
+        "实体密度：wikidot 两站为 Extreme Hostile Presence / 极多敌意存在，fandom 为 Some Hostile Presence（2/5），原生生物仅构成中等威胁。",
+        "定居点：wikidot 两站有大量活跃团体（M.E.G. Hollow Nest/空巢、Harmouth/哈莫兹、Amor Incrementum/神爱之繁生、U.E.C.、B.N.T.G. 等），fandom 称几乎无定居记录，只有几十到几百年前的无主废弃木桥与窝点。",
+        "空间异常：wikidot 两站有非欧几何、随机重力、熵加速，fandom（已获取片段内）只有 The Burrows 在无人观察时布局变化，未提重力或熵效应。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-8",
+      "title": "Level 8 - \"岩洞系统\"",
+      "method": "random-on-conflict",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-8.json"
+    },
+    "9": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "生存等级：wikidot-en 与 wikidot-cn 为生存难度 5；fandom 为 Threat Index Class 4（Unsafe / Unstable / High Entity Count）。",
+        "别名：wikidot-en 为 The Suburbs，wikidot-cn 为郊区；fandom 主名 Darkened Suburbs（也称 The Suburbs）。",
+        "房屋状态：wikidot 两站写有家具、相当新的房子；fandom 写破败程度不一、家具旧/坏或空荡，最早有 17 世纪风格、通常不超过两层。",
+        "路面：wikidot 两站为湿润无标线的沥青路和正常石质人行道；fandom 为破碎成块、露出泥土长苔藓杂草，部分区域没有路面。",
+        "雾：wikidot-en 称雾气会出现（间歇），wikidot-cn 只说对浓雾保持警惕，两者都说雾是 entity-63 的生成机制；fandom 称浓稠如墨的雾覆盖全层、视距约 10 米，且未提雾生成实体。",
+        "雾中实体名称：wikidot-en 为 The Mangled；wikidot-cn Level 9 页写'碾压者'，中文站 entity-63 页标题却是'残缺者'；fandom 未提。",
+        "气候：fandom 平均约 10°C，偶有强风和风暴；wikidot 两站 Level 9 页未给温度，只说水洼表明曾下过雨，其 entity-96 页称此层无风，entity-63 页称此层无已知雷暴。",
+        "照明：wikidot 两站路灯通常熄灭，个别闪烁或来源不明地通电；fandom 称路灯是户外主光源（坏的除外），并由常故障的锈蚀电力站供电。",
+        "实体：wikidot 两站点名 14 种实体（含本层特有的邻里守望、观察者、The Mangled/碾压者）；fandom 未点名任何实体，只说数量多、回避光亮。",
+        "物品：wikidot-en 在房屋物品中明确点名 Pockets；wikidot-cn Level 9 页只说'许多有用的物品'；fandom 为杏仁水与不完整急救包（小商店）、近战武器（仓库），且物资极少。",
+        "据点：wikidot 两站称有少数团体在此活动、建基地可能但危险、目前无记录；fandom 称不存在任何殖民地或前哨。",
+        "入口：wikidot 两站来自 Level 8/34/92/40/25/54/94/87/104（wikidot-en 另重复列出一条 Level 25 街机）；fandom 仅有 Level 8（洞穴中掉落）、Level 20（标 Neighborhood 的门）、Level 123（看似通往 the Whole 的门）。",
+        "去 Level 11：wikidot 两站跟箭头路标走 100 到 200 英里；fandom 跟指向北方的箭头路标，未给距离。",
+        "去 Level 9.1：wikidot 两站走通往草地的步道；fandom 切入被雪覆盖的树。",
+        "去 Level 10：wikidot-en 描述段为离开步道走进田野；wikidot-cn 译为在通往田地的路上行走；fandom 为通往草地的步道。",
+        "独有出口：wikidot 两站有 Level 53（进房屋）、60（切出街面）、113（电力线）、36（机场）、283（游乐场管道）和负数层级；fandom 独有 Level 8.4（跳洞）、13（温室）、84（毁坏的地下室门）。",
+        "空间异常：wikidot 两站为走太远会遇到两栋互相卡住的房子；fandom 为房屋融合成链、混凝土钢筋实心墙、房间被拉伸、生成复制房间。",
+        "精神影响：wikidot 两站的发现帖描述头脑昏沉、失去意识并谈论死亡与痛苦；fandom 未写精神异常效果，只收录一篇孤独焦虑的笔记。",
+        "电子设备：fandom 称无网络，但天线或可支持无线电近距离通联；wikidot 两站 entity-96 页称靠近邻里守望的电子设备会失灵损坏，本层设备也会出错。",
+        "Firesalt 用法：wikidot-en entity-96 页原句可理解为可用 Firesalt 摧毁 Watchers；wikidot-cn 译文为不鼓励用火盐杀害守望者。",
+        "街道危险度措辞：wikidot-en 为 the most dangerous area；wikidot-cn 译为'更加危险的区域'。",
+        "发现帖语气：wikidot-en 为 'Level 6 on crack'（更糟版的 Level 6）；wikidot-cn 译作'Level 6 走上正轨的样子'，语义相反。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-9",
+      "title": "Level 9 - \"The Suburbs\"",
+      "method": "random-on-conflict",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-9.json"
+    },
+    "20": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "核心设定完全不同：wikidot-en/cn 是建在行星 Boreas 上、有游戏房间的“Boreas Structure / 玻瑞阿斯的建筑（娱乐区）”，fandom 是无限延伸的仓库“The Warehouse”。",
+        "生存难度：wikidot-en/cn 为 Class 4，fandom 未能核实。",
+        "温度：wikidot 等候厅平均 7°C、窗边 -22°C 至 -43°C、霓虹区最低 -27°C，fandom 恒定约 10°C。",
+        "配色与材质：wikidot 等候厅为白色混凝土墙、棕地毯、灰瓷砖天花板，霓虹区为黑色调、灰地毯；fandom 为混凝土地面的仓库，满是板条箱、货架和叉车。",
+        "灯光：wikidot 霓虹区是霓虹灯，fandom 是亮度随机变化、持续嗡鸣的灯。",
+        "声音：wikidot 只有偏执引起的幻听（呼吸声、强风声），fandom 是灯具的嘈杂嗡鸣。",
+        "窗外景象：wikidot 是缀满星星的黑色虚空、偶见月亮，而且窗边极寒；fandom 是无法进入的黄昏大型停车场。",
+        "实体：wikidot-en/cn 列出 8 种实体（死亡飞蛾、肢团、猎犬、无面灵、窃皮者、Nguithr'xurh、牧蛇、啼物）外加 Boreas，fandom 没有核实到任何实体。",
+        "核心机制与危险：wikidot 是游戏房间的胜负奖惩系统、极寒和偏执幻觉，fandom 是箱子/货架倒塌和可切入的箱子、地板、木炭袋。",
+        "入口：wikidot 从 Level 2/21/122 的蓝色 FUN ZONE 门、Level 11 的 Fun Zone 建筑、Level 16 仰望天空、Level 19 破损门进入；fandom 从 Level 19 走廊尽头或熬过攻击、Level 21 的“20”号门、Level 17 的“Supply Room”门、Level 20.1 Area 2 进入。",
+        "出口：wikidot 通往 Level 2、24、78、4、21、36（游戏失败会被传送到 6、7、154），fandom 通往 Level 21、9、22、20.1、59、412、910 和 The Void。",
+        "物资：wikidot 是储物柜里的巧克力棒/汽水、饮水机杏仁水和游戏奖励（热巧克力、冬衣、记忆罐）；fandom 是箱中的工具、食物、捕鼠器、汽车零件、刀和砍刀，杏仁水罕见。",
+        "基地：wikidot 没有基地，只有 M.E.G. 小队探险（至少两人死亡）；fandom 有少数殖民地和前哨。",
+        "wikidot-en 与 wikidot-cn 的译文差异：Boreas 的眼睛和嘴，英文写“数千”，中文译为“一万”。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-20",
+      "title": "Level 20 - \"玻瑞阿斯的建筑\"",
+      "method": "random-on-conflict",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-20.json"
+    },
+    "fun": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "层级形态：wikidot-en 是一艘在各层级间切出移动的邮轮（Adventure / SS Fun =)）；wikidot-cn 是固定的“小型派对室”；fandom 是三段串联的室内场所（充气城堡仓库 → 游戏室 → 派对室）。",
+        "编号与标题：wikidot-en 已重写并归入编号层级 Level 26 “The SS Fun =)”；wikidot-cn 为“享乐层 =)”；fandom 为无编号的 “Level Fun”。",
+        "生存难度：wikidot-en 为 5（Unsafe / Unsecure / Entity Infestation）；wikidot-cn 只用标签标注生存难度 5；fandom 没有等级，且称第一区可以安全探索。",
+        "规模：wikidot-en 船长约 150 米、宽约 18 米，但下层甲板无限；wikidot-cn 为“小型”派对室；fandom 为看似无尽的仓库加迷宫。",
+        "派对客本质：wikidot-en 为人体＋Phobic Centipede＋甲壳类的嵌合体；wikidot-cn 为会分泌 PTG 液体的人形实体；fandom 为感染 Sanguine Festivus 病毒后披着布的人类空壳。",
+        "派对客外形：wikidot-en 与 wikidot-cn 都是亮黄色革质皮肤、手臂末端带牙口（变种色 en 为红蓝绿白，cn 为暗黄棕黄橙白）；fandom 为罩着发黄布单、布上血渍成笑脸的消瘦人形，没有特殊手臂。",
+        "转化机制：wikidot-en 被手臂咬住即转化、只有死亡能阻止（实体页科学家认为是超自然现象，不是感染或毒液）；wikidot-cn 为注入 PTG-A，半小时内心智同化、24 小时内身体转化，PTG-B 可逆转；fandom 为病毒四阶段，二期隔离可以康复。",
+        "派对客感知与速度：wikidot-en 近视、行动慢、靠视线心灵感应；wikidot-cn 平时步速、追击 1 m/s 且持久、攻击视线内所有人；fandom 视力受损、靠声音定位、以蹚水般的步态移动。",
+        "群体行为：wikidot-en 派对客是组织化社会、紧密成群狩猎且互相保持视线；wikidot-cn 以带“队长”的小组包围猎物；fandom 派对客连同类也攻击，不结群。",
+        "首领：wikidot-en 为派对客零号 Deacon Duncan（Entity 167 页又称派对主人是领导者）；wikidot-cn 实体页为“派对之主”在幕后教唆；fandom 没有首领，行为由病毒驱动。",
+        "其他实体：wikidot-en 有食肉气球（Entity 110）、派对主人（Entity 167）和被喂食的 Faceling；wikidot-cn 只有派对客；fandom 有病毒本身、携带者，以及第一区充气城堡里的未确认动静。",
+        "入口：wikidot-en 为触碰后室任意处的派对用品、捡起 TIME 4 FUN 海报，或登上停靠的船（Entity 67 页明确说切入 Level 1 天花板的传闻已证伪）；wikidot-cn 为切入 Level 1 天花板或 Level 283 休息室前写着 FUN！=) 的对开门；fandom 为 Level 11/18/21/25/52/257/800 中画有动物吉祥物的体育馆式双扇门。",
+        "出口：wikidot-en 为触碰反转失焦的海报（已知到 Level 4）或跳船；wikidot-cn 没有出口，只有一句反问；fandom 为滑梯 → 白门 → 会移位的双扇门 → 大堂，随机通往 Level 18/21/25/52/257/800。",
+        "物品：wikidot-cn 室内有大量蛋糕、饼干和杏仁水；wikidot-en 的派对用品和海报本身就是传送陷阱，派对客的蛋糕用人体组织做成、禁止食用；fandom 没有任何可用物品。",
+        "气球的作用：wikidot-en 气球是把人切进船里的派对用品，船上还泛滥着食肉气球；wikidot-cn 实体页称彩色气球是派对客的诱饵；fandom 派对室的气球只是永不漏气的装饰。",
+        "感官描写：wikidot-en 只写了尖叫和泳池的死亡气味，没写灯光；wikidot-cn 完全没有感官描写；fandom 写了鼓风声、灯的嗡嗡声、荧光灯/柔黄灯光、梦幻旋律、橡胶泡沫味和冰冷的空调。",
+        "层级是否移动：wikidot-en 整个层级会被绿色雾罩住后切出、在不同层级出现；wikidot-cn 与 fandom 是固定场所（fandom 只有第一区的入口墙门会在断开视线后消失）。",
+        "基地：wikidot-en 明确没有友好基地，整艘船是派对客总部；wikidot-cn 在“基地、前哨和社区”一节只列了“派对”；fandom 未提及任何基地。",
+        "主要危险来源：wikidot-en 是派对客的陷阱、折磨与转化；wikidot-cn 只用欢快语气暗示进来就出不去；fandom 是病毒和环境（下陷的充气地面、网坑、迷路）。",
+        "作者与版本：wikidot-en 为 Robert Goerman 与 MC_Crafter_24_7 的重写版（原 Level Fun 作者 1000dumplings）；wikidot-cn 署名 1000dumplings 并注明有删改（推断对应英文早期短版）；fandom 为 Nex <3 独立写作的版本。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-fun",
+      "title": "享乐层 =)",
+      "method": "random-on-conflict",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-fun.json"
+    },
+    "!": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "性质：wikidot-en/cn 是故事体，Level ! 已经被遗忘、彻底荒废，两个人走着参观；fandom 是正式层级文档，整局是被实体群追着跑的死亡长跑。",
+        "生存难度：wikidot-en 没有难度框（标签 unnumbered-level）；wikidot-cn 标签是“生存难度其他”，列在隐秘层级；fandom 是 Class 5（Exit 4/5、Environment 5/5、Entities 5/5）。",
+        "标题/别名：wikidot-en 叫 “A Long Forgotten Exclamation...”，wikidot-cn 叫“尘封已久的感叹号…”，正文都没出现 Run For Your Life；fandom 标题 Level !，别名 Run for your life! / Level Run / Run，旧称 Area-847。",
+        "起始房间：wikidot 的传说资料说第一个房间完全包覆反光金属、有微弱红光；fandom 是血红光照着的医院病房（病床、床头柜、帘子、药柜）。",
+        "锁着的门：wikidot 的资料说门后有实体聚集，但现场门后的房间是空的，只剩骨头和死尸味；fandom 是铁链锁住的门，无数实体撞门，撞开后开始追。",
+        "声音：wikidot 全程死寂；fandom 有来源不明、音量极高、伤精神的持续警报，还有撞门、吼叫、狗叫和振翅声。",
+        "照明：wikidot 角色一进门就问灯去哪了，走到尽头才看到光；fandom 唯一光源是天花板上随机分布的深红色出口标志，有太亮的地方也有全黑的地方。",
+        "走廊状况与危险：wikidot 是灰尘、骨头、抓痕和地面坑洞；fandom 是会滑动的障碍物、出口标志爆炸引起的火墙、地板/墙/天花板坍塌、垂下的电线，还有从侧门和通风口冒出的实体。",
+        "实体：wikidot 没有任何活着的实体，只有不明实体的骨头（角色推测饿死、互食或从出口跑了）；fandom 点名笑魇、死亡飞蛾、猎犬、派对客、Aranea Membri、窃皮者、Wretches 等，并给了对付方法。",
+        "长度与节奏：fandom 明确说走廊 10 公里，5~6 公里最累，约 10 公里到出口；wikidot 里 10 公里只是传说，角色不信，而且走起来“不算长”。",
+        "多人进入：fandom 说会被强制分开；wikidot 的资料说会被分进各自的独立副本，但两名角色全程同行，en 说这条规则已经失效，cn 译成“这个地方已经不复存在了”。",
+        "进入方式：wikidot 是走进画着感叹号的门（故事里在 Level 109 找到，另外提到穿模）；fandom 是随机出现、格格不入的出口门，穿模进感叹号相关物体，印着感叹号的电梯，在 Phenomenon/Level 354 产生特定念头，以及 Level 2 穿模穿过地板。",
+        "出口去向：fandom 的真出口多数通往 Class Habitable/0/1 层级，最常到 Level 1 和 Level 4，极少数回到 Level !；wikidot 传说是随机层级，但角色怀疑现在已经不能随机传送了，门后是什么也没写。",
+        "假出口与安全区：fandom 有每隔几公里拐角处的假出口，以及约 6% 报告里出现的蓝色安全区；wikidot 两样都没有。",
+        "物品：fandom 有杏仁水、能量棒、手电筒等，还有负重和使用建议；wikidot 没有任何能捡的物品。",
+        "来历：fandom 说它曾叫 Area-847，被当作 Level 14 的子层级（14.5），在 The Flicker 中被毁后又出现，最早记录是 Level 52 的 Photo E；wikidot 说它是因为被反复转述才遗忘、荒废的，可能是从一个堆放失落层级的层级掉出来的。",
+        "fandom 自身的版本差异：2026-01-06 快照写的是在 Level 354 产生某个念头就会进入，2026-09-07 的当前修订改成了 Phenomenon 354。",
+        "Fandom 归属：wikidot 上 PrinceBun 的后记说他的故事成了 Fandom 的新 Level !，但抓到的 Fandom 页（快照和当前修订）都是 Everybox 2025.6.1 的改写。",
+        "wikidot-cn 和 en 的译文差异：cn 把“走廊最空的一段”译成“最初的走廊”，把 people 改成了“实体”（有译注），把“感觉像待了好几个小时”译成“花了我们几个小时”。",
+        "wikidot-cn 和 en 的语气差异：en 是用疑问句问这里是不是从“失落层级垃圾场”掉出来的，cn 直接断言“就是从那里分离出来的”。",
+        "配图：wikidot-en 已经把图1、图6 换成 Endrew1 的新图（改自防爆气密门走廊和疗养院照片）；wikidot-cn 还在用旧的图1（Unsplash 照片加感叹号图标拼合），另外多列了 matthew Feeney 的图8。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/long-forgotten-exclamation",
+      "title": "尘封已久的感叹号…",
+      "method": "random-on-conflict",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-run.json"
+    }
+  },
+  "entities": {
+    "ant": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn"
+      ],
+      "conflicts": [
+        "编号归属：两个 wikidot 站现行 entity-89 都已换成 Fleshborn / 肉蜕（肌肉组织构成，偏红；幼生期约 20 厘米、前蛛形期 35 厘米、完全蛛形期约 150 厘米，能爬墙和天花板；视力差、趋光；咬伤传播细菌感染，第三阶段无法治愈、24 小时内致死；敌对，CN 标 IETS 4A；出现于 Level 1/2/4/5）。蚂蚁只存在于 trimmed（保留）页。Fandom 的 Entity 89 是 Slugreads。",
+        "出现层级：层级资料说 Level 5 有 Entity 89 目击，但两个 wikidot 蚂蚁页列出的已报告层级只有 Level 1、102、196、401，没有 Level 5；反而现行 entity-89（Fleshborn）的层级表里有 Level 5。需要确认层级页当初写的是蚂蚁还是链接被重写后指向了 Fleshborn。",
+        "关系：wikidot-en 说聚团是威慑大型实体的防御机制；wikidot-cn 本次提取未出现这句（unverified，可能是提取遗漏而非真实差异）。",
+        "Fandom 没有蚂蚁版本（loaded=false）。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/trimmed:entity-89",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Ants",
+      "zh": "蚂蚁",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/ant.json"
+    },
+    "arachnid": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "编号与页面：两个 wikidot 站现行 entity-39 都是 Organiguns / 生物枪（植物枪械实体）；蛛形纲专页只剩 wikidot-cn 的 old:entity-39；wikidot-en 只在 Level 8 页生态段落里描述，无编号（链接是占位符），只有 Level 9 页把 The Arachnids 链到 entity-39；Fandom 的 Entity 39 是 Mimicry，Level 8 蛛形实体叫 Troglosidae。",
+        "种类：wikidot-en 是蝎子、蜱、螨、蜘蛛；wikidot-cn 旧版只有三类蜘蛛（形蛛、皇后蛛、弗兰肯蜘蛛）；Fandom 是 Troglosidae，不属于蜘蛛目。",
+        "尺寸：wikidot-cn 形蛛 2 厘米–2 米、皇后蛛 7–10 米；wikidot-en 段落无尺寸；Fandom 只说远大于普通蜘蛛。",
+        "敌意：wikidot-en 领地性强、打扰就追击；wikidot-cn 形蛛被动，不理会可能不攻击，只有皇后蛛极具攻击性。",
+        "再生：wikidot-cn 弗兰肯蜘蛛快速愈合、生物学上不朽；wikidot-en 本次提取未找到再生和抗火的表述（层级资料里有，unverified）；Fandom 未见。",
+        "应对手段：wikidot-en 是跳进水里（大多数不会游泳）；wikidot-cn 是杏仁水中和毒咬、手电筒看清后绕行；Fandom 未见。",
+        "毒液：Fandom 是凝血剂致循环系统崩溃；wikidot-en 只说剧毒；wikidot-cn 是部分形蛛毒性高、皇后蛛毒力强。",
+        "起源：wikidot-en 说大多数不是原生，由帷幕教会用奥术符文魔法引入或改造；wikidot-cn、Fandom 未提。",
+        "Level 9：只有 wikidot-en Level 9 页提到有目击。",
+        "三个来源以外：第三方 Roblox 游戏 Wiki（The Backrooms: Nowhere）把 Entity 39 叫 The Arachnids of Level 8，写有发光眼睛、3 种蜘蛛；不属于三个指定来源，未采用。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/old:entity-39",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "The Arachnids",
+      "zh": "八层之蛛 / 蛛形纲生物",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/arachnid.json"
+    },
+    "camo_crawler": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn"
+      ],
+      "conflicts": [
+        "感官：两版实体页都说只能感知声音（听觉狩猎）；两版 Level 8 页面都写它靠嗅探搜寻（EN 还有咔嗒声）。给定的层级摘要'靠嗅觉找猎物'采用的是 Level 8 的说法。",
+        "颜色：EN 'grayish-brown'（灰褐）；CN 抽取为'灰褐色、灰色或棕色'。",
+        "发现小队名：EN 'Compass Point'，CN '罗经网行动小队'。译名差异，unverified。",
+        "伪装面：CN 抽取明确列出墙壁、天花板、地面；EN 只写'周围环境'。",
+        "尺寸、速度、攻击方式、致死性两版 wikidot 都没写（EN 页面正在重写）—— 建模/AI 数值需自定。",
+        "一次 EN Level 8 抽取提到'靠挖掘（burrowing）'，其他抽取均未证实，未采用（unverified）。",
+        "Fandom 版本不存在该实体（Fandom Entity 31 = 'Motion Sensors'）。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/entity-31",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Camo Crawler",
+      "zh": "迷彩爬行者",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/camo_crawler.json"
+    },
+    "clump": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "尺寸：wikidot-en 最大约4英尺；wikidot-cn 页面内自相矛盾（最大样本约3英尺 / 记录最大约4公尺）；fandom 平均直径约6英尺，可挤进2英尺空间。",
+        "肢体：wikidot-en/cn 多条肢体，最长8–10英尺，8英尺内出手；fandom 单条长臂超过20英尺，能举800磅以上。",
+        "移动与速度：wikidot-en/cn 用肢体扫/甩地面推进，能跳、钻通风管、爬墙，速度「极高」无数字；fandom 伸缩长臂推进，最高约20英里/小时。",
+        "行为模式：wikidot-en/cn 不停游荡找猎物，饱食后埋地休眠，近期绝食无视流浪者；fandom 静止伏击数小时到数天，垂臂作诱饵，回避其他实体。",
+        "攻击：wikidot-en/cn 抓住后拖向中心，露出利齿大嘴吞食；fandom 长臂缠绕使人无法动弹（后续机制未确认）。",
+        "感官：wikidot-en/cn 团中有眼睛和耳朵；fandom 对声音高度敏感（有摘要称无眼，未确认）。",
+        "弱点：wikidot-en/cn 鬼面墙面具震慑，休眠时可消灭，骨头脆；fandom 保持安静。",
+        "繁殖：wikidot-en/cn 受伤溅落的肉会长出新肢团；fandom 未提（unverified）。",
+        "数量：wikidot-en/cn 目击数创历史新高；fandom 全后室估计仅剩约100只。",
+        "起源：wikidot-en/cn 为 Protastheia 用人造出，与 Snatcher Weeds 同源；fandom 摘要未提创造者，只提因器官营养高被猎杀。",
+        "特殊栖息地：wikidot-en 为 The Cultivator's Courthouse；wikidot-cn 为 审判温室（/the-judge-s-garden）；fandom 为通风管、柜子、烟囱等狭窄空间。",
+        "皮肤：wikidot-en/cn 活体黏腻湿润，另记皮肤极干；fandom 摘要未提（unverified）。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-5",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Clump",
+      "zh": "肢团",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/clump.json"
+    },
+    "curabitur_bird": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn"
+      ],
+      "conflicts": [
+        "食性：两版实体页都说它只吃雄性死亡飞蛾；EN Level 8 页面写新莫维勒窟的昆虫被蜘蛛、死亡飞蛾、受眷鸟捕食（给定层级摘要'吃昆虫'采用的是这一说法）。",
+        "凝胶亮度持续时间：EN 说暴露约 3 天、密封更久；CN 抽取说完全亮度约 3 天、干燥后数小时内变暗。两者可能描述不同条件，unverified。",
+        "爪子触发方式：CN 抽取明确写是面部敏感刚毛触发；EN 抽取只写黏液粘住后触发利爪，没提刚毛（unverified）。",
+        "群聚名：EN 'constellations'，CN '星群'。译名差异。",
+        "Fandom 版本不存在该实体（Fandom Entity 37 = 'The \"Producers\"'）。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/entity-37",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Curabitur Bird",
+      "zh": "受眷鸟",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/curabitur_bird.json"
+    },
+    "deathmoth": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "体型：wikidot-en/cn 普通雄性翼展 30–35 cm、雌性 40–45 cm、禁卫级 60 cm、女皇近 3 m；fandom 翼展约 1.5 m（不分阶级）。",
+        "社会结构：wikidot-en/cn 有普通雄/雌、禁卫级、女皇三个成虫阶级，另有幼虫和卵；fandom 摘要只有雌雄之分。",
+        "颜色：wikidot-en/cn 没写任何颜色；fandom 为灰色粗硬的翅毛、深黑色复眼、锯齿状翅缘。",
+        "学名与原型：wikidot-en/cn 学名 Saturnia mortem；fandom 类比 Acherontia lachesis，基因相似 78%。",
+        "口器：wikidot-en/cn 只有雄性长针状吸管，雌性是撕肉的颚；fandom 摘要只写注射器状口器，不分性别。",
+        "每族群'至少一只'：wikidot-en 抓取摘要说是女皇；wikidot-cn 专门核对后说是禁卫级（en 未二次核对，可能是摘要误差，unverified）。",
+        "幼虫腿数：wikidot-en 十二条分节足；wikidot-cn 摘要写'十几对分节附肢'（unverified）。",
+        "短暂爆发式飞行：wikidot-cn 明确指女皇；wikidot-en 摘要未指明阶级。",
+        "层级：wikidot-cn 比 wikidot-en 多出 Level 520 和 Level 920；fandom 为绝大多数层级。三个来源的实体页都没单独点名游戏选用的 Level 3、5、8、9、20。",
+        "起源：fandom 有 Hive Theory、Mutant Theory、Kauer Thesis 等起源理论；wikidot 抓取结果未提。",
+        "与其他实体的关系：游戏层级简介里 Level 9 的'害怕邻里守望、尤其是 Watchers'在三个来源的实体页中都没有出现。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-4",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Deathmoths",
+      "zh": "死亡飞蛾",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/deathmoth.json"
+    },
+    "duller": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "外形：wikidot-en/cn 为深灰色、无脸无耳、骨架脆弱、手臂超长；fandom 为深色皱皮、裂口处露紫色血肉、凹陷空洞像融化的脸，亚种为滴落的灰色浓稠液体，可熔化变形。",
+        "体型：wikidot-en/cn 只说高大；fandom 平均约2米，范围从常人大小到树高。",
+        "性格：wikidot-en/cn 通常逃离靠近者，被注意到就无声逃走；fandom 高智能，喜欢长时间心理折磨与致幻后残杀。",
+        "杀人方式：wikidot-en/cn 拖进墙另一侧后怎么杀不明；fandom 折断骨头、折磨数小时后残杀，或饥饿时速杀。",
+        "应对：wikidot-en/cn 用杏仁水（它回避杏仁水），主动冲向它会逃；fandom 条目未确认杏仁水，Level 9 版本为直视使其减速/撤退，Level 0.8 版本冷水长时间浸泡致命。",
+        "精神效应：wikidot-en/cn 无；fandom Sakastan 气体致幻，效果类似 PTSD。",
+        "穿越能力：wikidot-en/cn 仅手臂 no-clip 穿墙；fandom 整个身体可 no-clip 在层级间穿行。",
+        "姿态与速度：wikidot-en 摇晃不自然的步态但跑得极快；fandom 速度远超流浪者（出处段落未确认），未提摇晃步态。",
+        "栖息：wikidot-en/cn 为大多数层级，通常在较浅/前几个层级；fandom 为昏暗偏远乡野区域及 Level 0.8、216、509、9 等。",
+        "感官：wikidot-en/cn 未描述；fandom 不受黑暗影响。",
+        "关系：wikidot-en/cn 仅与失落一族的「墙壁捕手」传说相关；fandom Level 9 的邻里守望是其天敌。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/entity-6",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Duller",
+      "zh": "钝人",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/duller.json"
+    },
+    "dunk": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn"
+      ],
+      "conflicts": [
+        "Level 8 亚种没有任何定义：两版实体页都没列出洞穴/林地/Level 8 变种，两版 Level 8 页面也只写'一个亚种'。亚种外形、颜色、行为全部 unverified，只能从基础型推断。",
+        "Fandom 版本不存在该实体（Fandom Entity 12 = 'The Phobia'）。",
+        "变种名：EN 'PlayHouse Dunks'（儿童游戏屋层级，耐噪音）；CN 抽取为'游乐园型'（耐噪音、色彩鲜艳）。可能是译名差异，unverified。",
+        "岩石/Stone 型吸收的光：EN 抽取为 far-red（远红光），CN 抽取为红外线（IR）。unverified。",
+        "听懂命令的方式：CN 抽取说似乎是心灵感应；EN 只说不论语言都能听懂。",
+        "黑暗中疲劳：EN 明确写了；CN 抽取未提及（unverified）。",
+        "食性张力：灌篮崽没有嘴、靠光合作用；Level 8 把亚种写在'食草动物'的巨臂林地段落里，但没说亚种进食 —— 亚种是否吃苔藓 unverified。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-12",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Dunk (sub-species)",
+      "zh": "灌篮崽（亚种）",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/dunk.json"
+    },
+    "faceling": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "敌意与杀伤力：wikidot-en/cn 写多数温顺、比成年人弱、容易甩开，从未有详细行凶记录；fandom 写约 26% 成年个体无故攻击、19.2% 歧视人类，敌对幼体 2–5 只、敌对成年 3–7 只成群，持刀枪、咬人吃人，致残致死。",
+        "分型体系：wikidot-en/cn 按亚种分为多边形、暗影、记忆、进化种；fandom 称只有 True/Partial/False 三型（80%/19.9%/0.1%），另按年龄分幼体/成年/老年，没有多边形、暗影、记忆亚种。",
+        "交流方式：wikidot-en/cn 写常见型没有声带、只能无声交流，M.E.G. 刚开始教手语和写字；fandom 写全部会手语、全部心灵感应、41% 会写字、58 个会说话。",
+        "视觉：wikidot-en/cn 写没有眼睛却行动如常，进化种近视；fandom 写视力与人类一样好。",
+        "生殖与起源：wikidot-en/cn 写不繁殖，由层级自发生成，外表不代表年龄；fandom 认为求偶育儿与人类无异（Wolfe 警官有一对双胞胎女儿），只是不能与人类繁殖。",
+        "进食：wikidot-en/cn 写不需要进食；fandom 写敌对个体用锯齿牙吃受害者。",
+        "历史：wikidot-en/cn 写自古存在，最早形态似肢团；fandom 写报告最早到 1315 年，1724 年发现首个会说英语的个体。",
+        "多边形亚种体型：wikidot-en 为更笨拙、方正（boxy）；wikidot-cn 译成『更加笨拙，身材矮小』。",
+        "敌意字段：wikidot-cn 页面标签为『善意』（记 friendly）；wikidot-en 无敌意标签（按正文记 neutral）；fandom 信息框写行为随年龄和类型而异（记 varies）。",
+        "同站交叉矛盾：wikidot-en/cn 的 Entity 38 类人页面把无面灵归为敌对实体并以猎杀为乐，与无面灵本页的温顺设定不一致。",
+        "fandom 页面内部不一致：与智人共享的 DNA 在 Phylogeny 段写 98%，在 Existence Theories 段写 98.9%。",
+        "层级：三个版本的实体页都没有点名 Level 3 或 Level 20。wikidot 点名 Level 11、6.1、116；fandom 没有点名具体层级。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/entity-9",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Facelings",
+      "zh": "无面灵",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/faceling.json"
+    },
+    "frayed": {
+      "candidates": [
+        "wikidot-en"
+      ],
+      "conflicts": [
+        "编号归属：wikidot-en 与 wikidot-cn 的 entity-21 现在都是 Anna / 安娜，trimmed:entity-21 现在是 Hook Head / 钩头；Fandom 英文站 Entity 21 是 Mechanized Angels。磨损者只存在于英文旧版存档。",
+        "出现层级：英文存档称起源于 Level 8；但 wikidot-en 与 wikidot-cn 当前的 Level 8 页都没列磨损者；两站 Level 9 页都说它是从 Level 8 游荡进 Level 9 的。",
+        "外观细节：未限定来源的搜索摘要有「黑色黏稠物、白色微光小眼」，三个指定来源都没能核实（unverified）。"
+      ],
+      "source": "wikidot-en",
+      "url": "http://backrooms-arch.wikidot.com/entity-21-1",
+      "title": null,
+      "method": "only-source",
+      "en": "The Frayed",
+      "zh": "磨损者",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/frayed.json"
+    },
+    "growler": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "编号：wikidot-en/cn 为 Entity 130；fandom 为 Entity 82。",
+        "材质与体形：wikidot-en 是毛根+电线组成的隐约人形（短腿长臂、肋骨状突起）；wikidot-cn 是五颜六色线缆状触手组成的人形；fandom 是没有固定形状的随机颜色电线团，常呈无头四足姿态，铜线外包橡胶绝缘。",
+        "身高：wikidot-en/cn 为 4–15 英尺；fandom 通常约 2 米。",
+        "移动：wikidot-en 弯腰拖着肢体走、发现猎物后迅速冲刺；wikidot-cn 用触手在表面爬行、快速接近；fandom 本身移动缓慢，靠减速声波让猎物跟它一样慢。",
+        "感官：wikidot-en/cn 完全失明、靠回声定位；fandom 摘要只说靠听到猎物，未提失明。",
+        "声音的作用：wikidot-en 心灵感应咆哮/白噪音迷惑惊吓（10–80 m）；wikidot-cn 同上且较大个体可造成脑损伤；fandom 是精确模仿声+白噪音+电子咔哒声，用来引诱并让猎物减速。",
+        "狩猎方式：wikidot 为游荡后察觉猎物就冲上去；fandom 为伏击型，不常游荡，约每月换一次巢。",
+        "攻击：wikidot-en/cn 伸出数百根肋骨状突起刺穿、打开胸腔吞噬；fandom 摘要未提这种攻击方式。",
+        "只在 wikidot-en/cn 出现、fandom 摘要未见：同类融合（体型、智力翻倍）、发出 Wi-Fi 并给电子设备充电、进入新层级会休克死亡。",
+        "层级：wikidot-en/cn 为 Level 2、Level 4 等低编号层级；fandom 为大部分层级、偏好室内。",
+        "游戏层级简介里 Level 1 的'朝头顶扔重物干扰后逃跑、被攻击时扯断头部线缆'在三个来源的实体页中都没有出现；实体页只有'被抓时扯下毛根/肢条、瞄准头部'这类应对建议。"
+      ],
+      "source": "fandom",
+      "url": "https://backrooms.fandom.com/wiki/Entity_82",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Growlers",
+      "zh": "啼物",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/growler.json"
+    },
+    "hound": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "起源：wikidot-en 为 Level 276 的卵孵化；wikidot-cn 为「蜂巢」(/the-hive) 的卵孵化；fandom 为人类被咬感染 Egremond 综合征后约20–30分钟变形而成。",
+        "发光：wikidot-en/cn 未提任何发光部位；fandom 双眼闪白光，黑暗中远处可见。",
+        "毛发：wikidot-en/cn 为头上大量长黑发、遮住巨口；fandom 为背上一长条黑色蓬乱毛发（变形时全身毛发生长）。",
+        "牙齿：wikidot-en/cn 为满是尖牙的巨口；fandom 为多排牙齿，能咬碎骨头和无机物。",
+        "爪子：wikidot-en/cn 爪子锋利；fandom 爪子磨钝、战斗中基本无效。",
+        "危险声音：wikidot-en 为低吼（growling）；wikidot-cn 为嚎叫声。",
+        "应对：wikidot-en/cn 直视并死盯可短暂吓退，不要一见就跑；fandom 条目建议保持距离缓慢后退，被咬5分钟内用杏仁水冲洗（论坛帖才说怕眼神接触，未计入条目）。",
+        "感官：wikidot-en/cn 未提听觉；fandom 听觉可达约两英里。",
+        "行动：wikidot-en/cn 未提跛行；fandom 许多个体跛行甚至不能跑，且体力消耗快。",
+        "智力：wikidot-en/cn 未提；fandom 略低于人类，会用简单工具、认脸、绘制心理地图。",
+        "攻击后果：wikidot-en/cn 只有撕咬；fandom 咬伤会传播病毒把人变成猎犬。"
+      ],
+      "source": "fandom",
+      "url": "https://backrooms.fandom.com/wiki/Entity_8",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Hound",
+      "zh": "猎犬",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/hound.json"
+    },
+    "hunter": {
+      "candidates": [
+        "fandom"
+      ],
+      "conflicts": [
+        "来源覆盖：只有 fandom 有这个实体；wikidot-en 与 wikidot-cn 的 Level 14 是完全不同的 'Paradise/天堂' 森林层级，没有猎手。"
+      ],
+      "source": "fandom",
+      "url": "https://backrooms.fandom.com/wiki/Level_14",
+      "title": null,
+      "method": "only-source",
+      "en": "The Hunter",
+      "zh": "猎手（零号病人）",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/hunter.json"
+    },
+    "imprint": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "注视后果：wikidot-en 写看见就痛苦，直视眼睛才加剧，昏迷 3 到 4 小时、极端脑死亡；wikidot-cn 写持续看 1 小时才加剧，昏迷 3 到 4 小时、极端脑死亡，没提眼睛；fandom 摘要写直视眼睛会昏迷（时长 unverified），看太久据说会变悲尸，脑死亡 unverified。",
+        "模仿与重现：fandom 写精确复刻原流浪者的动作但不会说话，原主离开或死亡时消失、24 到 72 小时后在进入点重现；wikidot-en/cn 只说是分身，没写模仿动作和消失重现规则。",
+        "悲尸：只有 fandom 提到看太久会变悲尸（且目击者说陷入悲尸循环的人会凭空消失）；wikidot-en/cn 没有这条。",
+        "外形：fandom 形容为像鬼魂；wikidot-en/cn 只说是分身，没说像鬼。",
+        "页面状态：wikidot-en 的 Level 17 已被 trim（原地址 404）；wikidot-cn 仍是正常层级页，标题'航空母舰'。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/trimmed:level-17",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Imprints",
+      "zh": "印记",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/imprint.json"
+    },
+    "infecting_agent": {
+      "candidates": [
+        "fandom"
+      ],
+      "conflicts": [
+        "来源覆盖：只有 fandom 有这个实体；wikidot-en 与 wikidot-cn 的 Level 14 是 'Paradise/天堂'，没有感染体。"
+      ],
+      "source": "fandom",
+      "url": "https://backrooms.fandom.com/wiki/Level_14",
+      "title": null,
+      "method": "only-source",
+      "en": "Infecting Agents",
+      "zh": "感染体",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/infecting_agent.json"
+    },
+    "jerry": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn"
+      ],
+      "conflicts": [
+        "出现层级：wikidot-en 当前版为 Level 1、Level 2、Level 274；wikidot-cn 为 Level 1、Level 2、杰瑞厅；两版都没提 Level 9。EN Level 9 页链接的 trimmed:entity-7 已 404，其旧版存档摘要称鹦鹉会在看似随机的层级重新出现（unverified）。",
+        "受害者去向：wikidot-en 为几小时后去 Level 274 并恢复意识（仍然崇拜）；wikidot-cn 为数小时后进入杰瑞厅并与外界断联；EN 旧版存档摘要为不久后失踪、可能去了无出口的 Jerry's Room（unverified）。",
+        "追逐与切进地面：wikidot-en 称看到人就追、跑赢者被瞬间切进地面；wikidot-cn 本次提取没有此描述（unverified）。",
+        "谁在切层：wikidot-cn 称杰瑞自己能在层级间切出移动；wikidot-en 只说跑赢者被切进地面，是否 Jerry 所致仍在调查。",
+        "驯服后果：wikidot-en 为几天后 Jerry 飞走，且不再同化驯服者；wikidot-cn 为驯服后与驯服者接触不教化（未提飞走）；EN 旧版存档摘要为只对喂食者有效，别人拿起照样被控制（unverified）。",
+        "触发方式：wikidot-en / wikidot-cn 为接触；EN 旧版存档摘要为「拿着它」的人被控制（unverified）。",
+        "编号：Fandom 英文站的 Entity 7 是 Mandela Virus，不是 Jerry。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-7",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Jerry",
+      "zh": "杰瑞",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/jerry.json"
+    },
+    "light_guide": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn"
+      ],
+      "conflicts": [
+        "稀有度/成群：两版实体页都说很罕见（Level 16 还说从不成群），但 Level 8 有一群、Level 16 File 2 有大量；实体页本身又说两个以上会协作。",
+        "颜色：实体页只说会变色，没有具体颜色；Level 8 叙事给出蓝绿色（两版一致）。",
+        "层级列表：一次 EN 抽取多列了 Level -0；CN 逐句核对只有 Level 2/4/6/263。Level -0 unverified。",
+        "Level 8 的巢：EN 叫氙弹珠 'nesting grounds'，CN 叫'提供了居所'。按 CN 逐句核对，前一句'它们的食物来源是有机残渣'里的'它们'指溪流里的盲鱼、虾、蝾螈，不是微光向导；早期一次 EN 抽取说它吃氙弹珠，属误读。",
+        "Level 16 形态名：EN 'File 2'（arctic/tundra），CN '第二个文件 / 冰河期状态'。说法一致，措辞不同。",
+        "Fandom 版本不存在该实体（Fandom Entity 35 = 'Spines'）。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-35",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Light Guide",
+      "zh": "微光向导",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/light_guide.json"
+    },
+    "lucky_crane": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn"
+      ],
+      "conflicts": [
+        "来源覆盖：fandom 不存在此实体（其 Entity 46 是 Narco Jellyfish），只有 wikidot-en 与 wikidot-cn 两个版本。",
+        "Level 11：wikidot-en 当前的 Level 11 'The City That Never Sleeps' 把幸运纸鹤列为较少出现的稀有实体；wikidot-cn 的 Level 11 '无垠城市' 完全没提纸鹤。两站的实体页都只拿 Level 11 当人口门槛的例子。",
+        "厄运触发条件：wikidot-en 写群落远多于人口时出事；wikidot-cn 写纸鹤数量超过人口时出事。两者都没给具体比例。",
+        "Level 13：wikidot-en 把 Level 13 列为当前无法安全驱散的大群落层级；wikidot-cn 第一次摘要把 Level 13 写成'以前'，逐句核对时又没找到'曾经'一类字样，unverified。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/entity-46",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Lucky Cranes",
+      "zh": "幸运纸鹤",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/lucky_crane.json"
+    },
+    "neighborhood_watch": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "编号：wikidot-en / wikidot-cn 为 Entity 96；Fandom 为 Entity 196。",
+        "Watcher 本质与弱点：wikidot-en / wikidot-cn 为表面坚韧或弹性极高、常规武器无效（EN 建议火盐可能有效）；Fandom 为非生物组织、带极端非物质特性，所有直接攻击都无效。",
+        "Watcher 移动：wikidot-en / wikidot-cn 为步行速度滑翔；Fandom 为离地固定高度漂浮、无声无痕（没给速度）。",
+        "Watcher 颜色：wikidot-cn 提取称灰色调；wikidot-en 没写颜色；Fandom unverified。",
+        "Strider 形态与速度：wikidot-en / wikidot-cn 为六条 8 英尺附肢、最高 90 mph；Fandom 为几条粗壮、异常长的附肢（数量、长度、速度都没给数字）。",
+        "Strider 弱点：wikidot-en / wikidot-cn 为远程武器有效，但枪声或火盐会引来其他实体；Fandom 为常规物理手段可伤，受足够伤害后短暂瘫痪。",
+        "Strider 感知：Fandom 为不能直接探测生物，只追踪电子设备信号；wikidot-cn 提取称视觉敏锐；wikidot-en 未写。",
+        "Strider 处理猎物：wikidot-en 为砸死，或吊在 Watcher 眼前由 Watcher 接手；wikidot-cn 为撞击至死、交给守望者；Fandom 只写穿墙抓人。",
+        "Swimmer 形态：wikidot-en / wikidot-cn 为狗那么大、八条章鱼式排布的视神经；Fandom 为主眼加多条章鱼触手肢，明显小于另两类（没写狗大小）。",
+        "Swimmer 攻击：wikidot-en / wikidot-cn 为缠住溺死，不成就撕掉暴露的肢体；Fandom 为拖进附近液体淹死。",
+        "Swimmer 栖息：wikidot-en 为下水道、排水系统、管道、街道积水；wikidot-cn 为管道等狭窄空间；Fandom 为积水、水池、浴缸、洗手池、淹水房间、地下管道。",
+        "捕食：wikidot-en / wikidot-cn 称它们主动猎杀活物、是狩猎专家；Fandom 称整个邻里守望不需要进食，未观察到捕食、消化行为。",
+        "活动区域：wikidot-en 为偏好暗角、死胡同、房屋密集区，开阔地与通往 Level 10 的区域少见，从不主动越层；Fandom 为多在暗郊边缘活动、回避出口、可被人为带离。",
+        "电子设备：wikidot-en / wikidot-cn 为靠近就损坏设备、塞入随机图像声音；Fandom 为 Strider 靠设备信号定位目标（损坏效应 unverified）。",
+        "特殊物品：wikidot-en / wikidot-cn 为携带 Pockets 会立刻暴露，Strider/Swimmer 会把它取回放回原处；Fandom 为追逐途中会停下来盯着旧电话等物品（Pockets unverified）。",
+        "群体比例：wikidot-en 日志为每 1 个 Watcher 附近约 3 个 Strider，Strider 常三只一组；wikidot-cn 本次提取只有三只一组；Fandom unverified。",
+        "与其他实体关系：wikidot-en / wikidot-cn 为死亡飞蛾、笑魇、窃皮者、猎犬都怕它们；Fandom unverified。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/entity-96",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "The Neighborhood Watch (Watchers / Striders / Swimmers)",
+      "zh": "邻里守望（守望者 / 挺进者 / 水泳者）",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/neighborhood_watch.json"
+    },
+    "nguithrxurh": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn"
+      ],
+      "conflicts": [
+        "体长：wikidot-en 为 4 英寸宽、7 英寸长；wikidot-cn 为 4 英寸宽、5 英寸长（两次专门核对原句均如此）。",
+        "编号：wikidot-en/cn 为 Entity 16；fandom Entity List 为 Entity 23。",
+        "层级：wikidot-en/cn 为 Level 1、2、3；fandom Entity List 为 Level 2、8。",
+        "伤害能否治疗：wikidot-cn 写伤害'通常可以治疗'；wikidot-en 抓取结果只提到 2 人致命受伤，是否也有这句 unverified。",
+        "游戏层级简介里 Level 1 的'发光球状蛛网'：wikidot-en/cn 实体页都没有写蛛网发光，也没有写任何颜色；fandom 正文未读到。",
+        "敌对等级：三个来源都没有明确写；wikidot 两版只说近距离非常危险、但慢且不追击。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/entity-16",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Nguithr'xurh",
+      "zh": "Nguithr'xurh（未译）",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/nguithrxurh.json"
+    },
+    "observer": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "内容量：wikidot-en/cn 只在 Level 9 列了名字，没有任何描述；fandom 有独立实体页 Entity 161，但页面自己也说它的存在从未被证实。",
+        "编号：wikidot-en/cn 无编号，两站的 Entity 38 分别是 Humanoids/类人，不叫观察者；fandom 为 Entity 161。任务背景里'Level 5 的 Entity 38 观察者'在 wikidot-en/cn 都对不上，出处 unverified。",
+        "出现层级：wikidot-en 归档版 Level 11 说观察者等 Level 9 实体在 Level 11 也有报告；wikidot-cn 只确认 Level 9；fandom 摘要只提 Level 9。",
+        "是否真实存在：fandom 提出集体幻觉/心理投射说，并说无实证；wikidot-en/cn 直接把它当 Level 9 的已知实体列出，没有质疑。"
+      ],
+      "source": "fandom",
+      "url": "https://backrooms.fandom.com/wiki/Entity_161",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "The Observer",
+      "zh": "观察者",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/observer.json"
+    },
+    "partygoer": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "编号：wikidot-cn 为原创条目 C-233；wikidot-en 与 fandom 为 Entity 67（wikidot-cn 另有 Entity 67 的译本，内容同 wikidot-en）。",
+        "外形：wikidot-en 高大双足、亮黄革质皮肤（红/蓝/绿/白变体）、刻出的血笑脸「=)」、面条状手臂末端钩齿吸盘嘴、方块腿、胸甲内藏利爪手；wikidot-cn 亮黄革质皮肤（暗黄/棕黄/橙/白变体）、红色物质卡通笑脸、手臂末端七鳃鳗/红虫状嘴、下肢时而人腿时而跳棋底座圆台；fandom 蹒跚枯槁的躯壳罩着发黄布单，血渗出形成笑脸血渍。",
+        "速度：wikidot-en 近视且缓慢（慢于人类）；wikidot-cn 平时正常人步速，追击可达 1 m/s 并持续很久；fandom 相对缓慢但耐力高。",
+        "转化机制：wikidot-en 被钩齿手臂咬中后超自然转化，不可逆，只有死亡能终止，首例历时十天；wikidot-cn 咬伤注入 PTG-A，半小时内心智同化、24 小时内生理转化，PTG-B 可逆转（越晚越无效）；fandom 感染 SFV 病毒，数小时内出现初期症状。",
+        "诱饵：wikidot-en 海报、伪造数据库条目、派对邀请、网站宣传，红气球是新转化者的情感残留而非诱饵；wikidot-cn 彩色气球、儿童笑声、生日蛋糕；fandom unverified。",
+        "攻击手段：wikidot-en 咬 + 胸甲利爪手挖眼掏内脏，断臂后狂暴露出恐惧蜈蚣头；wikidot-cn 只有咬，不会用精密武器；fandom unverified。",
+        "弱点：wikidot-en 砍断外臂、火（外骨骼含燃料可烧尽）、打眼/头部、近视慢；wikidot-cn 会避开高温/陡坡/伏击、某些层级有天敌、被咬后切除伤口并注射 PTG-B；fandom unverified。",
+        "首领与控制：wikidot-en 由零号派对客 Deacon Duncan 领导，派对之主（Party Hosts）是派对客误咬无面灵产生的不能移动的实体；wikidot-cn 派对之主蛊惑教唆派对客；fandom unverified（仅见「The Party Host」Caius Taggert 条目标题）。",
+        "中立个体：wikidot-en 没有中立个体，全部痛恨人类；wikidot-cn 有少数中立派对客（如安迪）不受派对之主影响、拒绝攻击人类；fandom Level 18 的派对客温顺并会帮流浪者逃离。",
+        "智力与交流：wikidot-en 依赖视线的短程心灵感应，懂电脑机械和酷刑；wikidot-cn 一般人类智力，用对方母语说话，会操作机械开门、做简易陷阱；fandom unverified。",
+        "跟随切出：wikidot-en 只说能用常规入口/出口跨层，未说追人切出；wikidot-cn 明确会跟随流浪者切出（除非知道目标层级危险）；fandom unverified。",
+        "群体：wikidot-en 总是成群、至少两只互相保持视线；wikidot-cn 小组制有队长，人数占优时包围，首次大袭击约 20 只；fandom unverified。",
+        "敌对团体：wikidot-en 主要对手为 M.E.G.（Team「Party Over」）；wikidot-cn 为人类、M.E.G.，并与扫兴客打过享乐战争；fandom unverified。",
+        "栖息层级：wikidot-en 为 Level Fun（邮轮）并遍布后室；wikidot-cn 绝大部分在享乐层、少数游荡；fandom 为 Level Fun（The Party Rooms 病原体更多），Level 18 有温顺个体，Level 27 unverified。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-c-233",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Partygoer",
+      "zh": "派对客",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/partygoer.json"
+    },
+    "samantha": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn"
+      ],
+      "conflicts": [
+        "wikidot-en 与 wikidot-cn（翻译）基本一致；en 额外写明讨厌 spam 和沙丁鱼、可能出现在任何层级、2020 年 7 月首报于 Level 3，cn 本次提取未出现这些句子（unverified，可能只是提取遗漏）。",
+        "编号：英文 Fandom 的 Entity 26 已是 Mercies（蚊状掠食者），与 wikidot 的萨曼莎不是同一实体；Fandom 版本未加载。",
+        "未核实说法：一条搜索摘要称她暴怒时能用通灵能力控制流浪者，两个 wikidot 页都没这么写。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-26",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Samantha",
+      "zh": "萨曼莎",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/samantha.json"
+    },
+    "scit": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn"
+      ],
+      "conflicts": [
+        "Fandom 版本不存在该实体（Fandom Entity 20 = 'The Thing on Level 7'），只有 wikidot-en / wikidot-cn 两个版本可选。",
+        "第三个捕食者：EN 写 Reviooks，CN 写'地栖怪'；多半是译名，但对应关系 unverified。",
+        "水中能力：CN 明确写能适应陆地与水中；EN 两次抽取结果不一致（一次说两栖，一次说没提游泳）—— EN 是否两栖 unverified。",
+        "食性张力（非直接冲突）：两版实体页都说旱虾不需要任何食物/能量；Level 8 页面把它和'食草节肢动物'写在同一句，但没说它吃苔藓。",
+        "首次发现日期：EN 写 7/3/2013，CN 写 2013/7/3（CN 按 7 月 3 日理解）。数字相同；EN 若按日/月读则为 3 月 7 日 —— 月日顺序 unverified。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-20",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Scit",
+      "zh": "旱虾",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/scit.json"
+    },
+    "shadow_worker": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn"
+      ],
+      "conflicts": [
+        "服装：wikidot-en/cn 的 Level 1 页都说是工装（overalls）；两站链接到的装修公司团体页描述为淡蓝（灰）风衣 + 红肩甲 + 白围裙 + 棕羊毛裤 + 黑雨靴 + 灰贝雷帽（同源内两页不一致）。",
+        "外形：Level 1 页（en/cn）只说影子般；团体页（en/cn）为漆黑人形、白圆圈眼、无口鼻，形态从近人到六腿、猩猩状乃至一台烤面包机。",
+        "能否交流：Level 1 页（en/cn）不回答任何问题、无视人类；团体页（en/cn）可以沟通，低级员工说道歉短句，高级员工能交谈。",
+        "被提及同事伤亡时的反应：wikidot-en 团体页抽取为明显困惑、不自在（另一次抽取称显出敌意，unverified）；wikidot-cn 团体页为敌意上升并试图迅速赶走提醒者。",
+        "危险来源：Level 1 页（en/cn）为埋头施工导致的意外伤害（cn 另建议远离其装置）；团体页（en/cn）为装修导致层级分裂、灾难与死亡。",
+        "出现层级：Level 1 页只在衔尾段；wikidot-en 团体页列出装修分裂出的 Level 0.2/0.3/90/381/481/998.2；wikidot-cn 团体页列出 Level 0/0.2/0.3/90/998.2/隐秘层级「密码」/C-143.1；两站团体页都未提 Level 1。",
+        "fandom：英文 Fandom 未找到该实体（Level 1 为 Parking Zone），loaded=false，无可比内容。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-1",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Shadowy workers in overalls (Backrooms Remodeling Co)",
+      "zh": "穿工装的影子工人（后室装修公司）",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/shadow_worker.json"
+    },
+    "skin_stealer": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "真身颜色：wikidot-en/cn 为淡黄色、深陷白眼、吸盘状凸起皮肤；fandom 为深米色、外观不固定、可长尖爪附肢。",
+        "伪装机制：wikidot-en/cn 用吸盘状凸起贴合撕下的人皮，约24小时后人皮被消化；fandom 繁殖时保留宿主皮肤、吃掉内脏、继承记忆，并可用细胞把流浪者数小时内转化为窃皮者。",
+        "智力：wikidot-en/cn 智力有限、不懂语言、只会复读（多种语言）；fandom 继承受害者记忆、会用暗示、能在聚居地潜伏多年。",
+        "识别方法：wikidot-en/cn 看透明血液，警惕几乎不说话或说随机词语的人；fandom 看身体比例略变、行为不对劲（摘要未提透明血液）。",
+        "攻击方式：wikidot-en/cn 饥饿时徒手撕碎落单者；fandom 变出尖爪附肢突袭，或潜伏逐个猎杀。",
+        "敌意：wikidot-en/cn 分温顺期与饥饿期（varies）；fandom 为持续的掠食者（hostile）。",
+        "猎物：wikidot-en/cn 为人类；fandom 最常吃其他实体，也吃人类和 Facelings。",
+        "弱点：wikidot-en/cn 无战斗弱点，只能识别和远离；fandom 新变形部位脆弱，心脏在胸骨左侧。",
+        "栖息：wikidot-en/cn 最常见于 Level 1/2/3；fandom 为人类/智慧生物多的层级，Level 851 为主导实体。",
+        "温顺期细节：wikidot-cn 明确写人皮被消化后进入相对温顺阶段；wikidot-en 抓取到的原句只说约24小时后人皮被消化（是否接温顺期 unverified）。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/entity-10",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Skin-Stealer",
+      "zh": "窃皮者",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/skin_stealer.json"
+    },
+    "smiler": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "对光的反应：wikidot-en/cn 被光吸引、会追逐光源，建议关灯、扔光源当诱饵；fandom 光是弱点，照到会疼痛退缩，手电筒或亮房间可击退。",
+        "致命弱点：wikidot-en/cn 用驱笑剂令其撤退/失去知觉；fandom 着火会溶解至死。",
+        "身体：wikidot-en/cn 身体肉眼不可见（传闻类外星、肢体弯折，未证实）；fandom 身体是可见的纯黑火焰状物质，无定形，可变为人形、犬形、巨型蜘蛛、飞鸟。",
+        "发光部位颜色：wikidot-en/cn 为白色发光眼睛+闪亮牙齿；fandom 发光物质构成眼和牙，颜色摘要未写明。",
+        "攻击触发：wikidot-en/cn 只有在惊慌逃跑或巨大噪音时才攻击，保持眼神接触缓慢离开即可；fandom 主动在黑暗中追踪人类、嘲弄折磨。",
+        "智力与群体：wikidot-en/cn 未提；fandom 类人智力、心灵感应、成群狩猎。",
+        "感官：wikidot-en/cn 被光和声吸引；fandom 发光的眼与齿本身是视听器官。",
+        "栖息：wikidot-en/cn 为 Level 2/3 黑暗区域，基地 The Smiling Room / 微笑的房间；fandom 为全后室低光照区域，未提基地。"
+      ],
+      "source": "fandom",
+      "url": "https://backrooms.fandom.com/wiki/Entity_3",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Smiler",
+      "zh": "笑魇",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/smiler.json"
+    },
+    "thing_on_level_7": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "编号与页面：wikidot-en 无编号、无独立页（entity-20 = Scits）；wikidot-cn 旧版和 Fandom 都是 Entity 20。",
+        "外形：wikidot-en 没写；wikidot-cn 旧版是黑色蛇形身体、10 米牙、嘴能吞下小型旅馆、会排焦油；Fandom 是鲸类生理加鳗形身体，头尾从未被看到。",
+        "体长：wikidot-cn 旧版约 11,000 米；Fandom 大小未知，估计是天体到行星轨道级；wikidot-en 未写。",
+        "焦油：wikidot-cn 旧版中是七层之物排焦油；wikidot-en / wikidot-cn 的 Entity 720 页里排焦油的是 Tiny。",
+        "“小不点 / Tiny”：wikidot-cn 旧版里“小不点”是七层之物本身的绰号；wikidot-en 与中文 Level 7 / Entity 720 页里 Tiny（小小）是另一只人形实体；Fandom 论坛概念帖也把 Tiny 当作它的别名（非正式）。",
+        "弱点：wikidot-en 与中文 Level 7 页是眼睛怕光；wikidot-cn 旧版实体页未写；Fandom 是体型太大难以快速追击或进入窄处，且无线电等小扰动会引来它。",
+        "栖息深度：wikidot-en / 中文 Level 7 页是午夜带加深渊上层；Fandom 是最深水域。",
+        "智力与交流：wikidot-cn 旧版会写字不会说话；wikidot-en 未写；Fandom 正式摘要未见（论坛概念帖称会设陷阱）。",
+        "攻击：wikidot-cn 旧版像鲨鱼绕圈、追踪移动物体、整口吞噬，列出两名死者；Fandom 是巨浪或肠胃爆炸冲击波致昏；wikidot-en 未写。",
+        "发现时间：Fandom 记为 1873 年（更早可追溯到 1100 年代）；两个 wikidot 版本未写。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-7",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "The Thing On Level 7",
+      "zh": "七层之物",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/thing_on_level_7.json"
+    },
+    "tiny": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn"
+      ],
+      "conflicts": [
+        "出现时间：wikidot-en Level 7 页称 2019 年 4 月 18 日起 Level 7 有了 Tiny；两个 Entity 720 页都写 2019 年 6 月被发现。",
+        "兽皮：wikidot-en 写他披着另一种鱼形实体的皮；wikidot-cn 本次提取未出现（unverified，可能是提取遗漏）。",
+        "长矛材质：wikidot-en 说看起来像更大生物的骨头、可能是牙齿；wikidot-cn 说推测是巨大生物的牙齿。",
+        "谁排焦油、谁叫“小不点”：两个 Entity 720 页里是 Tiny 排焦油；wikidot-cn 旧版 Entity 20 页里却是七层之物排焦油，而且“小不点”是七层之物的绰号。",
+        "安全交流地点：wikidot-en Level 7 页说在入口房间或岛上；wikidot-cn Entity 720 页只提入口房间。",
+        "Fandom 没有 Tiny 版本（loaded=false）。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/trimmed:entity-720",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Tiny",
+      "zh": "小小",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/tiny.json"
+    },
+    "transporter": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn"
+      ],
+      "conflicts": [
+        "敌意与致死性：wikidot-en 新版条目为安全的摆渡服务、无致死记录；wikidot-en 旧版条目与 wikidot-cn 提取称切出对非 Entity 13 生命可能致命、死因不明。",
+        "帽子：wikidot-en 为 pork pie 帽；wikidot-cn 译为「宽沿平顶帽」（帽檐宽窄两版不一致）。",
+        "增生：wikidot-en 为能长出更多手指节；wikidot-cn 为能增生额外的手臂与手指。",
+        "群体：wikidot-en 提取为似乎成群行动；wikidot-cn 为单独或成群。",
+        "编号：Fandom 英文站的 Entity 13 是 Familiar Face / Solarnoids，不是 Transporter。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-13",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Transporter",
+      "zh": "传送者",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/transporter.json"
+    },
+    "warning_kite": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn"
+      ],
+      "conflicts": [
+        "现身距离：wikidot-en 首次提取为危险在约一英亩内时现身，二次提取原文是 more than an acre；wikidot-cn 为方圆一英亩内。",
+        "数量随什么变化：wikidot-en 为随危险的「数量」增减；wikidot-cn 为随危险「程度」增减。",
+        "出现层级：wikidot-en 为任何室外层级，并写明首次发现于 Level 10（附近有窃皮者）；wikidot-cn 本次提取只写所有室外层级。",
+        "编号：Fandom 英文站的 Entity 22 是 Anethikas，不是 Warning Kite。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-22",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Warning Kite",
+      "zh": "警告风筝",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/warning_kite.json"
+    },
+    "wrangler": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn"
+      ],
+      "conflicts": [
+        "雌性外形：wikidot-en 为像蠕虫、嘴部是钳子；wikidot-cn 抓取摘要为像巨型昆虫、钳状颚（可能是翻译或摘要差异，unverified）。",
+        "移动方式：wikidot-en 明确写幼体物理钻地、年长个体改用切行；wikidot-cn 摘要写旋转钻地并能'切'入表面，没看到按年龄区分（unverified）。",
+        "体长与游戏层级简介：实体页（en/cn）成体 10–90 英里；游戏选用的 Level 8 层级页写一般一英里以上、有一条约 70 英里。",
+        "层级：wikidot 实体页的层级列表（669、52、8、2、2.1、14、9）不包含游戏选用的 Level 1、5、20。",
+        "fandom：英文 fandom 的 Entity 75 是另一个实体（Warding Phantasms）；只有西班牙语 fandom 有 Wranglers 页，且形态描述完全不同（章鱼/蛇混合、9 条触手、深棕色皮肤），未作为 fandom 来源采用。",
+        "弱点 Pyroil 火：只在 wikidot-en 核实，wikidot-cn 未核实。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/entity-75",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Wranglers",
+      "zh": "牧蛇",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/wrangler.json"
+    },
+    "wretch": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "成因：wikidot-en/cn 为缺乏食物、水、睡眠（孤立会加速）引起的三阶段悲尸循环；fandom 为长期孤立、绝望、精神崩溃引起的 Roth Syndrome，并用心灵能量理论解释。",
+        "外形：wikidot-en/cn 为红褐色干裂皮肤、孔洞和脓疱、棕色淤泥，第三阶段没有眼睑和嘴唇；fandom 摘要为自残伤口、瞳孔放大、表情麻木，没提皮肤颜色和脓疱。",
+        "传染：wikidot-en/cn 写第三阶段淤泥接触后几分钟内使人转化；fandom 摘要没提接触传染。",
+        "活动范围：fandom 写领地性极强，几乎不离开异化地点；wikidot 没提领地性，写成群时像蜂巢意识。",
+        "智力与工具：wikidot-en 为动物级到会用武器不等；wikidot-cn 为智力有限、少数有人类行为；fandom 为会用简单武器并设陷阱。",
+        "治疗：wikidot-en 写第二、三阶段需要特定物品，墙面具推测可逆转；wikidot-cn 写第二阶段只有杏仁水和清新剂有效、第三阶段无药可救。",
+        "说话：wikidot-en/cn 第二阶段还能说话，但只会乞求食物；fandom 写悲尸不说话，只有随机噪音、喃喃和笑声。游戏层级简介里 Level 8 的'低声喊救命'不在任何实体页里。",
+        "层级：三个来源都写成遍布大部分层级；wikidot 点名 Level 0、Level 2、Trader's Keep；没有一个来源单独点名游戏选用的 Level 1、3、8、9。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-15",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Wretches",
+      "zh": "悲尸",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/wretch.json"
+    },
+    "burster": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn"
+      ],
+      "conflicts": [
+        "页面状态：wikidot-en 有「过时」通知并标 to-rewrite；wikidot-cn 只标待重写，没有过时通知。",
+        "结局用词：wikidot-en 为受害者休克后被吞食（consume）；wikidot-cn 译为开始「消化」受害者。",
+        "Level 3 名单：wikidot-cn 的 Level 3 页面列出爆酸者；wikidot-en 当前的 Level 3 页面名单没有 Bursters，只在实体页写栖息地为 Level 3。",
+        "Fandom：没有爆酸者条目；Fandom 的 Entity 11 是 Hydrolitis Plague，编号对应的是另一种实体。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-11",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Burster",
+      "zh": "爆酸者",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/burster.json"
+    },
+    "death_rat": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "外形：wikidot-en/cn 最常见形态为黑毛家鼠，头上长棕色角、角尖发红光；fandom 为灰毛、长尾、红眼、有时皮肤发粉，没有角。",
+        "发光：wikidot-en/cn 角尖发红光；fandom 没有写任何发光部位。",
+        "体型：wikidot-en/cn 实体页像普通家鼠（wikidot-en Level 3 页面的种群像水豚）；fandom 比普通老鼠大，长 11-13 英寸、高 3-4 英寸。",
+        "敌意：wikidot-en/cn 大多无害、少数危险（varies），甚至能当食物；fandom 高度敌对，见人就攻击。",
+        "食性：wikidot-en/cn 主要吃雄性死亡飞蛾和霉菌；fandom 主要吃死亡或腐烂物质，也猎食其他实体和同类。",
+        "特殊能力：wikidot-en/cn 有「尖叫事件」（追杀实体时尖叫、灯光闪烁）；fandom 没有尖叫事件，改为 4 英里听觉、伪装和呼叫同伴围攻。",
+        "攻击方式：wikidot-en/cn 实体页没有写怎么攻击人；fandom 为绊倒或冲撞后挖食大脑或心脏。",
+        "智力：wikidot-en/cn 比想象中聪明、会设陷阱（wikidot-en Level 3 页面称有人类水平智力、会读写英语）；fandom 称智力高、配合好，但自己说证据不足。",
+        "疾病：fandom 传播 Hydrolitis Plague；wikidot-en/cn 未提疾病。",
+        "栖息地：wikidot-en/cn 为大多数层级（名单含 Level 1、2、5、8、9，wikidot-en 另有 Level 3）；fandom 为 The Poolrooms 的管道和 Level 0.22 的通风口。",
+        "Level 3：wikidot-en 的 Level 3 页面列出水豚状高智力尸鼠；wikidot-cn 的 Level 3 页面没有列尸鼠。",
+        "Level 8 通风管：wikidot-en 的 Level 8 页面说管道似乎连到 Level 2；wikidot-cn 译为把管道当作通往其他层级的桥梁。",
+        "页面状态：wikidot-en 正在重写；wikidot-cn 标原文重写中；fandom 快照被标为候选删除（抄袭）。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-24",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Death Rat",
+      "zh": "尸鼠",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/death_rat.json"
+    },
+    "plush_dino": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn"
+      ],
+      "conflicts": [
+        "作者署名：wikidot-en 署名 yoyoflux（信息栏另链 YellowISlol 作者页）；wikidot-cn 署名 YellowISlol，译者 Dr Wingdings。",
+        "能否被伤害（Level 18 页面）：wikidot-en 说不知道能不能伤害到这只玩偶；wikidot-cn 译为不知道它是否可能对人造成伤害。",
+        "情绪效果（Level 18 页面）：wikidot-en 为让人产生满足感；wikidot-cn 为会影响人、诱发情感。",
+        "睡眠：wikidot-en 为看起来会睡觉并会自己选择睡；wikidot-cn 为看起来像在睡觉且经常选择这样做。",
+        "标签：wikidot-en 有 object-like、wholesome；wikidot-cn 有思想感知，没有对应的物品状、温馨标签。",
+        "Fandom：没有 Plush Dino 条目；Fandom 的 Level 18 只有会跟随流浪者、外形未描述的未命名中立实体。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-198",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "The Plush Dino",
+      "zh": "毛绒恐龙",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/plush_dino.json"
+    },
+    "watcher": {
+      "candidates": [
+        "wikidot-en",
+        "fandom"
+      ],
+      "conflicts": [
+        "编号：wikidot-en（存档）为 Entity 38；fandom 为 Entity 5923；wikidot-en/cn 两站现行的 Entity 38 都已改为 Humanoids / 类人；Fandom 的 Entity 38 是 Needlelimbs。",
+        "中文站：wikidot-cn 没有观察者实体页内容（/entity-38 是类人，old:entity-38 不存在），只有 Level 5 名单里有这个名字。",
+        "外形：wikidot-en 为漆黑中只能看到发光的白眼，身体不明；fandom 为暗影人形、白眼，位于建筑高层的窗后。",
+        "栖息地：wikidot-en 为大多数层级的漆黑区域（发现于 Level 1，列入 Level 5）；fandom 为 Level 971 的城镇和 Level 188。",
+        "核心机制：wikidot-en 为被注视就吸取理智、笑声加强，理智耗尽可能变成 Insanity，杏仁水可缓解；fandom 为敲窗尖叫求救，引发心脏病或偏执、诱人进屋，进屋即心脏病发作。",
+        "声音：wikidot-en 为笑声；fandom 为只有目击者能听到的求救尖叫。",
+        "攻击性：wikidot-en 为被动、不攻击；fandom 为危险，会攻击其他实体，但不攻击儿童。",
+        "群体：wikidot-en 通常成大群、狩猎时聚集；fandom 没有提群体。",
+        "怕光：wikidot-en 为被光照到立刻消失；fandom 为手电照射它可能会离开。",
+        "关系：wikidot-en 未写；fandom 为会攻击其他实体，并与 Windows 是朋友。"
+      ],
+      "source": "fandom",
+      "url": "https://web.archive.org/web/20220708193715/https://backrooms.fandom.com/wiki/Watchers",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Watcher",
+      "zh": "观察者",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/watcher.json"
+    },
+    "woodlin": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn"
+      ],
+      "conflicts": [
+        "现身方式：wikidot-en 为木灵偶尔主动让目标察觉到自己，然后瞬间消失；wikidot-cn 译为少数情况下流浪者发现木灵时，木灵立即消失（变成被动反应）。",
+        "解剖案例结局：wikidot-en 为取出大部分木刺后活了下来，后因脑干下部囊肿破裂引发感染而死；wikidot-cn 为即使碎片全部移除，最后也会因低位脑干囊肿破裂而死（没提感染，读起来像普遍结论）。",
+        "尸体：wikidot-en 为受害者尸体无法回收；wikidot-cn 为通常死无全尸。",
+        "被拉入后：wikidot-en 为之后被移出表面；wikidot-cn 为身体重新掉出墙面。",
+        "来源现状：两站现行 /entity-45 都已改为 Chupavidas / 汲碌焰灵；木灵原文在 wikidot-en 只剩外部存档站副本，在 wikidot-cn 为 old:entity-45 旧页面。",
+        "Fandom：没有木灵条目；Fandom 的 Entity 45 是 Ravager Apes。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/old:entity-45",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Woodlin",
+      "zh": "木灵",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/woodlin.json"
+    }
+  },
+  "items": {
+    "almond_water": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "包装：wikidot-en/cn 是约 1 英尺高的金属保温瓶；fandom 是 Victoria's Kitchen 瓶子的复刻，还有塑料瓶/金属罐/玻璃酒瓶/纸盒。",
+        "颜色变种：wikidot 有灰/绿/红/蓝四种；fandom 只有蓝/绿/红三种，没有灰色。",
+        "最常见的变种：wikidot 是灰色；fandom 是蓝色（红色最稀有，只有 5 瓶）。",
+        "营养：wikidot 一瓶约 600 卡、相当一顿饭；fandom 只有少量营养，主要作用是补水。",
+        "红色效果：wikidot 是抗生素、治疫疾、犯困（cn 另限每 8 小时一瓶）；fandom 是促进血液循环、加速伤口愈合。",
+        "精神效果：wikidot 只有蓝色防精神影响；fandom 普通杏仁水就能完全抵消敌对实体造成的效果，蓝色能清除精神失常。",
+        "危险：wikidot-cn 说部分层级的有类似氰化物的毒，煮沸可中和；fandom 说过期长霉后有毒、可致死；wikidot-en 物品页摘要没提。",
+        "味道：wikidot-cn object-1 是杏仁微甜；wikidot-cn 原创页 /almond-water 是硬涩刺鼻；fandom 是甜杏仁、香草加玫瑰水。"
+      ],
+      "source": "fandom",
+      "url": "https://web.archive.org/web/20251210135726/https://backrooms.fandom.com/wiki/Object_1",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Almond Water",
+      "zh": "杏仁水"
+    },
+    "liquid_pain": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "编号：wikidot 是 Object 48，fandom 是 Object 12。",
+        "伪装方式：wikidot 装在普通杏仁水瓶里；fandom 装在贴错标签的不起眼容器里，通常是金属或厚壁容器。",
+        "外观：wikidot-en 红色，wikidot-cn 浅红色、像兑水果汁宾治；fandom 鲜红粘稠，还冒深红色毒烟。",
+        "伤害机制：wikidot 是喝下后酸蚀加氰化钾中毒，几小时（en）/约 3 小时（cn）后死亡；fandom 主要写接触腐蚀，几秒就溶皮肤，没写喝下后的潜伏时间。",
+        "分布：wikidot 物品页只写 Level 46；fandom 说大部分层级都有。",
+        "用途：fandom 可硬化成弹药，还能合成火盐；wikidot 物品页没提（wikidot 层级页有气化喷洒和胶囊弹药的用法）。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/object-48",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Liquid Pain (Object 48)",
+      "zh": "液态痛苦"
+    },
+    "soft_drink": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "状态：wikidot 的 Level 20 是售货机和储物柜里的正常饮料，也是游戏奖励；fandom 的 Level 14 是发霉瓶子，里面的液体已经变质。",
+        "出现层级：wikidot 在 Level 5 和 Level 20；fandom 只在 Level 14。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-20",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Soda / soft drinks",
+      "zh": "苏打水/软饮料"
+    },
+    "firesalt": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "爆炸条件：fandom 小晶体一碎就有手雷级爆炸，平时还保持约 500°C；wikidot 小晶体碎裂只造成一到二度烧伤，大晶体才会爆炸。",
+        "爆炸重量门槛：wikidot-en 是 100 g 以上；wikidot-cn 是 50 g 以上。",
+        "来源：fandom 的 Liquid Pain 页说火盐由液态痛苦加盐合成；wikidot 说小晶体在层级角落自然生长，大块要人工熔合。",
+        "分布：wikidot 在前 5 层的角落；fandom 在洞穴状或破败的层级。",
+        "发光：fandom 一直发光，能做手电；wikidot 物品页只说碎裂时放光。"
+      ],
+      "source": "fandom",
+      "url": "https://web.archive.org/web/20251116092928/https://backrooms.fandom.com/wiki/Object_15",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Firesalt (Object 15)",
+      "zh": "火盐"
+    },
+    "bandages": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "出现位置：wikidot 在 Level 1 板条箱里；fandom 在 Level 14 接待室前台上。"
+      ],
+      "source": "fandom",
+      "url": "https://web.archive.org/web/2025/https://backrooms.fandom.com/wiki/Level_14",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Bandages / gauze",
+      "zh": "绷带/纱布"
+    },
+    "candy": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn"
+      ],
+      "conflicts": [
+        "变形部位：wikidot-en 是手指变成枪；wikidot-cn 是手臂变成枪，另外提到有噎住的风险。",
+        "编号：wikidot 的 Object 5 是糖果；fandom 的 Object 5 是 Greek Fire，fandom 没有糖果条目。",
+        "Level 3 丰度：wikidot-cn Level 3 页说储量丰富；两站物品页都只提到 Level 11 市场有卖。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/object-5",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Candy (Object 5)",
+      "zh": "糖果"
+    },
+    "royal_rations": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "外观：wikidot 是 9×6×3 cm、像石蜡的软胶块；fandom 是白灰色的明胶状物质，没写尺寸。",
+        "饱腹量：wikidot 一块能撑几个月，吃多少都够；fandom 一小口管一天，建议一天一茶匙。",
+        "Level 3 丰度：wikidot-cn Level 3 页说储量丰富；wikidot-en Level 3 页说是稀有报酬；两站物品页都说极其稀有。",
+        "fandom 版本只有 2022 年旧快照，而且现在 fandom 的编号 16 已经不是这个物品。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/object-16",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Royal Rations (Object 16)",
+      "zh": "皇家口粮"
+    },
+    "lightning_in_a_bottle": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn"
+      ],
+      "conflicts": [
+        "稀有度：wikidot-en 物品页 7/10、很少见；wikidot-cn Level 3 页说储量丰富。",
+        "人工闪电和蓝色闪电的威力比，wikidot-en 摘要里自相矛盾（unverified）；wikidot-cn 只给了人造闪电约 10 万焦耳。",
+        "fandom 没有这个物品，fandom 的编号 42 是另一个物品。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/object-42",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Lightning In a Bottle (Object 42)",
+      "zh": "瓶装闪电"
+    },
+    "warpberries": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn"
+      ],
+      "conflicts": [
+        "效果：两站物品页都是传送回浆果最初被发现的地点/层级；两站 Level 1 页却写成逃离必死局面，并在新到的层级长期困住。",
+        "已知分布：wikidot-en 是 Level 0、Level 2；wikidot-cn 是 Level 1、Level 2，并说分布很广。",
+        "包装：wikidot-en 一盒 7 颗；wikidot-cn 是普通纸箱，没说几颗。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/object-74",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Warpberries",
+      "zh": "迁跃浆果"
+    },
+    "moth_jelly": {
+      "candidates": [
+        "fandom"
+      ],
+      "conflicts": [
+        "只有 fandom 有这个物品；wikidot-en/cn 都没找到页面，wikidot 的 Object 6 是另一个物品（镜子）。"
+      ],
+      "source": "fandom",
+      "url": "https://web.archive.org/web/20260117131606/https://backrooms.fandom.com/wiki/Object_6",
+      "title": null,
+      "method": "only-source",
+      "en": "Moth Jelly (Object 6)",
+      "zh": "飞蛾果冻（中文站没有对应页面，译名 unverified）"
+    },
+    "ptg_b": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "只有 wikidot-cn 的中文原创 Entity C-233 有 PTG-A/PTG-B 设定；wikidot-en 和 fandom 的派对客设定里都没有这种逆转液。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-c-233",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "PTG-B",
+      "zh": "PTG-B（派对客转化逆转液/疫苗）"
+    },
+    "canned_food": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "容器：wikidot 写的是罐装或瓶装两种；fandom 只写罐头。",
+        "风险：wikidot 提醒其他食物多已变质或被污染；fandom 没提污染，但说板条箱可能整箱装的是液态痛苦。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-1",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Canned / jarred food",
+      "zh": "罐装/瓶装食物"
+    },
+    "canned_tuna": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "只有 wikidot 两站 Level 19 的叙事部分有；fandom 的 Level 19 没提。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-19",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Canned tuna (opened)",
+      "zh": "打开的金枪鱼罐头"
+    },
+    "water_bottle": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "只有 wikidot 两站 Level 19 的叙事部分有；fandom 的 Level 19 没提。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-19",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Water bottles",
+      "zh": "瓶装水"
+    },
+    "cooked_gammon": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "只有 wikidot 两站 Level 19 的叙事部分有；fandom 的 Level 19 没提。"
+      ],
+      "source": "fandom",
+      "url": "https://web.archive.org/web/20260114003328/https://backrooms.fandom.com/wiki/Level_19",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Cooked gammon on a plate",
+      "zh": "盘装熟熏肉（中文站译作「放在盘子里的熟熏肉」）"
+    },
+    "microwave_meal": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "安全性：wikidot 两站的 Level 13 冰箱食物可以正常吃；fandom 的 Level 13 所有食物都含致命灰色毒素，吃了几乎立即死亡。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-13",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Pre-packaged microwavable meals",
+      "zh": "预包装微波餐"
+    },
+    "chocolate_bar": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "wikidot 两站写明储物柜里有巧克力棒；fandom 只笼统说箱子里有普通食物。"
+      ],
+      "source": "fandom",
+      "url": "https://backrooms.fandom.com/wiki/Level_20",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Chocolate bars",
+      "zh": "巧克力棒"
+    },
+    "hot_chocolate": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "只有 wikidot 两站的 Level 20 有；fandom 的 Level 20 没有游戏奖励这套设定。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-20",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Hot chocolate",
+      "zh": "热巧克力"
+    },
+    "space_beverage": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "只有 wikidot 两站的 Level 20 有；fandom 的 Level 20 没提。"
+      ],
+      "source": "fandom",
+      "url": "https://backrooms.fandom.com/wiki/Level_20",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Space-themed beverage bottles",
+      "zh": "太空主题饮料瓶"
+    },
+    "partygoer_cake": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "蛋糕是什么：wikidot-en 是派对客用受害者肌肉反刍做的肉蛋糕，标注不要吃；wikidot-cn 是摆在派对室里的蛋糕和生日蛋糕诱饵，没说成分；fandom 没有。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/entity-67",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Cake",
+      "zh": "蛋糕（派对客的蛋糕）"
+    },
+    "cookies": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "只有 wikidot-cn 的 Level Fun 页有饼干；wikidot-en 和 fandom 没提。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-fun",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Cookies",
+      "zh": "饼干"
+    },
+    "painkillers": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "只有 fandom 的 Level 14 有；wikidot 两站的 Level 14 没列。"
+      ],
+      "source": "fandom",
+      "url": "https://web.archive.org/web/2025/https://backrooms.fandom.com/wiki/Level_14",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Painkillers",
+      "zh": "止痛药"
+    },
+    "antibiotics": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "只有 fandom 的 Level 14 有；wikidot 两站的 Level 14 没列。wikidot 另有红色杏仁水具有抗生素效果，是另一个物品，不要混用。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-14",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Antibiotics",
+      "zh": "抗生素"
+    },
+    "antiseptics": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "只有 wikidot 两站的 Level 1 有；fandom 的 Level 1 没提。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-1",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "Antiseptics, soap, hand sanitizer",
+      "zh": "消毒剂、肥皂、手消毒液"
+    },
+    "high_quality_meat": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "只有 wikidot 两站有；fandom 的 Level 5 没提，fandom 的 Entity 26 没拿到，无法比对。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-5",
+      "title": null,
+      "method": "random-on-conflict",
+      "en": "High-quality meat",
+      "zh": "优质的肉"
+    }
+  }
+}

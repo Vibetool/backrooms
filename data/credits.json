@@ -1,0 +1,608 @@
+{
+  "attribution": "设定改编自 Backrooms Wiki，按 CC BY-SA 3.0 使用；不同来源版本冲突时随机选取其一整体采用",
+  "license": "CC BY-SA 3.0",
+  "entries": [
+    {
+      "kind": "level",
+      "id": "0",
+      "title": "Level 0 - \"Threshold\"",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-0"
+    },
+    {
+      "kind": "level",
+      "id": "1",
+      "title": "Level 1 - “宜居地带”",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-1"
+    },
+    {
+      "kind": "level",
+      "id": "2",
+      "title": "Level 2: \"Pipe Dreams\"",
+      "site": "fandom",
+      "url": "https://web.archive.org/web/20251117020519/https://backrooms.fandom.com/wiki/Level_2"
+    },
+    {
+      "kind": "level",
+      "id": "3",
+      "title": "Level 3 - “发电站”",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-3"
+    },
+    {
+      "kind": "level",
+      "id": "4",
+      "title": "Level 4 - \"废弃办公室\"",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-4"
+    },
+    {
+      "kind": "level",
+      "id": "5",
+      "title": "Level 5 - “恐怖旅馆”",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-5"
+    },
+    {
+      "kind": "level",
+      "id": "6",
+      "title": "Level 6: \"Lights Out\"",
+      "site": "fandom",
+      "url": "https://web.archive.org/web/20251224183310/https://backrooms.fandom.com/wiki/Level_6"
+    },
+    {
+      "kind": "level",
+      "id": "7",
+      "title": "Level 7 - \"Thalassophobia\"",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-7"
+    },
+    {
+      "kind": "level",
+      "id": "8",
+      "title": "Level 8 - \"岩洞系统\"",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-8"
+    },
+    {
+      "kind": "level",
+      "id": "9",
+      "title": "Level 9 - \"The Suburbs\"",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-9"
+    },
+    {
+      "kind": "level",
+      "id": "10",
+      "title": "Level 10: \"The Bumper Crop\"",
+      "site": "fandom",
+      "url": "https://web.archive.org/web/20251216090901/https://backrooms.fandom.com/wiki/Level_10"
+    },
+    {
+      "kind": "level",
+      "id": "11",
+      "title": "Level 11 - \"The City That Never Sleeps\"",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-11"
+    },
+    {
+      "kind": "level",
+      "id": "12",
+      "title": "Level 12 - \"矩阵\"",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-12"
+    },
+    {
+      "kind": "level",
+      "id": "13",
+      "title": "Level 13 - \"The Boiling Frogs\"",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-13"
+    },
+    {
+      "kind": "level",
+      "id": "14",
+      "title": "Level 14: \"Inhospitality\"",
+      "site": "fandom",
+      "url": "https://web.archive.org/web/2025/https://backrooms.fandom.com/wiki/Level_14"
+    },
+    {
+      "kind": "level",
+      "id": "15",
+      "title": "Level 15 - \"未来走廊\"",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-15"
+    },
+    {
+      "kind": "level",
+      "id": "16",
+      "title": "Level 16 - \"地形转变\"",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-16"
+    },
+    {
+      "kind": "level",
+      "id": "17",
+      "title": "Level 17: “Abandoned Carrier\"",
+      "site": "fandom",
+      "url": "https://web.archive.org/web/20251231001018/https://backrooms.fandom.com/wiki/Level_17"
+    },
+    {
+      "kind": "level",
+      "id": "18",
+      "title": "Level 18 - “回忆”",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-18"
+    },
+    {
+      "kind": "level",
+      "id": "19",
+      "title": "Level 19 - “阁楼”",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-19"
+    },
+    {
+      "kind": "level",
+      "id": "20",
+      "title": "Level 20 - \"玻瑞阿斯的建筑\"",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-20"
+    },
+    {
+      "kind": "level",
+      "id": "fun",
+      "title": "享乐层 =)",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-fun"
+    },
+    {
+      "kind": "level",
+      "id": "!",
+      "title": "尘封已久的感叹号…",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/long-forgotten-exclamation"
+    },
+    {
+      "kind": "entity",
+      "id": "ant",
+      "title": "Ants",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/trimmed:entity-89"
+    },
+    {
+      "kind": "entity",
+      "id": "arachnid",
+      "title": "The Arachnids",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/old:entity-39"
+    },
+    {
+      "kind": "entity",
+      "id": "burster",
+      "title": "Burster",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-11"
+    },
+    {
+      "kind": "entity",
+      "id": "camo_crawler",
+      "title": "Camo Crawler",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/entity-31"
+    },
+    {
+      "kind": "entity",
+      "id": "clump",
+      "title": "Clump",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-5"
+    },
+    {
+      "kind": "entity",
+      "id": "curabitur_bird",
+      "title": "Curabitur Bird",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/entity-37"
+    },
+    {
+      "kind": "entity",
+      "id": "death_rat",
+      "title": "Death Rat",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-24"
+    },
+    {
+      "kind": "entity",
+      "id": "deathmoth",
+      "title": "Deathmoths",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-4"
+    },
+    {
+      "kind": "entity",
+      "id": "duller",
+      "title": "Duller",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/entity-6"
+    },
+    {
+      "kind": "entity",
+      "id": "dunk",
+      "title": "Dunk (sub-species)",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-12"
+    },
+    {
+      "kind": "entity",
+      "id": "faceling",
+      "title": "Facelings",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/entity-9"
+    },
+    {
+      "kind": "entity",
+      "id": "frayed",
+      "title": "The Frayed",
+      "site": "wikidot-en",
+      "url": "http://backrooms-arch.wikidot.com/entity-21-1"
+    },
+    {
+      "kind": "entity",
+      "id": "growler",
+      "title": "Growlers",
+      "site": "fandom",
+      "url": "https://backrooms.fandom.com/wiki/Entity_82"
+    },
+    {
+      "kind": "entity",
+      "id": "hound",
+      "title": "Hound",
+      "site": "fandom",
+      "url": "https://backrooms.fandom.com/wiki/Entity_8"
+    },
+    {
+      "kind": "entity",
+      "id": "hunter",
+      "title": "The Hunter",
+      "site": "fandom",
+      "url": "https://backrooms.fandom.com/wiki/Level_14"
+    },
+    {
+      "kind": "entity",
+      "id": "imprint",
+      "title": "Imprints",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/trimmed:level-17"
+    },
+    {
+      "kind": "entity",
+      "id": "infecting_agent",
+      "title": "Infecting Agents",
+      "site": "fandom",
+      "url": "https://backrooms.fandom.com/wiki/Level_14"
+    },
+    {
+      "kind": "entity",
+      "id": "jerry",
+      "title": "Jerry",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-7"
+    },
+    {
+      "kind": "entity",
+      "id": "light_guide",
+      "title": "Light Guide",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-35"
+    },
+    {
+      "kind": "entity",
+      "id": "lucky_crane",
+      "title": "Lucky Cranes",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/entity-46"
+    },
+    {
+      "kind": "entity",
+      "id": "neighborhood_watch",
+      "title": "The Neighborhood Watch (Watchers / Striders / Swimmers)",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/entity-96"
+    },
+    {
+      "kind": "entity",
+      "id": "nguithrxurh",
+      "title": "Nguithr'xurh",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/entity-16"
+    },
+    {
+      "kind": "entity",
+      "id": "observer",
+      "title": "The Observer",
+      "site": "fandom",
+      "url": "https://backrooms.fandom.com/wiki/Entity_161"
+    },
+    {
+      "kind": "entity",
+      "id": "partygoer",
+      "title": "Partygoer",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-c-233"
+    },
+    {
+      "kind": "entity",
+      "id": "plush_dino",
+      "title": "The Plush Dino",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-198"
+    },
+    {
+      "kind": "entity",
+      "id": "samantha",
+      "title": "Samantha",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-26"
+    },
+    {
+      "kind": "entity",
+      "id": "scit",
+      "title": "Scit",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-20"
+    },
+    {
+      "kind": "entity",
+      "id": "shadow_worker",
+      "title": "Shadowy workers in overalls (Backrooms Remodeling Co)",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-1"
+    },
+    {
+      "kind": "entity",
+      "id": "skin_stealer",
+      "title": "Skin-Stealer",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/entity-10"
+    },
+    {
+      "kind": "entity",
+      "id": "smiler",
+      "title": "Smiler",
+      "site": "fandom",
+      "url": "https://backrooms.fandom.com/wiki/Entity_3"
+    },
+    {
+      "kind": "entity",
+      "id": "thing_on_level_7",
+      "title": "The Thing On Level 7",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-7"
+    },
+    {
+      "kind": "entity",
+      "id": "tiny",
+      "title": "Tiny",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/trimmed:entity-720"
+    },
+    {
+      "kind": "entity",
+      "id": "transporter",
+      "title": "Transporter",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-13"
+    },
+    {
+      "kind": "entity",
+      "id": "warning_kite",
+      "title": "Warning Kite",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-22"
+    },
+    {
+      "kind": "entity",
+      "id": "watcher",
+      "title": "Watcher",
+      "site": "fandom",
+      "url": "https://web.archive.org/web/20220708193715/https://backrooms.fandom.com/wiki/Watchers"
+    },
+    {
+      "kind": "entity",
+      "id": "woodlin",
+      "title": "Woodlin",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/old:entity-45"
+    },
+    {
+      "kind": "entity",
+      "id": "wrangler",
+      "title": "Wranglers",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/entity-75"
+    },
+    {
+      "kind": "entity",
+      "id": "wretch",
+      "title": "Wretches",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-15"
+    },
+    {
+      "kind": "item",
+      "id": "almond_water",
+      "title": "Almond Water",
+      "site": "fandom",
+      "url": "https://web.archive.org/web/20251210135726/https://backrooms.fandom.com/wiki/Object_1"
+    },
+    {
+      "kind": "item",
+      "id": "liquid_pain",
+      "title": "Liquid Pain (Object 48)",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/object-48"
+    },
+    {
+      "kind": "item",
+      "id": "soft_drink",
+      "title": "Soda / soft drinks",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-20"
+    },
+    {
+      "kind": "item",
+      "id": "firesalt",
+      "title": "Firesalt (Object 15)",
+      "site": "fandom",
+      "url": "https://web.archive.org/web/20251116092928/https://backrooms.fandom.com/wiki/Object_15"
+    },
+    {
+      "kind": "item",
+      "id": "bandages",
+      "title": "Bandages / gauze",
+      "site": "fandom",
+      "url": "https://web.archive.org/web/2025/https://backrooms.fandom.com/wiki/Level_14"
+    },
+    {
+      "kind": "item",
+      "id": "candy",
+      "title": "Candy (Object 5)",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/object-5"
+    },
+    {
+      "kind": "item",
+      "id": "royal_rations",
+      "title": "Royal Rations (Object 16)",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/object-16"
+    },
+    {
+      "kind": "item",
+      "id": "lightning_in_a_bottle",
+      "title": "Lightning In a Bottle (Object 42)",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/object-42"
+    },
+    {
+      "kind": "item",
+      "id": "warpberries",
+      "title": "Warpberries",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/object-74"
+    },
+    {
+      "kind": "item",
+      "id": "moth_jelly",
+      "title": "Moth Jelly (Object 6)",
+      "site": "fandom",
+      "url": "https://web.archive.org/web/20260117131606/https://backrooms.fandom.com/wiki/Object_6"
+    },
+    {
+      "kind": "item",
+      "id": "ptg_b",
+      "title": "PTG-B",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/entity-c-233"
+    },
+    {
+      "kind": "item",
+      "id": "canned_food",
+      "title": "Canned / jarred food",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-1"
+    },
+    {
+      "kind": "item",
+      "id": "canned_tuna",
+      "title": "Canned tuna (opened)",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-19"
+    },
+    {
+      "kind": "item",
+      "id": "water_bottle",
+      "title": "Water bottles",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-19"
+    },
+    {
+      "kind": "item",
+      "id": "cooked_gammon",
+      "title": "Cooked gammon on a plate",
+      "site": "fandom",
+      "url": "https://web.archive.org/web/20260114003328/https://backrooms.fandom.com/wiki/Level_19"
+    },
+    {
+      "kind": "item",
+      "id": "microwave_meal",
+      "title": "Pre-packaged microwavable meals",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-13"
+    },
+    {
+      "kind": "item",
+      "id": "chocolate_bar",
+      "title": "Chocolate bars",
+      "site": "fandom",
+      "url": "https://backrooms.fandom.com/wiki/Level_20"
+    },
+    {
+      "kind": "item",
+      "id": "hot_chocolate",
+      "title": "Hot chocolate",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-20"
+    },
+    {
+      "kind": "item",
+      "id": "space_beverage",
+      "title": "Space-themed beverage bottles",
+      "site": "fandom",
+      "url": "https://backrooms.fandom.com/wiki/Level_20"
+    },
+    {
+      "kind": "item",
+      "id": "partygoer_cake",
+      "title": "Cake",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/entity-67"
+    },
+    {
+      "kind": "item",
+      "id": "cookies",
+      "title": "Cookies",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-fun"
+    },
+    {
+      "kind": "item",
+      "id": "painkillers",
+      "title": "Painkillers",
+      "site": "fandom",
+      "url": "https://web.archive.org/web/2025/https://backrooms.fandom.com/wiki/Level_14"
+    },
+    {
+      "kind": "item",
+      "id": "antibiotics",
+      "title": "Antibiotics",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-14"
+    },
+    {
+      "kind": "item",
+      "id": "antiseptics",
+      "title": "Antiseptics, soap, hand sanitizer",
+      "site": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-1"
+    },
+    {
+      "kind": "item",
+      "id": "high_quality_meat",
+      "title": "High-quality meat",
+      "site": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-5"
+    }
+  ]
+}
