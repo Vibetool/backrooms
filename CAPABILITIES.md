@@ -1,6 +1,6 @@
 # 引擎能力补课清单（用户 2026-09-13 决定：所有层级做完之后统一执行，与已有实体的逐个画质打磨一起做）
 
-来源：第一批（Level 0–3 + 13 种实体，A–K）、第二批（Level 4–7 + 7 种实体，L–U）各代理的 `notImplemented` / `apiRequests` 报告。只收录**引擎缺能力**导致没做出来、且后面几批大概率还会遇到的项；设定本身没写的、纯叙事的不收。
+来源：第一批（Level 0–3 + 13 种实体，A–K）、第二批（Level 4–7 + 7 种实体，L–U）、第三批（Level 8–11 + 13 种实体，V 起）各代理的 `notImplemented` / `apiRequests` 报告。只收录**引擎缺能力**导致没做出来、且后面几批大概率还会遇到的项；设定本身没写的、纯叙事的不收。
 
 不在本清单：M.E.G. 基地与交易（用户决定挂上大厅后单独做）、NPC 对话（用户决定不做）、枪械/负重（选中版本里只是建议性描述）。
 
@@ -27,6 +27,14 @@
 | S | 实体局部材质控制 | Tiny 眼睛亮度随环境光变化（只改眼睛，不改整个 glow 槽位） | onFrame 里 `u.slotMat(slot)` 拿到本实例该槽位的独立材质（按需克隆） | js/entities/_archetypes.js |
 | T | 穿墙感知 | 萨曼莎「读心/透视」应能隔墙发现目标 | `perception.xray: true` → 索敌跳过 `phys.los` | js/entities/_archetypes.js |
 | U | 通用贴图与小道具 | Level 5 黑胡桃木地板/白色大理石只能拿地毯贴图染色；观察者「无法被拍照」没有相机道具 | 生成 `wood_floor`、`marble` 等通用贴图进 MANIFEST；相机道具放到物品批次 | assets/tex、js/core/assets.js、js/items/ |
+| V | 远程/范围攻击 | 邻里守望·守望者的光束秒杀只能用超大近战 `attack.range` 近似 | `attack: { kind: 'beam' \| 'projectile', range, width, windup }`，带视线判定与前摇特效；联机只同步发射事件 | js/game/entities.js、js/entities/_archetypes.js |
+| W | 玩家对实体的交互 | 灌篮崽「轻敲鼻子驯服后跟随」；杰瑞「喂向日葵种子/杏仁水驯服」；幸运纸鹤「可轻轻拿起清理」 | 对准实体按 E 触发 `def.onInteract(e, player, heldItem, api)`；驯服后实体切到 `A.companion` 骨架跟随玩家 | js/game/player.js、js/game/entities.js、js/entities/_archetypes.js |
+| X | 实体把目标带去别的层 | 杰瑞把被教化的人送去杰瑞厅；传送者接触后切入墙体、几分钟后把人投送到目的层 | `api.sendToLevel(target, levelId, { delaySec })`：玩家走层级出口同一套流程（含未开放判定、联机由房主广播），测试人/实体直接移除 | js/game/entities.js、js/game/world.js、js/net/coop.js |
+| Y | 实体之间的捕食/畏惧关系 | 受眷鸟只捕食雄性死亡飞蛾；死亡飞蛾/钝人/地栖怪捕食旱虾；猎犬、笑魇等畏惧邻里守望 | `def.relations: { prey: [type], fear: [type] }`：索敌时 prey 越过阵营规则可攻击、fear 进入视野就逃；两边文件都不用互相改 | js/game/entities.js、js/entities/_archetypes.js |
+| Z | 噪音诱饵与投掷物 | 迷彩爬行者失明靠听觉，原文弱点是「扔东西制造声响把它引开」 | 玩家可投掷背包物品 → 落点 `BR.bus.emit('noise', { x, z, loudness })`，`A.hearPlayer` 类感知同时响应噪音点 | js/game/player.js、js/game/items.js、js/entities/_archetypes.js |
+| AA | 隐身/瞬移表现、持久地面痕迹 | 观察者「被清楚察觉就消失」只能隐藏模型+改坐标；磨损者走过留下墨色腐蚀痕迹 | `A.fx.vanish(e)` / `A.fx.appear(e)`（淡出+粒子）；`BR.world.decal(x, z, { ttl })` 区块级贴花池（数量上限、随区块卸载） | js/entities/_archetypes.js、js/game/world.js |
+| AB | 骨架小钩子 | `A.ambush` 分不出扑空/扑中（迷彩爬行者「扑空才嚎叫」）；`A.guide` 不能穿墙（微光向导「穿过墙和物体」） | `A.ambush({ onMiss, onCatch })`；`A.guide({ noclip: true })` 走无碰撞移动 | js/entities/_archetypes.js |
+| AC | 杂项 | Level 10「土层只有 1 米、挖深了涌出蠕虫」没有挖掘动作；幸运纸鹤「被幸运的人吸引」没有运气属性；受眷鸟的化学感受器；Level 9「电器在本层不能用」没有按层禁用物品的标记；Level 11「车换了喷嘴和油泵就能开」没有载具、「在沙房间里睡着就会被传走」没有睡觉/静止判定、「没人看着时车辆挪位/广告换画」依赖 B 项 | 挖掘交互（铲子类物品）；`BR.player.luck`；`perception.smell` 扩展到信息素；层级 `env.disabledItemTags: ['electronic']`；载具（后期）；`BR.player.idleSec` 静止计时 | 多处，逐项评估 |
 
 执行建议：A、B、C、D、H、I 是跨层级高频需求，优先；E、F、G 主要服务 Level 0，但 Level 0 是入口层、玩家第一印象，建议同批做；J、K 放最后。
 第二批新增里 L（手电）、M（水体）、N（多层结构）后面的黑暗层、水域层、多层建筑还会反复遇到，建议和 A–D 同批优先；O 与 A、Q 与 C 合并实现；P、R、S、T、U 放后面。

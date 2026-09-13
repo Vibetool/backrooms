@@ -131,6 +131,19 @@ async function desktop(browser, base) {
   await boot(page, base);
 
   // ---------- 主页 ----------
+  // ---------- 层级实体/物品表里的 type 都要已注册 ----------
+  // 实体代理常把一个实体拆成多个形态 type（arachnid_common、neighborhood_watch_strider……），层级表里还写总名的话
+  // world 会静默跳过、一只都不刷，截图和报错里都看不出来，只能在这里逐个对名字
+  const tableIssues = await ev(page, () => {
+    const out = [];
+    for (const lv of BR.levels.all()) {
+      for (const e of lv.entities || []) if (e && !BR.entityTypes.has(e.type)) out.push('L' + lv.id + ' 实体 ' + e.type);
+      for (const it of lv.items || []) if (it && !BR.itemTypes.has(it.type)) out.push('L' + lv.id + ' 物品 ' + it.type);
+    }
+    return out;
+  });
+  check('每个层级 entities / items 表里的 type 都已注册', tableIssues.length === 0, tableIssues);
+
   const home0 = await ev(page, () => ({ screen: BR.game.screen, shown: BR.home.shown, skin: BR.skin.current, inputOn: BR.input.enabled }));
   check('主页：启动后停在主页、输入关闭', home0.screen === 'home' && home0.shown && !home0.inputOn, home0);
   check('主页：「游玩」按钮在右下角', await ev(page, () => {
@@ -389,10 +402,13 @@ async function desktop(browser, base) {
       px = e.x; pz = e.z;
     }
     const moving = out.filter(v => v > 0.3).sort((a, b) => a - b);
-    return { max: moving.length ? moving[moving.length - 1] : 0, median: moving.length ? moving[moving.length >> 1] : 0, samples: out.length, moving: moving.length, walk: BR.config.player.walk };
+    return { max: moving.length ? moving[moving.length - 1] : 0, median: moving.length ? moving[moving.length >> 1] : 0,
+      p75: moving.length ? moving[Math.floor(moving.length * 0.75)] : 0, samples: out.length, moving: moving.length, walk: BR.config.player.walk };
   }, dummy0.id);
-  const ratio = dSpeed.median / dSpeed.walk;
-  check('测试人移速约为玩家步行一半', dSpeed.moving >= 5 && ratio > 0.4 && ratio < 0.56 && dSpeed.max / dSpeed.walk < 0.6, { ...dSpeed, ratio: +ratio.toFixed(3) });
+  // 巡航速度看最大值（没被挡时正好是步行的一半）；中位数会被贴墙滑行、转身拖低——每次种子随机、布局不同，按中位数判定会偶发失败。
+  // 再要求 75 分位不低于 0.35 倍，防止测试人大部分时间卡住不动也算过
+  const ratio = dSpeed.max / dSpeed.walk;
+  check('测试人移速约为玩家步行一半', dSpeed.moving >= 5 && ratio > 0.45 && ratio < 0.56 && dSpeed.p75 / dSpeed.walk > 0.35, { ...dSpeed, ratio: +ratio.toFixed(3) });
 
   // 场景一：只放有害实体 + 测试人（测试人拉回原位），推进 10 秒，验证测试人掉血。
   // 以前和友善实体放在同一场，有害实体常先被友善实体打死、来不及打测试人，所以拆成两个独立场景。

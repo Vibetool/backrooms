@@ -62,6 +62,17 @@ SPEC = {
     # Level 5：贝弗莉室小桌旁「红金色地毯」（environment.materials），花纹不规则走 destripe+soften
     "l5_carpet_hotel": dict(src="l5_carpet_hotel", size=512, kind="tile", mean_rgb=(150, 78, 46), chroma=1.0,
                             destripe=True, soften=0.3),
+    # Level 11：城市层公寓/办公楼外立面，规律窗格走 periodic（environment.architecture「灰色公寓楼布满小窗」）
+    "l11_apartment_windows": dict(src="l11_apartment_windows", size=512, kind="tile", mean_rgb=(146, 144, 138),
+                                  chroma=0.7, periodic=True),
+    # Level 8：天然岩洞岩壁/地面（materials「天然岩石与矿物（岩种未写，unverified）」）——颜色未定，取中性暖灰褐天然岩石；
+    # 随机纹理不规律花纹，走 destripe+soften
+    "l8_cave_rock": dict(src="l8_cave_rock", size=512, kind="tile", mean_rgb=(96, 88, 78), chroma=0.65,
+                         destripe=True, soften=0.3),
+    # Level 10：农田土壤基底（environment.materials「土壤约 1 米厚、轻微疏水」，没给颜色，取常见耕地深褐色，unverified）；
+    # 随机纹理不规律花纹，走 destripe+soften
+    "l10_soil": dict(src="l10_soil", size=512, kind="tile", mean_rgb=(112, 90, 64), chroma=0.55,
+                     destripe=True, soften=0.35),
 }
 JPEG_QUALITY = 82
 
