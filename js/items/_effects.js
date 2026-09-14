@@ -9,6 +9,14 @@
 //     · negative 不写时自动判断：减速或任一每秒数值为负就算负面；原地重生时负面效果被清掉
 //     · hostile: true 表示"敌对实体造成的效果"（杏仁水能抵消）；tags 给别的物品按标记清除（如 'infection'）
 //     · lethalAtEnd：走完最后一阶段仍活着就致死（噩梦模式才生效），cause 是结算界面的死因
+//     · onExpire: 'death' | 'transform:<type>'（ENGINE_PLAN M4 的字段名）：'death' 同 lethalAtEnd；'transform:<type>'
+//       对玩家也是致死、死因取 cause（如"你变成了悲尸"），不在原地生成实体（用户 2026-09-14 定，免得和"继续时清掉附近实体"打架）
+//     · cureTags（效果级，或 stages[i].cureTags 按阶段覆盖）：当前阶段能治好它的解药标记；空数组 = 这一阶段无药可救。
+//       cureToast：治好时的提示
+//     · stages[i].toastMs：该阶段提示停留多久；不写按字数估（每字 120 ms，2.2–6 s），cureToast 同样按字数估
+//   cure(tags)       按"当前阶段的 cureTags"治：只清掉解药标记对得上的效果，返回清掉几个。和 clear({ tag }) 分开——
+//                    clear 不看阶段，会让分阶段病在无药可救的阶段也被一刀切清掉
+//   cureByItem(def)  吃喝物品后由 player.useSelected 调用：任何食物 → 'food'；杏仁水及彩色瓶 → 'almond_water'；再加物品 def.cureTags
 //   update(dt)       player.update 每帧调用（玩家死亡期间不调用）
 //   speedMul()       所有生效效果的移速倍率乘积，player.speed() 乘上它
 //   list             生效中的效果数组（只读）
@@ -43,6 +51,16 @@ function stageNegative(s) {
   return num(s.speedMul, 1) < 1 || num(s.hpPerSec, 0) < 0 || num(s.sanityPerSec, 0) < 0 || num(s.hungerPerSec, 0) < 0;
 }
 
+// 提示停留时长：阶段写了 toastMs 就用它；没写按字数估。中文大约一秒读 6–8 个字，而阶段提示常常和受伤闪红、
+// 掉血同一刻弹出，玩家要先反应过来再读，所以每字给 120 ms。短句保持原来的 2.2 s，长句封顶 6 s，免得堆着挡画面
+const TOAST_MIN_MS = 2200;
+const TOAST_MAX_MS = 6000;
+const TOAST_PER_CHAR_MS = 120;
+function toastMs(ms, text) {
+  if (num(ms, 0) > 0) return ms;
+  return U.clamp(1000 + String(text || '').length * TOAST_PER_CHAR_MS, TOAST_MIN_MS, TOAST_MAX_MS);
+}
+
 function copyStage(e, s) {
   e.speedMul = Math.max(0, num(s.speedMul, 1));
   e.hpPerSec = num(s.hpPerSec, 0);
@@ -50,7 +68,9 @@ function copyStage(e, s) {
   e.hungerPerSec = num(s.hungerPerSec, 0);
   e.visual = s.visual || null;
   e.pulseLeft = e.visual && e.visual.pulse > 0 ? e.visual.pulse : 0;
-  if (s.toast && has(BR.hud, 'toast')) BR.hud.toast(s.toast, 2200);
+  // 阶段没写 cureTags 就沿用效果级的：大多数病整段都是同一种解药，只有像悲尸循环这样逐段收紧的才按阶段写
+  e.cureTags = Array.isArray(s.cureTags) ? s.cureTags.slice() : e.baseCureTags;
+  if (s.toast && has(BR.hud, 'toast')) BR.hud.toast(s.toast, toastMs(s.toastMs, s.toast));
   flash(e.visual);
 }
 
@@ -70,7 +90,11 @@ function add(opts) {
     tags: Array.isArray(o.tags) ? o.tags.slice() : [],
     cause: o.cause || null,
     hostile: !!o.hostile,
-    lethalAtEnd: !!o.lethalAtEnd,
+    lethalAtEnd: !!o.lethalAtEnd || o.onExpire === 'death',
+    onExpire: typeof o.onExpire === 'string' ? o.onExpire : null,
+    baseCureTags: Array.isArray(o.cureTags) ? o.cureTags.slice() : null,
+    cureTags: null,
+    cureToast: o.cureToast ? String(o.cureToast) : null,
     onEnd: typeof o.onEnd === 'function' ? o.onEnd : null,
     data: o.data || {},
     negative: o.negative != null ? !!o.negative : (stages ? stages.some(stageNegative) : stageNegative(o)),
@@ -82,10 +106,13 @@ function add(opts) {
   return e;
 }
 
-// 最后一下走 player.damage：死因记到这个效果头上，结算界面不会写"未知原因"
+function transformsInto(e) { return typeof e.onExpire === 'string' && e.onExpire.indexOf('transform:') === 0; }
+
+// 最后一下走 player.damage：死因记到这个效果头上，结算界面不会写"未知原因"。
+// 转化类的 causeKey 写 'transform:<type>'：以后要在原地生成那只实体（M4）按这个认，不用解析中文死因
 function kill(p, e) {
   if (!p || p.dead || !has(p, 'damage')) return;
-  p.damage({ hp: Math.max(0.01, p.hp), source: { cause: e.cause || '中毒身亡', key: 'effect:' + e.key } });
+  p.damage({ hp: Math.max(0.01, p.hp), source: { cause: e.cause || '中毒身亡', key: transformsInto(e) ? e.onExpire : 'effect:' + e.key } });
 }
 
 function applyStats(p, e, step) {
@@ -103,7 +130,7 @@ function applyStats(p, e, step) {
 }
 
 function finish(e, statsOn) {
-  if (e.lethalAtEnd && statsOn) kill(BR.player, e);
+  if ((e.lethalAtEnd || transformsInto(e)) && statsOn) kill(BR.player, e);
   if (e.onEnd) {
     try { e.onEnd(e); } catch (err) { console.error('[effects] onEnd 出错', e.key, err); }
   }
@@ -248,6 +275,39 @@ function match(e, f) {
   return true;
 }
 
+// ---------- 解药 ----------
+// 标准杏仁水和三种彩色瓶；过期杏仁水不算——发霉变质后"没有任何好处"，只剩毒性
+const ALMOND_WATERS = ['almond_water', 'almond_water_blue', 'almond_water_green', 'almond_water_red'];
+
+// 物品 → 解药标记。物品文件还没声明 cureTags（M4 回填时加），先按类别推，声明了的一并算上
+function itemCureTags(def) {
+  if (!def) return [];
+  const out = Array.isArray(def.cureTags) ? def.cureTags.slice() : [];
+  if (def.category === 'food') out.push('food');
+  if (ALMOND_WATERS.indexOf(def.type) >= 0) out.push('almond_water');
+  return out;
+}
+
+function cure(tags) {
+  const want = Array.isArray(tags) ? tags : tags != null ? [tags] : [];
+  if (!want.length) return 0;
+  let n = 0;
+  for (let i = list.length - 1; i >= 0; i--) {
+    const e = list[i], ct = e.cureTags;
+    if (!ct || !ct.length || !want.some(t => ct.indexOf(t) >= 0)) continue;
+    list.splice(i, 1);
+    n++;
+    if (e.cureToast && has(BR.hud, 'toast')) BR.hud.toast(e.cureToast, toastMs(0, e.cureToast));
+  }
+  if (n) syncAlert();
+  return n;
+}
+
+function cureByItem(def) {
+  const d = typeof def === 'string' ? BR.itemTypes.get(def) : def;
+  return cure(itemCureTags(d));
+}
+
 function clear(filter) {
   const f = filter && typeof filter === 'object' ? filter : null;
   let n = 0;
@@ -269,6 +329,7 @@ BR.bus.on('level:enter', () => { alertApplied = -1; });
 BR.effects = {
   list,
   add, update, speedMul, clear, has: key => !!get(key), get, remove, addFx,
+  cure, cureByItem, itemCureTags,
   get fxCount() { return fx.length; },
 };
 })();

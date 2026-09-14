@@ -96,6 +96,8 @@ BR.game = {
 | `player:respawn` | `{ x, y, z }` |
 | `item:pickup` / `item:use` | `{ type, id? }` |
 | `entity:kill` | `{ killer, victim }`（实体 id 或 'player'） |
+| `entity:infect` | `{ id, type, key, toType, source, sourceType }`（实体被感染上；仅房主发，见第 12 节 BR.entities 感染与转化） |
+| `entity:transform` | `{ from, to, fromType, toType, x, z, key, cause }`（from/to 为实体 id；cause `'infection'` 到时转化 / `'rise'` 感染尸体爬起；仅房主发） |
 | `exit:reach` | `{ to, kind }` |
 | `item:pickRequest` | `{ id, type }`（联机客机按互动时发，由 coop 转给房主） |
 | `skin:change` | `{ key }` |
@@ -229,6 +231,7 @@ BR.player = {
 
 - 信令复用 `https://api.ovobot.ai/room.php`（host/guest 两人）。DataChannel 第一条消息 `{ t: 'hello', game: 'backrooms', v }`，game 不对就断开（房间码和火箭游戏共用号段）。
 - 房主权威：`{ t:'world', seed, levelId, settings }`；实体只在房主模拟，10Hz 发 `{ t:'ents', list:[[id,type,x,z,yaw,state,hp]] }`；双方 15Hz 发 `{ t:'me', x,y,z,yaw,pitch }`。
+- 实体行尾部可选列（2026-09-14，向后兼容）：`[id,type,x,z,yaw,state,hp, y?, flags?, infStage?]`。`y` 是 ENGINE_PLAN M4 快照 v2 预留的离地高度，目前写 `null`；`flags` 位表沿用 M4 草案，bit3（8）= 感染中；`infStage` 是感染阶段号（0 起）。没感染的行仍是 7 列。旧客机只读前 7 列，新客机收到 7 列当作没感染。感染的计时和转化只在房主，转化靠现有的删一个 id、增一个 id 同步。
 - 拾取：客机发 `{ t:'pick', id }`，房主确认后广播 `{ t:'picked', id, by }`。
 - 换层：任一方到达出口 → 房主广播 `{ t:'level', to }`，两人一起换层。
 - 语音：开麦/闭麦切换，默认闭麦；V 键（input 的 `'mic'` 边沿动作）或 coop.js 自建的触屏麦克风按钮切换；对本地和远端音轨各接 AnalyserNode，coop.js 自建小角标显示"我在说话 / 对方在说话"。
@@ -372,9 +375,33 @@ update(dt)                             authoritative 为 false（联机客机）
 clearRadius(x, z, r)
 clear()
 list; authoritative
-snapshot(): [[id, type, x, z, yaw, state, hp], ...]
+snapshot(): [[id, type, x, z, yaw, state, hp, y?, flags?, infStage?], ...]   尾部 3 列只在感染中的实体上出现，见第 9 节
 applySnapshot(list)
+infect(target, spec, source?): bool    target 为实体 / id / BR.player / findTarget 结果；新感染上才返回 true
+transform(e | id, toType, { key, cause }?): e | null    仅房主
+isHuman(target): bool                  本机玩家，或 def.human === true 的实体（目前只有测试人）
 ```
+
+**感染与转化**（ENGINE_PLAN M4「状态效果、感染与转化」的子集，2026-09-14；目前只有悲尸在用，M4 在此基础上扩成通用 `addEffect` / `applyEffect`）
+```
+spec = {
+  key: 'wretch_cycle', toType: 'wretch',
+  stages: [{ at: 0, ...玩家侧字段 }, { at: 15, ... }, { at: 30, ... }],   // at = 感染后第几秒进入该阶段，第一个必须是 0
+  transformAt: 45,              // 到这一秒还没治好就转化
+  deathRiseSec: 4,              // 感染中被打死，尸体几秒后原地爬起来变成 toType（0 = 按普通死亡处理）
+  sparesInfected: true,         // 可选：带这份规格的实体（def.infection）不再攻击已带同一 key 感染的实体
+  cause: '你变成了悲尸',         // 玩家侧死因
+  cureToast: '…',               // 玩家治好时的提示
+}
+```
+- 感染源实体在定义里写 `infection: spec`（悲尸两种形态都写了同一份）。`sparesInfected` 为真时，`canAttack` 对已带同一 `key` 感染的实体返回 false（findTarget 扫候选、保留旧目标、attack 都认），悲尸挠上就去找下一个——测试人不会跑也不还手，不放过的话挨两下就死，看不到后面的阶段和原地转化。只管实体目标：噩梦里的玩家照常被追杀（模式规则）。
+- 阶段提示停留时长：`stages[i].toastMs`，不写按字数估（每字 120 ms，2.2–6 s），`cureToast` 同样按字数估。
+- 客机回单机（本机重新拿到权威）时，快照建出的没有 `spec` 的感染记录在下一次 AI 帧清掉，之后可以被重新感染。
+- 旧来源兼容：L8.js 进层时自己订阅 `player:damage` 做的 20 s 悲尸感染持续伤害（source `'hazard:wretch-infection'`）已被 `wretch_cycle` 取代，`player.damage` 直接忽略这个来源；M4 回填 L8 删掉那段订阅后一起删。L8 那句"你被感染了"的 toast 仍会和第一阶段提示同时弹出（L8.js 不在 2026-09-14 这次的改动范围）。
+- 实体目标（仅房主）：写 `e.infection = { key, toType, stage, stageAt, since, elapsed, riseAt }`（只读，给 `animate` 画症状；客机上由快照建出，只有 `stage` / `stageAt` 有意义）。已感染再中不重置计时；目标类型就是 `toType` 时不感染；被这一击当场打死的也算感染上（直接进入爬起倒计时）。到 `transformAt` 在原地（位置、朝向、`chunkKey`、`manual` 继承）生成 `toType`、移除原目标（不算击杀），发 `entity:transform`；感染尸体到 `deathRiseSec` 爬起来（原目标补发 `entity:kill`）。尸体爬起是净增一只，活跃实体数达到 `maxActiveEntities` 时改按普通尸体结算；活着的原地转化是一换一，不受限制。清场（`clearRadius` / 区块卸载）遇到等着爬起的尸体按击杀结算。
+- 玩家目标：只对本机玩家、只在 `BR.game.attackPlayers` 为真（噩梦生存）时生效，转成 `BR.effects.add({ key, stages（at 换成 seconds）, onExpire: 'transform:<toType>', cause, cureToast, tags: [key], negative: true })`。阶段字段 `toast` / `visual` / `cureTags` 由 BR.effects 处理，吃喝后 `player.useSelected` 调 `BR.effects.cureByItem(def)`。不打 `'infection'` 标签、不标 `hostile`：消毒剂按标签清、杏仁水按 hostile 清都不看阶段。到期走死亡结算（causeKey `'transform:<type>'`），不在原地生成实体（用户 2026-09-14 定，避免和"继续时清掉附近实体"冲突）；原地重生清负面效果时一起清掉。
+- 联机：联机只在游玩模式，实体不打玩家，房主的实体也不以客机为目标，所以客机玩家没有感染通道；实体的感染症状经快照尾列同步。
+- 实体行为里的用法：`onAttack(e, t, api) { if (api.isHuman(t)) api.infect(t, SPEC, e); }`；`api.transform` 同 `BR.entities.transform`。
 
 ### BR.hud（js/game/hud.js）
 ```
@@ -433,12 +460,12 @@ clearAll()                             清除全部实体和测试人
 | `BR.kit` | js/levels/_kit.js | 层级搭建：`builder(ctx,cx,cz,rng)`、`mat`、`grid`/`gridWalls`/`gridSpawns`（跨区块无缝，默认墙厚 0.267 m）、`trims.yellowWood`（黄色墙纸房间的黄木矮踢脚线）、`prop.*` 29 种构件、`exit`（首期范围外自动 sealed、noclip、event 可 setActive）、`heightField`、`loreKey`。写法见 **js/levels/_TEMPLATE.md** |
 | `BR.arch` | js/entities/_archetypes.js | 实体行为骨架（stalker/pack/flyer/ambush/mimic/lightBound/wanderer/guide/swarm/hazardEntity）、模型构件 `parts.*`、动画 `anim.*`。写法见 **js/entities/_TEMPLATE.md** |
 | `BR.itemKit` | js/items/_kit.js | 物品共用：小模型、图标、数值结算（只在 statsEnabled 时生效）、分次食用、投掷；`LORE_HOUR` = 设定 1 小时对应游戏 60 秒 |
-| `BR.effects` | js/items/_effects.js | 时效效果：`add({key,seconds,speedMul,hpPerSec,sanityPerSec,hungerPerSec,visual,negative,tags})`、`update(dt)`、`speedMul()`、`clear({negative})`。player.speed() 乘 speedMul；原地重生只清负面效果；换层不清（防止走出口解毒） |
+| `BR.effects` | js/items/_effects.js | 时效效果：`add({key,seconds,speedMul,hpPerSec,sanityPerSec,hungerPerSec,visual,negative,tags})`、`update(dt)`、`speedMul()`、`clear({negative})`。player.speed() 乘 speedMul；原地重生只清负面效果；换层不清（防止走出口解毒）。分阶段病（2026-09-14）：`stages[i].cureTags`（该阶段能治它的解药标记，空数组 = 无药可救）、`onExpire: 'death' \| 'transform:<type>'`（lethalAtEnd 是 death 的别名；transform 对玩家也是致死，死因取 cause）、`cureToast`、`cure(tags)`、`cureByItem(def)`（食物类别 → 'food'，杏仁水及彩色瓶 → 'almond_water'，外加物品 def 的 `cureTags`） |
 
 加载顺序补充：`js/game/items.js → js/items/_kit.js → js/items/_effects.js → 其余物品`；`js/game/entities.js → js/entities/_archetypes.js → 各实体`；`js/game/world.js → js/levels/_kit.js → 各层级`。
 
-实体定义可选钩子（entities.js 已支持）：`init(e, api)`、`animate(e, dt, api)`（房主和客机每帧都跑，只做表现）、`onHit(e, amount, attacker, api)`、`onDeath(e, api) → 尸体保留秒数`、`dispose(e)`、`attack.entityHp`。
-`BR.entities` 额外：`get(id)`、`remove`、`damage`、`kill`、`count()`；`spawn` 的 opts 支持 `yaw`、`from`、`force`、`manual`（手动放出的不随区块卸载、不受 maxActiveEntities 限制）。
+实体定义可选钩子（entities.js 已支持）：`init(e, api)`、`animate(e, dt, api)`（房主和客机每帧都跑，只做表现）、`onHit(e, amount, attacker, api)`、`onDeath(e, api) → 尸体保留秒数`、`dispose(e)`、`attack.entityHp`、`human: true`（人类目标：感染类攻击只对它和玩家生效）。
+`BR.entities` 额外：`get(id)`、`remove`、`damage`、`kill`、`count()`、`infect`、`transform`、`isHuman`（见第 12 节）；`spawn` 的 opts 支持 `yaw`、`from`、`force`、`manual`（手动放出的不随区块卸载、不受 maxActiveEntities 限制）。
 
 联机打洞：`net.js` 默认 ICE 为小米 STUN → Google STUN → Cloudflare STUN；设置 `BR.config.iceServers` 可整体覆盖（将来加 TURN 中继就在这里配）。
 

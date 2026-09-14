@@ -6,7 +6,7 @@
 
 | # | 能力 | 第一批里卡住的 | 建议接口 | 归属文件 |
 |---|---|---|---|---|
-| A | 持续状态与感染/变异 | 猎犬咬伤 20–30 分钟后变异、5 分钟内杏仁水冲洗可解；笑魇怕火；Level 0 污染杏仁水与地毯纤维致病 | 扩展 `BR.effects`：`stages`（按时间切换症状）、`cureTags`（物品 use 时清除带某 tag 的效果）、`onExpire: 'death' \| 'transform:<type>'`；实体侧 `BR.entities.addEffect(e, {...})`（燃烧、中毒） | js/items/_effects.js、js/game/entities.js、js/game/player.js |
+| A | 持续状态与感染/变异（部分完成：悲尸感染转化，见 BR.entities.infect） | 猎犬咬伤 20–30 分钟后变异、5 分钟内杏仁水冲洗可解；笑魇怕火；Level 0 污染杏仁水与地毯纤维致病 | 扩展 `BR.effects`：`stages`（按时间切换症状）、`cureTags`（物品 use 时清除带某 tag 的效果）、`onExpire: 'death' \| 'transform:<type>'`；实体侧 `BR.entities.addEffect(e, {...})`（燃烧、中毒） | js/items/_effects.js、js/game/entities.js、js/game/player.js |
 | B | "是否被注视"查询 | Level 1 画作/木箱不被注视时消失、自然锁被注视时消失；Level 0 走廊在不被观察时变形 | `BR.view.isObserved(x, y, z, r)`：相机视锥 + `phys.los`，联机时把对方相机也算进去（对方位姿已同步） | 新增 js/core/view.js、js/net/coop.js |
 | C | 按区域/标签限定刷怪 | Level 1 影子工人只出现在衔尾宏区 | 层级 entities 条目加 `tags: ['ouroboros']` 或 `where(cx, cz)`；`spawnForChunk` 只在匹配 tag 的 spawnPoints 上生成，密度按匹配面积折算 | js/game/entities.js、js/game/world.js |
 | D | 竖直方向的移动与攻击 | 钝人隔墙伸手；Nguithr'xurh 从天花板坠落；肢团爬墙钻通风管；牧蛇钻地 | `api.moveToward(e, x, z, speed, { mode: 'ceiling' \| 'wall' \| 'burrow' })`（忽略地面碰撞、贴天花板/墙面走）；`attack.throughWalls`、`attack.fromAbove` | js/game/entities.js、js/core/phys.js |
@@ -14,7 +14,7 @@
 | F | 联机"孤立效应" | Level 0：两人同层却互相找不到、沟通无效，仅一个小房间例外 | 层级 `env.coopIsolation: true` → coop 隐藏对方人形与名牌、静音语音；层级可按区域标记例外 | js/net/coop.js |
 | G | 运行时布局变化 | Level 0 Peripheral Shift（不被观察时布局重排） | 世界"位移纪元"：区块种子带 epoch，房主推进 epoch 并广播，只重建当前不被观察（依赖 B）的区块，碰撞体/物品/实体一并重建 | js/game/world.js、js/net/coop.js |
 | H | 按层覆写实体行为 | Level 2 实体改为一路猛冲、不再保存体力 | 层级 entities 条目加 `overrides: { speed, brain }`，spawn 时合并到实例 | js/game/entities.js |
-| I | 实体生成实体 | 肢团受伤掉下的肉块长成新肢团 | `api.spawn(type, x, y, z)`，受 maxActiveEntities 与每实体繁殖上限约束 | js/game/entities.js |
+| I | 实体生成实体（部分完成：悲尸感染转化，见 BR.entities.infect） | 肢团受伤掉下的肉块长成新肢团 | `api.spawn(type, x, y, z)`，受 maxActiveEntities 与每实体繁殖上限约束 | js/game/entities.js |
 | J | 蹲伏与窄道 | Level 3 需要弯腰/侧身通过的窄走廊 | 玩家蹲伏（C 键 / 触屏按钮，眼高 1.0 m、碰撞高 1.1 m）；kit 窄道构件带低矮顶棚碰撞体 | js/game/player.js、js/core/input.js、js/levels/_kit.js |
 | K | 天气粒子 | Level 2 降雪 | `BR.gfx.weather({ type: 'snow' \| 'rain' \| 'dust', intensity })`，跟随相机的粒子盒，低画质减量 | js/core/gfx.js |
 | L | 手持光源 / 手电 | Level 6「光源一带进来就熄灭」只能靠极低环境光近似；观察者「手电照射可能离开」、七层之物「用光照射可暂时制服」都没有定向光可判 | 玩家光源：相机下固定一盏 SpotLight（占灯池 1 个名额），开关/电量，层级可强制熄灭 `BR.player.snuffLight(sec)`；`BR.view.litBy(target)` 判断手电是否照到目标 | js/game/player.js、js/core/gfx.js、js/core/input.js |

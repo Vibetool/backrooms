@@ -224,7 +224,16 @@ async function desktop(browser, base) {
   const casEnts = await ev(page, async () => {
     if (BR.entities.count() === 0 && BR.levels.has('1')) await BR.world.goTo('1');
     // Level 1 平均每块约 0.23 只实体：只推进 1 秒时建好的区块不多，偶尔一只都没刷到。多推进几步（最多 6 秒）让出生点周围区块建完再数
-    if (window.__br && __br.step) { __br.step(1); for (let i = 0; i < 25 && BR.entities.count() === 0; i++) __br.step(0.2); }
+    if (window.__br && __br.step) {
+      __br.step(1); for (let i = 0; i < 25 && BR.entities.count() === 0; i++) __br.step(0.2);
+      // 有的种子下出生点附近几块刚好一只没刷（本地新代码与线上旧版本同种子逐个核对过数量一致，是随机性不是回归）：
+      // 换到几块外再数，最多 3 次；仍然检验"自动生成实体"这件事本身
+      for (let k = 0; k < 3 && BR.entities.count() === 0; k++) {
+        const size = (BR.levels.get(BR.game.levelId) || {}).chunkSize || 24;
+        BR.player.x += 3 * size;
+        for (let i = 0; i < 20 && BR.entities.count() === 0; i++) __br.step(0.2);
+      }
+    }
     return { lv: BR.game.levelId, n: BR.entities.count(), items: BR.items.list.length, statsHidden: document.querySelector('.hud-stats').hidden };
   });
   check('游玩：自动生成了实体，也刷了食物/杏仁水', casEnts.n > 0 && casEnts.items > 0, casEnts);

@@ -8,6 +8,12 @@
 //   onDeath(e, api) → 秒数            返回 > 0 就保留尸体这么久，到时再移除并发 entity:kill；否则立即移除
 //   dispose(e)                        移除时释放实例独有的其他资源
 //   attack.entityHp                   打实体时的伤害，缺省用 attack.hp
+//   human: true                       "人类目标"（目前只有测试人）：感染类攻击只对人类和玩家生效，见 isHuman
+//   infection: spec                   这只实体携带的感染规格（onAttack 里 api.infect 用的同一份）；spec.sparesInfected 为真时
+//                                     它不再攻击已带同一 key 感染的实体（只管实体目标，玩家照常），见 sparesInfected
+// 感染与转化（ENGINE_PLAN M4 的子集，2026-09-14 先给悲尸用）：infect(target, spec, source?) / transform(target, toType)。
+//   e.infection 是只读的症状状态 { key, toType, stage, stageAt, since, elapsed, riseAt }，animate 按它画症状；
+//   计时、转化只在房主跑，客机只从快照拿"感染了没有 + 第几阶段"
 // 资源约定：模型的几何体/材质默认当作共享的（assets 缓存、模块级缓存、GLB 克隆都共享），移除实体时不释放；
 //   实例独有的几何体或材质把自己的 userData.entityOwned 设为 true，移除时统一 dispose。
 (function () {
@@ -145,6 +151,9 @@ function canAttack(a, kind, ref) {
     return fa === 'neutral' && provoker(a) === 'player';
   }
   if (!alive(ref) || ref === a) return false;
+  // 感染源放过已经带着同一种感染的实体（spec.sparesInfected，见 sparesInfected）。放在阵营判断前面：
+  // findTarget 扫候选、保留旧目标、attack 出手都走这里，一处拦住就不会出现"盯着不打、别的目标也不看"
+  if (ref.infection && sparesInfected(a, ref.infection)) return false;
   const fb = ref.def.faction;
   if (fa === 'hostile') return fb === 'friendly' || fb === 'dummy';
   if (fa === 'friendly') return fb === 'hostile';
@@ -434,8 +443,17 @@ function kill(e, killer) {
   e.target = null;
   e._m.killer = info[0];
   e._m.killerType = info[1];
+  e._m.diedAt = time;
   sound(e, 'hit');
   const hold = has(e.def, 'onDeath') ? num(safeCall(e.def, 'onDeath', e, api), 0) : 0;
+  // 感染中被打死：不按普通流程移除，尸体留在原地 deathRiseSec 秒后爬起来变成 toType。
+  // onDeath 照常调用（它可能有音效等副作用），只是它给的保留时长让位给这里
+  const inf = e.infection;
+  if (inf && inf.spec && inf.spec.deathRiseSec > 0) {
+    inf.riseAt = time + inf.spec.deathRiseSec;
+    e._m.removeAt = null;
+    return;
+  }
   if (hold > 0) e._m.removeAt = time + hold;
   else finalize(e);
 }
@@ -527,9 +545,10 @@ function detach(e) {
   if (byId.get(e.id) === e) byId.delete(e.id);
   if (iterating) dirty = true; else compact();
 }
-// 清场用：正在倒地的尸体已经算死了，补发击杀事件；活着的只是被清掉，不算击杀
+// 清场用：正在倒地的尸体（包括等着爬起来的感染尸体）已经算死了，补发击杀事件；活着的只是被清掉，不算击杀
 function discard(e) {
-  if (e.dead && !e.removed && e._m.removeAt != null) finalize(e);
+  const rising = !!(e.infection && e.infection.riseAt != null);
+  if (e.dead && !e.removed && (e._m.removeAt != null || rising)) finalize(e);
   else detach(e);
 }
 
@@ -549,8 +568,10 @@ function makeEntity(def, id, x, y, z, yaw) {
     remote: false,           // 联机客机按快照创建的
     dead: false, removed: false,
     hitAt: -1e9, spawnedAt: time,
+    infection: null,         // 感染症状状态（只读），见文件头与 infect()
     // 管理器私有状态，行为代码请用 data
     _m: {
+      diedAt: null,
       thinkAcc: aiRng() * FAR_INTERVAL,   // 错开远处实体的思考时刻
       scanAt: 0, seenAt: -1e9, seenCheckAt: 0, curSeen: false,
       detourT: 0, detourX: 0, detourZ: 0, side: 0, detourN: 0, detourEndAt: -1e9,
@@ -731,12 +752,188 @@ function removeEntity(e) {
   if (e) detach(e);
 }
 
+// ---------- 感染与转化（ENGINE_PLAN M4 的子集） ----------
+// 规格 spec 由实体文件声明，本文件不认识任何具体实体；联机只同步"是否感染 + 阶段号"，函数和数值不进快照（M4 同一原则）。
+//   { key, toType, stages: [{ at, ...玩家侧字段 }], transformAt, deathRiseSec, cause?, cureToast? }
+//   stages[i].at：感染后第几秒进入该阶段，第一个必须是 0；阶段里的 toast / cureTags / visual 等只有玩家侧（BR.effects）读
+//   transformAt：到这一秒还没好就转化；deathRiseSec：感染中被打死后尸体几秒爬起来（0 = 按普通死亡处理）
+// M4 做通用 addEffect 时，这里的 e.infection 会并进 e._fx，infect 变成 applyEffect 的一个预设
+const SNAP_INFECTED = 1 << 3;   // 快照 flags 位：沿用 M4 草案位表的 bit3 infected，M4 加其他位时不用改这一位
+const specCache = new WeakMap();
+
+// 规格按对象缓存：悲尸每挠一下都会传同一个 spec，不重复校验和拷贝
+function normInfection(spec) {
+  if (!spec || typeof spec !== 'object') return null;
+  if (specCache.has(spec)) return specCache.get(spec);
+  const key = spec.key != null ? String(spec.key) : '';
+  const toType = spec.toType != null ? String(spec.toType) : '';
+  const stages = (Array.isArray(spec.stages) ? spec.stages : [])
+    .filter(s => s && Number.isFinite(+s.at) && +s.at >= 0)
+    .map(s => Object.assign({}, s, { at: +s.at }))
+    .sort((a, b) => a.at - b.at);
+  const transformAt = num(spec.transformAt, NaN);
+  let n = null;
+  if (!key || !toType || !stages.length || stages[0].at !== 0 || !(transformAt > stages[stages.length - 1].at)) {
+    once('infspec:' + key, () => console.warn('[entities] 感染规格无效：要有 key、toType、stages[0].at = 0、transformAt 大于最后一个阶段', spec));
+  } else {
+    n = {
+      key, toType, stages, transformAt,
+      deathRiseSec: Math.max(0, num(spec.deathRiseSec, 0)),
+      sparesInfected: spec.sparesInfected === true,
+      cause: spec.cause ? String(spec.cause) : null,
+      cureToast: spec.cureToast ? String(spec.cureToast) : null,
+    };
+  }
+  specCache.set(spec, n);
+  return n;
+}
+
+// 感染源放过"同类"：攻击方 def.infection 声明了规格且 sparesInfected 为真，目标实体已经带着同一 key 的感染，就不再当目标。
+// 为什么要有：测试人不会跑也不会还手，感染源要是接着打，它挨两下就死，自然流程里永远看不到后面几个阶段和原地转化。
+// 只管实体目标，玩家不走这里（canAttack 的 player 分支在前面）：噩梦里实体照常追杀人类是用户定死的模式规则。
+// 快照建出来的感染记录 key 是 null（客机），客机本来也不跑 AI，这里不会误判
+function sparesInfected(a, inf) {
+  const spec = a.def && a.def.infection;
+  if (!spec || inf.key == null) return false;
+  const s = normInfection(spec);
+  return !!s && s.sparesInfected && s.key === inf.key;
+}
+
+// "人类目标"：本机玩家，或 def.human === true 的实体（目前只有测试人）
+function isHuman(target) {
+  if (typeof target === 'string') target = byId.get(target);
+  const t = resolveTarget(target);
+  return !!t && (t.kind === 'player' || !!(t.ref.def && t.ref.def.human === true));
+}
+
+// 统一入口：目标是本机玩家走 BR.effects（玩家状态效果），是实体走实体侧计时。返回是否新感染上了
+function infect(target, spec, source) {
+  if (typeof target === 'string') target = byId.get(target);
+  const t = resolveTarget(target);
+  const s = normInfection(spec);
+  if (!t || !s) return false;
+  const src = source !== undefined ? source : spec.source;
+  return t.kind === 'player' ? infectPlayer(t.ref, s, src) : infectEntity(t.ref, s, src);
+}
+
+function infectEntity(e, s, source) {
+  // 转化要生成、移除实体，只能房主做；客机上的感染状态只从快照来
+  if (!isAuthoritative() || !e || e.removed) return false;
+  // 已感染：再被划伤不重置计时。没有 spec 的记录是当客机时从快照建的，房主已经不在了（客机回单机），
+  // 没有时间线可接着走，允许重新感染覆盖掉，不然它会永远挂着症状、既不转化也感染不上
+  if (e.infection && e.infection.spec) return false;
+  if (e.type === s.toType) return false;      // 本来就是转化结果（悲尸不会被悲尸感染）
+  if (!BR.entityTypes.has(s.toType)) {
+    once('inftype:' + s.toType, () => console.warn('[entities] 感染的转化类型未注册：', s.toType));
+    return false;
+  }
+  let riseAt = null;
+  if (e.dead) {
+    // 致命的那一下也是一次划伤：只认这一刻刚被打死的尸体（onAttack 紧跟在命中之后调用），
+    // 早就倒在地上的尸体不会因为被补一刀就爬起来
+    if (e._m.diedAt !== time || !(s.deathRiseSec > 0)) return false;
+    riseAt = time + s.deathRiseSec;
+    e._m.removeAt = null;
+  }
+  const info = killerInfo(source);
+  e.infection = { key: s.key, toType: s.toType, stage: 0, stageAt: time, since: time, elapsed: 0, riseAt, source: info[0], spec: s };
+  BR.bus.emit('entity:infect', { id: e.id, type: e.type, key: s.key, toType: s.toType, source: info[0], sourceType: info[1] });
+  return true;
+}
+
+// 玩家侧：和物品毒发同一套 BR.effects（阶段、提示、原地重生清负面）。
+// 只作用于本机玩家——联机只开放游玩模式，那里实体不打任何玩家；房主的实体也从不以客机为目标（findTarget 只看本机玩家），
+// 所以现在没有"实体伤到客机"的通道，也就没有要带感染信息的消息
+function infectPlayer(p, s, source) {
+  // 模式规则：只在实体会攻击玩家的模式（噩梦生存）生效；游玩/测试模式直接拒绝，哪怕有人绕过 attack 直接调
+  if (p !== BR.player || !BR.game.attackPlayers || !playerAlive(p)) return false;
+  const fx = BR.effects;
+  if (!has(fx, 'add') || !has(fx, 'has')) return false;
+  if (fx.has(s.key)) return false;            // 已感染：再被划伤不重置计时
+  const toDef = BR.entityTypes.get(s.toType);
+  const stages = s.stages.map((st, i) => {
+    const end = i + 1 < s.stages.length ? s.stages[i + 1].at : s.transformAt;
+    const out = Object.assign({}, st, { seconds: end - st.at });
+    delete out.at;
+    return out;
+  });
+  const info = killerInfo(source);
+  return !!fx.add({
+    key: s.key, stages,
+    // 不打 'infection' 标签、不标 hostile：消毒剂按 infection 标签清、杏仁水按 hostile 清，
+    // 都不看阶段——会让第三阶段也能治好，违背选中版本；是否能治只由阶段里的 cureTags 决定
+    tags: [s.key], negative: true, hostile: false,
+    cause: s.cause || ('你变成了' + ((toDef && toDef.zh) || s.toType)),
+    onExpire: 'transform:' + s.toType,
+    cureToast: s.cureToast,
+    data: { source: info[0], sourceType: info[1] },
+  });
+}
+
+// 房主每帧：推进阶段；活着的到点原地转化，感染尸体到点爬起来
+function tickInfection(e, dt) {
+  const inf = e.infection, s = inf.spec;
+  // 没有 spec = 当客机时从快照建的，现在本机拿回了权威（客机回单机，房主已经不在）：没有时间线可以接着走，
+  // 留着只会让它永远抽搐、永远不转化，所以清掉症状，之后可以被重新感染（本函数只在房主/单机的 runAI 里调用）
+  if (!s) { e.infection = null; return; }
+  if (e.dead) {
+    if (inf.riseAt != null && time >= inf.riseAt) rise(e);
+    return;
+  }
+  inf.elapsed += dt;
+  let st = inf.stage;
+  while (st + 1 < s.stages.length && inf.elapsed >= s.stages[st + 1].at) st++;
+  if (st !== inf.stage) { inf.stage = st; inf.stageAt = time; }
+  if (inf.elapsed >= s.transformAt) transform(e, s.toType, { key: s.key, cause: 'infection' });
+}
+
+function rise(e) {
+  const inf = e.infection;
+  inf.riseAt = null;
+  // 尸体爬起来是净增一只活跃实体：计入 maxActiveEntities，满了就按普通尸体结算，防止转化链刷怪风暴（M4 风险项）。
+  // 活着的目标原地转化是一换一，数量不变，不受这条限制
+  const max = num(BR.config.world.maxActiveEntities, 28);
+  if (activeCount() >= max) {
+    console.info('[entities] 活跃实体已达上限 ' + max + '，' + e.type + ' 的尸体没有爬起来');
+    finalize(e);
+    return;
+  }
+  transform(e, inf.toType, { key: inf.key, cause: 'rise' });
+}
+
+// 原地把目标换成另一种实体（M4 草案的 api.transform）：同位置、同朝向，继承区块归属和 manual 标记
+// （测试面板放出的目标转化出的新实体也不被区块卸载/无主清理带走）。先生成，成功了才移除原目标。
+// 活着的目标被换掉不算击杀（不发 entity:kill）；倒地的尸体按击杀结算（补发 entity:kill）。只在房主执行，客机靠快照看到一删一增
+function transform(target, toType, opts) {
+  const o = opts || {};
+  if (typeof target === 'string') target = byId.get(target);
+  const e = target && target.def && !target.removed ? target : null;
+  if (!e || !isAuthoritative()) return null;
+  const type = String(toType || '');
+  if (!BR.entityTypes.has(type)) {
+    once('inftype:' + type, () => console.warn('[entities] transform 的目标类型未注册：', type));
+    return null;
+  }
+  const sp = { yaw: e.yaw, chunkKey: e.chunkKey };
+  let ne = spawn(type, e.x, e.y, e.z, sp);
+  if (!ne) { sp.force = true; ne = spawn(type, e.x, e.y, e.z, sp); }   // 原地被墙蹭到也要换，不能让目标就这么不转化
+  if (!ne) return null;
+  ne.chunkKey = e.chunkKey;
+  ne.manual = e.manual;
+  const from = e.id, fromType = e.type;
+  if (e.dead) finalize(e); else detach(e);
+  BR.bus.emit('entity:transform', { from, to: ne.id, fromType, toType: type, x: ne.x, z: ne.z, key: o.key || null, cause: o.cause || null });
+  return ne;
+}
+
 // ---------- 每帧 ----------
 function runAI(dt) {
   const far2 = THINK_FAR * THINK_FAR;
   for (let i = 0; i < ents.length; i++) {
     const e = ents[i];
     if (e.removed) continue;
+    // 感染计时按真实帧时间走，排在远处降频之前：离玩家远的测试人也要按时转化，不能因为没人看着就停表
+    if (e.infection) { tickInfection(e, dt); if (e.removed) continue; }
     const m = e._m;
     if (e.dead) {
       if (m.removeAt != null && time >= m.removeAt) finalize(e);
@@ -850,13 +1047,18 @@ function update(dt) {
 // ---------- 联机快照（第 9、12 节） ----------
 const r2d = v => Math.round(v * 100) / 100;
 
+// 行格式 [id, type, x, z, yaw, state, hp, y?, flags?, infStage?]：前 7 列和旧版一模一样，新增的只追加在尾部。
+//   第 8 列 y：M4 快照 v2 预留（离地高度），本版不写，占位 null；第 9 列 flags：位表同 M4 草案，bit3 = 感染中；
+//   第 10 列：感染阶段号（0 起）。没感染的行不追加，仍是 7 列。旧客机只读前 7 列，新客机收到 7 列就当没感染
 function snapshot() {
   const out = [];
   for (let i = 0; i < ents.length; i++) {
     const e = ents[i];
     if (e.removed) continue;
     // hp 向上取整：还活着的实体不会被客机显示成 0 血
-    out.push([e.id, e.type, r2d(e.x), r2d(e.z), r2d(e.yaw), String(e.state || 'idle'), Math.max(0, Math.ceil(e.hp))]);
+    const row = [e.id, e.type, r2d(e.x), r2d(e.z), r2d(e.yaw), String(e.state || 'idle'), Math.max(0, Math.ceil(e.hp))];
+    if (e.infection) row.push(null, SNAP_INFECTED, e.infection.stage | 0);
+    out.push(row);
   }
   return out;
 }
@@ -901,6 +1103,14 @@ function applySnapshot(list) {
         else if (state === 'attack' && e.def.sounds && e.def.sounds.attack) sound(e, e.def.sounds.attack);
         e.state = state;
       }
+      // 感染症状：只拿"感染了没有 + 第几阶段"，阶段开始时刻按本机收到的时间记（症状渐变是纯表现，差一个快照周期无所谓）
+      if (num(row[8], 0) & SNAP_INFECTED) {
+        const st = Math.max(0, num(row[9], 0) | 0);
+        const inf = e.infection || (e.infection = { key: null, toType: null, stage: -1, stageAt: time, since: time, elapsed: 0, riseAt: null, source: null, spec: null });
+        if (inf.stage !== st) { inf.stage = st; inf.stageAt = time; }
+      } else if (e.infection) {
+        e.infection = null;
+      }
     }
     for (let i = 0; i < ents.length; i++) {
       const e = ents[i];
@@ -911,15 +1121,16 @@ function applySnapshot(list) {
 
 function debugInfo() {
   const byFaction = {};
-  let far = 0;
+  let far = 0, infected = 0;
   for (const e of ents) {
     if (e.removed) continue;
     const f = e.def.faction;
     byFaction[f] = (byFaction[f] || 0) + 1;
+    if (e.infection) infected++;
     const d2 = nearestPlayerD2(e.x, e.z);
     if (d2 !== Infinity && d2 > THINK_FAR * THINK_FAR) far++;
   }
-  return { total: ents.length, active: activeCount(), byFaction, farThinking: far, authoritative: isAuthoritative(), time };
+  return { total: ents.length, active: activeCount(), byFaction, farThinking: far, infected, authoritative: isAuthoritative(), time };
 }
 
 // ---------- 给 think 用的 api（全体实体共用一个对象，time/dt 每次调用前刷新） ----------
@@ -932,6 +1143,8 @@ const api = {
   faceToward,
   canAttack(e, target) { const t = resolveTarget(target); return !!t && canAttack(e, t.kind, t.ref); },
   damage: damageEntity,
+  // 感染与转化：onAttack(e, t, api) 里 api.isHuman(t) && api.infect(t, SPEC, e)
+  infect, transform, isHuman,
   get player() { return BR.player; },
   get list() { return ents; },
 };
@@ -958,6 +1171,10 @@ BR.entities = {
   kill,                          // (e | id, killer?)
   count: activeCount,
   canAttack: api.canAttack,
+  infect,                        // (target, spec, source?) → bool：新感染上才返回 true；目标是本机玩家时走 BR.effects
+  transform,                     // (e | id, toType, { key, cause }?) → 新实体 | null；仅房主
+  isHuman,                       // (target) → bool：本机玩家或 def.human === true
+  SNAP_FLAGS: { infected: SNAP_INFECTED },
   api,
   debugInfo,
 };

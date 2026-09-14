@@ -245,8 +245,9 @@ function useSelected() {
   const def = BR.itemTypes.get(slot.type);
   if (!def || typeof def.use !== 'function') return false;
   const before = { hp: player.hp, hunger: player.hunger, sanity: player.sanity };
-  let consumed = false;
-  try { consumed = def.use(player, BR.game) === true; }
+  const leftBefore = slot.left;
+  let consumed = false, used = false;
+  try { consumed = def.use(player, BR.game) === true; used = true; }
   catch (err) { console.error('[player] 使用物品出错', slot.type, err); }
   if (BR.game.statsEnabled) {
     player.hp = U.clamp(num(player.hp, before.hp), 0, PC.maxHp);
@@ -259,6 +260,9 @@ function useSelected() {
     player.hunger = before.hunger;
     player.sanity = before.sanity;
   }
+  // 吃喝能治分阶段的病（悲尸循环：第一阶段正常饮食可逆转、第二阶段只有杏仁水有效，见 BR.effects.cure）。
+  // 分几次吃完的食物前几口 use 返回 false、不发 item:use，所以"这一格剩余口数变了"也算吃过一口
+  if (used && (consumed || slot.left !== leftBefore) && has(BR.effects, 'cureByItem')) BR.effects.cureByItem(def);
   if (consumed) {
     // use 里可能动过背包，按引用找回原来那一格再扣
     const idx = player.inventory.indexOf(slot);
@@ -334,6 +338,7 @@ function interact() {
 }
 
 // ---------- 受伤 / 死亡 / 重生 ----------
+
 function damage(opts) {
   const o = opts || {};
   if (player.dead) return false;

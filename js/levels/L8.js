@@ -597,7 +597,7 @@ function buildChunk(ctx, cx, cz, rng) {
 // ============================================================
 const S = {
   timer: 0, region: 'road9', hazTimer: 0, mauvilleTime: 0, mauvilleWarned: false, mauvilleIn: false, mauvilleTickAt: 0,
-  tipIdx: 0, infectUntil: -1, infectTickAt: 0, unsubDamage: null,
+  tipIdx: 0,
 };
 // 依据 mechanics「M.E.G. 生存建议 8 条」——原文逐条列出，按固定顺序循环提示
 const MEG_TIPS = [
@@ -704,18 +704,13 @@ BR.levels.register({
   ],
   enter(ctx) {
     S.timer = 0; S.region = 'road9'; S.hazTimer = 0; S.mauvilleTime = 0; S.mauvilleWarned = false; S.mauvilleIn = false; S.mauvilleTickAt = 0;
-    S.tipIdx = 0; S.infectUntil = -1; S.infectTickAt = 0; S._nextTip = 0;
+    S.tipIdx = 0; S._nextTip = 0;
     S.rng = U.rng(ctx.levelSeed, 'L8-flavor');   // 浮空岩石崩塌判定用；不用 Math.random（联机双方要逐字节一致）
     BR.hud.toast('手电的光在这里弱得像蜡烛……回声却大得吓人', 3200);   // 依据 lighting/sounds
     if (BR.audio && BR.audio.play) BR.audio.play('static');
-    // 依据 hazards「悲尸感染：接触会传染」——订阅玩家受伤事件，命中来源是悲尸就叠加一段持续的感染伤害
-    S.unsubDamage = BR.bus.on('player:damage', (payload) => {
-      const src = payload && payload.source;
-      if (src && src.type === 'wretch' && S.infectUntil < S.timer) {
-        S.infectUntil = S.timer + 20;   // 感染持续时间：原文没给数字，取一段够玩家紧张处理伤口的时长，非设定数值
-        BR.hud.toast('伤口火辣辣的……感觉不太对劲，你被感染了', 2600);
-      }
-    });
+    // hazards「悲尸感染：接触会传染」已经由通用的 BR.entities.infect 接管（js/entities/wretch.js 的 wretch_cycle：
+    // 划伤即感染、分阶段症状、按阶段治愈）。原来这里单独订阅玩家受伤、叠加 20 秒持续伤害，会和新机制同一帧重复提示，
+    // 而且吃东西治好后还继续掉血，所以删掉，不再重复实现
     ctx && void ctx;
   },
   update(ctx, dt) {
@@ -726,12 +721,6 @@ BR.levels.register({
       S._nextTip = S.timer + TIP_INTERVAL;
       BR.hud.toast(MEG_TIPS[S.tipIdx % MEG_TIPS.length], 3400);
       S.tipIdx++;
-    }
-
-    // ---------- 感染持续伤害（依据 14 节：只在 attackPlayers 时扣血）----------
-    if (S.infectUntil >= 0 && S.timer < S.infectUntil && S.timer >= S.infectTickAt) {
-      S.infectTickAt = S.timer + 2;
-      if (BR.game.attackPlayers) BR.player.damage({ hp: 2, sanity: 1, source: 'hazard:wretch-infection' });
     }
 
     // ---------- 新莫维勒窟滞留计时（依据 mechanics「不超过一小时」）；累计用每帧 dt，是否在区域内跟危害巡检
@@ -795,7 +784,6 @@ BR.levels.register({
   },
   leave(ctx) {
     BR.hud.prompt(null);
-    if (S.unsubDamage) { S.unsubDamage(); S.unsubDamage = null; }
     ctx && void ctx;
   },
 });
