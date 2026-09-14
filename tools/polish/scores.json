@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "_说明": "实体画质打分表（ENGINE_PLAN 第 4 节「实体画质打磨流程」）。看 tests/output/gallery/<tag>/ 下每类型 6 张图和 sheets/ 联系表打分；每个打分员每轮追加一条 rounds 记录，不改别人的记录。",
+  "scale": {
+    "min": 1,
+    "max": 5,
+    "anchors": {
+      "1": "认不出 / 明显不符合设定 / 只是几块几何体",
+      "2": "勉强认得出，但缺关键特征或比例明显不对",
+      "3": "能认出，关键特征齐，细节少",
+      "4": "特征清楚，有若干可指认的细节，比例姿态自然",
+      "5": "一眼认出，细节层次丰富，完全贴合选中版本"
+    }
+  },
+  "axes": [
+    { "key": "silhouette", "zh": "轮廓辨识度", "question": "10 m 外只看剪影能否认出是谁", "look": ["1-front34", "2-side", "6-level"] },
+    { "key": "detail", "zh": "细节层次", "question": "可指认的形状细节数量（眼、牙、衣物、关节、附件……）", "look": ["1-front34", "3-back", "4-head"] },
+    { "key": "lore", "zh": "设定符合度", "question": "对照 data/lore-choices.json 的选中版本和 userOverride", "look": ["1-front34", "2-side", "3-back", "4-head"] },
+    { "key": "proportion", "zh": "比例与姿态", "question": "身体比例、姿态是否与设定描述一致（摄影棚地面网格 0.5 m 一格作尺度参照）", "look": ["2-side", "1-front34", "6-level"] },
+    { "key": "lowQuality", "zh": "低画质可读性", "question": "低画质档（关抗锯齿、简版几何）下是否仍能认出", "look": ["5-low"] }
+  ],
+  "rules": {
+    "disagreement": "M1 由 2 名打分员独立给全部类型打首轮分；同一类型同一轴相差 ≥2 分时由主会话看图裁决，结果写进 arbitration",
+    "later": "之后每批由 1 名复评代理打分，主会话亲自看对照拼图作为第二意见",
+    "priority": "优先级 = 曝光权重 ×（5 − 平均分）；用户点名的「人」和 L0–L3 经典实体固定在第 1 批；可在批次之间调换，但每批规模不变",
+    "acceptance": "复评平均分提升 ≥1.0，且任何一轴不下降"
+  },
+  "fields": {
+    "exposure.<type>": "曝光权重（数字）：综合首次出场层级、出场层数、密度、知名度，排批次时用",
+    "rounds[]": "一轮打分：{ id, tag, rater, date, types }",
+    "rounds[].id": "轮次标识，如 m1-a / m1-b / b1-review",
+    "rounds[].tag": "打分依据的出图 tag：base / bN-before / bN-after",
+    "rounds[].rater": "打分员代号",
+    "rounds[].date": "YYYY-MM-DD",
+    "rounds[].types.<type>": "按 template 填：五轴各 1–5 整数，avg 为五轴平均（保留 2 位小数），notes 写扣分理由（要能在图上指认），shapes 列出截图上能指认、但还没建模的形状细节（给构建代理用，每条带原文依据）",
+    "arbitration[]": "{ type, axis, scores: { <rater>: 分 }, final, by: \"主会话\", why }"
+  },
+  "template": {
+    "silhouette": null,
+    "detail": null,
+    "lore": null,
+    "proportion": null,
+    "lowQuality": null,
+    "avg": null,
+    "notes": "",
+    "shapes": []
+  },
+  "exposure": {},
+  "rounds": [],
+  "arbitration": []
+}

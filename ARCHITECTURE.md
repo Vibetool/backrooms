@@ -364,6 +364,23 @@ lightAt(x, z): 0..1
 clear()
 chunkCoordsAt(x, z): { cx, cz }        chunkBounds(cx, cz): { minX, minZ, maxX, maxZ }
 chunkAt(x, z): 区块记录 | null          chunks(): 全部已载入区块记录；exits(): 已载入出口描述（记录只读）
+decal(x, z, { color, radius=0.6, ttl=60, y? }?): bool
+                                       贴地斑块（墨迹、腐蚀痕）。纯表现、不同步，各端按实体位置本地调；区块没载入返回 false。
+                                       全场 1 个 InstancedMesh（1 个 draw call），高画质 ≤64 / 低画质 ≤32 块，满了挤掉最老的；
+                                       每块记所属区块，区块卸载时清掉，clear()/换层全清；寿命最后 20% 缩小消失。
+                                       y 缺省取 phys.groundY；不进 chunk.group，不影响区块几何（golden）
+decalInfo(): { count, cap, byChunk: { "cx,cz": n }, inScene, visible, instances }   调试 / 测试用
+```
+
+### BR.arch 视觉钩子（js/entities/_archetypes.js，ENGINE_PLAN M1；完整写法见 js/entities/_TEMPLATE.md 6.10）
+```
+RigBuilder.box/sphere/limb/cone/chain/geo(..., { tint: 0xRRGGBB })   顶点色；最终颜色 = 槽位材质色 × tint
+A.mat.keyOf(material): string | null   缓存键（tint 槽位的材质键 = 原键 + '/vc'）
+u.slotMat(slot): Material | 只读视图 | null      u = A.wrap 返回的 root.userData.arch（anim.onFrame / animate 第 4 个参数）
+A.fx.vanish(e, { sec }?) / A.fx.appear(e, { sec }?)   写 e.state = 'vanish' / 'appear'；淡出淡入在 animate 里跑（房主和客机都跑）
+A.fx.update(e, dt)                     自己写 animate、没用 def.anim 的实体手动推进淡出淡入
+A.fx.burst(x, y, z, { color | [colors], count=24, speed, life, gravity, drag, up, spread, floor, flash=true, radius, flashSec }?): 实际发出的粒子数
+A.fx.clear()   A.fx.debugInfo(): { particles, particleCap, poolMax, points, clones }
 ```
 
 ### BR.entities（js/game/entities.js）

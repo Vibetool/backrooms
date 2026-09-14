@@ -7,6 +7,33 @@
 const BR = window.BR;
 const A = BR.arch;
 
+// 瞬移粒子（ENGINE_PLAN M1 AA 回填）：原文没写瞬移的视觉效果（appearance 里"无发光部位"），纯表现补充；
+// 颜色借用她自己"绿色眼睛"这一处设定色，不是新设定。
+// 放在 anim.onFrame 里按"位移突变"触发，而不是在 think 瞬移的那一刻调：think 只在房主跑，客机只收到 10 Hz 位置快照、
+// 再用 100 ms 插值滑过去（entities.js runInterp）。所以把"连续几步都快得不可能是走路"的一段位移当成一次瞬移，
+// 这段结束时在起点、终点各炸一次——房主（一帧跳过去）和客机（几帧滑过去）看到的是同一个效果。
+// animate 里不能读 e.data（客机上是空的），状态记在本机的 u 上
+const BLINK_COLOR = 0x4c8c3c;
+const BLINK_MIN = 1.5;    // 一段突变累计超过 1.5 m 才算瞬移：lightSeek 候选点离原位 2.5 / 5 m；网络抖动补位一般到不了这么远
+const BLINK_FAST = 2.5;   // 单步位移超过"最快移动速度 × 步长 × 2.5"算突变：走路、小跑不会超，100 ms 插值滑 2.5 m 远远超过
+const BLINK_GAP = 0.4;    // 两次 onFrame 间隔超过这个（远处降频停过动画）就只重记位置、不判定，免得把一路走过来的累计位移当瞬移
+function blinkFx(e, dt, api, u) {
+  const b = u.blink;
+  if (!b || api.time - b.t > BLINK_GAP) { u.blink = { x: e.x, z: e.z, t: api.time, on: false, sx: 0, sz: 0 }; return; }
+  const sp = e.def.speed, vmax = Math.max(sp.walk, sp.run);
+  const fast = Math.hypot(e.x - b.x, e.z - b.z) > vmax * dt * BLINK_FAST;
+  if (fast && !b.on) { b.on = true; b.sx = b.x; b.sz = b.z; }
+  else if (!fast && b.on) {
+    b.on = false;
+    if (!e.dead && Math.hypot(b.x - b.sx, b.z - b.sz) >= BLINK_MIN) {
+      const y = e.y + e.h * 0.5;
+      A.fx.burst(b.sx, y, b.sz, { color: BLINK_COLOR, count: 16 });
+      A.fx.burst(b.x, y, b.z, { color: BLINK_COLOR, count: 16 });
+    }
+  }
+  b.x = e.x; b.z = e.z; b.t = api.time;
+}
+
 A.register({
   type: 'samantha', en: 'Samantha', zh: '萨曼莎', version: 'wikidot-cn',
   // hostility 原文是 varies：“主要消极被动……用肉换取她的读灵术服务”，但“不喂食时会变得暴力”。
@@ -44,12 +71,13 @@ A.register({
     if ((e.state === 'wander' || e.state === 'idle') && api.time >= s.at) {
       const spot = A.lightSeek(e, api, 5, api.rng() < 0.5 ? 'dark' : 'bright');
       if (spot) { e.x = spot.x; e.z = spot.z; A.cry(e, 'noclip', { cooldown: 1, hear: 20 }); }
-      // 瞬移消失/重现没有额外的隐没特效（预算限制），用 noclip 音效（本来就是“穿墙/相位”音效）示意
+      // 瞬移消失/重现的粒子不在这里炸（think 只在房主跑，客机看不见），由 anim.onFrame 的 blinkFx 按位移突变
+      // 在起点、终点各炸一次，房主和客机都看得到；音效仍用 noclip（本来就是"穿墙/相位"音效）示意
       s.at = api.time + 6 + api.rng() * 8;
     }
   },
 
-  anim: { gait: 'quad', stride: 0.5, strike: 'bite', fall: 'side', recoil: 0.18 },
+  anim: { gait: 'quad', stride: 0.5, strike: 'bite', fall: 'side', recoil: 0.18, onFrame: blinkFx },
 
   build(ctx) {
     return A.wrap(A.parts.quadruped({

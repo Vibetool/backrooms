@@ -1,0 +1,496 @@
+{
+  "schema": 1,
+  "level": "run",
+  "seed": 12345,
+  "quality": "high",
+  "spawnFactor": 1,
+  "radius": 2,
+  "chunkSize": 16,
+  "hash": "39b5bb049d39bd9944b75d4e12e5ec045fd9b7596303446d36a1ac9683e70727",
+  "chunks": [
+    {
+      "cx": -2,
+      "cz": -2,
+      "hash": "a52d197143620888",
+      "verts": 24,
+      "mats": ["kit|kit:prop"],
+      "meshes": [
+        ["kit|kit:prop",24]
+      ],
+      "solids": [
+        [-32,-1,-32,-16,3.8,-16]
+      ],
+      "spawnPoints": [],
+      "exits": [],
+      "entities": []
+    },
+    {
+      "cx": -1,
+      "cz": -2,
+      "hash": "09a8a34f680ec6bb",
+      "verts": 24,
+      "mats": ["kit|kit:prop"],
+      "meshes": [
+        ["kit|kit:prop",24]
+      ],
+      "solids": [
+        [-16,-1,-32,0,3.8,-16]
+      ],
+      "spawnPoints": [],
+      "exits": [],
+      "entities": []
+    },
+    {
+      "cx": 0,
+      "cz": -2,
+      "hash": "7119cc0d8f8a62d8",
+      "verts": 24,
+      "mats": ["kit|kit:prop"],
+      "meshes": [
+        ["kit|kit:prop",24]
+      ],
+      "solids": [
+        [0,-1,-32,16,3.8,-16]
+      ],
+      "spawnPoints": [],
+      "exits": [],
+      "entities": []
+    },
+    {
+      "cx": 1,
+      "cz": -2,
+      "hash": "8b52b96efa744b6a",
+      "verts": 24,
+      "mats": ["kit|kit:prop"],
+      "meshes": [
+        ["kit|kit:prop",24]
+      ],
+      "solids": [
+        [16,-1,-32,32,3.8,-16]
+      ],
+      "spawnPoints": [],
+      "exits": [],
+      "entities": []
+    },
+    {
+      "cx": 2,
+      "cz": -2,
+      "hash": "379f1eec9f42a38f",
+      "verts": 24,
+      "mats": ["kit|kit:prop"],
+      "meshes": [
+        ["kit|kit:prop",24]
+      ],
+      "solids": [
+        [32,-1,-32,48,3.8,-16]
+      ],
+      "spawnPoints": [],
+      "exits": [],
+      "entities": []
+    },
+    {
+      "cx": -2,
+      "cz": -1,
+      "hash": "3fe480e5c130353a",
+      "verts": 24,
+      "mats": ["kit|kit:prop"],
+      "meshes": [
+        ["kit|kit:prop",24]
+      ],
+      "solids": [
+        [-32,-1,-16,-16,3.8,0]
+      ],
+      "spawnPoints": [],
+      "exits": [],
+      "entities": []
+    },
+    {
+      "cx": -1,
+      "cz": -1,
+      "hash": "bb7e2daac9032656",
+      "verts": 24,
+      "mats": ["kit|kit:prop"],
+      "meshes": [
+        ["kit|kit:prop",24]
+      ],
+      "solids": [
+        [-16,-1,-16,0,3.8,0]
+      ],
+      "spawnPoints": [],
+      "exits": [],
+      "entities": []
+    },
+    {
+      "cx": 0,
+      "cz": -1,
+      "hash": "928f5eb06eea858a",
+      "verts": 24,
+      "mats": ["kit|kit:prop"],
+      "meshes": [
+        ["kit|kit:prop",24]
+      ],
+      "solids": [
+        [0,-1,-16,16,3.8,0]
+      ],
+      "spawnPoints": [],
+      "exits": [],
+      "entities": []
+    },
+    {
+      "cx": 1,
+      "cz": -1,
+      "hash": "79a1e7161fc11236",
+      "verts": 24,
+      "mats": ["kit|kit:prop"],
+      "meshes": [
+        ["kit|kit:prop",24]
+      ],
+      "solids": [
+        [16,-1,-16,32,3.8,0]
+      ],
+      "spawnPoints": [],
+      "exits": [],
+      "entities": []
+    },
+    {
+      "cx": 2,
+      "cz": -1,
+      "hash": "ea6ad3beb5e8290f",
+      "verts": 24,
+      "mats": ["kit|kit:prop"],
+      "meshes": [
+        ["kit|kit:prop",24]
+      ],
+      "solids": [
+        [32,-1,-16,48,3.8,0]
+      ],
+      "spawnPoints": [],
+      "exits": [],
+      "entities": []
+    },
+    {
+      "cx": -2,
+      "cz": 0,
+      "hash": "a0d59b36d13defcd",
+      "verts": 24,
+      "mats": ["kit|kit:prop"],
+      "meshes": [
+        ["kit|kit:prop",24]
+      ],
+      "solids": [
+        [-32,-1,0,-16,3.8,16]
+      ],
+      "spawnPoints": [],
+      "exits": [],
+      "entities": []
+    },
+    {
+      "cx": -1,
+      "cz": 0,
+      "hash": "e746713e2fa7bf68",
+      "verts": 24,
+      "mats": ["kit|kit:prop"],
+      "meshes": [
+        ["kit|kit:prop",24]
+      ],
+      "solids": [
+        [-16,-1,0,0,3.8,16]
+      ],
+      "spawnPoints": [],
+      "exits": [],
+      "entities": []
+    },
+    {
+      "cx": 0,
+      "cz": 0,
+      "hash": "732e4577c0561918",
+      "verts": 560,
+      "mats": ["kit|Lrun:metal","kit|kit:prop"],
+      "meshes": [
+        ["kit|Lrun:metal",144],
+        ["kit|kit:prop",416]
+      ],
+      "solids": [
+        [0,0,5.667,16,2.8,5.933],
+        [0,0,10.067,16,2.8,10.333],
+        [1.267,0,5.8,1.533,2.8,7.47],
+        [1.267,0,8.53,1.533,2.8,10.2],
+        [1.267,2.13,7.47,1.533,2.8,8.53],
+        [1.32,0,7.47,1.48,2.05,7.55],
+        [1.32,0,8.45,1.48,2.05,8.53],
+        [1.35,0,7.55,1.45,2.05,8.45],
+        [15.367,0,5.8,15.633,2.8,7.47],
+        [15.367,0,8.53,15.633,2.8,10.2],
+        [15.367,2.13,7.47,15.633,2.8,8.53]
+      ],
+      "spawnPoints": [
+        [0.414,0,7.595,{"tag":"floor"}],
+        [0.228,0,8.863,{"tag":"floor"}],
+        [3.14,0,7.369,{"tag":"floor"}],
+        [2.939,0,8.878,{"tag":"floor"}],
+        [4.409,0,7.43,{"tag":"floor"}],
+        [4.437,0,8.753,{"tag":"floor"}],
+        [5.594,0,7.476,{"tag":"floor"}],
+        [5.69,0,8.762,{"tag":"floor"}],
+        [6.692,0,7.48,{"tag":"floor"}],
+        [6.72,0,8.586,{"tag":"floor"}],
+        [8.266,0,7.413,{"tag":"floor"}],
+        [8.337,0,8.626,{"tag":"floor"}],
+        [9.631,0,7.382,{"tag":"floor"}],
+        [9.315,0,8.794,{"tag":"floor"}],
+        [10.652,0,7.354,{"tag":"floor"}],
+        [10.775,0,8.618,{"tag":"floor"}],
+        [11.927,0,7.417,{"tag":"floor"}],
+        [12.102,0,8.826,{"tag":"floor"}],
+        [13.195,0,7.441,{"tag":"floor"}],
+        [13.202,0,8.556,{"tag":"floor"}],
+        [14.651,0,7.372,{"tag":"floor"}],
+        [14.66,0,8.89,{"tag":"floor"}]
+      ],
+      "exits": [],
+      "entities": []
+    },
+    {
+      "cx": 1,
+      "cz": 0,
+      "hash": "6ed490c274cf9120",
+      "verts": 3262,
+      "mats": ["kit|Lrun:ceiling","kit|Lrun:floor","kit|Lrun:wall","kit|kit:prop"],
+      "meshes": [
+        ["kit|Lrun:wall",84],
+        ["kit|Lrun:floor",4],
+        ["kit|Lrun:ceiling",4],
+        ["kit|kit:prop",3170]
+      ],
+      "solids": [
+        [16,0,5.667,32,2.8,5.933],
+        [16,0,10.067,32,2.8,10.333],
+        [31.367,0,5.8,31.633,2.8,7.47],
+        [31.367,0,8.53,31.633,2.8,10.2],
+        [31.367,2.13,7.47,31.633,2.8,8.53]
+      ],
+      "spawnPoints": [
+        [16.201,0,7.52,{"tag":"floor"}],
+        [16.388,0,8.938,{"tag":"floor"}],
+        [17.648,0,7.334,{"tag":"floor"}],
+        [17.831,0,8.554,{"tag":"floor"}],
+        [18.821,0,7.312,{"tag":"floor"}],
+        [18.784,0,8.863,{"tag":"floor"}],
+        [20.319,0,7.628,{"tag":"floor"}],
+        [20.242,0,8.878,{"tag":"floor"}],
+        [21.723,0,7.442,{"tag":"floor"}],
+        [21.489,0,8.585,{"tag":"floor"}],
+        [22.822,0,7.301,{"tag":"floor"}],
+        [22.69,0,8.925,{"tag":"floor"}],
+        [24.036,0,7.647,{"tag":"floor"}],
+        [24.177,0,8.738,{"tag":"floor"}],
+        [25.493,0,7.251,{"tag":"floor"}],
+        [25.524,0,8.627,{"tag":"floor"}],
+        [26.628,0,7.328,{"tag":"floor"}],
+        [26.609,0,8.598,{"tag":"floor"}],
+        [27.866,0,7.335,{"tag":"floor"}],
+        [27.934,0,8.909,{"tag":"floor"}],
+        [29.275,0,7.318,{"tag":"floor"}],
+        [29.31,0,8.823,{"tag":"floor"}],
+        [30.735,0,7.276,{"tag":"floor"}],
+        [30.643,0,8.936,{"tag":"floor"}]
+      ],
+      "exits": [],
+      "entities": []
+    },
+    {
+      "cx": 2,
+      "cz": 0,
+      "hash": "2203a7388ec7ca08",
+      "verts": 5822,
+      "mats": ["kit|Lrun:ceiling","kit|Lrun:floor","kit|Lrun:wall","kit|kit:glow","kit|kit:prop"],
+      "meshes": [
+        ["kit|Lrun:wall",32],
+        ["kit|Lrun:floor",4],
+        ["kit|Lrun:ceiling",4],
+        ["kit|kit:prop",5740],
+        ["kit|kit:glow",42]
+      ],
+      "solids": [
+        [32,0,6.267,48,2.8,6.533],
+        [32,0,9.467,48,2.8,9.733]
+      ],
+      "spawnPoints": [
+        [32.466,0,8.124,{"tag":"floor"}],
+        [33.845,0,7.996,{"tag":"floor"}],
+        [34.942,0,8.071,{"tag":"floor"}],
+        [36.25,0,7.945,{"tag":"floor"}],
+        [37.576,0,8.13,{"tag":"floor"}],
+        [38.823,0,7.974,{"tag":"floor"}],
+        [40.173,0,7.876,{"tag":"floor"}],
+        [41.447,0,7.851,{"tag":"floor"}],
+        [42.704,0,8.037,{"tag":"floor"}],
+        [43.948,0,8,{"tag":"floor"}],
+        [45.304,0,8.024,{"tag":"floor"}],
+        [46.675,0,8.196,{"tag":"floor"}]
+      ],
+      "exits": [],
+      "entities": []
+    },
+    {
+      "cx": -2,
+      "cz": 1,
+      "hash": "374a9864e0f41d3e",
+      "verts": 24,
+      "mats": ["kit|kit:prop"],
+      "meshes": [
+        ["kit|kit:prop",24]
+      ],
+      "solids": [
+        [-32,-1,16,-16,3.8,32]
+      ],
+      "spawnPoints": [],
+      "exits": [],
+      "entities": []
+    },
+    {
+      "cx": -1,
+      "cz": 1,
+      "hash": "812f409083829802",
+      "verts": 24,
+      "mats": ["kit|kit:prop"],
+      "meshes": [
+        ["kit|kit:prop",24]
+      ],
+      "solids": [
+        [-16,-1,16,0,3.8,32]
+      ],
+      "spawnPoints": [],
+      "exits": [],
+      "entities": []
+    },
+    {
+      "cx": 0,
+      "cz": 1,
+      "hash": "eab301e418651450",
+      "verts": 24,
+      "mats": ["kit|kit:prop"],
+      "meshes": [
+        ["kit|kit:prop",24]
+      ],
+      "solids": [
+        [0,-1,16,16,3.8,32]
+      ],
+      "spawnPoints": [],
+      "exits": [],
+      "entities": []
+    },
+    {
+      "cx": 1,
+      "cz": 1,
+      "hash": "c609c78ff369c363",
+      "verts": 24,
+      "mats": ["kit|kit:prop"],
+      "meshes": [
+        ["kit|kit:prop",24]
+      ],
+      "solids": [
+        [16,-1,16,32,3.8,32]
+      ],
+      "spawnPoints": [],
+      "exits": [],
+      "entities": []
+    },
+    {
+      "cx": 2,
+      "cz": 1,
+      "hash": "e5d064fa0d0cd4a9",
+      "verts": 24,
+      "mats": ["kit|kit:prop"],
+      "meshes": [
+        ["kit|kit:prop",24]
+      ],
+      "solids": [
+        [32,-1,16,48,3.8,32]
+      ],
+      "spawnPoints": [],
+      "exits": [],
+      "entities": []
+    },
+    {
+      "cx": -2,
+      "cz": 2,
+      "hash": "d39a2301c58c35a0",
+      "verts": 24,
+      "mats": ["kit|kit:prop"],
+      "meshes": [
+        ["kit|kit:prop",24]
+      ],
+      "solids": [
+        [-32,-1,32,-16,3.8,48]
+      ],
+      "spawnPoints": [],
+      "exits": [],
+      "entities": []
+    },
+    {
+      "cx": -1,
+      "cz": 2,
+      "hash": "9b24d4b316b417f6",
+      "verts": 24,
+      "mats": ["kit|kit:prop"],
+      "meshes": [
+        ["kit|kit:prop",24]
+      ],
+      "solids": [
+        [-16,-1,32,0,3.8,48]
+      ],
+      "spawnPoints": [],
+      "exits": [],
+      "entities": []
+    },
+    {
+      "cx": 0,
+      "cz": 2,
+      "hash": "53afdffd34605f13",
+      "verts": 24,
+      "mats": ["kit|kit:prop"],
+      "meshes": [
+        ["kit|kit:prop",24]
+      ],
+      "solids": [
+        [0,-1,32,16,3.8,48]
+      ],
+      "spawnPoints": [],
+      "exits": [],
+      "entities": []
+    },
+    {
+      "cx": 1,
+      "cz": 2,
+      "hash": "2c1e8fa71801bbf5",
+      "verts": 24,
+      "mats": ["kit|kit:prop"],
+      "meshes": [
+        ["kit|kit:prop",24]
+      ],
+      "solids": [
+        [16,-1,32,32,3.8,48]
+      ],
+      "spawnPoints": [],
+      "exits": [],
+      "entities": []
+    },
+    {
+      "cx": 2,
+      "cz": 2,
+      "hash": "8a3b2c492a99d9c1",
+      "verts": 24,
+      "mats": ["kit|kit:prop"],
+      "meshes": [
+        ["kit|kit:prop",24]
+      ],
+      "solids": [
+        [32,-1,32,48,3.8,48]
+      ],
+      "spawnPoints": [],
+      "exits": [],
+      "entities": []
+    }
+  ]
+}

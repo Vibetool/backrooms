@@ -30,22 +30,28 @@ function wranglerBody(b, male) {
   const bones = b.chain('tail', null, [0, HEIGHT * 0.5, 0.05], [0, 0, -1], 7, BODY_LEN,
     male ? 0.85 : 0.75, 0.2, 'body', 8);
   const head = bones[bones.length - 1];
+  // RigBuilder 的位置参数都是模型空间绝对坐标（原点在脚下），不是相对父骨骼的偏移。原来眼睛、笑脸、钳子都按"相对头部"写，
+  // 结果全堆在尾端原点附近，离真正的头（链条末端 z≈-6 m）差了一整条蛇身，看起来像零件悬空飘着。头部位置 = 链条起点 + 方向 × 长度
+  const HX = 0, HY = HEIGHT * 0.5, HZ = 0.05 - BODY_LEN;
+  const at = (dx, dy, dz) => [HX + dx, HY + dy, HZ + dz];
+  // 头端是链条最细的一节，端面半径 = chain 的 r1（0.2 m）；眼睛/嘴都按这个半径贴在头端表面，不再伸出头外
   // 依据："眼睛发出明亮的白光"——两个种性共有，独立做成 glow 槽位的球体
-  b.bone('eyeL', head, [-0.22, 0.12, -0.2]); b.sphere('eyeL', 'glow', 0.06, [0, 0, 0]);
-  b.bone('eyeR', head, [0.22, 0.12, -0.2]); b.sphere('eyeR', 'glow', 0.06, [0, 0, 0]);
+  b.bone('eyeL', head, at(-0.13, 0.15, 0.1)); b.sphere('eyeL', 'glow', 0.06, at(-0.13, 0.15, 0.1));
+  b.bone('eyeR', head, at(0.13, 0.15, 0.1)); b.sphere('eyeR', 'glow', 0.06, at(0.13, 0.15, 0.1));
   if (male) {
     // 依据："雄性脸更像人，带着大大的笑容"——用发光笑脸几何贴到头部前方，只要笑容不要眼睛（眼睛已经单独做了）
-    b.geo(head, 'glow', A.geo.glowFace({ width: 0.85, eyes: 0, smile: true, smileWidth: 1.3, teeth: 16, curve: 0.6, toothH: 0.05 })
-      .translate(0, -0.05, -0.55));
+    // glowFace 的 smileWidth/curve/toothH 是米制绝对值，不随 width 缩放，按端面直径 0.4 m 取值
+    b.geo(head, 'glow', A.geo.glowFace({ width: 0.3, eyes: 0, smile: true, smileWidth: 0.3, teeth: 10, curve: 0.08, toothH: 0.035 })
+      .translate(HX, HY - 0.05, HZ - 0.012));
   } else {
-    // 依据："雌性更像蠕虫，嘴的位置是一对钳子"——用两段圆台在嘴部位置摆出一对钳子
-    b.cone(head, 'body', [-0.12, 0, -0.35], [-0.4, 0, -0.6], 0.05, 4);
-    b.cone(head, 'body', [0.12, 0, -0.35], [0.4, 0, -0.6], 0.05, 4);
+    // 依据："雌性更像蠕虫，嘴的位置是一对钳子"——用两段圆台在嘴部位置摆出一对钳子，根部埋在头端里
+    b.cone(head, 'body', at(-0.1, -0.02, 0.05), at(-0.32, -0.02, -0.45), 0.05, 4);
+    b.cone(head, 'body', at(0.1, -0.02, 0.05), at(0.32, -0.02, -0.45), 0.05, 4);
   }
 }
 
 function buildWrangler(male) {
-  return A.wrap(A.parts.rig('wrangler_' + (male ? 'male' : 'female') + '_v1', b => wranglerBody(b, male), {
+  return A.wrap(A.parts.rig('wrangler_' + (male ? 'male' : 'female') + '_v2', b => wranglerBody(b, male), {
     // 依据："皮肤湿润、黏滑""随年龄增长变得更灰、更不透明"——没有精确颜色，取灰绿/灰褐的湿滑色调，非设定精确值；
     // 雄性"皮肤较粗糙"取带纹理的 chitin 质感，雌性保留更光滑的 skin 质感
     colors: { body: male ? 0x6f6a5d : 0x8f9a86, glow: 0xffffff },

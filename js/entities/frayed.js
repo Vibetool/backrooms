@@ -9,6 +9,12 @@
 const BR = window.BR;
 const A = BR.arch;
 
+// 移动路径上的墨色腐蚀痕迹（ENGINE_PLAN M1 回填，见 anim.onFrame）：数值是任务给定的参考值，非设定精确数字
+const TRAIL_STEP = 0.8;    // 每移动约 0.8 m 落一块
+const TRAIL_RADIUS = 0.32; // 比脚下常驻的印记（原 0.4）略小，多块连起来才像脚印链而不是一整滩
+const TRAIL_TTL = 60;      // 依据：任务给的参考时长约 60 s
+const TRAIL_COLOR = 0x08070a;   // 沿用原来脚下印记的墨黑色，色调一致
+
 A.register({
   type: 'frayed', en: 'The Frayed', zh: '磨损者', version: 'wikidot-en',
   faction: 'neutral',
@@ -47,6 +53,20 @@ A.register({
     strike: 'grab', recoil: 0.15, fall: 'fade',
     // 依据：攻击是"试图接触"，用 grab 近似；死亡表现原文 unverified，按"身体大部分是液体"选择淡出
     // 消散而不是倒地不起，非设定
+    onFrame(e, dt, api, u) {
+      // 依据："移动时留下墨色的腐蚀性痕迹"——按移动距离每隔约 0.8 m 在脚下贴一块地面痕迹，纯表现、
+      // 不同步（各端各自按本地位置生成），ttl ≈60 s 到期自然消失（ENGINE_PLAN M1 回填）
+      if (e.dead) { u.trailAcc = 0; u.trailX = u.trailZ = null; return; }
+      if (u.trailX == null) { u.trailX = e.x; u.trailZ = e.z; u.trailAcc = 0; return; }   // 首帧只记位置，不落痕
+      u.trailAcc = (u.trailAcc || 0) + Math.hypot(e.x - u.trailX, e.z - u.trailZ);
+      u.trailX = e.x; u.trailZ = e.z;
+      if (u.trailAcc >= TRAIL_STEP) {
+        u.trailAcc = 0;
+        if (BR.world && typeof BR.world.decal === 'function') {
+          BR.world.decal(e.x, e.z, { color: TRAIL_COLOR, radius: TRAIL_RADIUS, ttl: TRAIL_TTL });
+        }
+      }
+    },
   },
 
   build(ctx) {
@@ -72,11 +92,9 @@ A.register({
       },
     });
     group.add(body);
-    const pool = A.parts.decal({ radius: 0.4, color: 0x08070a, opacity: 0.7, lumps: 8, seed: 3, look: 'lambert' });
-    group.add(pool);
-    // 依据："移动时留下墨色（inky）的腐蚀性痕迹"——在 think/animate 里逐帧生成持久地面痕迹会不断
-    // new 对象（性能规则禁止，见 apiRequests），这里近似成跟随它脚下的一小滩黑色印记，不是真正留在
-    // 途经路径上的轨迹，见 notImplemented
+    // 依据："移动时留下墨色（inky）的腐蚀性痕迹"——真正留在途经路径上的轨迹用 BR.world.decal 做
+    // （见下方 anim.onFrame，ENGINE_PLAN M1 回填：区块级环形缓冲、全场只占 1 个 draw call，不在这里
+    // 每帧 new 网格对象）
     return A.wrap(group, { label: 'frayed' });
   },
 });
@@ -87,7 +105,9 @@ A.register({
 //   反击，无法让它主动伤人；attack 字段保留了灼烧伤害数值，但触发条件退化成"反击"而不是"主动靠近就摸你"。
 // - 转化成新的磨损者（需要长时间暴露在大量液态物质里）：没有"感染/转化"机制，引擎也没有动态生成新
 //   实体类型的接口。
-// - "身后留下墨色腐蚀性痕迹"（持久地面轨迹）：为避免在 think/animate 里逐帧创建新对象（性能规则禁止），
-//   只做了跟随脚下的一小滩印记，不是真正留在途经路径上的轨迹。
+// - 已实现（2026-09-14，ENGINE_PLAN M1 回填）："身后留下墨色腐蚀性痕迹"：anim.onFrame 按移动距离每
+//   ~0.8 m 调一次 BR.world.decal，在途经路径上真正留下会随时间消失（ttl≈60 s）的墨色痕迹；用的是区块级
+//   环形缓冲（InstancedMesh），不是每帧 new 网格对象，符合性能规则。原来"跟随脚下一小滩印记"的近似写法
+//   已删除。纯表现、不联机同步，各端按自己看到的位置各自生成。
 // - 具体体型、颜色、眼睛、感官、速度：选中版本大量字段是 unverified，均取游戏性默认值，已在各字段
 //   依据注释里说明。

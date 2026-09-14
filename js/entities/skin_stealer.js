@@ -6,6 +6,16 @@
 const BR = window.BR;
 const A = BR.arch;
 
+// 真身头部 head 槽位的基色（build() 的 colors.head 用它）。"深陷白眼"的白眼珠和暗色眼窝都靠 tint 从这个浅黄色
+// 精确换算到目标色（tint = 目标分量 / 基色分量），不新增材质槽位；共用同一个常量，改肤色时眼睛跟着换算，不会脱节
+const HEAD_HEX = 0xe6d6a3;
+function tintTo(base, target) {
+  const c = (hex, shift) => (hex >> shift & 255) / 255;
+  return [c(target, 16) / c(base, 16), c(target, 8) / c(base, 8), c(target, 0) / c(base, 0)];
+}
+const EYE_WHITE = tintTo(HEAD_HEX, 0xffffff);
+const EYE_SOCKET = tintTo(HEAD_HEX, 0x3a3024);   // 眼窝：暗灰褐，读作"凹进去的阴影"，不用纯黑，免得像贴了块黑片
+
 A.register({
   type: 'skin_stealer', en: 'Skin-Stealer', zh: '窃皮者', version: 'wikidot-en',
   // hostility = varies。依据 _TEMPLATE.md 第3节判断规则：「常态下(饥饿、领地、看见人)就会主动伤人→hostile」，
@@ -46,11 +56,33 @@ A.register({
         height: 2.0, bulk: 1.2, thin: 0.15, head: 'round', claws: 0, hair: 0,
         // 依据：「用力量徒手撕碎」→ 略偏壮(bulk)；未提爪子/毛发 → claws:0, hair:0；
         // 只说眼窝深陷、发白，不是无脸，头部仍用普通 head:'round'
-        colors: { body: 0xdcc478, head: 0xe6d6a3, glow: 0xffffff },
+        colors: { body: 0xdcc478, head: HEAD_HEX, glow: 0xffffff },
         // 依据：「高大、淡黄色(pale yellow)的人形」→ body 取淡黄色；头部略调浅表现「眼睛深陷、白色」的苍白感
-        // （人形构件没有独立的非发光眼部插槽，无法精确还原"深陷白眼"细节，见 notImplemented）
         look: { body: 'skin', head: 'skin' },
         // 依据：「外层皮肉布满微小凸起，类似章鱼触手上的吸盘」→ 用 skin 材质的斑驳纹理近似凹凸质感，非精确建模
+        key: 'skin_stealer_true_v2',   // extend 的形状 / tint 变了就换键：几何缓存按键取，不换会拿到旧眼睛
+        extend(b, d) {
+          // 深陷的非发光白眼——依据（wikidot-en/cn）：「眼睛深陷、白色」／「深深凹陷的白色眼睛」；原文没提发光，
+          // 复用 head 槽位（skin 材质受场景光照，天然"非发光"，不新增材质槽位 / draw call）。
+          // 这套构件是形状互相叠加，挖不了洞，"深陷"用颜色表现：脸上先贴一片压扁的暗色眼窝（EYE_SOCKET），中间再嵌一颗
+          // 压扁的白眼珠（EYE_WHITE），两片都顺着脸部曲面的法线摆、只探出表面一点点，看起来是阴影里的一颗白眼，而不是凸出来的眼珠。
+          // 第一版（半径 0.1·hr 的小白球大半埋进头里）全身出图只差 63 个像素，6 m 外看不见，所以放大并加了眼窝
+          const T = window.THREE, hr = d.headR;
+          // humanoid 圆头：半径 hr、缩放 [0.92, 1.08, 0.98]、中心 headY，脸朝 -z。眼睛在头部局部 (±0.32, +0.05)·hr，
+          // 在理想椭球上算出这里的表面点和法线，眼窝 / 眼珠的压扁轴对准法线，贴合脸侧往后弯的曲面
+          const EX = 0.32, EY = 0.05, AX = 0.92, AY = 1.08, AZ = 0.98;
+          const ez = AZ * Math.sqrt(1 - (EX / AX) ** 2 - (EY / AY) ** 2);
+          for (const s of [-1, 1]) {
+            const p = new T.Vector3(s * EX * hr, d.headY + EY * hr, -ez * hr);
+            const n = new T.Vector3(s * EX / (AX * AX), EY / (AY * AY), -ez / (AZ * AZ)).normalize();
+            const yaw = Math.atan2(-n.x, -n.z);   // 绕 y 转 yaw 后，局部 -z 轴对准法线的水平分量
+            // r：沿脸面的半径；sy：竖向压扁；depth：沿法线的半厚；proud：最前端探出理想表面多少（都按 hr 计）
+            const disc = (r, sy, depth, proud) => new T.SphereGeometry(r * hr, 8, 5).scale(1, sy, depth / r).rotateY(yaw)
+              .translate(p.x + n.x * (proud - depth) * hr, p.y + n.y * (proud - depth) * hr, p.z + n.z * (proud - depth) * hr);
+            b.geo('head', 'head', disc(0.24, 0.8, 0.07, 0.01), { tint: EYE_SOCKET });
+            b.geo('head', 'head', disc(0.14, 0.8, 0.06, 0.025), { tint: EYE_WHITE });
+          }
+        },
       }),
     }, { form: 'disguise', label: 'skin_stealer' });
   },

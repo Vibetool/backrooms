@@ -6,6 +6,13 @@
 //   node tests/preview.mjs --level-shots <id> [--mode test|casual|nightmare] [--shots N] [--out dir]
 //                          进层看关：出生点四个朝向 + N 个 spawnPoints/出口附近各一张，打印 draw call/三角面/区块/实体/物品/出口/env
 //   node tests/preview.mjs --scale <id>        数量比例自检：游玩满格与噩梦四档的期望实体总数比值应为 0.5:0:0.2:0.4:0.6
+//   node tests/preview.mjs --gallery all|<type,type..> --tag <name> [--quality high,low] [--shard k/n] [--resume] [--size 640]
+//                          [--out tests/output/gallery]
+//                          打磨出图：摄影棚（中性灰、关雾、环境光 0.55、一盏固定主光）里每类型 6 张 + gallery.json（三角面/draw call/
+//                          材质/bbox/图元/tint，high 超 4000 面或 5 个 draw call 判 FAIL，tools/polish/budget-exceptions.json 里的判 KNOWN）
+//                          输出 <out>/<tag>/<type>-<n>-<view>.png；分片并行时各进程加锁合并同一份 gallery.json；--resume 跳过已齐的类型
+//   node tests/preview.mjs --stress <type> [--count 28] [--level 3] [--frames 60] [--tag <name>] [--out tests/output/gallery]
+//                          同屏放 count 只，固定步进测 renderer.info.render.calls 与平均帧时间（先测空场基线再测满载），写 json + 一张截图
 //
 // 所有模式启动时都会自动扫描 js/levels/L*.js、js/entities/*.js、js/items/*.js，把 index.html 里还没登记的脚本
 // 按"层级工具库之后 / 实体骨架之后 / js/items/_effects.js 之后"的顺序注入（下划线开头的支持文件在同组里排最前）：
@@ -35,7 +42,9 @@ function arg(name, def) {
   const v = argv[i + 1];
   return v === undefined || v.startsWith('--') ? true : v;
 }
-const OUT = path.resolve(ROOT, String(arg('out', 'tests/output/preview')));
+// 打磨出图（--gallery / --stress）缺省输出到 tests/output/gallery，tools/polish/sheet.sh 也按这个目录找图
+const GALLERY_MODE = !!(arg('gallery') || arg('stress'));
+const OUT = path.resolve(ROOT, String(arg('out', GALLERY_MODE ? 'tests/output/gallery' : 'tests/output/preview')));
 const LEVEL = String(arg('level', 'dev'));
 const VIEW = { width: 960, height: 640 };   // SwiftShader 软渲染，分辨率大了每一步都慢
 fs.mkdirSync(OUT, { recursive: true });
@@ -694,6 +703,637 @@ function registerProbes() {
 }
 
 // =====================================================================
+// --gallery / --stress 页面帮助函数（整段序列化进页面，不能引用 node 这边的变量）
+// =====================================================================
+// 图元计数钩子：用 addInitScript 在任何页面脚本之前挂上 load 监听，js/entities/_archetypes.js 一执行完就给 RigBuilder 装上。
+// 为什么这么早：骨架几何按 key 全局缓存，主页兜底人形这类启动时就建好的骨架，晚装钩子就再也数不到了
+function primHookInit() {
+  const install = source => {
+    const A = window.BR && window.BR.arch;
+    if (!A || !A.RigBuilder) return false;
+    if (A.RigBuilder.__pvHooked) return true;
+    const P = A.RigBuilder.prototype;
+    const book = window.__pvPrims = window.__pvPrims || {};
+    const rec = key => book[key] || (book[key] = { prims: 0, tints: 0 });
+    // box / sphere / limb / cone 最后都走 geo()，chain 每一节走一次 limb：parts.length 就是图元数
+    const geo0 = P.geo;
+    P.geo = function () { const r = geo0.apply(this, arguments); rec(this.key).prims = this.parts.length; return r; };
+    // tint 只数最外层调用：chain 内部再调 limb / geo 时不重复计
+    let depth = 0;
+    ['box', 'sphere', 'limb', 'cone', 'chain', 'geo'].forEach(name => {
+      const f = P[name];
+      if (typeof f !== 'function') return;
+      P[name] = function () {
+        if (depth === 0) {
+          for (let i = 0; i < arguments.length; i++) {
+            const a = arguments[i];
+            if (a && typeof a === 'object' && !Array.isArray(a) && !a.isBufferGeometry && a.tint != null) {
+              this.__pvTints = (this.__pvTints || 0) + 1;   // 按构建器实例计：build 抛异常后重建同一个 key 不会累加
+              rec(this.key).tints = this.__pvTints;
+              break;
+            }
+          }
+        }
+        depth++;
+        try { return f.apply(this, arguments); } finally { depth--; }
+      };
+    });
+    A.RigBuilder.__pvHooked = true;
+    if (!window.__pvPrimHookAt) window.__pvPrimHookAt = source || 'unknown';
+    return true;
+  };
+  window.__pvInstallPrimHook = install;
+  document.addEventListener('load', ev => {
+    const t = ev.target;
+    if (t && t.tagName === 'SCRIPT' && /\/_archetypes\.js(\?|$)/.test(t.src || '')) install('script-load');
+  }, true);
+}
+
+function installGalleryHelpers() {
+  const H = window.__pv;
+  const T = THREE, U = BR.util;
+  const G = H.gal = {};
+  // 摄影棚摆在离层级内容几千米外：没有墙和天花板（飞行实体的天花板射线打空，按巡航高度摆），主相机远裁剪面也够不到任何区块
+  const X0 = 4000, Z0 = 4000;
+  // idle 相位：api.time 从 T0 起按 DT 走 POSE_FRAMES 帧（1 s），群体散开度、现形缩放这类阻尼量都收敛到位
+  const T0 = 3, DT = 1 / 30, POSE_FRAMES = 30;
+  // 背景是清屏色、原 hex 直出；地板和网格线走 sRGB 输出编码会被提亮一大截（0x6b 的地板实拍接近 0xbf，浅色实体贴地就没对比了），
+  // 所以材质色给得很暗，实拍地板 ≈0x89、网格线 ≈0x78，和背景 0x7a 同一档中性灰
+  const BG = 0x7a7a7a, FLOOR = 0x333333;
+  // az 以实体正前方为 0（模型面朝 -Z），90 = 实体左侧；fill = 包围盒在画面里占的比例
+  const VIEWS = {
+    front34: { az: 35, el: 12, fill: 0.84 },
+    side: { az: 90, el: 6, fill: 0.84 },
+    back: { az: 180, el: 12, fill: 0.84 },
+    head: { az: 20, el: 6, fill: 0.5, head: true },
+    low: { az: 0, el: 10, fill: 0.84 },
+  };
+  // 贴地斑块（高 < 水平尺寸的 1/4）平视只剩一条线，改成俯拍
+  const FLAT_EL = { front34: 50, side: 32, back: 50, head: 60, low: 50 };
+  const hook = typeof window.__pvInstallPrimHook === 'function' ? window.__pvInstallPrimHook('gallery-late') : false;
+  G.meta = {
+    origin: [X0, 0, Z0], poseTime: T0, poseDt: +DT.toFixed(6), poseFrames: POSE_FRAMES,
+    background: '#' + BG.toString(16), floor: '#' + FLOOR.toString(16) + '（0.5 m 网格）', fog: false,
+    ambient: { type: 'AmbientLight', intensity: 0.55 },
+    keyLight: { type: 'DirectionalLight', intensity: 0.85, offsetFromEntity: [-2.2, 4.5, -3.4] },
+    fov: 30, views: VIEWS, flatElevation: FLAT_EL,
+    primHook: window.__pvPrimHookAt || (hook ? 'gallery-late' : 'none'),
+    determinism: '建模和摆姿势期间 Math.random 换成按类型名播种的 mulberry32；实体 id 固定为 gallery-<type>；A.wrap 的动画种子 u.seed 置 0；' +
+      'api.time 固定从 ' + T0 + ' s 走 ' + POSE_FRAMES + ' 帧；层级镜头冻结灯光闪烁、重置灯池槽位后再渲染',
+  };
+
+  G.withSeed = (key, fn) => {
+    const orig = Math.random;
+    Math.random = U.mulberry32(U.hashStr('pv-gallery:' + key));
+    try { return fn(); } finally { Math.random = orig; }
+  };
+  const visibleIn = (o, root) => { for (let p = o; p; p = p.parent) { if (p.visible === false) return false; if (p === root) break; } return true; };
+  const trisOfGeo = g => !g ? 0 : (g.index ? g.index.count : (g.attributes && g.attributes.position ? g.attributes.position.count : 0)) / 3;
+  const r3 = v => Math.round(v * 1000) / 1000;
+
+  // 全部注册类型 + 首个出场层级（BR.LEVEL_ORDER 顺序反查各层 entities 表；dev 等不在顺序表里的层排最后）
+  G.catalog = () => {
+    const levels = (BR.LEVEL_ORDER || []).map(String).filter(id => BR.levels.has(id));
+    BR.levels.all().forEach(l => { const id = String(l.id); if (levels.indexOf(id) < 0) levels.push(id); });
+    const first = {};
+    levels.forEach(id => {
+      const lv = BR.levels.get(id);
+      (Array.isArray(lv.entities) ? lv.entities : []).forEach(en => { if (en && en.type && first[en.type] == null) first[en.type] = id; });
+    });
+    const types = BR.entityTypes.all().map(d => ({
+      type: String(d.type), zh: d.zh, en: d.en || null, faction: d.faction, version: d.version,
+      firstLevel: first[d.type] != null ? first[d.type] : null,
+    }));
+    return { levels, types, primHook: G.meta.primHook };
+  };
+
+  // 灯光闪烁由 gfx 内部时钟决定，而这个时钟跟着之前 step 过多少次走：不冻结的话，同一层的镜头换个出图顺序就可能正赶上灯管熄灭。
+  // 只改本页里的灯光描述对象（发光面片 linkGlow 读的是同一份），不碰任何文件
+  G.freezeFlicker = () => {
+    let n = 0;
+    BR.world.chunks().forEach(c => (c.lights || []).forEach(L => { if (L && L.flicker > 0) { L.flicker = 0; n++; } }));
+    return n;
+  };
+  // 灯池槽位按"历史上谁先占的"分配，槽位顺序不同 shader 里累加顺序就不同，可能差 1 个色阶：
+  // 先清空再重推，全部按离相机远近重新入槽，结果只取决于相机位置
+  G.resetLightPool = () => {
+    const list = [];
+    BR.world.chunks().forEach(c => (c.lights || []).forEach(L => list.push(L)));
+    const out = BR.workshop && typeof BR.workshop.lightTransform === 'function' ? BR.workshop.lightTransform(list) : list;
+    BR.gfx.setLightSources([]);
+    BR.gfx.setLightSources(out);
+    return list.length;
+  };
+  G.enterLevel = level => {
+    const id = String(level);
+    if (!BR.levels.has(id)) return { ok: false, error: '没有注册层级 ' + id };
+    let info = null;
+    // 层级 update 里偶发现象用的 Math.random 也按层级 id 播种，进同一层的状态和之前拍过什么无关
+    G.withSeed('level:' + id, () => {
+      __br.setAuto(false);
+      __br.start({ mode: 'test', levelId: id, seed: 12345, settings: { visibility: 1, quality: 'high' } });
+      if (BR.game.screen !== 'playing' || !BR.world.current) { info = { ok: false, error: '没能进入层级 ' + id }; return; }
+      const frozen = G.freezeFlicker();
+      __br.step(1);
+      BR.game.autoSpawn = false;
+      BR.entities.clear();
+      G.freezeFlicker();
+      __br.step(0.05);
+      BR.gfx.setSanityEffect(0, true);   // 低 san 的相机抖动是直接加在渲染相机上的，出图时必须为 0
+      H.hideUi();
+      const P = BR.player;
+      info = { ok: true, level: BR.game.levelId, mode: BR.game.mode, flickerFrozen: frozen, spawn: { x: r3(P.x), y: r3(P.y), z: r3(P.z), yaw: +P.yaw.toFixed(4) } };
+    });
+    return info;
+  };
+
+  // ---------- 摄影棚 ----------
+  // 独立的 scene + 两个离屏渲染器（高画质开 MSAA、低画质关 MSAA，和游戏两档的抗锯齿一致），不进任何层级、不受雾和灯池影响
+  G.initStudio = size => {
+    if (G.studio) return G.meta;
+    const main = BR.gfx.renderer;
+    const mk = aa => {
+      const cv = document.createElement('canvas');
+      cv.width = cv.height = size;
+      const rd = new T.WebGLRenderer({ canvas: cv, antialias: aa, alpha: false, stencil: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
+      rd.setPixelRatio(1);
+      rd.setSize(size, size, false);
+      // 输出编码和色调映射照抄游戏渲染器：gfx.js 改写过的 CustomToneMapping 是全局 shader 片段，这里拿到的是同一套
+      rd.outputEncoding = main.outputEncoding;
+      rd.toneMapping = main.toneMapping;
+      rd.toneMappingExposure = main.toneMappingExposure;
+      rd.shadowMap.enabled = false;
+      return rd;
+    };
+    const scene = new T.Scene();
+    scene.background = new T.Color(BG);
+    scene.fog = null;
+    const amb = new T.AmbientLight(0xffffff, 0.55);
+    const key = new T.DirectionalLight(0xffffff, 0.85);
+    key.position.set(X0 - 2.2, 4.5, Z0 - 3.4);   // 固定在实体左前上方：3/4 正面和正侧受光，背面只剩环境光
+    key.target.position.set(X0, 0.8, Z0);
+    const floor = new T.Mesh(new T.PlaneGeometry(60, 60), new T.MeshLambertMaterial({ color: FLOOR }));
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.set(X0, -0.003, Z0);
+    const grid = new T.GridHelper(8, 16, 0x262626, 0x2e2e2e);   // 0.5 m 一格：打"比例与姿态"分时有尺度参照；线色同样会被 sRGB 编码提亮
+    grid.position.set(X0, -0.0015, Z0);
+    scene.add(amb, key, key.target, floor, grid);
+    const cam = new T.PerspectiveCamera(30, 1, 0.01, 120);
+    G.studio = { size, scene, cam, floor, grid, hi: mk(true), lo: mk(false) };
+    G.meta.size = size;
+    return G.meta;
+  };
+
+  // 放一只实体并摆到 idle 同一相位。id 固定：partygoer 这类按 id 哈希取色的实体两次出图才一样
+  G.spawnPosed = (type, quality, x, y, z, yaw) => {
+    const def = BR.entityTypes.get(type);
+    if (!def) return { error: '没有注册实体 ' + type };
+    const S = BR.game.settings, q0 = S.quality, api = BR.entities.api;
+    let e = null, error = null;
+    // clear 顺带按游戏种子重置 entities 的 aiRng：makeEntity / init 里抽的随机数与出图顺序无关
+    BR.entities.clear();
+    S.quality = quality;   // 构件的 detail 缺省跟 settings.quality 走，建模那一刻生效
+    try {
+      G.withSeed(type, () => {
+        api.time = T0; api.dt = DT;   // init 里记下的时间戳也固定
+        try { e = BR.entities.spawn(type, x, y, z, { force: true, yaw, id: 'gallery-' + type }); }
+        catch (err) { error = 'spawn 抛异常：' + String(err && err.stack || err).slice(0, 600); return; }
+        if (!e) { error = 'BR.entities.spawn 返回空'; return; }
+        if (!e.obj) { error = '没有模型（build 抛异常？看 errors）'; return; }
+        e.spawnedAt = T0;
+        e.hitAt = -1e9;
+        const u = e.obj.userData && e.obj.userData.arch;
+        if (u) u.seed = 0;   // A.wrap 里是 Math.random()*100：呼吸、抽搐、飞行起伏、光晕脉动的相位全看它
+        try { G.pose(e); } catch (err) { error = 'animate 抛异常：' + String(err && err.stack || err).slice(0, 600); }
+      });
+    } finally { S.quality = q0; }
+    if (error && e) { BR.entities.remove(e); e = null; }
+    return error ? { error } : { e };
+  };
+  // 不跑 AI（think 会让它走开、换状态），只按固定时间轴调 animate
+  G.pose = e => {
+    const cam = BR.gfx.camera, api = BR.entities.api;
+    // A.anim 的 lodStep 按主相机距离降频（>14 m 隔帧、>80 m 一帧都不动）：摆姿势期间主相机放到实体正前方 4 m
+    const fx = -Math.sin(e.yaw), fz = -Math.cos(e.yaw);
+    cam.position.set(e.x + fx * 4, e.y + 1.4, e.z + fz * 4);
+    cam.lookAt(e.x, e.y + 0.8, e.z);
+    cam.updateMatrixWorld(true);
+    if (typeof e.def.animate === 'function') {
+      for (let k = 1; k <= POSE_FRAMES; k++) {
+        api.time = T0 + k * DT; api.dt = DT;
+        e.def.animate(e, DT, api);
+      }
+    }
+    e.obj.position.set(e.x, e.y, e.z);
+    e.obj.rotation.y = e.yaw;
+    e.obj.updateMatrixWorld(true);
+  };
+
+  // 摆好姿势后的包围盒：蒙皮网格逐顶点做骨骼变换（佝偻、爬行姿势的绑定姿势包围盒差得很远），Sprite 按世界缩放，实例化个体按实例矩阵
+  G.bounds = (root, e) => {
+    root.updateMatrixWorld(true);
+    const box = new T.Box3(), head = new T.Box3(), headOwn = new T.Box3();
+    // 头部：优先骨架里叫 head 的骨骼连同子骨骼（下颌、眼睛、耳朵都挂在它下面）；没有骨架就找名字带 head/face/skull 的节点。
+    // headOwn 只收直接绑在 head 骨骼上的顶点：子树大到占了大半个身体时（蜘蛛头胸部挂着腿、眼睛骨骼绑错位置甩出去）改用它
+    let headBones = null, headBone = null, headObj = null, headSource = null;
+    root.traverse(o => {
+      if (headBones || !o.isSkinnedMesh || !o.skeleton || !visibleIn(o, root)) return;
+      const bs = o.skeleton.bones;
+      const hb = bs.find(b => /^head$/i.test(b.name)) || bs.find(b => /head|skull/i.test(b.name));
+      if (hb) { headBones = new Set(); headBone = hb; hb.traverse(b => { if (b.isBone) headBones.add(b); }); headSource = 'bone:' + hb.name; }
+    });
+    if (!headBones) root.traverse(o => { if (!headObj && o !== root && !o.isBone && /head|face|skull/i.test(o.name || '') && visibleIn(o, root)) { headObj = o; headSource = 'node:' + o.name; } });
+    const underHead = o => { for (let p = o; p; p = p.parent) { if (p === headObj || (headBones && headBones.has(p))) return true; if (p === root) break; } return false; };
+    const v = new T.Vector3(), s = new T.Vector3(), m4 = new T.Matrix4(), si = new T.Vector4(), sw = new T.Vector4();
+    root.traverse(o => {
+      if (!visibleIn(o, root)) return;
+      const inHead = underHead(o);
+      if (o.isSprite) {
+        o.getWorldPosition(v); o.getWorldScale(s);
+        const hx = Math.abs(s.x) / 2, hy = Math.abs(s.y) / 2;
+        const bb = new T.Box3(new T.Vector3(v.x - hx, v.y - hy, v.z - hx), new T.Vector3(v.x + hx, v.y + hy, v.z + hx));
+        box.union(bb); if (inHead) head.union(bb);
+        return;
+      }
+      if (!(o.isMesh || o.isPoints || o.isLine)) return;
+      const g = o.geometry, pos = g && g.attributes && g.attributes.position;
+      if (!pos) return;
+      if (o.isInstancedMesh) {
+        if (!g.boundingBox) g.computeBoundingBox();
+        for (let i = 0; i < o.count; i++) {
+          o.getMatrixAt(i, m4); m4.premultiply(o.matrixWorld);
+          const bb = g.boundingBox.clone().applyMatrix4(m4);
+          box.union(bb); if (inHead) head.union(bb);
+        }
+        return;
+      }
+      const skinned = o.isSkinnedMesh && o.skeleton && g.attributes.skinIndex && g.attributes.skinWeight;
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i);
+        let hv = inHead, own = false;
+        if (skinned) {
+          if (headBones) {
+            si.fromBufferAttribute(g.attributes.skinIndex, i); sw.fromBufferAttribute(g.attributes.skinWeight, i);
+            let best = 0;
+            for (let k = 1; k < 4; k++) if (sw.getComponent(k) > sw.getComponent(best)) best = k;
+            const bn = o.skeleton.bones[si.getComponent(best)];
+            own = bn === headBone;
+            hv = hv || headBones.has(bn);
+          }
+          o.boneTransform(i, v);
+        }
+        v.applyMatrix4(o.matrixWorld);
+        box.expandByPoint(v);
+        if (hv) head.expandByPoint(v);
+        if (own) headOwn.expandByPoint(v);
+      }
+    });
+    if (box.isEmpty()) {
+      const r = e && e.r || 0.4, h = e && e.h || 1.6, ex = e ? e.x : X0, ey = e ? e.y : 0, ez = e ? e.z : Z0;
+      box.set(new T.Vector3(ex - r, ey, ez - r), new T.Vector3(ex + r, ey + h, ez + r));
+    }
+    const size = box.getSize(new T.Vector3());
+    const flat = size.y < 0.25 * Math.max(size.x, size.z);
+    const bodyMax = Math.max(size.x, size.y, size.z, 1e-3);
+    const maxDim = b => { const q = b.getSize(new T.Vector3()); return Math.max(q.x, q.y, q.z); };
+    if (headBones && !head.isEmpty() && !headOwn.isEmpty() && maxDim(head) > 0.6 * bodyMax) { head.copy(headOwn); headSource += '(own)'; }
+    if (head.isEmpty()) {
+      const mn = box.min, mx = box.max;
+      if (flat || Math.max(size.x, size.y, size.z) < 0.35) { head.copy(box); headSource = 'whole'; }
+      else if (size.y >= Math.max(size.x, size.z) * 0.8) { head.set(new T.Vector3(mn.x, mx.y - size.y * 0.28, mn.z), mx.clone()); headSource = 'top28%'; }
+      else { head.set(mn.clone(), new T.Vector3(mx.x, mx.y, mn.z + size.z * 0.35)); headSource = 'front35%'; }   // 面朝 -Z：前段在 z 小的一头
+    }
+    const hs = head.getSize(new T.Vector3());
+    head.expandByVector(new T.Vector3(Math.max(0, 0.08 - hs.x) / 2, Math.max(0, 0.08 - hs.y) / 2, Math.max(0, 0.08 - hs.z) / 2));
+    // 头本身就占了大半个身体（光球、蜘蛛）：特写按全身取景比例拍，免得"特写"反而比 3/4 正面还远
+    return { box, head, headSource, flat, size, headWide: maxDim(head) > 0.6 * bodyMax };
+  };
+
+  // 让 box 的 8 个角都落在画面 fill 比例以内：逐角算需要的距离取最大
+  G.fit = (box, azDeg, elDeg, fill, cam) => {
+    const c = box.getCenter(new T.Vector3());
+    const az = azDeg * Math.PI / 180, el = elDeg * Math.PI / 180;
+    const dir = new T.Vector3(-Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el));   // 中心指向相机
+    const fwd = dir.clone().negate();
+    const right = new T.Vector3().crossVectors(fwd, new T.Vector3(0, 1, 0)).normalize();
+    const up = new T.Vector3().crossVectors(right, fwd).normalize();
+    const tanV = Math.tan(cam.fov * Math.PI / 360) * fill, tanH = tanV * cam.aspect;
+    const q = new T.Vector3();
+    let d = 0.05;
+    for (let i = 0; i < 8; i++) {
+      q.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z).sub(c);
+      const x = Math.abs(q.dot(right)), y = Math.abs(q.dot(up)), z = q.dot(dir);
+      d = Math.max(d, z + x / tanH, z + y / tanV);
+    }
+    const rad = box.getSize(q).length() / 2;
+    cam.position.copy(c).addScaledVector(dir, d);
+    cam.up.set(0, 1, 0);
+    cam.lookAt(c);
+    cam.near = Math.max(0.003, (d - rad) * 0.5);
+    cam.far = 120;
+    cam.updateProjectionMatrix();
+    cam.updateMatrixWorld(true);
+    return { az: azDeg, el: elDeg, fill, dist: r3(d), target: [r3(c.x - X0), r3(c.y), r3(c.z - Z0)] };
+  };
+  G.aim = (B, view) => {
+    const cfg = VIEWS[view];
+    const whole = cfg.head && (B.headSource === 'whole' || B.headWide);
+    return G.fit(cfg.head ? B.head : B.box, cfg.az, B.flat ? FLAT_EL[view] : cfg.el, whole ? VIEWS.front34.fill : cfg.fill, G.studio.cam);
+  };
+
+  // 非骨架网格（glowFace 合并几何、GLB、Sprite 以外的网格）的图元数近似：顶点按坐标焊接后数三角形连通块
+  const compCache = new WeakMap();
+  const components = g => {
+    const pos = g && g.attributes && g.attributes.position;
+    if (!pos) return 0;
+    if (compCache.has(g)) return compCache.get(g);
+    const n = pos.count, id = new Int32Array(n), keys = new Map();
+    for (let i = 0; i < n; i++) {
+      const k = Math.round(pos.getX(i) * 1e4) + ',' + Math.round(pos.getY(i) * 1e4) + ',' + Math.round(pos.getZ(i) * 1e4);
+      let x = keys.get(k);
+      if (x === undefined) { x = keys.size; keys.set(k, x); }
+      id[i] = x;
+    }
+    const m = keys.size, parent = new Int32Array(m), used = new Uint8Array(m);
+    for (let i = 0; i < m; i++) parent[i] = i;
+    const find = x => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
+    const idx = g.index, cnt = idx ? idx.count : n;
+    for (let t = 0; t + 2 < cnt; t += 3) {
+      const a = id[idx ? idx.getX(t) : t], b = id[idx ? idx.getX(t + 1) : t + 1], c = id[idx ? idx.getX(t + 2) : t + 2];
+      used[a] = used[b] = used[c] = 1;
+      let ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb;
+      rb = find(b); const rc = find(c); if (rb !== rc) parent[rb] = rc;
+    }
+    let comps = 0;
+    for (let i = 0; i < m; i++) if (used[i] && find(i) === i) comps++;
+    compCache.set(g, comps);
+    return comps;
+  };
+  G.stats = root => {
+    let meshes = 0, tris = 0, drawStatic = 0, prims = 0, tints = 0, fromHook = 0, fromWeld = 0;
+    const geos = new Set(), mats = new Set(), matsVis = new Set(), swarm = [];
+    root.traverse(o => {
+      if (!(o.isMesh || o.isSprite || o.isPoints || o.isLine)) return;
+      meshes++;
+      const g = o.geometry, vis = visibleIn(o, root);
+      if (g) geos.add(g.uuid);
+      (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { if (!m) return; mats.add(m.uuid); if (vis) matsVis.add(m.uuid); });
+      if (o.isInstancedMesh) {
+        // 群体个体有自己的预算（TRIS.swarmUnit），不计入 4k 面；图元按"一种个体"算 1
+        swarm.push({ unitTris: Math.round(trisOfGeo(g)), instances: o.count });
+        if (vis) drawStatic++;
+        prims++; fromWeld++;
+        return;
+      }
+      if (o.isMesh) tris += trisOfGeo(g);
+      if (vis) drawStatic += o.isMesh && g && g.groups && g.groups.length ? g.groups.length : 1;
+      const rig = o.userData && o.userData.rig;
+      const rec = rig && window.__pvPrims && window.__pvPrims[rig.key];
+      if (rec && rec.prims > 0) { prims += rec.prims; tints += rec.tints || 0; fromHook += rec.prims; }
+      else if (o.isSprite || o.isPoints || o.isLine) { prims++; fromWeld++; }
+      else { const c = components(g); prims += c; fromWeld += c; }
+    });
+    let source = fromWeld === 0 ? 'rigbuilder' : fromHook === 0 ? 'weld' : 'rigbuilder+weld';
+    const ud = root.userData || {};
+    if (typeof ud.primitives === 'number') { prims = ud.primitives; source = 'root.userData.primitives'; }
+    if (typeof ud.tints === 'number') tints = ud.tints;
+    else if (Array.isArray(ud.tints)) tints = ud.tints.length;
+    return {
+      tris: Math.round(tris), drawCallsStatic: drawStatic, materials: mats.size, materialsVisible: matsVis.size,
+      meshes, geometries: geos.size, primitives: prims, primitivesSource: source, tint: tints, swarm: swarm.length ? swarm : null,
+    };
+  };
+
+  // 摄影棚出图：一次放一只、一个画质；返回数据 + 各机位 PNG（dataURL）
+  G.studioShoot = (type, quality, views) => {
+    const st = G.studio;
+    if (!st) return { ok: false, error: '摄影棚没初始化' };
+    const r = G.spawnPosed(type, quality, X0, 0, Z0, 0);
+    if (r.error) return { ok: false, error: r.error };
+    const e = r.e, root = e.obj;
+    try {
+      st.scene.add(root);   // Object3D 只能有一个父节点：add 会把它从游戏场景里摘下来
+      const B = G.bounds(root, e);
+      const u = root.userData.arch || null;
+      const stats = G.stats(root);
+      stats.bbox = {
+        min: [r3(B.box.min.x - e.x), r3(B.box.min.y - e.y), r3(B.box.min.z - e.z)],
+        max: [r3(B.box.max.x - e.x), r3(B.box.max.y - e.y), r3(B.box.max.z - e.z)],
+        size: [r3(B.size.x), r3(B.size.y), r3(B.size.z)],
+      };
+      stats.flat = B.flat;
+      stats.head = B.headSource;
+      stats.state = String(e.state);
+      stats.form = u && u.formKey || null;
+      stats.forms = u && u.forms ? Object.keys(u.forms) : null;
+      const rd = quality === 'low' ? st.lo : st.hi;
+      // draw call / 渲染三角面实测：藏掉地板和网格只画实体（high 取 3/4 正面机位，low 取正面机位）
+      G.aim(B, quality === 'low' ? 'low' : 'front34');
+      st.floor.visible = st.grid.visible = false;
+      rd.render(st.scene, st.cam);
+      stats.drawCalls = rd.info.render.calls;
+      stats.trisRendered = rd.info.render.triangles;
+      st.floor.visible = st.grid.visible = true;
+      const shots = [];
+      for (const v of views) {
+        const cam = G.aim(B, v);
+        rd.render(st.scene, st.cam);
+        shots.push({ view: v, camera: cam, png: rd.domElement.toDataURL('image/png') });
+      }
+      // 多形态（窃皮者伪装/真身、woodlin 隐藏/现形、plush_dino 休眠/活动）：idle 只显示一个形态，打磨真身时前后对照会是 AE 0 看不出改动。
+      // 其余形态各补一张 3/4 正面 7-form-<形态名>：强制切显示、只摆骨架基础姿势——再跑 animate 的话状态机会把形态切回去
+      if (views.indexOf('front34') >= 0 && u && u.forms) {
+        for (const k of Object.keys(u.forms)) {
+          if (k === u.formKey) continue;
+          for (const kk in u.forms) u.forms[kk].visible = kk === k;
+          u.forms[k].scale.setScalar(1);
+          if (u.rigs && u.rigs[k]) BR.arch.anim.pose(u.rigs[k]);
+          root.updateMatrixWorld(true);
+          const FB = G.bounds(root, e);
+          const cam = Object.assign(G.aim(FB, 'front34'), { form: k, pose: 'base' });
+          rd.render(st.scene, st.cam);
+          shots.push({ view: 'form-' + String(k).toLowerCase().replace(/[^a-z0-9_]/g, '_'), camera: cam, png: rd.domElement.toDataURL('image/png') });
+        }
+      }
+      const d = e.def;
+      return { ok: true, stats, shots, def: { type: d.type, zh: d.zh, en: d.en || null, faction: d.faction, version: d.version, radius: d.radius, height: d.height } };
+    } catch (err) {
+      return { ok: false, error: '出图抛异常：' + String(err && err.stack || err).slice(0, 600) };
+    } finally {
+      BR.entities.remove(e);
+    }
+  };
+
+  // 首个出场层级：玩家站在出生点，实体放在视线方向约 6 m、有视线且放得下的空位，面朝玩家，用游戏渲染器拍
+  G.levelShot = (type, quality) => {
+    const def = BR.entityTypes.get(type);
+    if (!def) return { ok: false, error: '没有注册实体 ' + type };
+    const P = BR.player, eyeH = (BR.config.player && BR.config.player.eyeHeight) || 1.6;
+    const px = P.x, pz = P.z, eyeY = P.y, feetY = eyeY - eyeH, yaw0 = P.yaw;
+    BR.entities.clear();
+    const r = def.radius > 0 ? def.radius : 0.4, h = def.height > 0 ? def.height : 1.8;
+    const search = collide => {
+      for (const d of [6, 5.5, 6.5, 5, 7, 4.5, 7.5, 4, 3.5, 3, 2.5]) {
+        for (let i = 0; i <= 24; i++) {
+          const off = (i % 2 ? 1 : -1) * Math.ceil(i / 2) * (Math.PI / 12);   // 正前方起左右交替 15° 一档
+          const a = yaw0 + off;
+          const x = px - Math.sin(a) * d, z = pz - Math.cos(a) * d;
+          const gy = H.ground(x, z);
+          if (Math.abs(gy - feetY) > 1.2) continue;   // 不跨楼层
+          if (collide && BR.phys.overlapCircle(x, z, r + 0.05, gy + 0.02, h)) continue;
+          if (!BR.phys.los(px, eyeY, pz, x, gy + Math.min(h * 0.6, 1.2), z)) continue;
+          return { x, z, y: gy, dist: d, offDeg: Math.round(off * 180 / Math.PI) };
+        }
+      }
+      return null;
+    };
+    let note = null;
+    let spot = search(true);
+    // 大体型（thing_on_level_7 半径 2.4 m）在出生点附近放不下：退一步只要视线、不查碰撞；再不行直接放正前方 6 m。
+    // 这张图看的是层级灯光下的样子，嵌进墙里也比缺图强，note 里写明
+    if (!spot) { spot = search(false); if (spot) note = '半径 ' + r + ' m 在出生点附近放不下，忽略碰撞摆放'; }
+    if (!spot) {
+      const x = px - Math.sin(yaw0) * 6, z = pz - Math.cos(yaw0) * 6;
+      spot = { x, z, y: H.ground(x, z), dist: 6, offDeg: 0 };
+      note = '出生点周围 2.5–7.5 m 找不到有视线的位置，直接放正前方 6 m（可能被墙挡住）';
+    }
+    const res = G.spawnPosed(type, quality, spot.x, spot.y, spot.z, Math.atan2(-(px - spot.x), -(pz - spot.z)));
+    if (res.error) return { ok: false, error: res.error };
+    const e = res.e;
+    try {
+      const B = G.bounds(e.obj, e);
+      const c = B.box.getCenter(new T.Vector3());
+      const cam = BR.gfx.camera;
+      const dx = c.x - px, dy = c.y - eyeY, dz = c.z - pz;
+      cam.rotation.order = 'YXZ';
+      cam.rotation.set(Math.atan2(dy, Math.hypot(dx, dz)), Math.atan2(-dx, -dz), 0);
+      cam.position.set(px, eyeY, pz);
+      cam.updateMatrixWorld(true);
+      BR.gfx.setSanityEffect(0, true);
+      G.freezeFlicker();
+      const lights = G.resetLightPool();
+      BR.gfx.render(0);
+      const info = BR.gfx.renderer.info.render;
+      const out = {
+        ok: true, png: BR.gfx.renderer.domElement.toDataURL('image/png'),
+        dist: r3(Math.hypot(spot.x - px, spot.z - pz)), wantDist: spot.dist, offDeg: spot.offDeg, note,
+        lightAt: r3(BR.world.lightAt(spot.x, spot.z)), lightSources: lights,
+        sceneDrawCalls: info.calls, sceneTriangles: info.triangles,
+        eye: [r3(px), r3(eyeY), r3(pz)], entityAt: [r3(spot.x), r3(spot.y), r3(spot.z)],
+      };
+      return out;
+    } catch (err) {
+      return { ok: false, error: '层级镜头抛异常：' + String(err && err.stack || err).slice(0, 600) };
+    } finally {
+      BR.entities.remove(e);
+    }
+  };
+
+  // ---------- --stress ----------
+  G.stress = (type, count, frames) => {
+    const def = BR.entityTypes.get(type);
+    if (!def) return { ok: false, error: '没有注册实体 ' + type };
+    const P = BR.player, eyeH = (BR.config.player && BR.config.player.eyeHeight) || 1.6, feetY = P.y - eyeH;
+    const gl = BR.gfx.renderer.getContext(), px = new Uint8Array(4);
+    BR.entities.clear();
+    G.freezeFlicker();
+    BR.gfx.setSanityEffect(0, true);
+    // 按事件数玩家挨打（不看 hp：测试模式的满血值不一定是 100）
+    let playerDamage = 0;
+    const offDamage = BR.bus.on('player:damage', () => { playerDamage++; });
+    const r = def.radius > 0 ? def.radius : 0.4, h = def.height > 0 ? def.height : 1.8;
+    // 落点：先在视野中心 ±35° 扇面内由近到远排，排不满再放宽到 ±55°、最后全周；要有视线、互不重叠、不跨楼层
+    const spots = [];
+    const ok = (x, z) => {
+      const gy = H.ground(x, z);
+      if (Math.abs(gy - feetY) > 1.2) return null;
+      if (BR.phys.overlapCircle(x, z, r + 0.05, gy + 0.02, h)) return null;
+      if (spots.some(s => Math.hypot(s.x - x, s.z - z) < 2 * r + 0.3)) return null;
+      if (!BR.phys.los(P.x, P.y, P.z, x, gy + Math.min(h * 0.6, 1.2), z)) return null;
+      return gy;
+    };
+    const dists = [];
+    for (let d = 2.5; d <= 22; d += Math.max(0.8, 2 * r + 0.35)) dists.push(d);
+    for (const maxA of [35, 55, 180]) {
+      for (const d of dists) {
+        const nA = Math.max(3, Math.round((2 * maxA * Math.PI / 180) * d / (2 * r + 0.45)));
+        for (let i = 0; i < nA && spots.length < count; i++) {
+          const a = P.yaw + (-maxA + 2 * maxA * (i + 0.5) / nA) * Math.PI / 180;
+          const x = P.x - Math.sin(a) * d, z = P.z - Math.cos(a) * d;
+          const gy = ok(x, z);
+          if (gy != null) spots.push({ x, z, y: gy, d: r3(d), cone: maxA });
+        }
+        if (spots.length >= count) break;
+      }
+      if (spots.length >= count) break;
+    }
+    const step = () => __br.step(1 / 30);
+    const measure = n => {
+      const ms = [];
+      let calls = 0, maxCalls = 0, minCalls = Infinity, triSum = 0, entMs = 0;
+      const E = BR.entities, upd = E.update;
+      E.update = function (dt) { const t0 = performance.now(); try { return upd.call(E, dt); } finally { entMs += performance.now() - t0; } };
+      try {
+        for (let i = 0; i < n; i++) {
+          const t0 = performance.now();
+          step();
+          gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);   // 逼 GPU 进程把这一帧画完：帧时间里才包含 SwiftShader 光栅化
+          ms.push(performance.now() - t0);
+          const inf = BR.gfx.renderer.info.render;
+          calls += inf.calls; triSum += inf.triangles;
+          if (inf.calls > maxCalls) maxCalls = inf.calls;
+          if (inf.calls < minCalls) minCalls = inf.calls;
+        }
+      } finally { E.update = upd; }
+      const sorted = ms.slice().sort((a, b) => a - b);
+      const avg = ms.reduce((a, b) => a + b, 0) / n;
+      return {
+        frames: n, avgFrameMs: r3(avg), medianFrameMs: r3(sorted[n >> 1]), p90FrameMs: r3(sorted[Math.min(n - 1, Math.floor(n * 0.9))]),
+        avgDrawCalls: +(calls / n).toFixed(2), maxDrawCalls: maxCalls, minDrawCalls: minCalls, avgTriangles: Math.round(triSum / n),
+        avgEntitiesUpdateMs: r3(entMs / n),
+      };
+    };
+    const inView = () => {
+      const cam = BR.gfx.camera;
+      cam.updateMatrixWorld(true);
+      const fr = new T.Frustum().setFromProjectionMatrix(new T.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
+      let n = 0;
+      BR.entities.list.forEach(x => { if (x.removed || !x.obj) return; const b = new T.Box3().setFromObject(x.obj); if (!b.isEmpty() && fr.intersectsBox(b)) n++; });
+      return n;
+    };
+    for (let i = 0; i < 10; i++) step();   // 预热：层级 shader 编译不算进基线
+    const baseline = measure(frames);
+    let placed = 0;
+    G.withSeed('stress:' + type, () => {
+      spots.forEach((s, i) => {
+        const e = BR.entities.spawn(type, s.x, s.y, s.z, { force: true, id: 'stress-' + type + '-' + i, yaw: Math.atan2(-(P.x - s.x), -(P.z - s.z)) });
+        if (e) placed++;
+      });
+    });
+    for (let i = 0; i < 10; i++) step();   // 预热：实体材质 shader 编译
+    const inViewStart = inView();
+    const loaded = measure(frames);
+    const inViewEnd = inView();
+    BR.gfx.render(0);
+    const png = BR.gfx.renderer.domElement.toDataURL('image/png');
+    const alive = BR.entities.list.filter(x => !x.removed && x.type === type).length;
+    offDamage();
+    BR.entities.clear();
+    return {
+      ok: true, type, count, placed, alive, inViewStart, inViewEnd, playerDamage,
+      spots: { found: spots.length, minDist: spots.length ? Math.min(...spots.map(s => s.d)) : null, maxDist: spots.length ? Math.max(...spots.map(s => s.d)) : null, widestCone: spots.length ? Math.max(...spots.map(s => s.cone)) : null },
+      baseline, loaded,
+      delta: {
+        frameMs: r3(loaded.avgFrameMs - baseline.avgFrameMs), frameRatio: baseline.avgFrameMs > 0 ? r3(loaded.avgFrameMs / baseline.avgFrameMs) : null,
+        drawCalls: +(loaded.avgDrawCalls - baseline.avgDrawCalls).toFixed(2),
+      },
+      png,
+    };
+  };
+  return true;
+}
+
+// =====================================================================
 // node 侧
 // =====================================================================
 const call = (page, name, ...args) => page.evaluate(([n, a]) => {
@@ -711,9 +1351,12 @@ async function snap(page, name, fnName, ...args) {
   return r;
 }
 
-async function newPage(browser) {
-  const ctx = await browser.newContext({ viewport: VIEW });
+// opts（--gallery / --stress 用，其他模式不传，行为不变）：viewport 覆盖默认尺寸；primHook 在页面脚本之前装图元计数钩子
+async function newPage(browser, opts) {
+  const o = opts || {};
+  const ctx = await browser.newContext({ viewport: o.viewport || VIEW });
   const page = await ctx.newPage();
+  if (o.primHook) await page.addInitScript(primHookInit);
   page.on('console', m => {
     const t = m.text();
     if (m.type() === 'error') errors.push('console.error: ' + t);
@@ -758,8 +1401,9 @@ async function startMode(page, mode, level, opts) {
 }
 
 // 到主页、装好 __pv 帮助函数、注入还没登记进 index.html 的脚本；不进任何关卡（--scale 用这个就够）
-async function bootHome(browser, base) {
-  const page = await newPage(browser);
+async function bootHome(browser, base, opts) {
+  const o = opts || {};
+  const page = await newPage(browser, { viewport: o.viewport, primHook: !!o.gallery });
   await page.goto(base + 'index.html');
   await page.waitForFunction(() => window.BR && window.__br && BR.home && BR.home.shown, null, { timeout: 30000 });
   await page.evaluate(() => BR.assets.init());
@@ -768,6 +1412,8 @@ async function bootHome(browser, base) {
   if (!archOk) throw new Error('BR.arch 没有加载（index.html 里 js/entities/_archetypes.js 报错或缺失）');
   await page.evaluate(installHelpers);
   await injectMissingScripts(page);
+  // 出图帮助函数装在注入之后：catalog 要看到自动注入的实体类型
+  if (o.gallery) await page.evaluate(installGalleryHelpers);
   return page;
 }
 
@@ -1023,12 +1669,344 @@ async function runScale(browser, base) {
   process.exitCode = ok ? 0 : 1;
 }
 
+// ---------- --gallery ----------
+const POLISH = path.join(ROOT, 'tools', 'polish');
+const SHOT_N = { front34: 1, side: 2, back: 3, head: 4, low: 5, level: 6 };
+const BUDGET = { tris: 4000, drawCalls: 5 };
+const GALLERY_FIELDS = {
+  'types.<type>.status': 'PASS / FAIL（high 档三角面 > 4000 或 draw call > 5）/ KNOWN（超预算但列在 tools/polish/budget-exceptions.json）/ ERROR（high 档没出模型）/ UNCHECKED（没拍 high 档，不判预算）',
+  'types.<type>.high|low.tris': '非实例化网格三角面合计，含隐藏形态（与 A.wrap 预算口径一致）；预算判定用它',
+  'types.<type>.high|low.trisRendered': '摄影棚实测渲染三角面（renderer.info，只算当前可见形态，含群体实例化个体）',
+  'types.<type>.high|low.drawCalls': '摄影棚实测 draw call：藏掉地板网格后 renderer.info.render.calls（high 用 3/4 正面机位，low 用正面机位）；r147 里透明 + 双面材质要画两遍，所以可能比静态估算多（deathmoth 翅膀）',
+  'types.<type>.high|low.drawCallsStatic': '按可见网格 geometry.groups 静态估算（A.wrap 口径，另加 Sprite/Points/Line 各 1）；预算判定取实测与静态的较大值',
+  'types.<type>.high|low.materials': '模型用到的不同材质数（含隐藏形态）；materialsVisible 只算当前可见形态',
+  'types.<type>.high|low.meshes|geometries': '网格节点数 / 不同 BufferGeometry 数',
+  'types.<type>.high|low.primitives': '图元数：骨架网格用 RigBuilder 计数钩子（box/sphere/limb/cone/geo 各算 1，chain 每节 1）；非骨架网格（glowFace 合并几何、GLB 等）按顶点焊接后的三角形连通块数近似；Sprite/Points/Line/实例化个体各算 1；root.userData.primitives 存在时直接用它',
+  'types.<type>.high|low.primitivesSource': 'rigbuilder / weld（焊接连通块近似）/ rigbuilder+weld / root.userData.primitives',
+  'types.<type>.high|low.tint': 'RigBuilder 调用参数里带 { tint } 的图元数（顶点色 tint 落地前恒为 0）；root.userData.tints 存在时用它',
+  'types.<type>.high|low.bbox': '摆好 idle 姿势后按蒙皮顶点实算的包围盒，相对实体脚底原点、面朝 -Z，单位 m；flat = 贴地斑块（改俯拍）',
+  'types.<type>.high|low.swarm': '群体构件的实例化个体 [{ unitTris, instances }]，不计入 tris',
+  'types.<type>.high|low.state|form|forms': 'init 之后的状态、当前显示的形态、全部形态名（多形态实体只拍当前形态）',
+  'types.<type>.high|low.head': '头部特写取景来源：bone:<骨骼名>（含子骨骼）/ bone:<骨骼名>(own)（子树占了大半个身体时只取直接绑在头骨骼上的顶点）/ node:<节点名> / top28% / front35% / whole',
+  'types.<type>.shots[]': '{ n, view, file, quality, camera }：1-front34 3/4 正面、2-side 正侧、3-back 背面、4-head 头部特写、5-low 低画质正面、6-level 首个出场层级出生点灯光下；多形态实体另有 7-form-<形态名>（非默认形态的 3/4 正面，骨架基础姿势）',
+  'types.<type>.def': '实体定义里的 radius / height（对照 bbox 查形体偏差）',
+  'types.<type>.level': '{ id, dist, offDeg, lightAt, sceneDrawCalls, spawn, note, error }：首个出场层级（BR.LEVEL_ORDER 顺序反查 entities 表，没有就退回 dev 层）；dist 是实体离玩家眼位的水平距离',
+  'types.<type>.file|batch': '注册这个类型的实体文件 / tools/polish/batches.json 里的批次号',
+  'types.<type>.errors|warns': '处理这个类型期间页面的 console.error / [arch] 警告',
+  'types.<type>.complete': '该出的图和数据都齐了（--resume 据此跳过）',
+  'types.<type>.ms': '摄影棚 / 层级镜头各自耗时（毫秒）',
+  'summary': '整个 tag 按状态汇总（分片合并后重算）',
+  'runs[]': '每次运行（每个分片）的参数、开始时间、耗时',
+};
+
+function readJsonSafe(file, def) { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { return def; } }
+function sleepSync(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
+function writePng(file, dataUrl) { fs.writeFileSync(file, Buffer.from(String(dataUrl).slice(String(dataUrl).indexOf(',') + 1), 'base64')); }
+function parseShard(v) {
+  if (!v || v === true) return null;
+  const m = /^(\d+)\/(\d+)$/.exec(String(v));
+  if (!m || +m[1] < 1 || +m[1] > +m[2]) throw new Error('--shard 格式是 k/n（1 ≤ k ≤ n），收到 ' + v);
+  return { k: +m[1], n: +m[2] };
+}
+// 类型 → 注册它的实体文件：静态扫 register( 之后最近的 type: '...'（一个文件注册多个变体的也能对上）
+function scanEntityFiles() {
+  const dir = path.join(ROOT, 'js', 'entities');
+  const map = {};
+  for (const f of fs.readdirSync(dir).filter(x => x.endsWith('.js') && x !== '_archetypes.js')) {
+    const src = fs.readFileSync(path.join(dir, f), 'utf8');
+    const re = /register\(/g;
+    let m;
+    while ((m = re.exec(src))) {
+      const t = /type:\s*'([A-Za-z0-9_]+)'/.exec(src.slice(m.index, m.index + 600));
+      if (t && !map[t[1]]) map[t[1]] = 'js/entities/' + f;
+    }
+  }
+  return map;
+}
+function batchOfFile() {
+  const doc = readJsonSafe(path.join(POLISH, 'batches.json'), null);
+  const out = {};
+  for (const b of (doc && doc.batches) || []) for (const f of b.files || []) out[f] = b.id;
+  return out;
+}
+// 分片并行时多个进程写同一份 gallery.json：mkdir 是原子操作，拿它当锁；读-合并-写临时文件-rename
+function withLock(dir, fn) {
+  const lock = path.join(dir, '.gallery.lock');
+  const t0 = Date.now();
+  for (;;) {
+    try { fs.mkdirSync(lock); break; }
+    catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+      // 分片进程被杀掉时锁会留下：两分钟没动过就当死锁清掉
+      try { if (Date.now() - fs.statSync(lock).mtimeMs > 120000) { fs.rmdirSync(lock); continue; } } catch (e) { /* 别人刚删掉 */ }
+      if (Date.now() - t0 > 60000) throw new Error('等 gallery.json 锁超时：' + lock);
+      sleepSync(40);
+    }
+  }
+  try { return fn(); } finally { try { fs.rmdirSync(lock); } catch (e) { /* 已清 */ } }
+}
+function summarize(doc) {
+  const s = { types: 0, PASS: 0, KNOWN: 0, FAIL: 0, ERROR: 0, UNCHECKED: 0, fail: [], known: [], error: [], incomplete: [], withPageErrors: [] };
+  for (const [t, r] of Object.entries(doc.types || {})) {
+    s.types++;
+    s[r.status] = (s[r.status] || 0) + 1;
+    if (r.status === 'FAIL') s.fail.push(t);
+    if (r.status === 'KNOWN') s.known.push(t);
+    if (r.status === 'ERROR') s.error.push(t);
+    if (!r.complete) s.incomplete.push(t);
+    if (r.errors && r.errors.length) s.withPageErrors.push(t);
+  }
+  return s;
+}
+function mergeGallery(dir, tag, patch) {
+  return withLock(dir, () => {
+    const file = path.join(dir, 'gallery.json');
+    const doc = readJsonSafe(file, null) || { tag, types: {}, runs: [] };
+    doc.tag = tag;
+    doc.version = 1;
+    doc.tool = 'node tests/preview.mjs --gallery';
+    doc.fields = GALLERY_FIELDS;
+    doc.budget = { tris: BUDGET.tris, drawCalls: BUDGET.drawCalls, exceptionsFile: 'tools/polish/budget-exceptions.json' };
+    if (patch.studio) doc.studio = patch.studio;
+    doc.types = doc.types || {};
+    if (patch.type) doc.types[patch.type.type] = patch.type;
+    if (patch.run) {
+      doc.runs = doc.runs || [];
+      const i = doc.runs.findIndex(r => r.id === patch.run.id);
+      if (i >= 0) doc.runs[i] = patch.run; else doc.runs.push(patch.run);
+    }
+    doc.types = Object.fromEntries(Object.keys(doc.types).sort().map(k => [k, doc.types[k]]));   // 按类型名排：两个 tag 的 json 能直接 diff
+    doc.summary = summarize(doc);
+    const tmp = file + '.' + process.pid + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(doc, null, 2));
+    fs.renameSync(tmp, file);
+    return doc;
+  });
+}
+function judge(rec, exceptions, hasHigh) {
+  const hi = rec.high;
+  if (!hasHigh) return { status: 'UNCHECKED', statusWhy: '没拍 high 档，不判预算' };
+  if (!hi) return { status: 'ERROR', statusWhy: rec.errors[0] ? String(rec.errors[0]).slice(0, 200) : 'high 档没出模型' };
+  const dc = Math.max(hi.drawCalls || 0, hi.drawCallsStatic || 0);
+  const over = [];
+  if (hi.tris > BUDGET.tris) over.push(`三角面 ${hi.tris} > ${BUDGET.tris}`);
+  if (dc > BUDGET.drawCalls) over.push(`draw call ${dc} > ${BUDGET.drawCalls}`);
+  if (!over.length) return { status: 'PASS', statusWhy: null };
+  const ex = exceptions[rec.type];
+  if (ex) return { status: 'KNOWN', statusWhy: over.join('，') + '；已知例外：' + (ex.reason || '') };
+  return { status: 'FAIL', statusWhy: over.join('，') };
+}
+async function startForShots(page, level) {
+  const screen = await page.evaluate(() => BR.game.screen);
+  if (screen !== 'home') {
+    await page.evaluate(() => BR.bus.emit('game:home'));
+    await page.waitForFunction(() => BR.game.screen === 'home', null, { timeout: 15000 });
+  }
+  const info = await page.evaluate(id => __pv.gal.enterLevel(id), String(level));
+  if (!info || !info.ok) throw new Error((info && info.error) || '进层失败：' + level);
+  return info;
+}
+
+async function runGallery(browser, base) {
+  const tag = arg('tag');
+  if (!tag || tag === true || !/^[A-Za-z0-9_.-]+$/.test(String(tag))) {
+    console.log('FAIL --gallery 需要 --tag <name>（只用字母、数字、_ . -，会拿来当目录名）');
+    process.exitCode = 2;
+    return;
+  }
+  const want = String(arg('gallery'));
+  const qualities = [...new Set(String(arg('quality', 'high,low')).split(',').map(s => s.trim()))].filter(q => q === 'high' || q === 'low');
+  if (!qualities.length) { console.log('FAIL --quality 只认 high、low（逗号分隔）'); process.exitCode = 2; return; }
+  const primary = qualities.includes('high') ? 'high' : 'low';
+  const size = Math.max(256, Math.min(1600, (+arg('size', 640)) | 0));
+  const shard = parseShard(arg('shard'));
+  const dir = path.join(OUT, String(tag));
+  fs.mkdirSync(dir, { recursive: true });
+  const t0 = Date.now();
+  const exceptions = (readJsonSafe(path.join(POLISH, 'budget-exceptions.json'), {}) || {}).types || {};
+  const fileOf = scanEntityFiles();
+  const batchOf = batchOfFile();
+
+  // 画幅设成正方形：层级镜头用游戏渲染器直接出图，和摄影棚的图一样大，联系表里对得齐
+  const page = await bootHome(browser, base, { gallery: true, viewport: { width: size, height: size } });
+  const cat = await page.evaluate(() => __pv.gal.catalog());
+  const known = new Map(cat.types.map(t => [t.type, t]));
+  // all 不含下划线开头的调试类型（_dev_* / _demo_*），要看就显式点名
+  let names = want === 'all' ? cat.types.map(t => t.type).filter(n => !n.startsWith('_')) : want.split(',').map(s => s.trim()).filter(Boolean);
+  names = [...new Set(names)].sort();
+  const total = names.length;
+  if (shard) { const per = Math.ceil(names.length / shard.n); names = names.slice((shard.k - 1) * per, shard.k * per); }
+  if (arg('resume')) {
+    const prev = readJsonSafe(path.join(dir, 'gallery.json'), null);
+    const n0 = names.length;
+    names = names.filter(n => {
+      const r = prev && prev.types && prev.types[n];
+      return !(r && r.complete && (r.shots || []).every(s => fs.existsSync(path.join(dir, s.file))));
+    });
+    console.log(`[gallery] --resume：跳过已出齐的 ${n0 - names.length} 种`);
+  }
+  const run = { id: process.pid + '-' + t0, at: new Date(t0).toISOString(), args: argv.join(' '), shard: shard ? shard.k + '/' + shard.n : null, types: names.slice(), ofTotal: total, ms: null, done: false };
+  console.log(`[gallery] tag ${tag}：${names.length} 种${shard ? `（分片 ${shard.k}/${shard.n}，全集 ${total} 种）` : ''}，画质 ${qualities.join('+')}，${size}px，图元钩子 ${cat.primHook}`);
+
+  await startForShots(page, 'dev');
+  const studio = await page.evaluate(s => __pv.gal.initStudio(s), size);
+  studio.levelCamera = '游戏渲染器与相机（fov 75，画幅同 --size），玩家出生点眼位看向实体包围盒中心；冻结灯光闪烁、重排灯池槽位';
+  mergeGallery(dir, String(tag), { studio, run });
+  if (errors.length) console.log('[gallery] 启动阶段页面报错：' + errors.slice(0, 5).join(' | '));
+
+  const recs = new Map();
+  for (const name of names) {
+    const info = known.get(name);
+    const file = fileOf[name] || null;
+    const rec = {
+      type: name, zh: info ? info.zh : null, en: info ? info.en : null, faction: info ? info.faction : null, version: info ? info.version : null,
+      file, batch: file && batchOf[file] != null ? batchOf[file] : null, firstLevel: info ? info.firstLevel : null, def: null,
+      status: 'ERROR', statusWhy: null, complete: false,
+      high: null, low: null, shots: [], level: null, errors: [], warns: [], ms: { studio: 0, level: 0 },
+    };
+    recs.set(name, rec);
+    if (!info) {
+      rec.errors.push('没有注册实体 ' + name + '（拼错了？index.html 里有 script 吗？）');
+      rec.statusWhy = '未注册';
+      mergeGallery(dir, String(tag), { type: rec });
+      console.log('ERROR ' + name + '：未注册');
+      continue;
+    }
+    // 重拍前删掉这个类型的旧图：形态少了、机位改名之后，旧文件留着会被 --compare 当成还存在的镜头
+    for (const f of fs.readdirSync(dir)) if (f.endsWith('.png') && f.split('-')[0] === name && /-\d+-[a-z0-9_-]+\.png$/.test(f)) fs.unlinkSync(path.join(dir, f));
+    const ts = Date.now(), e0 = errors.length, w0 = warns.length;
+    for (const q of qualities) {
+      const views = q === primary ? ['front34', 'side', 'back', 'head'] : [];
+      if (q === 'low') views.push('low');
+      let r;
+      try { r = await page.evaluate(([t, qq, v]) => __pv.gal.studioShoot(t, qq, v), [name, q, views]); }
+      catch (err) { r = { ok: false, error: String(err && err.message || err).slice(0, 600) }; }
+      if (!r.ok) { rec.errors.push(q + '：' + r.error); continue; }
+      rec[q] = r.stats;
+      if (!rec.def) rec.def = { radius: r.def.radius, height: r.def.height };
+      for (const s of r.shots) {
+        const n = SHOT_N[s.view] || 7;   // 7-form-<形态名>：多形态实体的非默认形态
+        const f = `${name}-${n}-${s.view}.png`;
+        writePng(path.join(dir, f), s.png);
+        rec.shots.push({ n, view: s.view, file: f, quality: q, camera: s.camera });
+      }
+    }
+    rec.errors.push(...errors.slice(e0));
+    rec.warns.push(...warns.slice(w0));
+    rec.ms.studio = Date.now() - ts;
+    Object.assign(rec, judge(rec, exceptions, qualities.includes('high')));
+    mergeGallery(dir, String(tag), { type: rec });
+    const hi = rec.high, lo = rec.low;
+    const brief = s => s ? `${s.tris}△/${Math.max(s.drawCalls, s.drawCallsStatic)}dc` : '-';
+    console.log(`${rec.status.padEnd(7)} ${name.padEnd(28)} hi ${brief(hi).padEnd(12)} lo ${brief(lo).padEnd(12)} 图元 ${hi ? hi.primitives : lo ? lo.primitives : '-'}  ${(rec.ms.studio / 1000).toFixed(1)} s${rec.statusWhy ? '  ' + rec.statusWhy : ''}`);
+  }
+
+  // 层级镜头：按首个出场层级分组，每层只进一次
+  const groups = new Map();
+  for (const rec of recs.values()) {
+    if (!rec.high && !rec.low) continue;
+    const L = rec.firstLevel != null ? rec.firstLevel : 'dev';
+    if (!groups.has(L)) groups.set(L, []);
+    groups.get(L).push(rec);
+  }
+  const order = cat.levels.filter(id => groups.has(id));
+  for (const id of groups.keys()) if (order.indexOf(id) < 0) order.push(id);
+  const expected = 4 + (qualities.includes('low') ? 1 : 0) + 1;
+  for (const L of order) {
+    let entered = null, enterErr = null;
+    try { entered = await startForShots(page, L); } catch (err) { enterErr = String(err && err.message || err).slice(0, 600); }
+    for (const rec of groups.get(L)) {
+      const ts = Date.now(), e0 = errors.length, w0 = warns.length;
+      rec.level = { id: L, note: rec.firstLevel == null ? '没有层级的 entities 表收录这个类型，退回 dev 层' : null };
+      rec.shots = rec.shots.filter(s => s.view !== 'level');
+      if (enterErr) rec.level.error = enterErr;
+      else {
+        let r;
+        try { r = await page.evaluate(([t, q]) => __pv.gal.levelShot(t, q), [rec.type, primary]); }
+        catch (err) { r = { ok: false, error: String(err && err.message || err).slice(0, 600) }; }
+        if (!r.ok) rec.level.error = r.error;
+        else {
+          const f = `${rec.type}-6-level.png`;
+          writePng(path.join(dir, f), r.png);
+          rec.shots.push({ n: 6, view: 'level', file: f, quality: primary, camera: { fov: 75, eye: r.eye, entityAt: r.entityAt } });
+          delete r.png; delete r.ok;
+          const note = [rec.level.note, r.note].filter(Boolean).join('；') || null;
+          Object.assign(rec.level, r, { note, spawn: entered.spawn, flickerFrozen: entered.flickerFrozen });
+        }
+      }
+      rec.errors.push(...errors.slice(e0));
+      rec.warns.push(...warns.slice(w0));
+      rec.ms.level = Date.now() - ts;
+      rec.complete = rec.shots.length >= expected && !rec.level.error;
+      mergeGallery(dir, String(tag), { type: rec });
+      console.log(`level   ${rec.type.padEnd(28)} L${L}  ${rec.level.error ? 'ERROR ' + rec.level.error : rec.level.dist + ' m，lightAt ' + rec.level.lightAt + '，场景 ' + rec.level.sceneDrawCalls + ' dc'}`);
+    }
+  }
+
+  run.ms = Date.now() - t0;
+  run.done = true;
+  const doc = mergeGallery(dir, String(tag), { run });
+  const mine = names.map(n => recs.get(n));
+  const cnt = k => mine.filter(r => r.status === k).length;
+  console.log(`\n===== --gallery ${tag}${shard ? ' 分片 ' + shard.k + '/' + shard.n : ''}：${mine.length} 种，PASS ${cnt('PASS')}，KNOWN ${cnt('KNOWN')}，FAIL ${cnt('FAIL')}，ERROR ${cnt('ERROR')}` +
+    `，耗时 ${(run.ms / 1000).toFixed(1)} s（平均每种 ${(run.ms / 1000 / Math.max(1, mine.length)).toFixed(1)} s）`);
+  for (const r of mine) if (r.status !== 'PASS') console.log(`  ${r.status} ${r.type}：${r.statusWhy || ''}`);
+  const incomplete = mine.filter(r => !r.complete);
+  if (incomplete.length) console.log('  没出齐：' + incomplete.map(r => r.type + (r.level && r.level.error ? '（' + r.level.error + '）' : '')).join('、'));
+  for (const r of mine.filter(x => x.errors.length)) console.log(`  页面报错 ${r.type}：` + r.errors.slice(0, 3).join(' | '));
+  console.log(`输出 ${path.relative(ROOT, dir)}/；gallery.json 全 tag 汇总 ${JSON.stringify({ types: doc.summary.types, PASS: doc.summary.PASS, KNOWN: doc.summary.KNOWN, FAIL: doc.summary.FAIL, ERROR: doc.summary.ERROR, incomplete: doc.summary.incomplete.length })}`);
+  process.exitCode = mine.some(r => r.status === 'FAIL' || r.status === 'ERROR' || !r.complete || r.errors.length) ? 1 : 0;
+}
+
+// ---------- --stress ----------
+async function runStress(browser, base) {
+  const type = String(arg('stress'));
+  const count = Math.max(1, (+arg('count', 28)) | 0);
+  const frames = Math.max(10, (+arg('frames', 60)) | 0);
+  const tag = arg('tag') && arg('tag') !== true ? String(arg('tag')) : null;
+  const page = await bootHome(browser, base, { gallery: true });
+  const cat = await page.evaluate(() => __pv.gal.catalog());
+  const info = cat.types.find(t => t.type === type);
+  if (!info) { console.log('FAIL --stress：没有注册实体 ' + type); process.exitCode = 1; return; }
+  const raw = arg('level') && arg('level') !== true ? String(arg('level')) : (info.firstLevel != null ? info.firstLevel : 'dev');
+  // 计划里写的是 --level L3，也认 --level 3
+  const level = cat.levels.includes(raw) ? raw : (/^L/i.test(raw) && cat.levels.includes(raw.slice(1)) ? raw.slice(1) : raw);
+  const entered = await startForShots(page, level);
+  const e0 = errors.length;
+  const r = await page.evaluate(([t, n, f]) => __pv.gal.stress(t, n, f), [type, count, frames]);
+  if (!r.ok) { console.log('FAIL --stress：' + r.error); process.exitCode = 1; return; }
+  const dir = tag ? path.join(OUT, tag) : path.join(OUT, 'stress');
+  fs.mkdirSync(dir, { recursive: true });
+  const stem = (tag ? 'stress-' : '') + `${type}-x${count}-L${level}`;
+  writePng(path.join(dir, stem + '.png'), r.png);
+  delete r.png; delete r.ok;
+  const report = {
+    ...r, level, levelSpawn: entered.spawn, flickerFrozen: entered.flickerFrozen, viewport: VIEW, drawCallBudget: 120,
+    errors: errors.slice(e0), at: new Date().toISOString(), shot: stem + '.png',
+    note: '帧时间 = __br.step(1/30)（AI + 动画 + 渲染）+ 1 像素 readPixels 同步 GPU；SwiftShader 软渲染，只拿来做同机前后对比',
+  };
+  fs.writeFileSync(path.join(dir, stem + '.json'), JSON.stringify(report, null, 2));
+  console.log(`\n== --stress ${type} ×${count}（L${level}，${VIEW.width}×${VIEW.height}，${frames} 帧）：放下 ${r.placed}，视野内 ${r.inViewStart}→${r.inViewEnd}，落点 ${r.spots.minDist}–${r.spots.maxDist} m（扇面 ±${r.spots.widestCone}°）`);
+  console.log(`   空场：平均帧 ${r.baseline.avgFrameMs} ms（中位 ${r.baseline.medianFrameMs}），draw call ${r.baseline.avgDrawCalls}`);
+  console.log(`   满载：平均帧 ${r.loaded.avgFrameMs} ms（中位 ${r.loaded.medianFrameMs}，p90 ${r.loaded.p90FrameMs}），draw call 平均 ${r.loaded.avgDrawCalls} 最多 ${r.loaded.maxDrawCalls}，三角面 ${r.loaded.avgTriangles}，entities.update ${r.loaded.avgEntitiesUpdateMs} ms`);
+  console.log(`   增量：帧 +${r.delta.frameMs} ms（×${r.delta.frameRatio}），draw call +${r.delta.drawCalls}`);
+  check(`--stress ${type}：${count} 只全部放下`, r.placed === count, { placed: r.placed, spots: r.spots.found });
+  check('--stress 全场 draw calls ≤ 120', r.loaded.maxDrawCalls <= 120, { max: r.loaded.maxDrawCalls });
+  check('--stress 测试模式实体没打玩家', r.playerDamage === 0, { playerDamage: r.playerDamage });
+  check('--stress 页面没有 console.error / 未捕获异常', report.errors.length === 0, report.errors.slice(0, 5));
+  console.log('写入 ' + path.relative(ROOT, path.join(dir, stem + '.json')) + '，截图 ' + path.relative(ROOT, path.join(dir, stem + '.png')));
+  console.log('PREVIEW_JSON ' + JSON.stringify(report));
+  process.exitCode = results.some(x => !x.ok) ? 1 : 0;
+}
+
 // ---------- 入口 ----------
-if (!arg('entity') && !arg('arch') && !arg('level-shots') && !arg('scale')) {
+if (!arg('entity') && !arg('arch') && !arg('level-shots') && !arg('scale') && !arg('gallery') && !arg('stress')) {
   console.log('用法：node tests/preview.mjs --entity <type>[,<type>] [--with test_dummy,_dev_friendly] [--seconds 15] [--dist 5] [--mode test|nightmare] [--level dev] [--out dir]\n' +
     '      node tests/preview.mjs --arch\n' +
     '      node tests/preview.mjs --level-shots <id> [--mode test|casual|nightmare] [--shots N] [--out dir]\n' +
-    '      node tests/preview.mjs --scale <id>');
+    '      node tests/preview.mjs --scale <id>\n' +
+    '      node tests/preview.mjs --gallery all|<type,type..> --tag <name> [--quality high,low] [--shard k/n] [--resume] [--size 640] [--out tests/output/gallery]\n' +
+    '      node tests/preview.mjs --stress <type> [--count 28] [--level 3] [--frames 60] [--tag <name>] [--out tests/output/gallery]');
   process.exit(2);
 }
 const srv = await startServer();
@@ -1042,12 +2020,22 @@ try {
   if (arg('arch')) await runArch(browser, base);
   else if (arg('level-shots')) await runLevelShots(browser, base);
   else if (arg('scale')) await runScale(browser, base);
+  else if (arg('gallery')) await runGallery(browser, base);
+  else if (arg('stress')) await runStress(browser, base);
   else await runEntities(browser, base);
 } catch (err) {
   console.log('FAIL 预览流程中断：' + (err && err.stack || err));
   for (const e of errors) console.log('  ' + e);
   process.exitCode = 1;
 } finally {
+  if (GALLERY_MODE) {
+    // 出图模式一个页面开三个 WebGL 上下文，分片并行时偶发 browser.close() 在 Chrome 进程已经退掉之后还挂十几分钟不返回，
+    // 分片脚本的 wait 就一直等不到：限时 15 s 关浏览器，再强制关掉静态服务的连接并退出
+    await Promise.race([browser.close().catch(() => {}), new Promise(r => setTimeout(r, 15000))]);
+    if (typeof srv.closeAllConnections === 'function') srv.closeAllConnections();
+    srv.close();
+    process.exit(process.exitCode || 0);
+  }
   await browser.close();
   srv.close();
 }

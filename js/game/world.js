@@ -193,6 +193,7 @@ function unloadChunk(c, bulk) {
     if (c.solids.length && has(BR.phys, 'removeSolids')) BR.phys.removeSolids(c.key);
     if (has(BR.items, 'removeChunk')) BR.items.removeChunk(c.key);
     if (has(BR.entities, 'removeChunk')) BR.entities.removeChunk(c.key);
+    if (decals.length) dropChunkDecals(c.key);
   }
   if (c.lights.length) S.lightsDirty = true;
 }
@@ -212,6 +213,139 @@ function disposeGroup(root) {
   });
   geos.forEach(g => g.dispose());
   mats.forEach(m => m.dispose());
+}
+
+// ---------- 贴花（ENGINE_PLAN M1 AA）：墨迹、腐蚀痕这类贴地斑块 ----------
+// 纯表现、不同步：各端按实体位置本地生成。全场 1 个 InstancedMesh（1 个 draw call），高画质 ≤64、低画质 ≤32 块，
+// 满了挤掉最老的（环形缓冲）；每块记所属区块，区块卸载时一起清掉，换层 / 回主页全清。
+// 网格不挂进 chunk.group：区块几何（golden 哈希的内容）不变，disposeGroup 也不会把共用的贴花几何释放掉
+const DECAL_CAP = { high: 64, low: 32 };
+const DECAL_FADE = 0.2;          // 寿命最后 20% 缩小消失：实例化网格没有逐块透明度，用缩放代替
+const decals = [];               // 按生成先后排：{ key, x, y, z, r, rot, color, born, ttl }
+const DC = { mesh: null, time: 0, mat4: null, quat: null, pos: null, scl: null, col: null, up: null };
+
+function decalCap() { const s = BR.game.settings; return s && s.quality === 'low' ? DECAL_CAP.low : DECAL_CAP.high; }
+
+function decalMesh() {
+  if (DC.mesh || !THREE) return DC.mesh;
+  // 不规则圆斑，半径 1（按实例缩放）；轮廓用固定种子，不走 Math.random
+  const rnd = U.mulberry32(U.hashStr('world-decal'));
+  const n = 16, radii = [];
+  for (let i = 0; i < n; i++) radii.push(0.72 + 0.28 * rnd());
+  const shape = new THREE.Shape();
+  for (let i = 0; i <= n; i++) {
+    const a = i / n * Math.PI * 2, rr = radii[i % n];
+    if (i === 0) shape.moveTo(Math.cos(a) * rr, Math.sin(a) * rr); else shape.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+  }
+  const geo = new THREE.ShapeGeometry(shape, 1).rotateX(-Math.PI / 2);
+  // polygonOffset + 抬高 1.2 cm：贴着地板不打架；depthWrite 关掉，半透明斑块叠在一起不互相挖洞
+  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+  const mesh = new THREE.InstancedMesh(geo, mat, DECAL_CAP.high);
+  // 实例颜色缓冲一开始就建好：第一次渲染时没有它，编出来的着色器就不带实例颜色
+  mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(DECAL_CAP.high * 3), 3);
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+  mesh.count = 0;
+  mesh.visible = false;
+  mesh.frustumCulled = false;    // 包围球只按一块算，散在几个区块里会被误裁掉
+  mesh.renderOrder = 1;
+  mesh.name = 'world decals';
+  DC.mesh = mesh;
+  DC.mat4 = new THREE.Matrix4();
+  DC.quat = new THREE.Quaternion();
+  DC.pos = new THREE.Vector3();
+  DC.scl = new THREE.Vector3();
+  DC.col = new THREE.Color();
+  DC.up = new THREE.Vector3(0, 1, 0);
+  return mesh;
+}
+
+// 按 decals 重写实例矩阵和颜色；返回是否有正在缩小消失的
+function writeDecals() {
+  const m = DC.mesh;
+  if (!m) return false;
+  const cap = decalCap();
+  if (decals.length > cap) decals.splice(0, decals.length - cap);   // 刚切到低画质：挤掉最老的
+  let fading = false;
+  for (let i = 0; i < decals.length; i++) {
+    const d = decals[i], k = (DC.time - d.born) / d.ttl;
+    let s = d.r;
+    if (k > 1 - DECAL_FADE) { s *= Math.max(0.001, (1 - k) / DECAL_FADE); fading = true; }
+    DC.quat.setFromAxisAngle(DC.up, d.rot);
+    DC.pos.set(d.x, d.y, d.z);
+    DC.scl.set(s, 1, s);
+    m.setMatrixAt(i, DC.mat4.compose(DC.pos, DC.quat, DC.scl));
+    m.setColorAt(i, DC.col.setHex(d.color));
+  }
+  m.count = decals.length;
+  m.visible = decals.length > 0;
+  m.instanceMatrix.needsUpdate = true;
+  m.instanceColor.needsUpdate = true;
+  return fading;
+}
+
+function tickDecals(dt) {
+  DC.time += dt;
+  let changed = decals.length > decalCap();
+  for (let i = decals.length - 1; i >= 0; i--) {
+    const k = (DC.time - decals[i].born) / decals[i].ttl;
+    if (k >= 1) { decals.splice(i, 1); changed = true; }
+    else if (k > 1 - DECAL_FADE) changed = true;
+  }
+  if (changed) writeDecals();
+}
+
+// BR.world.decal(x, z, { color, radius, ttl, y })：贴一块；区块没载入（或没开局）返回 false
+function decal(x, z, o) {
+  if (!S.level || !THREE) return false;
+  if (!(num(x, NaN) === x && num(z, NaN) === z)) return false;
+  const c = byNum.get(numKey(Math.floor(x / S.size), Math.floor(z / S.size)));
+  if (!c) return false;          // 没载入的区块不贴：它卸载时也清不到
+  const scene = sceneOf();
+  const m = decalMesh();
+  if (!scene || !m) return false;
+  if (m.parent !== scene) scene.add(m);
+  o = o || {};
+  const cap = decalCap();
+  if (decals.length >= cap) decals.splice(0, decals.length - cap + 1);
+  const y = num(o.y, has(BR.phys, 'groundY') ? num(+BR.phys.groundY(x, z), 0) : 0);
+  const ttl = num(o.ttl, 60);
+  decals.push({
+    key: c.key, x, y: y + 0.012, z,
+    r: Math.max(0.05, num(o.radius, 0.6)),
+    rot: (U.hashInts(Math.round(x * 64), Math.round(z * 64)) % 6283) / 1000,   // 按位置转个角度，一串斑块不会长得一模一样
+    color: num(o.color, 0x16110c) & 0xffffff,
+    born: DC.time, ttl: ttl > 0 ? ttl : 60,
+  });
+  writeDecals();
+  return true;
+}
+
+function dropChunkDecals(key) {
+  let j = 0;
+  for (let i = 0; i < decals.length; i++) if (decals[i].key !== key) decals[j++] = decals[i];
+  if (j === decals.length) return;
+  decals.length = j;
+  writeDecals();
+}
+
+function clearDecals() {
+  decals.length = 0;
+  DC.time = 0;
+  const m = DC.mesh;
+  if (m) {
+    m.count = 0;
+    m.visible = false;
+    if (m.parent) m.parent.remove(m);
+  }
+}
+
+// 调试 / 测试：{ count, cap, byChunk: { "cx,cz": 块数 }, inScene, visible }
+function decalInfo() {
+  const byChunk = {};
+  for (let i = 0; i < decals.length; i++) byChunk[decals[i].key] = (byChunk[decals[i].key] || 0) + 1;
+  const m = DC.mesh;
+  return { count: decals.length, cap: decalCap(), byChunk, inScene: !!(m && m.parent), visible: !!(m && m.visible), instances: m ? m.count : 0 };
 }
 
 // ---------- 流式加载 ----------
@@ -482,6 +616,7 @@ function update(dt) {
   dt = dt > 0 ? Math.min(dt, 0.1) : 0;
   const f = focus();
   stream(f.x, f.z);
+  if (decals.length) tickDecals(dt);   // 放在 stream 之后：本帧刚卸载的区块，它的贴花已经清掉了
   pushLights();
   tickDt = dt;
   chunks.forEach(tickChunk);
@@ -538,6 +673,7 @@ function clear() {
   if (has(BR.phys, 'clear')) BR.phys.clear();
   if (has(BR.items, 'clear')) BR.items.clear();
   if (has(BR.entities, 'clear')) BR.entities.clear();
+  clearDecals();
   // 只有自己推过灯才清：主页可能在用 gfx 的灯
   if (S.lightsPushed && has(BR.gfx, 'setLightSources')) BR.gfx.setLightSources([]);
   S.lightsPushed = false;
@@ -608,5 +744,7 @@ BR.world = {
   chunks: loadedChunks,
   exits: loadedExits,
   debugInfo,
+  decal,        // (x, z, { color, radius, ttl, y }?) → bool：贴地斑块，纯表现、不同步（ENGINE_PLAN M1 AA）
+  decalInfo,    // () → { count, cap, byChunk, inScene, visible, instances }
 };
 })();

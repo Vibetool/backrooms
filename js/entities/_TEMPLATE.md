@@ -352,6 +352,8 @@ A.parts.rig(key, fn(b), { colors, look, mats }) → SkinnedMesh   完全自定�
 ```
 
 ### 6.6 自定义骨架（`extend` 或 `A.parts.rig`）
+> **坐标约定（多次踩坑，务必看）**：`b.bone`、`b.sphere`、`b.box`、`b.cone`、`b.limb`、`b.chain` 的位置参数，以及 `b.geo` 传入几何的顶点，都是**以脚底为原点的模型空间绝对坐标**，不是相对父骨骼的偏移；骨骼只决定动画时绕哪一点转。部件要长在头上，就写头部的绝对位置（例如 `[x, d.headY + dy, z]`），不要写 `[0, 0, 0]` 指望它跟着骨骼走——那样部件会堆在脚底，带自转动画时还会绕支点甩出去（悲尸眼珠飘到身体两侧 1.6 m、肉块悲尸眼珠散在地上、牧蛇眼睛和钳子掉在尾端，都是这个错）。自查方法：`node tests/preview.mjs --gallery <type> --tag x` 后看 gallery.json 的 bbox，包围盒远大于碰撞体 radius/height 就要查坐标。
+
 `b` 是 `A.RigBuilder`，所有坐标都是**模型空间的绑定姿势**（直立、展开，不带旋转）：
 ```
 b.bone(name, parentName | null, [x, y, z])            加骨骼（关节位置）
@@ -363,6 +365,13 @@ b.chain(name, parent, from, dir, n, length, r0, r1, slot, seg=6) → [骨骼名]
 b.geo(bone, slot, bufferGeometry)                     任意几何（先 translate 到位）
 b.setBase(name, rx, ry, rz, px, py, pz)               基础姿势（佝偻、张开的翅膀、歪头都靠它）
 b.pos(name) → [x, y, z]
+```
+以上 box / sphere / limb / cone / chain / geo 都能在**原有参数后面**再接一个可选对象 `{ tint: 0xRRGGBB }`（顶点色，见 6.10），
+中间省略的可选位置参数不用补 `undefined`：
+```js
+b.box('head', 'head', [0.05, 0.03, 0.02], [0.04, 1.62, -0.11], { tint: 0xf2efe6 })        // 省略 rot
+b.limb('armL', 'body', from, to, 0.05, 0.04, { tint: 0x3a3226 })                         // 省略 seg / flat
+b.chain('tail', 'hips', from, dir, 4, 0.6, 0.05, 0.01, 'body', { tint: 0x2a2420 })       // 每节同色
 ```
 例：给人形加一张嘴里满是牙的脸和背上两条触手
 ```js
@@ -402,6 +411,53 @@ A.mat.own(material)        克隆一份并标 entityOwned —— 只有需要每
   `[arch] 模型 draw call … 超过 5` 的警告，和三角面超预算的警告一样，靠 `node tests/preview.mjs --arch` 的
   构件陈列自检发现。这次新增的关节球/手指/衣着/五官/牙列/触角链/指节/翅脉等细节全部叠在人形/四足/昆虫/肢团
   已有的 `body`/`head`（hazmat 是 `gear`）槽位上，不新增材质槽位，不会让 draw call 变多。
+
+### 6.10 视觉钩子：顶点色 tint、每实例材质 slotMat、淡出淡入、粒子、贴花（ENGINE_PLAN M1，2026-09-14 新增）
+全部是纯表现：不改位置、不改行为数值、不打玩家，联机协议不变。不用它们的实体，几何和材质和改动前逐字节一样。
+
+**顶点色 tint**——同一个材质槽位里区分颜色，不新增槽位、不多 draw call：
+```
+b.box(bone, slot, size, center, { tint: 0xRRGGBB })     box / sphere / limb / cone / chain / geo 都行（接法见 6.6）
+tint 也可以给 [r, g, b] 浮点（可以 >1，把这一块提亮到超过槽位材质色）
+```
+- 最终颜色 = 槽位材质色 × tint。没上色的图元写纯白（等于不变）。想让某块是精确颜色，就把槽位材质色给浅一点、其余图元也 tint。
+- 骨架里只要出现一个 tint，全部槽位的几何都会带 color 属性（槽位之间要合并成一份几何）；但只有**出现过 tint 的槽位**材质换成
+  `vertexColors` 版本，缓存键 = 原键 + `/vc`（`A.mat.keyOf(m)` 可查），仍然全体共享。原共享材质不改。
+- 几何缓存照旧按 key：用了 `extend` 时 tint 值变了要换 `key`，否则拿到的是旧颜色的缓存几何。
+
+**`u.slotMat(slot)`**——这一只单独改色 / 调亮度（眼睛随光照变亮、受伤发红）：
+```js
+anim: {
+  onFrame(e, dt, api, u) {
+    const m = u.slotMat('glow');                 // 当前形态骨架上 glow 槽位的"这一只专用"材质
+    if (m) m.color.setScalar(0.4 + 0.6 * api.lightAt(e.x, e.z));
+  },
+},
+```
+- 第一次调用时才克隆，之后同一只返回同一份；实体移除时释放（挂在网格上的、远处换下来的都释放）。
+- 距相机 >28 m 或低画质：网格换回共享材质，返回共享材质的**只读视图**——读到的是真实值，赋值和调方法静默作废，不会把全体共用的材质改坏；
+  回到近处再调，拿回原来那份副本。所以每帧都调、每帧都写，远近切换时自然正确。
+- 槽位不存在、模型不是骨架（GLB、orb 等）返回 `null`；多形态实体按当前形态的骨架找。别把返回值赋给别的网格。
+
+**`A.fx.vanish(e, { sec })` / `A.fx.appear(e, { sec })`**——隐身 / 现身：
+- 在 think 里调，写 `e.state = 'vanish'` / `'appear'`，快照带给客机；实际淡出淡入在 animate 里按 `e.state` 跑（房主、客机都跑）。
+  `'vanish'` 淡到透明后整只隐藏；其他任何状态都淡回（`appear` 只是个明确的状态名），淡完换回共享材质。
+- `sec` 只在调用的那台机器生效；想让客机一样快，把时长写进 `def.anim.vanishSec` / `appearSec`（缺省 0.5 s）。
+- 骨架（stalker 等）每次 think 都会改写 `e.state`：隐身期间要自己写 think，别再改 state。隐身只是画面，不影响碰撞、感知、攻击。
+- 高画质按透明度淡（临时克隆本实例材质，和 slotMat 共用那份）；低画质不克隆，按比例缩小。
+- 需要 `def.anim`（哪怕 `{}`）；自己写 animate 不用 anim 的，在 animate 里调 `A.fx.update(e, dt)`。
+
+**`A.fx.burst(x, y, z, opts)`**——一团粒子 + 中心一闪的光球（光球就是物品的 `itemKit.burstFx`）：
+```
+opts: { color: 0xffffff | [多种颜色随机], count: 24, speed: 2.2, life: 0.9, gravity: 4, drag: 1.2, up: 0.35, spread: 0.12,
+        floor（缺省地面与发射高度取低者）, flash: true, radius: 0.5, flashSec: 0.3 }   → 实际发出的粒子数
+```
+全场共享 1 个 THREE.Points（1 个 draw call），高画质 ≤200 粒、低画质 ≤100 粒，满了挤掉最老的；换层清空。
+房主 think 里调只有房主看得见；要两端都看见，在 animate / onFrame 里按 `e.state` 切换的那一帧调。
+
+**`BR.world.decal(x, z, { color, radius: 0.6, ttl: 60, y })`**——贴地斑块（墨迹、腐蚀痕）：
+全场 1 个 InstancedMesh（1 个 draw call），高画质 ≤64 / 低画质 ≤32 块，满了挤掉最老的；随区块卸载清掉，寿命最后 20% 缩小消失。
+纯表现、不同步：各端在 animate 里按 `e.x / e.z` 本地调（比如每走 0.8 m 贴一块）。区块没载入返回 false。
 
 ## 7. 动画（`def.anim`）
 

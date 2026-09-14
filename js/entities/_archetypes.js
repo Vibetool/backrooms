@@ -52,8 +52,13 @@ const LIGHT = { dark: 0.2, dim: 0.35, lit: 0.6 };
 const TRIS = { normal: 4000, swarmUnit: 120, drawCalls: 5 };
 
 // ---------- 材质（BR.assets.material 缓存，全体实例共享） ----------
+// matKeys 记下每份缓存材质的键：顶点色 tint 要按"原键 + /vc"派生一份开了 vertexColors 的材质。
+// 用 WeakMap 而不是写进 material.userData，是为了不碰任何已有材质对象（不带 tint 的实体材质逐字节不变）
+const matKeys = new WeakMap();
 function cachedMat(key, make) {
-  return has(BR.assets, 'material') ? BR.assets.material(key, make) : make();
+  const m = has(BR.assets, 'material') ? BR.assets.material(key, make) : make();
+  if (m && typeof m === 'object' && !matKeys.has(m)) matKeys.set(m, key);
+  return m;
 }
 function hex(c) { return (num(c, 0x808080) >>> 0).toString(16); }
 
@@ -190,7 +195,22 @@ const mat = {
     c.userData = Object.assign({}, c.userData, { entityOwned: true });
     return c;
   },
+  // 查缓存键（调试/测试用）：不是经 A.mat 缓存出来的材质返回 null
+  keyOf(m) { return (m && matKeys.get(m)) || null; },
 };
+
+// 顶点色变体：某个槽位用了 tint，这个槽位的材质就得开 vertexColors。缓存材质按"原键/vc"再缓存一份（全体实例共享）；
+// o.mats 直接给的非缓存材质按对象记一份（mat.own 的 entityOwned 标记会随 clone 带过去，实体移除时照常释放）。
+// 原材质本身不改：同一份共享材质可能正被不带 tint 的实体用着
+const vcByMat = new WeakMap();
+function vcMat(m) {
+  if (!m || !m.isMaterial || m.vertexColors) return m;
+  const key = matKeys.get(m);
+  if (key) return cachedMat(key + '/vc', () => { const c = m.clone(); c.vertexColors = true; return c; });
+  let c = vcByMat.get(m);
+  if (!c) { c = m.clone(); c.vertexColors = true; vcByMat.set(m, c); }
+  return c;
+}
 
 // ---------- 感知 / 战斗 / 声音 小工具 ----------
 // 离实体最近的玩家（本机 + 联机对方）：{ ref, x, z, dist, peer }，都没有返回 null
@@ -389,31 +409,48 @@ RB.bone = function (name, parent, pos) {
   return name;
 };
 RB.pos = function (name) { const b = this.bones[this.index[name]]; return b ? b.pos.slice() : [0, 0, 0]; };
-RB.geo = function (bone, slot, g) {
+// 可选参数对象 { tint: 0xRRGGBB }：接在各方法原有参数后面，中间省略的可选位置参数（rot / scale / seg / flat）可以不写。
+// 只认"普通对象"——数组、类型化数组、几何体都还当原来的位置参数，已有调用的解析结果和改动前完全一样
+function isOpts(a) { return !!a && typeof a === 'object' && !Array.isArray(a) && !ArrayBuffer.isView(a) && !a.isBufferGeometry; }
+function optsIn(args, from) {
+  for (let i = from; i < args.length; i++) if (isOpts(args[i])) return args[i];
+  return null;
+}
+RB.geo = function (bone, slot, g, o) {
   const bi = this.index[bone];
   if (bi == null) throw new Error('[arch] 骨骼不存在 ' + bone);
   if (!g || !g.isBufferGeometry) throw new Error('[arch] geo 需要 BufferGeometry');
-  this.parts.push({ bone: bi, slot: slot || 'body', geo: g });
+  const part = { bone: bi, slot: slot || 'body', geo: g };
+  if (isOpts(o) && o.tint != null) part.tint = o.tint;   // 不带 tint 的图元记录和改动前一模一样
+  this.parts.push(part);
   return g;
 };
 RB.box = function (bone, slot, size, center, rot) {
   const T = THREE_();
+  const o = optsIn(arguments, 4);
+  if (isOpts(rot)) rot = null;
   const g = new T.BoxGeometry(size[0], size[1], size[2]);
   if (rot) g.applyMatrix4(new T.Matrix4().makeRotationFromEuler(new T.Euler(rot[0] || 0, rot[1] || 0, rot[2] || 0)));
   g.translate(center[0], center[1], center[2]);
-  return this.geo(bone, slot, g);
+  return this.geo(bone, slot, g, o);
 };
 RB.sphere = function (bone, slot, r, center, scale, seg) {
   const T = THREE_();
+  const o = optsIn(arguments, 4);
+  if (isOpts(scale)) scale = null;
+  if (isOpts(seg)) seg = null;
   const s = seg || [10, 8];
   const g = new T.SphereGeometry(r, s[0], s[1]);
   if (scale) g.scale(scale[0], scale[1], scale[2]);
   g.translate(center[0], center[1], center[2]);
-  return this.geo(bone, slot, g);
+  return this.geo(bone, slot, g, o);
 };
 // 两点间的圆台：r0 在 from 端、r1 在 to 端；flat < 1 压扁截面（躯干）
 RB.limb = function (bone, slot, from, to, r0, r1, seg, flat) {
   const T = THREE_();
+  const o = optsIn(arguments, 6);
+  if (isOpts(seg)) seg = undefined;
+  if (isOpts(flat)) flat = undefined;
   const dx = to[0] - from[0], dy = to[1] - from[1], dz = to[2] - from[2];
   const len = Math.hypot(dx, dy, dz) || 1e-3;
   const g = new T.CylinderGeometry(Math.max(0.002, r1), Math.max(0.002, r0), len, seg || 7, 1);
@@ -421,11 +458,18 @@ RB.limb = function (bone, slot, from, to, r0, r1, seg, flat) {
   g.translate(0, len / 2, 0);
   g.applyQuaternion(new T.Quaternion().setFromUnitVectors(new T.Vector3(0, 1, 0), new T.Vector3(dx / len, dy / len, dz / len)));
   g.translate(from[0], from[1], from[2]);
-  return this.geo(bone, slot, g);
+  return this.geo(bone, slot, g, o);
 };
-RB.cone = function (bone, slot, from, to, r, seg) { return this.limb(bone, slot, from, to, r, 0.001, seg || 5); };
-// 骨骼链（触手、尾巴、长脖子）：n 节 n 根骨骼，由粗到细。名字为 name+序号，自动登记到 meta.chains 供 anim.sway 摆动
+RB.cone = function (bone, slot, from, to, r, seg) {
+  const o = optsIn(arguments, 5);
+  if (isOpts(seg)) seg = undefined;
+  return this.limb(bone, slot, from, to, r, 0.001, seg || 5, undefined, o);
+};
+// 骨骼链（触手、尾巴、长脖子）：n 节 n 根骨骼，由粗到细。名字为 name+序号，自动登记到 meta.chains 供 anim.sway 摆动。
+// 给了 { tint } 时每一节都上同一个色
 RB.chain = function (name, parent, from, dir, n, length, r0, r1, slot, seg) {
+  const o = optsIn(arguments, 9);
+  if (isOpts(seg)) seg = undefined;
   const L = Math.hypot(dir[0], dir[1], dir[2]) || 1;
   const ux = dir[0] / L, uy = dir[1] / L, uz = dir[2] / L, sl = length / n;
   const names = [];
@@ -434,7 +478,7 @@ RB.chain = function (name, parent, from, dir, n, length, r0, r1, slot, seg) {
     const a = [from[0] + ux * sl * k, from[1] + uy * sl * k, from[2] + uz * sl * k];
     const b = [a[0] + ux * sl, a[1] + uy * sl, a[2] + uz * sl];
     prev = this.bone(name + k, prev, a);
-    this.limb(prev, slot, a, b, U.lerp(r0, r1, k / n), U.lerp(r0, r1, (k + 1) / n), seg || 6);
+    this.limb(prev, slot, a, b, U.lerp(r0, r1, k / n), U.lerp(r0, r1, (k + 1) / n), seg || 6, undefined, o);
     names.push(prev);
   }
   this.meta.chains.push(names);
@@ -442,7 +486,8 @@ RB.chain = function (name, parent, from, dir, n, length, r0, r1, slot, seg) {
 };
 RB.setBase = function (name, rx, ry, rz, px, py, pz) { this.base[name] = [rx || 0, ry || 0, rz || 0, px || 0, py || 0, pz || 0]; };
 
-function prepGeo(g, bi, nonIndexed) {
+// rgb：只有骨架里用了 tint 才传（[r, g, b]，未上色图元传 [1, 1, 1]）；不传时输出和改动前逐字节一样，没有 color 属性
+function prepGeo(g, bi, nonIndexed, rgb) {
   const T = THREE_();
   let src = nonIndexed && g.index ? g.toNonIndexed() : g;
   if (!src.attributes.normal) src.computeVertexNormals();
@@ -456,7 +501,23 @@ function prepGeo(g, bi, nonIndexed) {
   for (let i = 0; i < n; i++) { si[i * 4] = bi; sw[i * 4] = 1; }
   out.setAttribute('skinIndex', new T.Uint16BufferAttribute(si, 4));
   out.setAttribute('skinWeight', new T.Float32BufferAttribute(sw, 4));
+  if (rgb) {
+    const col = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { col[i * 3] = rgb[0]; col[i * 3 + 1] = rgb[1]; col[i * 3 + 2] = rgb[2]; }
+    out.setAttribute('color', new T.Float32BufferAttribute(col, 3));
+  }
   return out;
+}
+
+// tint → 顶点色分量。hex 走 THREE.Color.setHex，和材质颜色同一条换算路径（色彩管理开关变了两边也一致）；
+// 也接受 [r, g, b] 浮点（可以 >1，用来把某块提亮到超过槽位材质色）。最终颜色 = 槽位材质色 × tint
+const WHITE_RGB = [1, 1, 1];
+function tintRGB(t) {
+  if (t == null) return WHITE_RGB;
+  if (Array.isArray(t)) return [num(t[0], 1), num(t[1], 1), num(t[2], 1)];
+  const c = new (THREE_().Color)();
+  c.setHex(num(t, 0xffffff) & 0xffffff);
+  return [c.r, c.g, c.b];
 }
 
 function trisOfGeo(g) {
@@ -475,10 +536,14 @@ function finishRig(b) {
   if (!merge) throw new Error('[arch] 缺 BufferGeometryUtils');
   if (!b.parts.length) throw new Error('[arch] 骨架 ' + b.key + ' 没有几何');
   const nonIndexed = b.parts.some(p => !p.geo.index);   // Icosahedron 这类不带索引，混用时全转成无索引才能合并
+  // 顶点色 tint：只要有一个图元带 tint，全部槽位的几何都得带 color 属性——槽位之间最后还要合并成一份几何，
+  // mergeBufferGeometries 要求属性集合一致。未上色的图元写纯白（乘到材质色上等于不变）；只有真正出现 tint 的槽位才换 vc 材质
+  const tinted = [];
+  for (const p of b.parts) if (p.tint != null && tinted.indexOf(p.slot) < 0) tinted.push(p.slot);
   const slots = [], bySlot = new Map();
   for (const p of b.parts) {
     if (!bySlot.has(p.slot)) { bySlot.set(p.slot, []); slots.push(p.slot); }
-    bySlot.get(p.slot).push(prepGeo(p.geo, p.bone, nonIndexed));
+    bySlot.get(p.slot).push(prepGeo(p.geo, p.bone, nonIndexed, tinted.length ? tintRGB(p.tint) : null));
   }
   const perSlot = slots.map(s => { const l = bySlot.get(s); return l.length === 1 ? l[0] : merge(l, false); });
   if (perSlot.some(g => !g)) throw new Error('[arch] 合并几何失败（属性不一致）：' + b.key);
@@ -498,6 +563,7 @@ function finishRig(b) {
   if (tris > TRIS.normal) once('tris:' + b.key, () => console.warn('[arch] 骨架 ' + b.key + ' 三角面 ' + tris + ' 超过 ' + TRIS.normal));
   return {
     key: b.key, geometry, slots, bones: b.bones, base: b.base, meta: b.meta, tris,
+    tinted: tinted.length ? tinted : null,   // 用了 tint 的槽位名；null = 没用 tint
     inverses: b.bones.map(bd => new T.Matrix4().makeTranslation(-bd.pos[0], -bd.pos[1], -bd.pos[2])),
   };
 }
@@ -529,10 +595,15 @@ function instRig(rec, mats) {
     bones[i].position.set(bd.pos[0] - pp[0], bd.pos[1] - pp[1], bd.pos[2] - pp[2]);
     if (bd.parent >= 0) bones[bd.parent].add(bones[i]);
   });
-  const mesh = new T.SkinnedMesh(rec.geometry, rec.slots.map(s => slotMat(mats, s)));
+  const tinted = rec.tinted;
+  const mesh = new T.SkinnedMesh(rec.geometry, rec.slots.map(s => {
+    const m = slotMat(mats, s);
+    return tinted && tinted.indexOf(s) >= 0 ? vcMat(m) : m;
+  }));
   for (let i = 0; i < bones.length; i++) if (rec.bones[i].parent < 0) mesh.add(bones[i]);
   mesh.bind(new T.Skeleton(bones, rec.inverses), identity());
-  const rig = { key: rec.key, mesh, skeleton: mesh.skeleton, bones: {}, list: [], meta: rec.meta };
+  // slots：材质数组下标 → 槽位名，给 u.slotMat 按槽位名找下标用
+  const rig = { key: rec.key, mesh, skeleton: mesh.skeleton, bones: {}, list: [], meta: rec.meta, slots: rec.slots };
   rec.bones.forEach((bd, i) => {
     rig.bones[bd.name] = bones[i];
     rig.list.push({ bone: bones[i], name: bd.name, rest: bones[i].position.clone(), base: rec.base[bd.name] || null });
@@ -1108,6 +1179,370 @@ function hazmat(ctx, o) {
   });
 }
 
+// ---------- 视觉钩子：每实例材质 slotMat、淡出淡入、共享粒子池（ENGINE_PLAN M1「S」「AA」） ----------
+// 为什么放一起：slotMat 和 vanish/appear 都要"需要时才给这一只单独一份材质"，共用一份登记表，实体移除时一次释放干净。
+// 全部是纯表现：不改 e.x/e.z、不碰行为数值、不打玩家；联机只靠 e.state（vanish/appear 写它），协议不变
+const SLOTMAT_FAR = 28;          // 与 LOD.mid 同值：再远就看不出每只的差别，不值得多一份材质、多一次材质切换
+const FADE_SEC = 0.5;            // vanish / appear 缺省时长
+let clonesLive = 0;              // 调试计数：还没释放的实例材质份数
+
+function lowQuality() { const s = BR.game && BR.game.settings; return !!(s && s.quality === 'low'); }
+// 和 lodStep 同一口径：只算水平距离；没有相机（自测页）当作就在眼前
+function camDist(obj) {
+  const cam = BR.gfx && BR.gfx.camera;
+  if (!cam || !cam.matrixWorld || !obj) return 0;
+  const m = cam.matrixWorld.elements;
+  return Math.hypot(obj.position.x - m[12], obj.position.z - m[14]);
+}
+
+// 只读视图：远处/低画质时 slotMat 返回共享材质的这个视图。读到的都是共享材质的真实值；直接赋值静默忽略；
+// 调方法（color.setHex、setValues、dispose……）落在一份暂存副本上——实体代码照常写，不会报错，也不会把全体共用的材质改坏
+const roProxy = new WeakMap(), roScratch = new WeakMap();
+function scratchOf(t) {
+  let s = roScratch.get(t);
+  if (!s) {
+    s = typeof t.clone === 'function' ? t.clone() : Object.create(t);
+    roScratch.set(t, s);
+  } else if (typeof s.copy === 'function') {
+    try { s.copy(t); } catch (err) { /* 拷不过去就沿用旧副本：写进去的反正都作废 */ }
+  }
+  return s;
+}
+function readOnly(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  let p = roProxy.get(obj);
+  if (p) return p;
+  const fns = new Map();
+  p = new Proxy(obj, {
+    get(t, k) {
+      const v = Reflect.get(t, k, t);
+      if (typeof v === 'function') {
+        if (k === 'constructor') return v;
+        let w = fns.get(k);
+        if (!w) {
+          w = function () {
+            const s = scratchOf(t);
+            const r = typeof s[k] === 'function' ? s[k].apply(s, arguments) : undefined;
+            return r === s ? p : r;   // 链式调用（setHex(..).multiplyScalar(..)）继续留在只读视图上
+          };
+          fns.set(k, w);
+        }
+        return w;
+      }
+      if (v && typeof v === 'object') {
+        const d = Reflect.getOwnPropertyDescriptor(t, k);
+        if (d && !d.configurable && !d.writable) return v;   // Proxy 不变式：不可写且不可配置的属性必须原样返回
+        return readOnly(v);
+      }
+      return v;
+    },
+    set() { return true; },
+    deleteProperty() { return true; },
+  });
+  roProxy.set(obj, p);
+  return p;
+}
+
+// 每实例材质登记：网格/精灵 → { base: 原材质（按下标）, clone: 这一只的副本, claim: slotMat 正在用这份副本 }
+function ownRec(u, obj) {
+  const book = u.own || (u.own = new Map());
+  let r = book.get(obj);
+  if (!r) {
+    const arr = Array.isArray(obj.material);
+    const base = arr ? obj.material.slice() : [obj.material];
+    r = { obj, arr, base, clone: new Array(base.length).fill(null), claim: new Array(base.length).fill(false) };
+    book.set(obj, r);
+  }
+  return r;
+}
+function matAt(r, i) { return r.arr ? r.obj.material[i] : r.obj.material; }
+function setMatAt(r, i, m) { if (r.arr) r.obj.material[i] = m; else r.obj.material = m; }
+function onCloneDispose(ev) { ev.target.removeEventListener('dispose', onCloneDispose); clonesLive--; }
+function cloneAt(r, i) {
+  let c = r.clone[i];
+  if (c) return c;
+  const b = r.base[i];
+  if (!b || !b.isMaterial) return null;
+  c = b.clone();
+  // entityOwned：不经 arch.register、直接 entityTypes.register + A.wrap 的实体，移除时 entities.js 也会释放挂在网格上的这份
+  c.userData = Object.assign({}, c.userData, { entityOwned: true });
+  c.addEventListener('dispose', onCloneDispose);
+  clonesLive++;
+  r.clone[i] = c;
+  return c;
+}
+
+// u.slotMat(slot)：当前形态骨架上该槽位的"这一只专用"材质，第一次调用时才克隆
+function slotMatOf(root, u, slot) {
+  const rig = u.rig, mesh = rig && rig.mesh;
+  if (!mesh || !rig.slots) return null;
+  const i = rig.slots.indexOf(slot);
+  if (i < 0) return null;
+  const r = ownRec(u, mesh);
+  const base = r.base[i];
+  if (!base || !base.isMaterial) return null;
+  if (lowQuality() || camDist(root) > SLOTMAT_FAR) {
+    r.claim[i] = false;
+    // 换回共享材质；淡出淡入进行中还要靠副本调透明度，等 appear 收尾时再换
+    if (!u.fade && r.clone[i] && matAt(r, i) === r.clone[i]) setMatAt(r, i, base);
+    return readOnly(base);
+  }
+  const c = cloneAt(r, i);
+  if (!c) return readOnly(base);
+  r.claim[i] = true;
+  if (matAt(r, i) !== c) setMatAt(r, i, c);
+  return c;
+}
+
+// ----- 淡出 / 淡入：由 e.state 驱动（'vanish' → 淡出，其余状态 → 淡回），房主和客机的 animate 都跑 -----
+function fadeSec(u, cfg, which) {
+  const own = which === 'vanish' ? u.fxVanishSec : u.fxAppearSec;
+  if (own > 0) return own;
+  const c = cfg && cfg[which + 'Sec'];   // 客机拿不到房主调用时传的 sec：想两端一致就把时长也写进 def.anim.vanishSec / appearSec
+  return c > 0 ? c : FADE_SEC;
+}
+function fadeMats(u, a) {
+  u.pivot.traverse(o => {
+    if (!o.material) return;
+    const r = ownRec(u, o);
+    for (let i = 0; i < r.base.length; i++) {
+      const c = cloneAt(r, i);
+      if (!c) continue;
+      if (matAt(r, i) !== c) setMatAt(r, i, c);
+      if (!c.transparent) { c.transparent = true; c.needsUpdate = true; }
+      c.opacity = num(r.base[i].opacity, 1) * a;
+    }
+  });
+}
+function unfadeMats(u) {
+  if (!u.own) return;
+  u.own.forEach(r => {
+    for (let i = 0; i < r.base.length; i++) {
+      const c = r.clone[i], b = r.base[i];
+      if (!c || !b) continue;
+      if (c.transparent !== b.transparent) { c.transparent = b.transparent; c.needsUpdate = true; }
+      c.opacity = b.opacity;
+      // 只把为淡出淡入临时换上的副本换回共享材质；slotMat 正在用的留着，上面写的颜色不丢
+      if (!r.claim[i] && matAt(r, i) === c) setMatAt(r, i, b);
+    }
+  });
+}
+function fadeTick(e, dt, u, cfg) {
+  const out = e.state === 'vanish';
+  let f = u.fade;
+  if (!f) {
+    if (!out) return;   // 从没隐身过：什么都不碰
+    f = u.fade = { a: 1, low: false, hid: false, sx: 1, sy: 1, sz: 1, wx: NaN, wy: NaN, wz: NaN };
+  }
+  f.a = out ? Math.max(0, f.a - dt / fadeSec(u, cfg, 'vanish')) : Math.min(1, f.a + dt / fadeSec(u, cfg, 'appear'));
+  const pv = u.pivot, low = lowQuality();
+  if (low !== f.low) { if (low) unfadeMats(u); f.low = low; }   // 中途切到低画质：副本透明度收回，改用缩放
+  if (low) {
+    // 低画质不克隆材质：按进度缩小（和 anim fall:'fade' 同一种做法）。auto 每帧重写 pivot.scale；自定义 animate 不重写时
+    // scale 还是上一帧写的值——认出来就沿用上次的基准，免得越乘越小
+    const s = pv.scale;
+    if (!(s.x === f.wx && s.y === f.wy && s.z === f.wz)) { f.sx = s.x; f.sy = s.y; f.sz = s.z; }
+    const k = Math.max(0.001, f.a);
+    s.set(f.sx * k, f.sy * k, f.sz * k);
+    f.wx = s.x; f.wy = s.y; f.wz = s.z;
+  } else {
+    fadeMats(u, f.a);
+  }
+  const hide = f.a <= 0;
+  if (hide !== f.hid) { pv.visible = !hide; f.hid = hide; }
+  if (!out && f.a >= 1) {
+    unfadeMats(u);
+    if (f.hid) pv.visible = true;
+    u.fade = null;
+  }
+}
+// 房主调：写 e.state，快照带给客机；sec 只在本机生效（见 fadeSec）
+function fxVanish(e, o) {
+  if (!e) return false;
+  const u = e.obj && e.obj.userData && e.obj.userData.arch;
+  const sec = num(o && o.sec, 0);
+  if (u && sec > 0) u.fxVanishSec = sec;
+  e.state = 'vanish';
+  return true;
+}
+function fxAppear(e, o) {
+  if (!e) return false;
+  const u = e.obj && e.obj.userData && e.obj.userData.arch;
+  const sec = num(o && o.sec, 0);
+  if (u && sec > 0) u.fxAppearSec = sec;
+  e.state = 'appear';
+  return true;
+}
+// 自己写 animate、没走 def.anim 的实体在 animate 里调它，淡出淡入才会动
+function fxUpdate(e, dt) {
+  const u = e && e.obj && e.obj.userData && e.obj.userData.arch;
+  if (u && (u.fade || e.state === 'vanish')) fadeTick(e, num(dt, 0), u, e.def && e.def.anim);
+}
+
+// ----- 共享粒子池：全场 1 个 THREE.Points（1 个 draw call），高画质 ≤200 粒、低画质 ≤100 粒 -----
+// 为什么在 onBeforeRender 里步进：粒子只是画面，不用进逻辑循环；没在画的时候不耗 CPU。three 在调 onBeforeRender 之前
+// 已经把缓冲传完了，所以这一帧的绘制范围用步进前的数量，步进结果下一帧上屏（晚一帧看不出来，也不会画到挪过位的旧数据）
+const POOL_MAX = 200;
+const POOL = { points: null, n: 0, t: 0, rnd: null, pos: null, col: null, vel: null, rgb: null, age: null, life: null, floor: null, grav: null, drag: null };
+function poolCap() { return lowQuality() ? POOL_MAX / 2 : POOL_MAX; }
+function poolInit() {
+  if (POOL.points) return POOL.points;
+  const T = THREE_();
+  if (!T) return null;
+  POOL.pos = new Float32Array(POOL_MAX * 3);
+  POOL.col = new Float32Array(POOL_MAX * 4);
+  POOL.vel = new Float32Array(POOL_MAX * 3);
+  POOL.rgb = new Float32Array(POOL_MAX * 3);
+  POOL.age = new Float32Array(POOL_MAX);
+  POOL.life = new Float32Array(POOL_MAX);
+  POOL.floor = new Float32Array(POOL_MAX);
+  POOL.grav = new Float32Array(POOL_MAX);
+  POOL.drag = new Float32Array(POOL_MAX);
+  POOL.rnd = U.mulberry32(U.hashStr('arch-fx-particles'));   // 不用 Math.random：同样的调用顺序出同样的画面，截图可对照
+  const g = new T.BufferGeometry();
+  const pa = new T.BufferAttribute(POOL.pos, 3), ca = new T.BufferAttribute(POOL.col, 4);   // 4 分量颜色 = 每粒自带透明度
+  pa.setUsage(T.DynamicDrawUsage);
+  ca.setUsage(T.DynamicDrawUsage);
+  g.setAttribute('position', pa);
+  g.setAttribute('color', ca);
+  g.setDrawRange(0, 0);
+  g.boundingSphere = new T.Sphere(new T.Vector3(), 1e6);   // 不裁剪；射线/包围球计算也别去扫一遍零散的粒子
+  const dot = canvasTex('fxdot', 32, 1, (c, s) => {
+    const grd = c.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+    grd.addColorStop(0, 'rgba(255,255,255,1)');
+    grd.addColorStop(0.45, 'rgba(255,255,255,0.85)');
+    grd.addColorStop(1, 'rgba(255,255,255,0)');
+    c.fillStyle = grd; c.fillRect(0, 0, s, s);
+  });
+  if (dot) dot.wrapS = dot.wrapT = T.ClampToEdgeWrapping;
+  const m = new T.PointsMaterial({ size: 0.09, sizeAttenuation: true, vertexColors: true, transparent: true, depthWrite: false, map: dot || null });
+  const pts = new T.Points(g, m);
+  pts.name = 'arch fx particles';
+  pts.frustumCulled = false;
+  pts.visible = false;
+  pts.renderOrder = 2;
+  pts.onBeforeRender = poolRender;
+  POOL.points = pts;
+  return pts;
+}
+function poolKill(i) {
+  const j = --POOL.n;
+  if (i === j) return;
+  const P = POOL, i3 = i * 3, j3 = j * 3;
+  for (let k = 0; k < 3; k++) { P.pos[i3 + k] = P.pos[j3 + k]; P.vel[i3 + k] = P.vel[j3 + k]; P.rgb[i3 + k] = P.rgb[j3 + k]; }
+  for (let k = 0; k < 4; k++) P.col[i * 4 + k] = P.col[j * 4 + k];
+  P.age[i] = P.age[j]; P.life[i] = P.life[j]; P.floor[i] = P.floor[j]; P.grav[i] = P.grav[j]; P.drag[i] = P.drag[j];
+}
+function poolWriteColors() {
+  const P = POOL;
+  for (let i = 0; i < P.n; i++) {
+    const k = P.age[i] / P.life[i], i3 = i * 3, i4 = i * 4;
+    P.col[i4] = P.rgb[i3]; P.col[i4 + 1] = P.rgb[i3 + 1]; P.col[i4 + 2] = P.rgb[i3 + 2];
+    P.col[i4 + 3] = k < 0.6 ? 1 : Math.max(0, (1 - k) / 0.4);   // 寿命最后 40% 渐隐
+  }
+  const g = P.points.geometry;
+  g.attributes.position.needsUpdate = true;
+  g.attributes.color.needsUpdate = true;
+}
+function poolStep(dt) {
+  const P = POOL;
+  const steps = Math.max(1, Math.min(150, Math.ceil(dt * 30)));
+  const h = dt / steps;
+  for (let s = 0; s < steps && P.n; s++) {
+    // 倒着扫：poolKill 把末尾那粒挪进空位，末尾那粒这一步已经算过
+    for (let i = P.n - 1; i >= 0; i--) {
+      P.age[i] += h;
+      if (P.age[i] >= P.life[i]) { poolKill(i); continue; }
+      const i3 = i * 3, d = Math.max(0, 1 - P.drag[i] * h);
+      P.vel[i3] *= d;
+      P.vel[i3 + 1] = P.vel[i3 + 1] * d - P.grav[i] * h;
+      P.vel[i3 + 2] *= d;
+      P.pos[i3] += P.vel[i3] * h;
+      P.pos[i3 + 1] += P.vel[i3 + 1] * h;
+      P.pos[i3 + 2] += P.vel[i3 + 2] * h;
+      if (P.pos[i3 + 1] < P.floor[i]) { P.pos[i3 + 1] = P.floor[i]; P.vel[i3 + 1] = 0; P.vel[i3] *= 0.5; P.vel[i3 + 2] *= 0.5; }
+    }
+  }
+  poolWriteColors();
+}
+function poolRender() {
+  const P = POOL, drawn = P.n, t = now(), dt = t - P.t;
+  P.t = t;
+  if (dt > 0 && P.n) poolStep(Math.min(dt, 5));
+  P.points.geometry.setDrawRange(0, drawn);
+  if (!P.n) P.points.visible = false;
+}
+function poolOldest() {
+  const P = POOL;
+  let bi = 0, bk = -1;
+  for (let i = 0; i < P.n; i++) { const k = P.age[i] / P.life[i]; if (k > bk) { bk = k; bi = i; } }
+  return bi;
+}
+function poolEmit(x, y, z, o) {
+  const pts = poolInit(), scene = BR.gfx && BR.gfx.scene;
+  if (!pts || !scene) return 0;
+  if (pts.parent !== scene) scene.add(pts);
+  const P = POOL, cap = poolCap();
+  if (P.n > cap) P.n = cap;   // 刚切到低画质：超出的直接丢
+  const want = Math.max(0, Math.min(cap, num(o.count, 24) | 0));
+  if (!want) return 0;
+  if (!P.n) P.t = now();      // 池子空着的这段时间不算进下一次步进
+  const T = THREE_(), C = new T.Color(), r = P.rnd;
+  const colors = Array.isArray(o.color) && o.color.length ? o.color : [num(o.color, 0xffffff)];
+  const speed = num(o.speed, 2.2), life = Math.max(0.05, num(o.life, 0.9)), grav = num(o.gravity, 4), drag = Math.max(0, num(o.drag, 1.2));
+  const up = num(o.up, 0.35), spread = Math.max(0, num(o.spread, 0.12));
+  // 落地高度：缺省取地面和发射点里低的那个（发射点在楼上时别把粒子顶上去）；多层层级自己传 floor
+  const gy = has(BR.phys, 'groundY') ? num(+BR.phys.groundY(x, z), -1e9) : -1e9;
+  const floor = num(o.floor, Math.min(gy, y)) + 0.02;
+  for (let k = 0; k < want; k++) {
+    const i = P.n < cap ? P.n++ : poolOldest();   // 满了挤掉最老的
+    const i3 = i * 3;
+    const cy = r() * 2 - 1, th = r() * TAU, sr = Math.sqrt(1 - cy * cy), sp = speed * (0.35 + 0.65 * r());
+    P.vel[i3] = sr * Math.cos(th) * sp;
+    P.vel[i3 + 1] = (cy + up) * sp;
+    P.vel[i3 + 2] = sr * Math.sin(th) * sp;
+    P.pos[i3] = x + (r() - 0.5) * 2 * spread;
+    P.pos[i3 + 1] = y + (r() - 0.5) * 2 * spread;
+    P.pos[i3 + 2] = z + (r() - 0.5) * 2 * spread;
+    C.setHex(num(colors[(r() * colors.length) | 0], 0xffffff) & 0xffffff);
+    const lum = 0.85 + 0.3 * r();
+    P.rgb[i3] = C.r * lum; P.rgb[i3 + 1] = C.g * lum; P.rgb[i3 + 2] = C.b * lum;
+    P.age[i] = 0;
+    P.life[i] = life * (0.7 + 0.6 * r());
+    P.floor[i] = floor;
+    P.grav[i] = grav;
+    P.drag[i] = drag;
+  }
+  poolWriteColors();
+  pts.geometry.setDrawRange(0, P.n);
+  pts.visible = true;
+  return want;
+}
+function poolClear() {
+  POOL.n = 0;
+  if (POOL.points) { POOL.points.visible = false; POOL.points.geometry.setDrawRange(0, 0); }
+}
+// A.fx.burst：粒子 + 中心一闪的光球。光球直接用物品的 itemKit.burstFx（爆炸、闪电落点同一种画法），不另造一份
+function fxBurst(x, y, z, o) {
+  o = o || {};
+  if (!(Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z))) return 0;
+  const n = poolEmit(x, y, z, o);
+  const K = BR.itemKit;
+  if (o.flash !== false && K && has(K, 'burstFx')) {
+    const c = Array.isArray(o.color) ? o.color[0] : o.color;
+    K.burstFx(x, y - 0.5, z, num(c, 0xffffff), num(o.radius, 0.5), num(o.flashSec, 0.3));   // burstFx 的 y 是脚底，球心画在 y+0.5
+  }
+  return n;
+}
+function fxDebug() {
+  return { particles: POOL.n, particleCap: poolCap(), poolMax: POOL_MAX, points: POOL.points ? 1 : 0, clones: clonesLive };
+}
+// 换层 / 回主页：粒子是上一层的画面，不带过去
+if (BR.bus && has(BR.bus, 'on')) {
+  BR.bus.on('level:leave', poolClear);
+  BR.bus.on('game:home', poolClear);
+}
+
 function findRig(obj) {
   let rig = null;
   obj.traverse(x => { if (!rig && x.userData && x.userData.rig) rig = x.userData.rig; });
@@ -1161,6 +1596,8 @@ function wrap(model, o) {
     draws += g.groups && g.groups.length ? g.groups.length : 1;
   });
   if (draws > TRIS.drawCalls) once('draws:' + (o.label || '') + draws, () => console.warn('[arch] 模型 draw call ' + draws + ' 超过 ' + TRIS.drawCalls, o.label || ''));
+  // 每实例材质入口（S）：在 onFrame / animate 里拿到的 u 上调。不调就不克隆，材质和改动前一样全体共享
+  u.slotMat = slot => slotMatOf(root, u, slot);
   return root;
 }
 
@@ -1172,6 +1609,14 @@ function disposeObj(e) {
     if (x.isSkinnedMesh && x.skeleton) x.skeleton.dispose();
     if (x.isInstancedMesh && typeof x.dispose === 'function') x.dispose();
   });
+  // slotMat / 淡出淡入给这一只克隆的材质：不管此刻挂没挂在网格上都释放（远处换回共享材质的那份不在网格上，entities.js 找不到它）
+  const u = o.userData && o.userData.arch;
+  if (u && u.own) {
+    u.own.forEach(r => {
+      for (let i = 0; i < r.clone.length; i++) if (r.clone[i]) { r.clone[i].dispose(); r.clone[i] = null; }
+    });
+    u.own.clear();
+  }
 }
 
 // ---------- 程序化动画 ----------
@@ -1442,6 +1887,8 @@ function animate(cfg) {
     if (!(step > 0)) return;
     auto(e, step, api, cfg, u);
     if (typeof cfg.onFrame === 'function') cfg.onFrame(e, step, api, u);
+    // 淡出淡入放最后：onFrame 里经 slotMat 写的透明度按淡出进度盖掉，隐身时不会闪出来。没隐身过的实体只多一次字符串比较
+    if (u.fade || e.state === 'vanish') fadeTick(e, step, u, cfg);
   };
 }
 
@@ -2063,6 +2510,8 @@ BR.arch = {
   mat, geo,
   parts: { humanoid, quadruped, insect, limbCluster, rig: customRig, silhouette, glowFace, orb, halo, decal, swarm: swarmPart, hazmat },
   RigBuilder, wrap, trisOf, disposeObj,
+  // 视觉钩子（ENGINE_PLAN M1 AA）：淡出淡入、共享粒子池；每实例材质见 wrap 返回的 u.slotMat
+  fx: { vanish: fxVanish, appear: fxAppear, update: fxUpdate, burst: fxBurst, clear: poolClear, debugInfo: fxDebug, FADE_SEC, SLOTMAT_FAR, POOL_MAX },
   // 动画
   anim: { pose, addRot, addPos, biped, crawl, quad, flap, sway, breathe, twitch, strike, swarm: swarmAnim, auto, lodStep },
   animate,

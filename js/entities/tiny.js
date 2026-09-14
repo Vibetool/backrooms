@@ -12,6 +12,10 @@ const A = BR.arch;
 // 2) relations 提到"与 Entity 20 划分领地、这是两者的契约"——巡逻圈也定在领地中心附近，而不是漫游全图。
 const TERRITORY_R = 22;
 
+// 与 build() 的 colors.glow 保持同一个值：眼睛（和焦土荧光斑点共用的 glow 槽位）随光照调亮度时用它做基色，
+// 不在两处各写一遍，免得以后改荧光色时漏改一处、眼睛变了别的颜色
+const GLOW_HEX = 0x35d9c4;
+
 A.register({
   type: 'tiny', en: 'Tiny', zh: '小小', version: 'wikidot-cn',
   faction: 'hostile',   // 依据：hostility 字段直接给了 hostile
@@ -80,6 +84,14 @@ A.register({
       // 平时嘴巴收在下巴内侧（build 里 setBase 的收拢角度），只在攻击状态下转出张开，呼应"甲壳打开"这一动作
       const open = e.state === 'attack' ? 1.4 : 0;
       A.anim.addRot(u.rig, 'jaw', open, 0, 0);
+
+      // 依据（wikidot-cn）："眼睛亮度随光照变化，浮出水面时暗淡无光"——眼睛和焦土荧光斑点、獠牙共用同一个
+      // glow 槽位（没有单独的眼部插槽，见 build() 里 face/extend 的注释），用 u.slotMat 懒克隆这一只专用的材质，
+      // 按当前位置的 api.lightAt 调整整体亮度：暗处（浮出水面前，在深水/暗层里）更亮，亮处（浮出水面）暗淡下来。
+      // 系数是非设定的游戏性取值，只保证方向对（暗处更亮），不追求精确数值；远处/低画质时 slotMat 会自动
+      // 换回只读的共享材质，写入静默作废，不用额外判断
+      const gm = u.slotMat('glow');
+      if (gm) gm.color.setHex(GLOW_HEX).multiplyScalar(1.5 - api.lightAt(e.x, e.z));
     },
   },
 
@@ -91,7 +103,7 @@ A.register({
       // claws:3——依据"有利爪"，没写具体数量，取默认小数值，非设定
       face: { eyes: 2, eyeShape: 'round', smile: false },
       // 依据："只露出两只眼睛"——用 humanoid 内置 face 只加两只眼睛，不带嘴（嘴巴另见下方 extend 的 jaw）
-      colors: { body: 0x141210, head: 0x1c1a17, claw: 0xcac2ab, glow: 0x35d9c4 },
+      colors: { body: 0x141210, head: 0x1c1a17, claw: 0xcac2ab, glow: GLOW_HEX },
       // body：依据"身体大部分包着一层厚焦油"——焦黑色；head：坚硬甲壳，比身体更冷硬深灰；
       // claw：矛/爪推测是"巨大生物的牙齿/骨头"材质——取骨牙的浅米色；
       // glow：荧光斑点"颜色未写（unverified）"，取深海生物常见的青绿色荧光，非设定
@@ -133,8 +145,6 @@ A.register({
 // - "无法在陆地上行走"没有做成真正的水域/陆地地形限制（引擎没有水体/液面的地形查询接口），
 //   用离开出生点 TERRITORY_R 米就不再追击来近似"游出了它能到达的水域"，不是精确复刻。
 // - "释放焦油迷惑或减缓猎物"未实现：引擎没有对目标施加减速/致盲一类状态效果的 API，见 apiRequests。
-// - "眼睛亮度随光照变化，浮出水面时暗淡无光"未实现：需要单独为眼睛（而不是整个 glow 槽位）动态调节
-//   发光强度，会占用文档未给出的私有材质句柄或多开一个材质槽位，超出可确认安全的接口范围，见 apiRequests。
 // - "通过某种心灵感应方式对话"未实现：用户规则明确 NPC 对话不做，只用 idle 音效（whisper）表现在"说话"。
 // - "已清除 Level 7 其他生物"未实现：这是层级实体生成表的职责（决定 Level 7 刷不刷别的实体），不在实体文件范围内。
 // - "只有在 Level 7 入口房间交流相对安全"这类"安全区域"未实现：涉及区域判定和交流系统，交流本身也被

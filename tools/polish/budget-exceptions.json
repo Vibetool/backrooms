@@ -1,0 +1,10 @@
+{
+  "_说明": "tests/preview.mjs --gallery 的预算例外表。这里列出的类型 high 档超过 4000 面或 5 个 draw call 时判 KNOWN（已知例外），不算失败；没列的超预算一律 FAIL。只放已经排进里程碑、确定要处理的，处理完从这里删掉。",
+  "types": {
+    "test_dummy": {
+      "reason": "M2 处理：测试人用 assets/models/hazmat.glb（约 1.8 万面），远超 4000 面；由 tools/blender_hazmat.py 重建，必要时另出 hazmat_low.glb",
+      "milestone": "M2",
+      "asset": "assets/models/hazmat.glb"
+    }
+  }
+}

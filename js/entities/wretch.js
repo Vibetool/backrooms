@@ -94,16 +94,39 @@ A.register({
       // 依据："红褐色干燥皮肤"——身体/头部取红褐色；glow 槽位（眼球）取苍白的巩膜色，见下方 look 覆盖为非发光
       look: { body: 'skin', head: 'skin', glow: 'lambert' },
       // 依据：look.glow 显式覆盖成 'lambert'（不发光）——原文只说眼睛"疯狂转动"，没说会发光，不能想当然加发光效果
-      key: 'wretch_v1',
+      key: 'wretch_v3',   // extend 里的形状 / tint 变了就换键：几何缓存按键取，不换会拿到旧的腰带
       extend(b, d) {
         // 依据："第三阶段眼睛疯狂转动"——独立骨骼便于旋转动画（见上方 anim.onFrame）
-        b.bone('eyeL', 'head', [-d.headR * 0.35, d.headY + d.headR * 0.1, -d.headR * 0.85]);
-        b.sphere('eyeL', 'glow', d.headR * 0.16, [0, 0, 0]);
-        b.bone('eyeR', 'head', [d.headR * 0.35, d.headY + d.headR * 0.1, -d.headR * 0.85]);
-        b.sphere('eyeR', 'glow', d.headR * 0.16, [0, 0, 0]);
+        // RigBuilder 里 sphere/box 的位置是模型空间绝对坐标（原点在脚下），不是相对骨骼的偏移：
+        // 原来写 [0,0,0] 把眼球放到了脚底，第三阶段绕头部骨骼支点自转时就在约 1.6 m 半径上甩到身体两侧（出图包围盒宽 3.35 m）。
+        // 眼球放在和骨骼支点同一点，自转就只在眼眶里原地转
+        const EYE_L = [-d.headR * 0.35, d.headY + d.headR * 0.1, -d.headR * 0.85];
+        const EYE_R = [d.headR * 0.35, d.headY + d.headR * 0.1, -d.headR * 0.85];
+        b.bone('eyeL', 'head', EYE_L);
+        b.sphere('eyeL', 'glow', d.headR * 0.16, EYE_L);
+        b.bone('eyeR', 'head', EYE_R);
+        b.sphere('eyeR', 'glow', d.headR * 0.16, EYE_R);
         // 依据："覆盖孔洞和脓疱"——躯干上加两个凸起的脓疱，颜色沿用 body 材质（没有单独的脓疱颜色描述）
         b.sphere('spine', 'body', 0.05, [0.12, d.shoulderY * 0.6, 0.1]);
         b.sphere('spine', 'body', 0.045, [-0.1, d.shoulderY * 0.75, -0.08]);
+        // 依据："常保留衣服等人类遗物"——脖颈根部一圈撕烂的衣领、腰间一圈残破的腰带，用 tint 在同一个
+        // body 材质槽位里标出比裸露皮肤更灰冷/更暗黄的破布色，不新增材质槽位、不增加 draw call
+        // （ENGINE_PLAN M1 回填）。领口没有直接沿用人形骨架公共衣着细节的领口高度（那个高度贴着躯干
+        // 锥体收窄前的位置，半径比躯干本身小一圈，会被整个吞进躯干里看不见——用 preview 出图实测过），
+        // 改放在躯干收到肩线以上、脖子外露的一小段，半径比脖子粗，才会露出来
+        b.limb('spine', 'body', [0, d.shoulderY + 0.05 * d.H, 0], [0, d.shoulderY + 0.03 * d.H, 0], 0.045, 0.055, 8, undefined,
+          { tint: [0.72, 1.15, 1.05] });
+        // 腰带用方箍贴着人形的骨盆方块（humanoid 里尺寸 [0.19·H·th, 0.09·H, 0.11·H·th]、中心 hipY + 0.02·H，th = 1 − 0.45·thin，
+        // 这里的 0.75 就是上面的 thin），四周只放出 6 mm。不用圆台：骨盆是扁方块，能包住它的圆台前后会凸出去一大截——
+        // 验收出图里侧面伸出身体轮廓、正面像贴了一块板。前后各垂一片撕破的布条，宽度控制在两条大腿内侧之间
+        // （大腿内沿 x≈±0.04 m），迈腿、跑动时不和大腿穿插；歪一点角度显得是撕破的。
+        // 颜色：tint 三个分量都 <1，把红褐肤色压成暗黄褐（腰带 ≈#423523，布条再暗一档 ≈#362b1c），比皮肤暗、偏黄、饱和度低，
+        // 读作脏破布；之前 [1.3, 1.05, 0.55] 把红色分量提亮，出图是一圈鲜橙色
+        const th = 1 - 0.45 * 0.75, pw = 0.19 * d.H * th, pd = 0.11 * d.H * th;
+        const by = d.hipY + 0.03 * d.H, bh = 0.045, RAG = [0.54, 0.72, 0.68], RAG_DARK = [0.44, 0.58, 0.54];
+        b.box('hips', 'body', [pw + 0.012, bh, pd + 0.012], [0, by, 0], { tint: RAG });
+        b.box('hips', 'body', [0.05, 0.075, 0.01], [-0.004, by - bh / 2 - 0.03, -pd / 2 - 0.002], [0, 0, 0.14], { tint: RAG_DARK });
+        b.box('hips', 'body', [0.045, 0.05, 0.01], [0.006, by - bh / 2 - 0.018, pd / 2 + 0.002], [0, 0, -0.18], { tint: RAG_DARK });
       },
     }), { label: 'wretch' });
   },
@@ -138,23 +161,28 @@ A.register({
     },
   },
   build(ctx) {
-    const rig = A.parts.rig('wretch_lump_v1', b => {
-      b.bone('core', null, [0, 0.28, 0]);
-      b.sphere('core', 'body', 0.28, [0, 0, 0], [1, 0.85, 1], [10, 8]);
+    const rig = A.parts.rig('wretch_lump_v2', b => {
+      // RigBuilder 的位置参数都是模型空间绝对坐标（原点在脚下）：原来核心球放在 y=0 一半埋进地里，眼球放在原点、
+      // 绕各自骨骼支点自转时散落到肉块周围的地上（验收出图"眼球和牙散落在旁边地上"）。统一以核心球心 C 为基准摆放
+      const C = [0, 0.28, 0];
+      const on = (p) => [C[0] + p[0], C[1] + p[1], C[2] + p[2]];
+      b.bone('core', null, C);
+      b.sphere('core', 'body', 0.28, C, [1, 0.85, 1], [10, 8]);
       // 依据：团块状主体，压扁一点更像一坨肉团而不是规整的球
       const eyeSpots = [
         [0.18, 0.08, 0.2], [-0.2, 0.05, 0.18], [0.05, 0.22, -0.22],
         [-0.15, 0.2, -0.15], [0.22, -0.05, -0.1], [-0.1, -0.08, 0.24],
       ];
       eyeSpots.forEach((p, i) => {
-        b.bone('eye' + i, 'core', p);
-        b.sphere('eye' + i, 'glow', 0.045 + (i % 2) * 0.015, [0, 0, 0]);
+        b.bone('eye' + i, 'core', on(p));
+        b.sphere('eye' + i, 'glow', 0.045 + (i % 2) * 0.015, on(p));
       });
       // 依据："几乎全由眼球和口器组成"——散布六颗大小不一的眼球
-      b.geo('core', 'glow', A.geo.glowFace({ width: 0.22, eyes: 0, teeth: 10, smile: true, smileWidth: 1.1 })
-        .translate(0, -0.05, -0.26));
-      b.geo('core', 'glow', A.geo.glowFace({ width: 0.16, eyes: 0, teeth: 8, smile: true, smileWidth: 1.0 })
-        .rotateY(Math.PI / 2).translate(0.24, 0.05, 0));
+      // glowFace 的 smileWidth 是米制绝对值（不是 width 的倍数），原来 1.1/1.0 让两排牙横穿出肉块一米多；按核心球直径收窄
+      b.geo('core', 'glow', A.geo.glowFace({ width: 0.22, eyes: 0, teeth: 10, smile: true, smileWidth: 0.22 })
+        .translate(C[0], C[1] - 0.05, C[2] - 0.285));
+      b.geo('core', 'glow', A.geo.glowFace({ width: 0.16, eyes: 0, teeth: 8, smile: true, smileWidth: 0.2 })
+        .rotateY(Math.PI / 2).translate(C[0] + 0.285, C[1] + 0.05, C[2]));
       // 依据：口器不止一处，正面和侧面各加一张牙床
     }, {
       colors: { body: 0x7a4a34, glow: 0xcabba3 },   // 沿用标准型的红褐色皮肤和苍白眼球色
@@ -177,5 +205,8 @@ A.register({
 //   玩家转化后不在原地生成悲尸（用户定：避免和"继续时清掉附近实体"冲突）、联机客机玩家（联机只有游玩模式，实体不打玩家）。
 // - "少数表现出人类行为""会用简单武器"未实现：没有具体行为描述（用什么武器、怎么用），无法落实成动作。
 // - "皇家口粮、墙壁面具、现实清新剂"等可以治疗/预防的道具不在本文件职责范围内（属于物品系统），未实现。
-// - "常保留衣服等人类遗物"的残留衣物细节未做在模型上：human 骨架的槽位固定是 body/head/hair/claw/glow，
-//   没有额外的"衣物"槽位，为避免用未文档化的槽位名引入材质风险，这个纯装饰细节没有实现。
+// - 已实现（2026-09-14，ENGINE_PLAN M1 回填）："常保留衣服等人类遗物"：标准型 wretch 的 extend 里用
+//   tint（顶点色）在肩颈加一圈灰绿色破衣领、腰间加一圈贴合骨盆的暗黄褐色破腰带（前后各垂一片破布条），
+//   沿用 body 材质槽位、不新增槽位，避开了之前"没有
+//   文档化衣物槽位名"的顾虑。只做了标准型；畸形肉块变体（wretch_lump）是无肢体的团块，没有"穿衣服"的
+//   形体基础，不加这个细节。

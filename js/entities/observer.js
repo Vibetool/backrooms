@@ -39,8 +39,10 @@ A.register({
     const now = api.time;
     const d = e.data.obs || (e.data.obs = {});
     // 依据：自己的状态放 e.data 的独立键（不是 A.state(e) 用的 e.data.arch），避免和骨架自身的字段混用
-    if (d.hideUntil && now < d.hideUntil) { e.state = 'hidden'; return; }
-    if (d.hideUntil) d.hideUntil = 0;   // 隐藏期刚结束，重新露面，交回骨架 think 继续游荡/保持距离
+    // 消失/出现改走 A.fx.vanish / A.fx.appear（ENGINE_PLAN M1 AA）：隐身期间不用自己每帧改 e.state，
+    // 淡出淡入由 animate 工厂按 e.state === 'vanish' 自动接管，房主和客机都跑
+    if (d.hideUntil && now < d.hideUntil) return;
+    if (d.hideUntil) { d.hideUntil = 0; A.fx.appear(e); }   // 隐藏期刚结束，显式转回"现身"，交回骨架 think 继续游荡/保持距离
     const looked = A.playerLooking(e, 40, 20);
     // 依据："流浪者一旦清楚察觉它（凭直觉感到、眼角余光瞥见，或者转身去找视线来源）……它就瞬间彻底消失"——
     // 用 A.playerLooking 判定"正在看向它"；角度/范围原文没给数字，取比常规索敌更宽的角度，因为原文说
@@ -59,9 +61,9 @@ A.register({
         if (P) { const ang = api.rng() * Math.PI * 2; e.x = P.x + Math.cos(ang) * 12; e.z = P.z + Math.sin(ang) * 12; }
       }
       // 依据："瞬间彻底消失"——直接把它挪到别处（优先挑暗处，呼应"几乎只出现在极其昏暗的地方"），
-      // 比"转身慢慢跑开"更接近"消失"这个措辞；引擎没有真正的隐身/瞬移特效，这里靠 e.state='hidden'
-      // 隐藏模型 + 直接改坐标近似，见 apiRequests
-      e.state = 'hidden';
+      // 比"转身慢慢跑开"更接近"消失"这个措辞；坐标瞬移仍是近似（引擎没有真正的相位/传送接口，见 apiRequests），
+      // 但"消失"本身现在用 A.fx.vanish 做成淡出＋隐藏，不再是整只模型瞬间切可见性
+      A.fx.vanish(e);
       return;
     }
     brain.think(e, dt, api);
@@ -69,11 +71,8 @@ A.register({
 
   anim: {
     gait: 'none', breathe: 0.01, sway: 0,
-    onFrame(e, dt, api, u) {
-      if (!u.pivot) return;
-      u.pivot.visible = e.state !== 'hidden';
-      // 依据："察觉瞬间彻底消失"——用整体隐藏表现消失，而不是常规的后仰/倒地动画
-    },
+    // 依据："察觉瞬间彻底消失"——消失/出现不再自己切 pivot.visible，改成 A.fx.vanish/appear 驱动的淡出淡入
+    // （animate 工厂在 onFrame 之后自动按 e.state === 'vanish' 接管，见 think 里的调用）
   },
 
   build(ctx) {
@@ -93,7 +92,8 @@ A.register({
 })();
 
 // notImplemented（返回值里再列一遍）：
-// - "彻底消失"用隐藏模型 + 瞬移到暗处近似，不是真正的隐身/粒子消散特效，引擎没有这类接口，见 apiRequests。
+// - "彻底消失"里"挪到别处"仍是瞬移近似（引擎没有真正的相位/传送接口，见 apiRequests）；消失/重新出现
+//   本身已经用 A.fx.vanish / A.fx.appear 做成淡出淡入（ENGINE_PLAN M1 AA），不再是整只模型瞬间切可见性。
 // - 它的存在本身是否真实（研究界的集体幻觉/心理投射争议）：这是背景设定层面的争议描述，不是可执行的
 //   游戏机制，不实现；游戏里仍然把它具体化成一个可交互的实体，因为需要一个可见/可测试的对象。
 // - 具体外观、感官、消失时长、理智数值：选中版本大量字段是 unverified，均取游戏性占位值，已在各字段

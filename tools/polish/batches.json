@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "_说明": "实体画质打磨批次（照 ENGINE_PLAN 第 4 节「实体画质打磨流程」的批次表，第 1083–1089 行）。5 批覆盖全部 40 个实体文件；files 是构建代理要改的实体文件，types 是这些文件注册的全部类型（出图、对照、打分按类型走）。M1 打分后可在批次之间调换，但每批规模不变；用户点名的「人」和 L0–L3 经典实体固定在第 1 批。",
+  "tags": "base = M1 全量基线；每批开工前拍 bN-before，完工后拍 bN-after（node tests/preview.mjs --gallery <types> --tag bN-before）",
+  "batches": [
+    {
+      "id": 1,
+      "milestone": "M2",
+      "reason": "人形无处不在；L0–L3 最常见；用户点名",
+      "shared": [
+        "assets/models/hazmat.glb（tools/blender_hazmat.py 程序化生成；主页人物、联机队友、测试人共用）",
+        "js/entities/_archetypes.js 的 A.parts.hazmat（窃皮者伪装、glb 缺失兜底；共享构件，改动要单独出图和像素差）"
+      ],
+      "files": [
+        "js/entities/test_dummy.js",
+        "js/entities/skin_stealer.js",
+        "js/entities/bacteria.js",
+        "js/entities/smiler.js",
+        "js/entities/hound.js",
+        "js/entities/duller.js",
+        "js/entities/clump.js",
+        "js/entities/faceling.js",
+        "js/entities/partygoer.js"
+      ],
+      "extras": [
+        "js/levels/Lfun.js 的装饰（气球改用绳而不是直杆；原文没写墙面颜色，不改色）"
+      ],
+      "types": [
+        "test_dummy", "skin_stealer", "bacteria", "smiler", "hound", "duller", "clump",
+        "faceling", "faceling_polygonal", "faceling_shadow",
+        "partygoer_biped", "partygoer_pedestal"
+      ],
+      "gates": [
+        "hound*：闸门（ENGINE_PLAN 第 220 行）——现模型是犬形四足，选中的 fandom 版是人被咬后变形、社区经典形象是四肢着地的人形；形态由用户拍板，没答复前 hound 只加细节、不改形态，或整只挪到 M5",
+        "smiler：只在「漂浮白色笑脸」范围内加牙列厚度、眼窝、边缘层次，不许加身体（userOverride）",
+        "bacteria：按 userOverride——比人高的瘦长黑色人形、手臂过膝、无五官的头纵向裂开露齿"
+      ]
+    },
+    {
+      "id": 2,
+      "milestone": "M5",
+      "reason": "L1–L5 常见，多层高密度",
+      "shared": [],
+      "files": [
+        "js/entities/deathmoth.js",
+        "js/entities/wretch.js",
+        "js/entities/growler.js",
+        "js/entities/death_rat.js",
+        "js/entities/nguithrxurh.js",
+        "js/entities/shadow_worker.js",
+        "js/entities/wrangler.js",
+        "js/entities/burster.js"
+      ],
+      "extras": [],
+      "types": [
+        "deathmoth_male", "deathmoth_female", "deathmoth_guard",
+        "wretch", "wretch_lump", "growler", "death_rat", "nguithrxurh",
+        "shadow_worker", "shadow_worker_penelope", "shadow_worker_grunt",
+        "wrangler_male", "wrangler_female", "burster"
+      ],
+      "gates": [
+        "deathmoth 群体个体单只 ≤1500 面（第 4 节验收标准 1）"
+      ]
+    },
+    {
+      "id": 3,
+      "milestone": "M8",
+      "reason": "L5 / L8",
+      "shared": [],
+      "files": [
+        "js/entities/samantha.js",
+        "js/entities/woodlin.js",
+        "js/entities/watcher.js",
+        "js/entities/ant.js",
+        "js/entities/arachnid.js",
+        "js/entities/scit.js",
+        "js/entities/curabitur_bird.js",
+        "js/entities/camo_crawler.js"
+      ],
+      "extras": [],
+      "types": [
+        "samantha", "woodlin", "watcher", "ant",
+        "arachnid_common", "arachnid_queen", "arachnid_franken",
+        "scit", "curabitur_bird", "camo_crawler"
+      ],
+      "gates": [
+        "ant 群体个体 ≤120 面（第 4 节验收标准 1）"
+      ]
+    },
+    {
+      "id": 4,
+      "milestone": "M11",
+      "reason": "L8 / L9，驯服和光束落地之后",
+      "shared": [],
+      "files": [
+        "js/entities/light_guide.js",
+        "js/entities/dunk.js",
+        "js/entities/jerry.js",
+        "js/entities/transporter.js",
+        "js/entities/warning_kite.js",
+        "js/entities/frayed.js",
+        "js/entities/observer.js",
+        "js/entities/neighborhood_watch.js"
+      ],
+      "extras": [],
+      "types": [
+        "light_guide", "dunk", "jerry", "transporter", "warning_kite", "frayed", "observer",
+        "neighborhood_watch_watcher", "neighborhood_watch_strider", "neighborhood_watch_swimmer"
+      ],
+      "gates": []
+    },
+    {
+      "id": 5,
+      "milestone": "M16",
+      "reason": "L7 / L11 / L14 / L17 / L18，水体落地之后",
+      "shared": [],
+      "files": [
+        "js/entities/thing_on_level_7.js",
+        "js/entities/tiny.js",
+        "js/entities/lucky_crane.js",
+        "js/entities/hunter.js",
+        "js/entities/infecting_agent.js",
+        "js/entities/imprint.js",
+        "js/entities/plush_dino.js"
+      ],
+      "extras": [],
+      "types": [
+        "thing_on_level_7", "tiny",
+        "lucky_crane", "lucky_crane_fantail", "lucky_crane_multihead",
+        "hunter", "infecting_agent", "imprint", "plush_dino"
+      ],
+      "gates": []
+    }
+  ]
+}
