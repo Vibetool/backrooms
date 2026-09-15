@@ -20,10 +20,13 @@
 .set-panel {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   box-sizing: border-box;
+  /* 居中卡片离刘海和底边都远，安全区从宽高里扣，不加进内边距（加进内边距 iPhone 横屏内容宽只剩 280px） */
   width: min(440px, calc(100% - 32px));
-  max-height: min(640px, calc(100% - 48px));
+  width: min(440px, calc(100% - 32px - env(safe-area-inset-left) - env(safe-area-inset-right)));
+  max-height: min(640px, calc(100% - 24px));
+  max-height: min(640px, calc(100% - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom)));
   display: flex; flex-direction: column;
-  padding: calc(14px + env(safe-area-inset-top)) calc(18px + env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) calc(18px + env(safe-area-inset-left));
+  padding: 14px 18px;
   border-radius: 16px;
   background: rgba(24, 20, 9, .95);
   border: 1px solid rgba(232, 197, 71, .3);
@@ -80,7 +83,22 @@
   cursor: pointer;
 }
 .set-btn:hover { background: rgba(232, 197, 71, .14); }
-.set-btn:focus-visible, .set-close:focus-visible, .set-seg-btn:focus-visible { outline: 2px solid #e8c547; outline-offset: 2px; }
+
+/* 画质提示旁的「立即刷新」：不能带 set-btn / set-seg-btn（tests/settings.mjs 按这两个类名点「恢复默认」和画质） */
+.set-reload {
+  display: block; min-height: 44px; margin-top: 6px;
+  padding: 0 16px;
+  font-size: 14px; font-weight: 700;
+  color: #1d1705;
+  background: linear-gradient(#f3d65e, #dcb434);
+  border: 1px solid #e8c547;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.set-reload[hidden] { display: none; }
+.set-reload:active { filter: brightness(.92); }
+
+.set-btn:focus-visible, .set-close:focus-visible, .set-seg-btn:focus-visible, .set-reload:focus-visible { outline: 2px solid #e8c547; outline-offset: 2px; }
 
 /* 竖屏手机：改成底部抽屉，跟主页弹窗（css/home.css 里 .home-dialog）同一个断点 */
 @media (max-aspect-ratio: 17/20) {
@@ -89,7 +107,28 @@
     width: 100%;
     max-height: 78vh; max-height: 78dvh;
     border-radius: 16px 16px 0 0; border-bottom: 0;
+    /* 抽屉顶边离灵动岛很远，顶部不加安全区；左右和底边贴屏幕边，要加 */
+    padding: 12px 16px 14px;
+    padding: 12px calc(16px + env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
   }
+}
+
+/* 矮横屏手机：面板放宽成两栏，一屏多看几项。左右安全区从宽度里扣（面板绝对定位，给 .set-root 加内边距没用） */
+@media (max-height: 460px) and (min-aspect-ratio: 17/20) {
+  .set-panel {
+    width: min(680px, calc(100% - 24px));
+    width: min(680px, calc(100% - 24px - env(safe-area-inset-left) - env(safe-area-inset-right)));
+    max-height: calc(100% - 16px);
+    max-height: calc(100% - 16px - env(safe-area-inset-bottom));
+    padding-top: 10px; padding-bottom: 10px;
+  }
+  .set-body { display: grid; grid-template-columns: 1fr 1fr; column-gap: 20px; }
+  /* 竖向留白收紧：iPhone 横屏底部再扣 21px 安全区后，一屏仍能完整看到前 5 项（控件高度都不动，仍 ≥44px） */
+  .set-head { margin-bottom: 4px; }
+  .set-sep { grid-column: 1 / -1; margin: 2px 0 8px; }
+  .set-field { margin-bottom: 6px; }
+  .set-note { margin-top: 2px; }
+  .set-actions { margin-top: 4px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

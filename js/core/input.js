@@ -5,7 +5,8 @@
 //   enabled 默认 false（开局在主页），进入游玩画面时由 main 置 true
 //   enabled=false 时只保留三个边沿：Esc 'pause'（菜单能用 Esc 关）、V 'mic'（暂停时也能开关麦）、T 'testmenu'（测试面板打开时能用 T 关）
 //   麦克风、测试面板的触屏按钮分别由 coop.js、testmode.js 自建，不归本文件
-//   额外接口：locked（只读）、sensitivity（视角灵敏度倍率，记在 localStorage）
+//   额外接口：locked（只读）、sensitivity（视角灵敏度倍率，记在 localStorage）、
+//     tap(el, fn)（菜单按钮轻点：另一根手指按着屏幕时也能触发，鼠标键盘照旧走 click，见「菜单按钮轻点」一节）
 (function () {
 'use strict';
 const BR = window.BR;
@@ -13,7 +14,13 @@ const clamp = BR.util.clamp;
 
 // ---------- 常量 ----------
 const DESK_RAD_PER_PX = 0.0022;
-const TOUCH_RAD_PER_PX = 0.005;
+// 触屏视角：划满右半屏约转 2.2 rad（126°），按屏宽换算每像素弧度再夹住；874 宽横屏正好是原来的固定值 0.005
+const TOUCH_HALF_SWIPE_RAD = 2.2;
+const TOUCH_RAD_MIN = 0.004, TOUCH_RAD_MAX = 0.012;
+// 菜单按钮轻点（tap）：手指位移阈值；合成 click 的去重窗口；惯性滚动停下前这么久内按下的不算轻点
+const TAP_SLOP = 12;
+const TAP_CLICK_DEDUP_MS = 800;
+const TAP_FLING_MS = 100;
 const SENS_MIN = 0.2, SENS_MAX = 3;
 const SENS_KEY = 'br.input.sensitivity';
 // Esc 退出指针锁定时，部分浏览器还会补发 Esc 的 keydown；两路在这个窗口内只算一次暂停
@@ -46,7 +53,7 @@ const KEY_ACTION = {
   1: 'slot1', 2: 'slot2', 3: 'slot3', 4: 'slot4', 5: 'slot5',
 };
 
-const TOUCH_BUTTONS = [['interact', '互动'], ['use', '使用'], ['sprint', '冲刺'], ['pause', '暂停']];
+const TOUCH_BUTTONS = [['interact', '互动'], ['use', '使用'], ['sprint', '冲刺'], ['drop', '丢弃'], ['pause', '暂停']];
 
 // ---------- 状态 ----------
 const move = { x: 0, y: 0 };
@@ -72,10 +79,16 @@ const T = {
   root: null, stickEl: null, knobEl: null, btns: {},
   owners: new Map(),      // touch.identifier → 'stick' | 'look' | 按钮动作
   btnTouches: {},         // 按钮动作 → 按着它的 identifier 集合（两根手指按同一个键也不会提前松开）
-  stick: { id: null, ox: 0, oy: 0, r: 60, jx: 0, jy: 0 },
-  look: { id: null, x: 0, y: 0 },
+  btnPos: new Map(),      // 冲刺键手指 identifier → 上次坐标 { x, y, skip }：按着冲刺拖动也转视角
+  waiting: new Map(),     // 落在已被占用的摇杆/视角区的手指 identifier → { who, x, y, stale }，前一根抬起后接管
+  landscape: null,        // 上次量到的横竖屏，只有它翻转才算转屏
+  // reanchor / skip：转屏后下一次移动重定摇杆圆心 / 跳过一次视角增量
+  stick: { id: null, ox: 0, oy: 0, r: 60, jx: 0, jy: 0, reanchor: false },
+  look: { id: null, x: 0, y: 0, skip: false },
   scrollOk: new Map(),    // identifier → 这根手指落点是否允许浏览器原生滚动（可滚动面板、表单控件）
   lastTap: { t: 0, x: 0, y: 0 },
+  // 菜单按钮轻点：document 捕获阶段数到的 touchend 次数、最近一次的时间；tap() 靠它认出不是在本元素上按下的合成 click
+  touchEnds: 0, touchEndAt: -1e9, endWatch: false,
 };
 
 // ---------- 小工具 ----------
@@ -130,6 +143,11 @@ function addLook(px, py, radPerPx) {
   // 主循环有几帧没来取（淡入淡出、换层载入）时别攒出一个大跳
   S.lookDx = clamp(S.lookDx + px * k, -Math.PI, Math.PI);
   S.lookDy = clamp(S.lookDy + py * k, -Math.PI, Math.PI);
+}
+
+// 触屏视角每像素弧度随屏宽缩放：竖屏、小屏手机也能一两下转过身，平板不至于太灵
+function touchRadPerPx() {
+  return clamp(TOUCH_HALF_SWIPE_RAD / Math.max(1, window.innerWidth / 2), TOUCH_RAD_MIN, TOUCH_RAD_MAX);
 }
 
 function updateMove() {
@@ -326,11 +344,16 @@ const TOUCH_CSS = [
     'background:rgba(22,19,8,.42);color:#fff5cc;font-size:14px;font-weight:600;letter-spacing:1px;' +
     'text-shadow:0 1px 2px rgba(0,0,0,.7);transition:transform .08s,background-color .08s}',
   '.touch-btn.touch-on{background:rgba(255,236,150,.62);color:#211d0c;text-shadow:none;transform:scale(.93)}',
-  // 右下角弧形排布：拇指落点最近的是「使用」，互动在左、冲刺在上；右上角只有暂停，麦克风按钮由 coop.js 摆在它下方
+  // 右下角弧形排布：拇指落点最近的是「使用」，互动在左、冲刺在上，丢弃在冲刺左侧、互动上方；
+  // 右上角只有暂停，麦克风按钮由 coop.js 摆在它下方
   btnCss('use', 76, 22, 26, false, 'font-size:16px'),
   btnCss('interact', 62, 112, 30, false),
   btnCss('sprint', 62, 30, 116, false),
+  btnCss('drop', 52, 117, 104, false, 'font-size:13px;letter-spacing:0'),
   btnCss('pause', 48, 12, 12, true, 'border-radius:14px;font-size:13px;letter-spacing:0'),
+  // 竖屏（与 css/game.css 背包改两排的断点相同）：左下物品名标签和互动、冲刺同一高度带，长名字会伸到丢弃键底下，
+  // 丢弃键挪到冲刺键正上方
+  '@media (max-width:559px){' + btnCss('drop', 52, 35, 188, false) + '}',
 ].join('\n');
 
 function injectStyle() {
@@ -417,7 +440,9 @@ function layoutStickIdle() {
   if (!T.stickEl || T.stick.id !== null) return;
   sizeStick(stickRadius());
   const ins = safeInsets(), r = T.stick.r, W = window.innerWidth, H = window.innerHeight;
-  drawStick(ins.l + Math.max(r + 28, W * 0.13), H - ins.b - Math.max(r + 40, H * 0.24), 0, 0);
+  // 竖屏背包是左下两排格子 + 物品名，约 146px 高（断点与 css/game.css 的 max-width:559px 一致），圈要整个画在它上面
+  const floor = W < 560 ? r + 146 : 0;
+  drawStick(ins.l + Math.max(r + 28, W * 0.13), H - ins.b - Math.max(r + 40, H * 0.24, floor), 0, 0);
   T.stickEl.classList.remove('touch-on');
 }
 
@@ -428,12 +453,19 @@ function startStick(t) {
   st.ox = t.clientX;
   st.oy = t.clientY;
   st.jx = st.jy = 0;
+  st.reanchor = false;
   T.stickEl.classList.add('touch-on');
   drawStick(st.ox, st.oy, 0, 0);
 }
 
 function moveStick(t) {
   const st = T.stick, r = st.r;
+  if (st.reanchor) {
+    // 转屏后旧圆心在新坐标系里没有意义，以手指当前位置为圆心重新起算，免得一下跳到反方向满推
+    st.reanchor = false;
+    st.ox = t.clientX;
+    st.oy = t.clientY;
+  }
   let dx = t.clientX - st.ox, dy = t.clientY - st.oy;
   const len = Math.sqrt(dx * dx + dy * dy);
   if (len > r) {
@@ -491,9 +523,13 @@ function clearButton(act) {
 
 function resetTouch() {
   T.owners.clear();
+  T.waiting.clear();
+  T.btnPos.clear();
   T.stick.id = null;
   T.stick.jx = T.stick.jy = 0;
+  T.stick.reanchor = false;
   T.look.id = null;
+  T.look.skip = false;
   for (const act in T.btnTouches) clearButton(act);
   layoutStickIdle();
 }
@@ -505,6 +541,31 @@ function ownerOf(el) {
   return null;
 }
 
+// 手指接管摇杆或视角区；stale 表示坐标是转屏前记下的，接管后的第一次移动要重锚
+function takeZone(who, id, x, y, stale) {
+  if (who === 'stick') {
+    startStick({ identifier: id, clientX: x, clientY: y });
+    T.stick.reanchor = stale;
+  } else {
+    T.look.id = id;
+    T.look.x = x;
+    T.look.y = y;
+    T.look.skip = stale;
+  }
+}
+
+// 前一根手指抬起后，同区等着的手指从它当前的位置接管，不会跳
+function promoteWaiting(who) {
+  for (const entry of T.waiting) {
+    const id = entry[0], w = entry[1];
+    if (w.who !== who) continue;
+    T.waiting.delete(id);
+    takeZone(who, id, w.x, w.y, w.stale);
+    T.owners.set(id, who);
+    return;
+  }
+}
+
 // 每根手指从落下起就归属一个控件，按 identifier 路由：摇杆、转视角、按钮互不抢
 function onRootStart(e) {
   if (e.cancelable) e.preventDefault();   // 挡掉合成鼠标事件、双击缩放、长按菜单
@@ -512,19 +573,20 @@ function onRootStart(e) {
   const list = e.changedTouches;
   for (let i = 0; i < list.length; i++) {
     const t = list[i];
-    if (T.owners.has(t.identifier)) continue;
+    if (T.owners.has(t.identifier) || T.waiting.has(t.identifier)) continue;
     const who = ownerOf(t.target);
     if (!who) continue;
-    if (who === 'stick') {
-      if (T.stick.id !== null) continue;
-      startStick(t);
-    } else if (who === 'look') {
-      if (T.look.id !== null) continue;
-      T.look.id = t.identifier;
-      T.look.x = t.clientX;
-      T.look.y = t.clientY;
-    } else if (!pressButton(who, t.identifier)) {
-      continue;
+    if (who === 'stick' || who === 'look') {
+      // 这块区域已经有手指了：先记下来，等前一根抬起再接管，不用抬起重按
+      if ((who === 'stick' ? T.stick.id : T.look.id) !== null) {
+        T.waiting.set(t.identifier, { who, x: t.clientX, y: t.clientY, stale: false });
+        continue;
+      }
+      takeZone(who, t.identifier, t.clientX, t.clientY, false);
+    } else {
+      if (!pressButton(who, t.identifier)) continue;
+      // 按着冲刺拖动顺带转视角：两个拇指就能边冲刺边拐弯
+      if (who === 'sprint') T.btnPos.set(t.identifier, { x: t.clientX, y: t.clientY, skip: false });
     }
     T.owners.set(t.identifier, who);
   }
@@ -536,13 +598,24 @@ function onRootMove(e) {
   const list = e.changedTouches;
   for (let i = 0; i < list.length; i++) {
     const t = list[i];
+    const w = T.waiting.get(t.identifier);
+    if (w) { w.x = t.clientX; w.y = t.clientY; w.stale = false; continue; }
     const who = T.owners.get(t.identifier);
     if (who === 'stick') {
       moveStick(t);
     } else if (who === 'look') {
-      addLook(t.clientX - T.look.x, t.clientY - T.look.y, TOUCH_RAD_PER_PX);
+      if (T.look.skip) T.look.skip = false;
+      else addLook(t.clientX - T.look.x, t.clientY - T.look.y, touchRadPerPx());
       T.look.x = t.clientX;
       T.look.y = t.clientY;
+    } else if (who === 'sprint') {
+      const p = T.btnPos.get(t.identifier);
+      if (p) {
+        if (p.skip) p.skip = false;
+        else addLook(t.clientX - p.x, t.clientY - p.y, touchRadPerPx());
+        p.x = t.clientX;
+        p.y = t.clientY;
+      }
     }
     // 按钮手指滑出按钮范围仍算按住，直到抬起，冲刺时拇指稍微挪一下不会断
   }
@@ -553,11 +626,13 @@ function onRootEnd(e) {
   const list = e.changedTouches;
   for (let i = 0; i < list.length; i++) {
     const id = list[i].identifier;
+    if (T.waiting.delete(id)) continue;
     const who = T.owners.get(id);
     if (!who) continue;
     T.owners.delete(id);
-    if (who === 'stick') { if (T.stick.id === id) endStick(); }
-    else if (who === 'look') { if (T.look.id === id) T.look.id = null; }
+    T.btnPos.delete(id);
+    if (who === 'stick') { if (T.stick.id === id) { endStick(); promoteWaiting('stick'); } }
+    else if (who === 'look') { if (T.look.id === id) { T.look.id = null; promoteWaiting('look'); } }
     else releaseButton(who, id);
   }
 }
@@ -632,6 +707,68 @@ function installGestureGuards() {
   d.addEventListener('gesturechange', preventIfCancelable, { passive: false });
 }
 
+// ---------- 菜单按钮轻点（暂停、结算、测试面板共用） ----------
+// 另一根手指还按在屏上时（摇杆手指、搭在遮罩上的手指）浏览器不合成 click，只绑 click 的按钮点不动。
+// 这里按 touchend 自己判定：同一根手指位移 < TAP_SLOP、抬起时仍在元素范围内就触发，并 preventDefault 吞掉单指时的合成 click；
+// 鼠标、键盘（Enter/空格）照旧走 click，距上次触屏触发不到 TAP_CLICK_DEDUP_MS 的 click 当成合成的忽略。
+// 手指不是在本元素上按下的（结算保护期里按在还不接收点击的按钮位置、解锁后才抬起），抬起时浏览器补的 click 也忽略：
+// 触屏激活一律走 touchend，click 只留给鼠标键盘。
+// 不看 S.enabled：暂停、结算时输入是关着的，按钮照样要能点
+function noteTouchEnd() {
+  T.touchEnds++;
+  T.touchEndAt = nowMs();
+}
+
+function tap(el, fn) {
+  if (!el || typeof fn !== 'function') return;
+  if (!T.endWatch) {
+    T.endWatch = true;
+    // 捕获阶段，先于元素自己的 touchend 监听计数
+    document.addEventListener('touchend', noteTouchEnd, { capture: true, passive: true });
+  }
+  const downs = new Map();   // identifier → { x, y, sx, sy, fling }
+  let firedAt = -1e9, scrolledAt = -1e9;
+  let ownEnd = -1;           // 最近一次在本元素上按下的手指抬起时的 T.touchEnds
+  // 可滚动的列表：按下是为了停住惯性滚动，或按住拖着滚了一段，都不算轻点，和原生 click 一致
+  el.addEventListener('scroll', function () { scrolledAt = nowMs(); }, { passive: true });
+  el.addEventListener('touchstart', function (e) {
+    const list = e.changedTouches;
+    const fling = nowMs() - scrolledAt < TAP_FLING_MS;
+    for (let i = 0; i < list.length; i++) {
+      const t = list[i];
+      if (el.contains(t.target)) downs.set(t.identifier, { x: t.clientX, y: t.clientY, sx: el.scrollLeft, sy: el.scrollTop, fling });
+    }
+  }, { passive: true });
+  function end(e) {
+    const list = e.changedTouches;
+    let hit = false;
+    for (let i = 0; i < list.length; i++) {
+      const t = list[i], d = downs.get(t.identifier);
+      if (!d) continue;
+      downs.delete(t.identifier);
+      if (e.type === 'touchend') ownEnd = T.touchEnds;
+      if (e.type !== 'touchend' || d.fling || el.scrollLeft !== d.sx || el.scrollTop !== d.sy) continue;
+      const dx = t.clientX - d.x, dy = t.clientY - d.y;
+      if (dx * dx + dy * dy >= TAP_SLOP * TAP_SLOP) continue;
+      const r = el.getBoundingClientRect();
+      if (t.clientX >= r.left && t.clientX <= r.right && t.clientY >= r.top && t.clientY <= r.bottom) hit = true;
+    }
+    if (!hit) return;
+    if (e.cancelable) e.preventDefault();
+    firedAt = nowMs();
+    fn(e);
+  }
+  el.addEventListener('touchend', end, { passive: false });
+  el.addEventListener('touchcancel', end, { passive: true });
+  el.addEventListener('click', function (e) {
+    const t = nowMs();
+    if (t - firedAt < TAP_CLICK_DEDUP_MS) return;
+    // 刚有手指抬起、但不是本元素上按下的那根：合成 click，不算。detail 为 0 的是键盘 Enter/空格或脚本 el.click()，照常
+    if (e.detail !== 0 && t - T.touchEndAt < TAP_CLICK_DEDUP_MS && ownEnd !== T.touchEnds) return;
+    fn(e);
+  });
+}
+
 function whenDomReady(fn) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn, { once: true });
   else fn();
@@ -658,6 +795,20 @@ function onResize() {
   if (T.stick.id === null) layoutStickIdle();
 }
 
+// 横竖屏切换后，按住的手指还带着旧坐标系的锚点：视角（含冲刺键拖动）跳过下一次增量，摇杆以手指当前位置重定圆心。
+// 只认宽高大小关系翻转：iOS 地址栏伸缩也会发 resize，那种不能重锚
+function onViewportChange() {
+  const land = window.innerWidth > window.innerHeight;
+  if (land !== T.landscape) {
+    T.landscape = land;
+    if (T.look.id !== null) T.look.skip = true;
+    if (T.stick.id !== null) T.stick.reanchor = true;
+    T.btnPos.forEach(function (p) { p.skip = true; });
+    T.waiting.forEach(function (w) { w.stale = true; });
+  }
+  onResize();
+}
+
 function onVisibility() {
   if (document.hidden) releaseAll();
 }
@@ -678,10 +829,11 @@ function init(canvas) {
   document.addEventListener('pointerlockerror', onLockError);
   window.addEventListener('blur', releaseAll);
   document.addEventListener('visibilitychange', onVisibility);
-  window.addEventListener('resize', onResize);
-  window.addEventListener('orientationchange', function () { setTimeout(onResize, 300); });
+  T.landscape = window.innerWidth > window.innerHeight;
+  window.addEventListener('resize', onViewportChange);
+  window.addEventListener('orientationchange', function () { setTimeout(onViewportChange, 300); });
   // iOS Safari 地址栏伸缩时 window 不一定发 resize，待机摇杆会被挤到工具栏下面
-  if (window.visualViewport) window.visualViewport.addEventListener('resize', onResize);
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', onViewportChange);
 
   if (S.touchDevice) activateTouch();
   else window.addEventListener('touchstart', onFirstTouch, { passive: true, capture: true });
@@ -729,6 +881,9 @@ BR.input = {
   endFrame() { S.edges.clear(); },
 
   lock,
+
+  // 菜单按钮轻点：另一根手指按着屏幕时也能触发，鼠标键盘照旧走 click
+  tap,
 
   get locked() { return S.locked; },
 

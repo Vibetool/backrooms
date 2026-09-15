@@ -5,6 +5,7 @@
 //     并 emit 'game:pause' { paused }。菜单里点「继续」时顺手请求指针锁定（只有点击手势里才锁得上）
 //   prompt(text) 是手动提示，优先于自动的拾取提示；传 null 交还给自动提示
 //   自动订阅 level:enter 播层级大标题（同一层短时间内只播一次，集成层再手动调也不会重复）
+//   暂停、死亡时 toast 整组藏起来（.hud-toasts-modal），不清掉；联机暂停时面板右上角有开关麦（.hud-pause-mic）
 //   额外只读：visible、paused
 (function () {
 'use strict';
@@ -26,6 +27,7 @@ const TITLE_REDUCED_MS = 3500;
 const HIT_MS = 350;
 const PAUSE_ARM_MS = 250;        // 按暂停的那一下不能顺带点中菜单按钮
 const HOME_CONFIRM_MS = 2500;    // 「返回主页」点两次才生效：手机上拖能见度滑条时误触会丢掉整局
+const VIS_THUMB_PX = 20;         // 与 css/game.css 里 .hud-range::-webkit-slider-thumb 的宽度一致
 const STYLE_RE = /(^|\/)css\/game\.css([?#]|$)/;
 const SELF_RE = /js\/game\/hud\.js([?#].*)?$/;
 // currentScript 只在脚本同步执行期间有值，必须在顶层取
@@ -52,6 +54,8 @@ const S = {
   nameSig: null,
   badIcons: new Set(),
   toasts: [],
+  toastModal: false,
+  micSig: null,
   titleId: null, titleAt: 0, titleTimer: 0,
   pauseArmAt: 0, homeConfirmUntil: 0, homeTimer: 0,
   warnedTarget: false,
@@ -63,6 +67,11 @@ function num(v, d) { return typeof v === 'number' && isFinite(v) ? v : d; }
 function has(obj, fn) { return !!obj && typeof obj[fn] === 'function'; }
 function toggle(node, cls, on) { if (on) node.classList.add(cls); else node.classList.remove(cls); }
 function attached(node) { return node.isConnected !== undefined ? node.isConnected : document.documentElement.contains(node); }
+// 菜单按钮用 input 的轻点判定：摇杆手指还按着屏幕时浏览器不合成 click；input 没载入时退回 click
+function tap(el, fn) {
+  if (BR.input && typeof BR.input.tap === 'function') BR.input.tap(el, fn);
+  else el.addEventListener('click', fn);
+}
 
 function mk(tag, cls, parent, text) {
   const n = document.createElement(tag);
@@ -266,6 +275,12 @@ function buildPause() {
   panel.setAttribute('aria-label', '暂停菜单');
   mk('div', 'hud-pause-tag', panel, '❚❚ PAUSE');
   mk('div', 'hud-pause-title', panel, '已暂停');
+  // 联机时暂停不停世界，右上角的麦克风按钮又被暂停层盖住：面板右上角补一个开关麦，只在联机时显示
+  const mic = dom.btnMic = mk('button', 'hud-pause-mic', panel);
+  mic.type = 'button';
+  mic.hidden = true;
+  mk('span', 'hud-pause-mic-ico', mic, '🎙');
+  dom.micTxt = mk('span', 'hud-pause-mic-txt', mic, '已闭麦');
   const sub = mk('div', 'hud-pause-sub', panel);
   dom.pauseLevel = mk('div', '', sub);
   dom.pauseMode = mk('div', '', sub);
@@ -288,10 +303,25 @@ function buildPause() {
   dom.btnHome.type = 'button';
   dom.pauseHint = mk('div', 'hud-pause-hint', panel, '按 Esc 也可以继续');
 
-  dom.btnResume.addEventListener('click', onResumeClick);
-  dom.btnHome.addEventListener('click', onHomeClick);
+  tap(dom.btnResume, onResumeClick);
+  tap(dom.btnHome, onHomeClick);
+  tap(mic, onMicClick);
   range.addEventListener('input', onVisInput);
   range.addEventListener('change', onVisInput);
+  // iOS Safari 的滑条点轨道不跳位、只能按住 20px 宽的滑块拖：触屏按下和拖动时按手指横坐标自己换算。
+  // 用 targetTouches：另一根手指（摇杆）还按着时 touches[0] 不一定是这根
+  const seek = (e) => {
+    const t = (e.targetTouches && e.targetTouches[0]) || (e.changedTouches && e.changedTouches[0]);
+    const r = range.getBoundingClientRect();
+    if (!t || !(r.width > VIS_THUMB_PX)) return;
+    // 滑块中心两端各让出半个滑块，和原生换算一致，手指一直压在滑块上
+    const v = String(Math.round(U.clamp((t.clientX - r.left - VIS_THUMB_PX / 2) / (r.width - VIS_THUMB_PX), 0, 1) * 100));
+    if (v === range.value) return;
+    range.value = v;
+    onVisInput();
+  };
+  range.addEventListener('touchstart', seek, { passive: true });
+  range.addEventListener('touchmove', seek, { passive: true });
 }
 
 // ---------- 状态条 ----------
@@ -527,6 +557,14 @@ function update(dt) {
     S.dead = dead;
     toggle(dom.root, 'hud-dead', dead);
   }
+  // 暂停菜单、死亡结算盖着时 toast（z-index 90）会压住按钮：整组藏起来，关掉后没过期的照常显示
+  const modal = S.paused || dead;
+  if (modal !== S.toastModal) {
+    S.toastModal = modal;
+    toggle(dom.toasts, 'hud-toasts-modal', modal);
+  }
+  // 暂停中联机、麦克风状态会变（对方断开、申请结果回来）：按签名刷新开关麦，没有 coop:mic 事件也跟得上
+  if (S.paused) renderPauseMic();
 
   updateStats(g, p);
   updateInfo(g);
@@ -660,6 +698,39 @@ function renderPause() {
   dom.visVal.textContent = vis + '%';
   dom.pauseHint.hidden = isTouch();
   setHomeConfirm(false);
+  renderPauseMic();
+}
+
+function pauseMicCoop() {
+  const c = BR.coop;
+  return c && c.active && typeof c.setMic === 'function' ? c : null;
+}
+
+// 文案、配色与 coop.js 的麦克风按钮一致；micBusy 由 coop.js 导出，没有时当作不在申请中
+function renderPauseMic() {
+  if (!dom.ready) return;
+  const c = pauseMicCoop();
+  const on = !!(c && c.mic), busy = !!(c && c.micBusy);
+  const sig = c ? (busy ? 'busy' : on ? 'on' : 'off') : '';
+  if (sig === S.micSig) return;
+  S.micSig = sig;
+  dom.btnMic.hidden = !c;
+  if (!c) return;
+  toggle(dom.btnMic, 'hud-mic-on', on);
+  toggle(dom.btnMic, 'hud-mic-busy', busy);
+  dom.micTxt.textContent = busy ? '申请麦克风…' : on ? '开麦中' : '已闭麦';
+  dom.btnMic.setAttribute('aria-pressed', on ? 'true' : 'false');
+  dom.btnMic.setAttribute('aria-label', busy ? '正在申请麦克风，点击取消' : on ? '麦克风已打开，点击闭麦' : '麦克风已关闭，点击开麦');
+}
+
+function onMicClick() {
+  if (!S.paused || nowMs() < S.pauseArmAt) return;
+  const c = pauseMicCoop();
+  if (!c) return;
+  // 申请途中再点 = 取消，和 coop.js 的麦克风按钮一致
+  const r = c.setMic(!(c.mic || c.micBusy));
+  renderPauseMic();
+  if (r && typeof r.then === 'function') r.then(renderPauseMic, renderPauseMic);
 }
 
 function closePause() {
@@ -741,9 +812,14 @@ BR.bus.on('game:home', () => {
   S.target = null;
   S.titleId = null;
   clearToasts();
+  S.toastModal = false;
+  if (dom.ready) toggle(dom.toasts, 'hud-toasts-modal', false);
   hideTitle();
   show(false);
 });
+
+// 麦克风状态变了（coop.js 发）：暂停菜单开着就立即刷新；没有这个事件时靠 update 里的签名兜底
+BR.bus.on('coop:mic', () => { if (S.paused) renderPauseMic(); });
 
 BR.bus.on('player:death', () => {
   // 联机时暂停并不停世界，可能在菜单里被打死：让位给结算界面，输入保持禁用

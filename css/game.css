@@ -353,6 +353,30 @@
 
 .hud-touch .hud-prompt { font-size: 15px; }
 
+/* 横屏触屏：居中的拾取提示和丢弃键（input.js：right:117、宽 52、bottom:104）在同一高度带。
+   限宽到丢弃键左边再留 8px，超出的照旧省略号；560–639 宽（568×320、592×304 带虚拟导航栏）字号略收，常见的「…（背包已满）」也放得下 */
+@media (min-width: 560px) and (max-height: 520px) {
+  .hud-touch .hud-prompt {
+    max-width: calc(100vw - 354px);
+    max-width: calc(100vw - 354px - 2 * env(safe-area-inset-right, 0px));
+  }
+}
+
+@media (min-width: 560px) and (max-width: 639px) and (max-height: 520px) {
+  .hud-touch .hud-prompt { padding: 4px 8px; font-size: 13px; }
+}
+
+/* 竖屏偏矮（375×553、360×560 带浏览器工具栏，320×568）：丢弃键在冲刺键正上方（right:35、宽 52、bottom:188），和提示同一高度带。
+   限宽到丢弃键左边再留 4px，放不下就折行，不截掉「（背包已满）」 */
+@media (max-width: 559px) and (min-height: 433px) and (max-height: 600px) {
+  .hud-touch .hud-prompt {
+    max-width: calc(100vw - 182px);
+    padding: 4px 8px;
+    font-size: 13px;
+    white-space: normal;
+  }
+}
+
 /* ========== 层级大标题 ========== */
 .hud-title {
   position: absolute;
@@ -544,7 +568,7 @@
 }
 
 /* 触屏竖屏：一排 5 格塞不进按钮组左边，改成左下 3+2 两排；
-   待机摇杆画在离底边 24% 高度处，两排格子 + 物品名的高度在它下面 */
+   待机摇杆画在两排格子 + 物品名上方（input.js layoutStickIdle 按同一断点抬高），丢弃键挪到冲刺键正上方 */
 @media (max-width: 559px) {
   .hud-touch .hud-inv {
     --hud-slot: 48px;
@@ -560,7 +584,11 @@
     grid-template-columns: repeat(3, var(--hud-slot));
     gap: 4px;
   }
-  .hud-touch .hud-inv-name { max-width: calc(100vw - 200px); }
+  /* 物品名和冲刺键在同一高度带：放宽到冲刺键（right:30px、宽 62）左边再留 8px，最长的「…· 点「使用」」也不截断 */
+  .hud-touch .hud-inv-name {
+    max-width: calc(100vw - 108px);
+    max-width: calc(100vw - 108px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+  }
 }
 
 /* 320px 宽：3 格 × 44 + 间距 + 左边距正好 140 = 屏宽 − 180 */
@@ -571,6 +599,10 @@
     left: calc(4px + env(safe-area-inset-left, 0px));
   }
   .hud-touch .hud-inv-row { gap: 2px; }
+  .hud-touch .hud-inv-name {
+    max-width: calc(100vw - 104px);
+    max-width: calc(100vw - 104px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+  }
 }
 
 /* 死亡时 HUD 还在结算层下面：准星和提示收掉，背包压暗且不可点 */
@@ -629,6 +661,9 @@
   to { opacity: 0; transform: translateY(-4px); }
 }
 
+/* 暂停菜单、死亡结算盖着时整组藏起来（hud.js 每帧切类）：toast 层级高于菜单，会压住按钮；不清掉，关掉菜单后没过期的照常显示 */
+.hud-toasts.hud-toasts-modal { visibility: hidden; }
+
 /* 横屏手机高度不够：中间下方会压到背包栏，改到右上暂停键下面 */
 @media (max-height: 520px) {
   .hud-toasts {
@@ -642,6 +677,19 @@
     width: auto;
     max-width: 42vw;
     align-items: flex-end;
+  }
+}
+
+/* 横屏测试面板开着（testmode.js 给 <html> 加 br-test-open）：右侧抽屉会盖住右上的 toast，改到左侧，
+   宽度限到抽屉（400px）左边再留 16px */
+@media (max-height: 520px) {
+  .br-test-open .hud-toasts {
+    right: auto;
+    left: 16px;
+    left: calc(16px + env(safe-area-inset-left, 0px));
+    align-items: flex-start;
+    max-width: calc(100vw - 432px);
+    max-width: min(42vw, calc(100vw - 432px - env(safe-area-inset-left, 0px)));
   }
 }
 
@@ -666,6 +714,7 @@
 
 /* margin:auto 居中：内容比屏幕高时自动退化成可滚动，align-items:center 会把顶部裁掉 */
 .hud-pause-panel {
+  position: relative;
   margin: auto;
   width: 100%;
   max-width: 360px;
@@ -831,6 +880,63 @@
   text-align: center;
   color: var(--hud-dim);
 }
+
+/* 联机开关麦：暂停面板右上角（hud.js）、结算按钮组下面（death.js）。暂停层 / 结算层盖住了 coop.js 的麦克风按钮，
+   这里补一个；配色照 css/coop.css 的 .coop-mic，但不引用它的选择器 */
+.hud-pause-mic,
+.death-mic {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 44px;
+  min-height: 44px;
+  margin: 0;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  color: #fff5cc;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+  background: rgba(22, 19, 8, 0.6);
+  border: 2px solid rgba(255, 240, 170, 0.55);
+  border-radius: 22px;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  touch-action: manipulation;
+}
+
+/* 绝对定位在标题右侧的空白处，不增加面板高度 */
+.hud-pause-mic {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+}
+
+.hud-pause-mic-ico,
+.death-mic-ico { opacity: 0.55; }
+
+.hud-pause-mic.hud-mic-on,
+.death-mic.death-mic-on {
+  color: #fff;
+  background: rgba(196, 64, 44, 0.85);
+  border-color: rgba(255, 205, 185, 0.9);
+}
+
+.hud-pause-mic.hud-mic-on .hud-pause-mic-ico,
+.death-mic.death-mic-on .death-mic-ico { opacity: 1; }
+
+.hud-pause-mic.hud-mic-busy,
+.death-mic.death-mic-busy { opacity: 0.7; }
+
+.hud-pause-mic:focus:not(:focus-visible),
+.death-mic:focus:not(:focus-visible) { outline: none; }
+
+.hud-pause-mic:focus-visible,
+.death-mic:focus-visible { outline: 2px solid var(--hud-accent); outline-offset: 2px; }
 
 @media (max-height: 520px) {
   .hud-pause-panel { padding: 12px 16px; }
@@ -1085,6 +1191,15 @@
   color: var(--hud-dim);
 }
 
+/* 联机开关麦：按钮组下方居中的小按钮，和主按钮一样有弹出保护期 */
+.death-mic { margin: 12px auto 0; }
+
+.death-root:not(.death-armed) .death-mic {
+  opacity: 0.4;
+  pointer-events: none;
+  cursor: default;
+}
+
 /* 宽屏两个按钮并排 */
 @media (min-width: 640px) and (min-height: 521px) {
   .death-panel { max-width: 560px; }
@@ -1110,6 +1225,22 @@
   .death-btn,
   .death-btn-continue { flex: 1 1 0; min-height: 52px; }
   .death-hint { margin-top: 8px; }
+}
+
+/* 更矮的横屏（640×360 带地址栏只剩 304、568×320、534×300）：开关麦放按钮组下面会被挤出首屏，
+   改到结算面板右上角，和居中的 SIGNAL LOST 标签左右错开。面板已在 .death-root 的安全区内边距里，不用再加 env()。
+   底部内边距收到 8px：534×300 原本就多出 12px 要滚 */
+@media (max-height: 400px) {
+  .death-root {
+    padding-bottom: 8px;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  }
+  .death-mic {
+    position: absolute;
+    top: 0;
+    right: 0;
+    margin: 0;
+  }
 }
 
 /* ========== 减弱动效 ========== */

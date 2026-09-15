@@ -83,10 +83,12 @@ const CSS = [
   '.test-empty{padding:24px 10px;text-align:center;font-size:13px;line-height:1.65;color:rgba(255,245,204,.7)}',
   '.test-empty b{display:block;margin-bottom:6px;font-size:15px;color:#fff5cc}',
   '.test-foot{flex:none;margin-top:6px;font-size:12px;color:rgba(255,245,204,.45)}',
-  // 窄屏铺满；横屏手机太矮时整张面板一起滚，别让列表只剩一条缝
+  // 窄屏铺满；横屏手机太矮时压缩间距，列表仍在自己的区域里滚，×、召唤测试人、搜索框一直留在顶部
+  // （必须写在这里：挂在 #ui 里的 test-style 文档顺序靠后，外部样式表同优先级盖不过它）
   '@media (max-width:440px){.test-sheet{width:100%;border-left:0;padding-left:14px;padding-left:calc(14px + env(safe-area-inset-left, 0px))}}',
-  '@media (max-height:520px){.test-sheet{display:block;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}' +
-    '.test-list{overflow:visible;margin-bottom:6px}}',
+  '@media (max-height:520px){.test-sheet{padding-top:8px;padding-top:calc(8px + env(safe-area-inset-top, 0px));' +
+    'padding-bottom:6px;padding-bottom:calc(6px + env(safe-area-inset-bottom, 0px))}' +
+    '.test-actions,.test-search{margin-top:6px}.test-list{margin-top:4px}.test-foot{margin-top:4px}}',
   // 触屏入口：竖直居中在暂停键（右上 12+48px）和冲刺键（右下 116+62px）之间的空档，横屏矮屏也压不到它们
   '.test-entry{position:fixed;z-index:31;width:52px;height:52px;padding:0;box-sizing:border-box;' +
     'right:12px;right:calc(12px + env(safe-area-inset-right, 0px));' +
@@ -152,6 +154,11 @@ function isTyping(el) {
   return !/^(button|checkbox|radio|range|color|file|image|reset|submit)$/i.test(el.type || '');
 }
 function groundAt(x, z) { return has(BR.phys, 'groundY') ? BR.phys.groundY(x, z) : 0; }
+// 面板按钮用 input 的轻点判定：摇杆手指还按着屏幕时浏览器不合成 click；input 没载入时退回 click
+function tap(el, fn) {
+  if (BR.input && typeof BR.input.tap === 'function') BR.input.tap(el, fn);
+  else el.addEventListener('click', fn);
+}
 
 // ---------- 落点 ----------
 // 视线：优先读相机（与画面一致），相机还没摆好时退回玩家姿态
@@ -508,11 +515,12 @@ function build() {
 
   const guarded = (fn) => (e) => { if (nowMs() >= S.guardUntil) fn(e); };
   // 关闭必须在点击回调里同步请求指针锁定，浏览器才认用户手势
-  backdrop.addEventListener('click', guarded(() => close({ relock: true })));
-  closeBtn.addEventListener('click', guarded(() => close({ relock: true })));
-  dummyBtn.addEventListener('click', guarded(() => spawnDummy()));
-  clearBtn.addEventListener('click', guarded(() => clearAll()));
-  dom.list.addEventListener('click', guarded((e) => {
+  tap(backdrop, guarded(() => close({ relock: true })));
+  tap(closeBtn, guarded(() => close({ relock: true })));
+  tap(dummyBtn, guarded(() => spawnDummy()));
+  tap(clearBtn, guarded(() => clearAll()));
+  // 列表项委托在列表上：touchend 的 target 是手指按下时的元素，click 的是点中的元素，都能找回列表项
+  tap(dom.list, guarded((e) => {
     const b = itemOf(e.target);
     if (b) spawnEntity(b.dataset.type);
   }));
@@ -614,6 +622,8 @@ function open() {
   const touch = !!(BR.input && BR.input.isTouch);
   dom.foot.textContent = (touch ? '点 × 关闭' : 'T / Esc 关闭') + ' · 点实体在准星前方放出';
   dom.root.hidden = false;
+  // 横屏时 css/game.css 据此把 toast 挪到抽屉左边，免得被抽屉盖住
+  document.documentElement.classList.add('br-test-open');
   const inp = BR.input;
   S.restoreInput = !!inp && inp.enabled !== false;
   // input 关掉时会顺带清边沿、退出指针锁定、收起触屏摇杆
@@ -632,6 +642,7 @@ function close(opts) {
   const a = document.activeElement;
   if (a && dom.root.contains(a) && typeof a.blur === 'function') a.blur();
   dom.root.hidden = true;
+  document.documentElement.classList.remove('br-test-open');
   const back = S.restoreInput && !opts.silent && uiUsable();
   S.restoreInput = false;
   if (back && BR.input) {
@@ -685,6 +696,7 @@ function onStart(p) {
 
 function onHome() {
   if (S.open) close({ silent: true });
+  document.documentElement.classList.remove('br-test-open');
   S.session = false;
   stopPoll();
   if (dom.ready) { setHidden(dom.entry, true); setHidden(dom.hint, true); }

@@ -55,7 +55,7 @@ function levelOrder() {
 }
 
 // ---------- 测试清单 ----------
-const KNOWN = ['phys.test.js', 'smoke.mjs', 'kit.mjs', 'items.mjs', 'coop.mjs', 'settings.mjs', 'workshop.mjs', 'workshop_core.mjs', 'workshop_ui.mjs', 'infection.mjs', 'visualhooks.mjs'];
+const KNOWN = ['phys.test.js', 'smoke.mjs', 'mobile.mjs', 'kit.mjs', 'items.mjs', 'coop.mjs', 'settings.mjs', 'workshop.mjs', 'workshop_core.mjs', 'workshop_ui.mjs', 'infection.mjs', 'visualhooks.mjs'];
 const SPECIAL = new Set(['all.mjs', 'online.mjs', 'golden.mjs', 'preview.mjs']);
 // "汇总已打印"的标志：各脚本只在最后的汇总段里打印这些行。preview 单独给，因为 --arch 中途也会打 PASS/FAIL
 const DONE_DEFAULT = /页面报错 \d+ 条|\d+ 条页面错误|^phys: \d+ 通过/m;

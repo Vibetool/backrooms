@@ -68,6 +68,16 @@
 .coop-status.coop-err { color: #ff9f86; }
 .coop-status.coop-ok { color: #b5e39c; }
 .coop-foot { display: flex; justify-content: flex-end; margin-top: 12px; }
+.coop-lobby-mic { margin-top: 8px; }
+
+/* 矮横屏（640×360、874×402）：压缩间距、去掉空状态行的占位，「加入」和确认框尽量留在首屏。副标题写着「语音默认闭麦」，不隐藏 */
+@media (max-height: 460px) {
+  .coop-card { padding: 12px 16px; }
+  .coop-sub { margin: 0 0 8px; }
+  .coop-section { margin-top: 8px; padding-top: 8px; }
+  .coop-section-title { margin-bottom: 4px; }
+  .coop-status:empty { min-height: 0; margin-top: 0; }
+}
 
 /* ---------- 麦克风按钮与说话角标 ---------- */
 .coop-hud {
@@ -103,6 +113,19 @@
   display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
 }
 .coop-touch .coop-talk { top: 124px; top: calc(124px + env(safe-area-inset-top, 0px)); }
+/* 横屏手机：暂停键下面是 toast 的位置（game.css），麦克风改放暂停键左边；说话角标挪到左上信息块下面，别压到冲刺键。
+   信息块三行底边约 73px（安卓中文字体行高更大还会再低一点），角标顶边留出 8px 以上 */
+@media (max-height: 520px) {
+  .coop-touch .coop-mic {
+    top: 14px; top: calc(14px + env(safe-area-inset-top, 0px));
+    right: 72px; right: calc(72px + env(safe-area-inset-right, 0px));
+  }
+  .coop-touch .coop-talk {
+    top: 84px; top: calc(84px + env(safe-area-inset-top, 0px));
+    left: 12px; left: calc(12px + env(safe-area-inset-left, 0px));
+    right: auto; align-items: flex-start;
+  }
+}
 .coop-badge {
   padding: 5px 10px; border-radius: 12px; background: rgba(22, 19, 8, .66); color: #fff5cc;
   font-size: 13px; border: 1px solid rgba(255, 240, 170, .35); white-space: nowrap;

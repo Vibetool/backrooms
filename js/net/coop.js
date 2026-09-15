@@ -42,9 +42,12 @@ const S = {
   taken: { levelId: null, ids: new Set() },        // 本层已被拿走的物品（房主用来回复中途加入和重复拾取）
   remoteTaken: { levelId: null, ids: new Set() },  // 对方拿走了、但本机那块区块还没载入的物品，载入后立即移除
   startingAsGuest: false,
+  guestStart: null,       // { run, timer }：客机开局在等大厅那条历史退掉（popstate 或 500ms 兜底）
   meAcc: 0, entsAcc: 0, reconcileAcc: 0,
   lastUpdateAt: 0, lastTickAt: 0,
   micOn: false, micBusy: false,
+  micTouchAt: -1e9,       // 麦克风按钮上次由 touchstart 触发的时刻：800ms 内的 click 当作同一次触摸
+  micSig: '000',          // 上次广播 coop:mic 时的 active / micOn / micBusy，变了才再发
   localLevel: 0, peerLevel: 0, localHold: 0, peerHold: 0,
   inputWasEnabled: false,
 };
@@ -113,7 +116,7 @@ function buildLobby() {
   root.setAttribute('aria-modal', 'true');
   root.setAttribute('aria-label', '双人联机');
   root.addEventListener('click', e => { if (e.target === root) closeLobby(); });
-  root.addEventListener('keydown', e => { if (e.key === 'Escape') closeLobby(); });
+  // Esc 在 init 里挂到 document 捕获阶段（onDocKeyDown），不挂在这里
 
   const card = mk('div', 'coop-card', root);
   const head = mk('div', 'coop-head', card);
@@ -170,12 +173,15 @@ function buildLobby() {
   D.secPeer = mk('div', 'coop-section', card);
   D.secPeer.hidden = true;
   D.peerLine = mk('p', 'coop-peer-line', D.secPeer);
-  D.peerTip = mk('p', 'coop-hint', D.secPeer, '按 V 键或点屏幕右上角的麦克风按钮开麦 / 闭麦。');
+  // 大厅（z 80）盖住了右上角的麦克风按钮，触屏又没有 V 键：接通后在这里也放一个开关，文案由 renderMic 同步
+  D.lobbyMic = btn('coop-lobby-mic', '开麦', D.secPeer, toggleMic);
+  D.lobbyMic.hidden = true;
+  D.peerTip = mk('p', 'coop-hint', D.secPeer);   // 文案按触屏 / 桌面在 renderLobby 里写
 
   D.status = mk('p', 'coop-status', card);
   D.status.setAttribute('aria-live', 'polite');
-  const foot = mk('div', 'coop-foot', card);
-  D.leaveBtn = btn('coop-btn-danger', '退出联机', foot, () => { leave(); setStatus('已退出联机'); });
+  D.foot = mk('div', 'coop-foot', card);
+  D.leaveBtn = btn('coop-btn-danger', '退出联机', D.foot, () => { leave(); setStatus('已退出联机'); });
   D.lobby = root;
 }
 
@@ -184,19 +190,22 @@ function renderLobby() {
   const p = S.phase;
   const idleish = p === 'idle' || p === 'checking' || p === 'confirm';
   const noNet = !BR.net;
+  // 微信 / QQ 旧内核等没有 WebRTC：一打开就提示并禁用。不用 BR.net.available()，没配 roomApi 时它也是 false，文案会错
+  const noRtc = !!BR.net && typeof RTCPeerConnection !== 'function';
   const blocked = blockedByMode();
-  D.note.hidden = !(noNet || (blocked && !S.active));
+  D.note.hidden = !(noNet || noRtc || (blocked && !S.active));
   D.note.textContent = noNet ? '联机模块没有加载（缺少 js/net/net.js）。'
+    : noRtc ? BR.net.errorText('no_webrtc')
     : '联机仅限「游玩」模式。请先回主页，选择「游玩」后再联机。';
   D.name.disabled = !idleish;
   D.secCreate.hidden = !(idleish || p === 'creating' || p === 'hosting');
   D.createBtn.hidden = p === 'hosting';
-  D.createBtn.disabled = p !== 'idle' || blocked || noNet;
+  D.createBtn.disabled = p !== 'idle' || blocked || noNet || noRtc;
   D.createBtn.textContent = p === 'creating' ? '创建中…' : '创建房间';
   D.hostBox.hidden = p !== 'hosting';
   D.code.textContent = (BR.net && BR.net.code) || '';
   D.secJoin.hidden = !(idleish || p === 'joining');
-  D.joinCode.disabled = D.joinBtn.disabled = p !== 'idle' || blocked || noNet;
+  D.joinCode.disabled = D.joinBtn.disabled = p !== 'idle' || blocked || noNet || noRtc;
   D.joinBtn.textContent = p === 'checking' ? '查询中…' : p === 'joining' ? '加入中…' : '加入';
   D.confirmBox.hidden = !(p === 'confirm' && S.confirm);
   if (S.confirm) {
@@ -210,7 +219,13 @@ function renderLobby() {
     ? '已连接：「' + S.peerName + '」 · 你是' + (S.role === 'host' ? '房主' : '客机')
     : '正在连接' + (S.peerName ? '「' + S.peerName + '」' : '') + '…';
   D.peerTip.hidden = p !== 'active';
+  D.peerTip.textContent = BR.input && BR.input.isTouch
+    ? '点上面的按钮，或关掉窗口后点右上角麦克风按钮开麦 / 闭麦。'
+    : '按 V 键或点屏幕右上角的麦克风按钮开麦 / 闭麦。';
+  D.lobbyMic.hidden = D.peerTip.hidden;
+  renderLobbyMic();
   D.leaveBtn.hidden = idleish;
+  D.foot.hidden = D.leaveBtn.hidden;   // 空底栏也占着外边距，矮屏上省出来
   D.status.textContent = S.status;
   D.status.className = 'coop-status' + (S.statusKind ? ' coop-' + S.statusKind : '');
 }
@@ -219,6 +234,8 @@ function setStatus(text, kind) {
   S.status = text || '';
   S.statusKind = kind || '';
   renderLobby();
+  // 状态行在卡片最底部，矮横屏上出错时常在可视区外：滚到看得见（已可见时 nearest 不动）
+  if (S.statusKind === 'err' && lobbyOpen()) D.status.scrollIntoView({ block: 'nearest' });
 }
 
 function myName() {
@@ -260,6 +277,8 @@ async function onJoin() {
     S.confirm = { code, host: info.host_name || '房主' };
     S.phase = 'confirm';
     setStatus('');
+    // 矮横屏上确认框落在卡片可视区下方，点完「加入」像没反应：滚到「同意加入」能看见
+    D.confirmBox.scrollIntoView({ block: 'nearest' });
   } catch (err) {
     if (S.phase !== 'checking') return;
     S.phase = 'idle';
@@ -331,6 +350,11 @@ function openLobby() {
   }
   const wasHidden = D.lobby.hidden;
   D.lobby.hidden = false;
+  // 安卓返回键 / iOS 边缘返回手势要先关大厅：打开时压一条历史记录。
+  // 带上当前的 brHome（主页弹层层数），home.js 的 onPopState 算层数不受影响；已经开着就不重复压
+  if (wasHidden) {
+    try { history.pushState({ brHome: histHome(), brPanel: 'lobby' }, ''); } catch (err) { /* file:// 或沙箱不让改历史，大厅照常工作 */ }
+  }
   // 游玩中直接打开（不经暂停菜单）时要先停掉操作、放开鼠标，关窗时再还回去
   if (wasHidden && BR.input && BR.input.enabled) { S.inputWasEnabled = true; BR.input.enabled = false; }
   renderLobby();
@@ -340,7 +364,12 @@ function openLobby() {
   }
 }
 
-function closeLobby() {
+function histState() { try { return history.state; } catch (err) { return null; } }
+function histHome() { const st = histState(); return st && typeof st.brHome === 'number' ? st.brHome : 0; }
+
+// how：'popstate' = 不动历史（返回键已经把那条记录退掉了，或者调用方自己退，见 startAsGuest）；
+//      其余（点 ×、点背景、Esc、外部直接调用，点击时传进来的是事件对象）= 栈顶是大厅那条就 back() 退掉
+function closeLobby(how) {
   if (!D.lobby || D.lobby.hidden) return;
   D.lobby.hidden = true;
   if (S.phase === 'confirm') { S.confirm = null; S.phase = 'idle'; }
@@ -348,6 +377,27 @@ function closeLobby() {
   if (a && D.lobby.contains(a) && typeof a.blur === 'function') a.blur();
   if (S.inputWasEnabled && BR.input && BR.game.screen === 'playing') BR.input.enabled = true;
   S.inputWasEnabled = false;
+  if (how === 'popstate') return;
+  const st = histState();
+  if (!st || st.brPanel !== 'lobby') return;
+  try { history.back(); } catch (err) { /* 忽略 */ }
+}
+
+// 返回键：退到的记录不是大厅那条，说明用户按了返回，关掉大厅
+function onPopState(e) {
+  if (lobbyOpen() && !(e.state && e.state.brPanel === 'lobby')) closeLobby('popstate');
+  // 客机开局在等这次退栈：放到下一个任务再开局。在这次 popstate 里直接开的话，main.js 排在后面的 popstate 监听
+  // 会把它当成 home.hide() 退弹层的那一次，真正的那一次反而被当成返回键，一开局就进暂停
+  if (S.guestStart) setTimeout(S.guestStart.run, 0);
+}
+
+// Esc 关大厅：挂在 document 捕获阶段并停止传播。挂在弹窗上的话焦点不在大厅里就收不到，
+// 而且会冒泡到 home.js 的 keydown，把底下的主页弹窗也关掉一层，两边各退一次历史，之后多出一次无效返回。
+// input.js 在 window 捕获阶段更早收到这次按键，暂停键不受影响
+function onDocKeyDown(e) {
+  if (e.key !== 'Escape' || !lobbyOpen()) return;
+  e.stopPropagation();
+  closeLobby();
 }
 
 function lobbyOpen() { return !!(D.lobby && !D.lobby.hidden); }
@@ -390,6 +440,7 @@ function activate() {
 function endSession() {
   const wasGuest = S.active && S.role === 'guest';
   if (S.helloTimer) clearTimeout(S.helloTimer);
+  if (S.guestStart) { clearTimeout(S.guestStart.timer); S.guestStart = null; }   // 还在等退栈的客机开局作废
   Object.assign(S, {
     active: false, gotHello: false, helloTimer: 0, phase: 'idle', role: null, confirm: null,
     peerName: '', peerSkin: null, hostSeed: null, hostLevel: null, joinAt: null,
@@ -567,22 +618,41 @@ function startAsGuest(m, lv, seed) {
   S.joinAt = at && isNum(at.x) && isNum(at.z)
     ? { levelId: lv, x: at.x, y: isNum(at.y) ? at.y : 0, z: at.z, yaw: isNum(at.yaw) ? at.yaw : 0, t: nowMs() }
     : null;
-  S.lastGuestStartAt = nowMs();
+  S.lastGuestStartAt = nowMs();   // 下面可能要等一次 popstate 才真正开局，期间重复收到的 world 照样忽略
   S.inputWasEnabled = false;   // 开局由 main 接管输入
-  closeLobby();
-  S.startingAsGuest = true;
-  try {
-    // 客机激活房主同步来的地图对象（不写本机存储）：main.js 的 onGameStart 认 workshop 字段，是对象就直接用
-    BR.bus.emit('game:start', {
-      mode: 'casual', difficulty: null, settings, seed, levelId: lv, coop: { role: 'guest' },
-      workshop: m.workshopMap || undefined,
-    });
-  } finally {
-    S.startingAsGuest = false;
-  }
-  syncGameCoop();
-  setGuestAuthority(true);
-  toast('已进入房主的世界', 2500);
+  const begin = () => {
+    S.startingAsGuest = true;
+    try {
+      // 客机激活房主同步来的地图对象（不写本机存储）：main.js 的 onGameStart 认 workshop 字段，是对象就直接用
+      BR.bus.emit('game:start', {
+        mode: 'casual', difficulty: null, settings, seed, levelId: lv, coop: { role: 'guest' },
+        workshop: m.workshopMap || undefined,
+      });
+    } finally {
+      S.startingAsGuest = false;
+    }
+    syncGameCoop();
+    setGuestAuthority(true);
+    toast('已进入房主的世界', 2500);
+  };
+  const st = histState();
+  const viaLobby = lobbyOpen() && !!st && st.brPanel === 'lobby';
+  closeLobby('popstate');
+  if (!viaLobby) { begin(); return; }
+  // 栈顶是大厅那条：先退掉再开局。开局时 home.hide() 会 history.go(-n) 退主页弹层，和 back() 挤在同一任务里两次遍历不可靠；
+  // 只 replaceState 抹掉标记的话会多留一条 { brHome } 记录，回主页后返回键要多按一次。等 popstate（onPopState 转过来），500ms 兜底
+  try { history.back(); } catch (err) { begin(); return; }
+  const job = {
+    run() {
+      if (S.guestStart !== job) return;
+      S.guestStart = null;
+      clearTimeout(job.timer);
+      if (S.active && S.role === 'guest') begin();   // 等的时候断线或退出了联机就不开了
+    },
+    timer: 0,
+  };
+  job.timer = setTimeout(job.run, 500);
+  S.guestStart = job;
 }
 
 // force：房主明确广播的换层，即使是同一层（比如 Level Dev 的"回到 Level Dev"圈，出生点重置）也要跟着重进
@@ -782,6 +852,11 @@ function onSkinChange(p) {
 }
 
 // ---------- 麦克风按钮与说话角标 ----------
+const PEER_TALK = '🔊 对方在说话';
+// 对方语音被自动播放策略拦着时的角标文案：触屏说轻触，桌面说点击
+const PEER_TAP_TOUCH = '🔊 轻触屏幕收听对方语音';
+const PEER_TAP_CLICK = '🔊 点击页面收听对方语音';
+
 function buildHud() {
   if (D.hud) {
     if (!document.body.contains(D.hud)) uiHost().appendChild(D.hud);
@@ -795,28 +870,52 @@ function buildHud() {
   mk('span', 'coop-mic-ico', D.mic, '🎙');
   D.micTxt = mk('span', 'coop-mic-txt', D.mic, '已闭麦');
   mk('kbd', 'coop-mic-key', D.mic, 'V');
+  // 触屏走 touchstart：另一根手指按着摇杆时部分手机不合成 click（hud.js 背包格、testmode 入口同理）。
+  // preventDefault 顺带吞掉合成 click；鼠标、键盘仍走 click，800ms 内的 click 当作同一次触摸，不再切一次
+  D.mic.addEventListener('touchstart', e => {
+    if (e.cancelable) e.preventDefault();
+    S.micTouchAt = nowMs();
+    toggleMic();
+  }, { passive: false });
   D.mic.addEventListener('click', e => {
     e.preventDefault();
+    if (nowMs() - S.micTouchAt < 800) return;
     toggleMic();
     D.mic.blur();   // 留着焦点的话空格/回车会再点一次
   });
   const talk = mk('div', 'coop-talk', root);
   D.badgeMe = mk('div', 'coop-badge coop-badge-me', talk, '🎙 我在说话');
   D.badgeMe.hidden = true;
-  D.badgePeer = mk('div', 'coop-badge coop-badge-peer', talk, '🔊 对方在说话');
+  D.badgePeer = mk('div', 'coop-badge coop-badge-peer', talk, PEER_TALK);
   D.badgePeer.hidden = true;
+  D.badgePeerTxt = PEER_TALK;
   D.hud = root;
 }
 
+// 大厅里的开关：申请中再点 = 取消，所以不禁用
+function renderLobbyMic() {
+  if (!D.lobbyMic) return;
+  D.lobbyMic.textContent = S.micBusy ? '申请麦克风…' : S.micOn ? '闭麦' : '开麦';
+  D.lobbyMic.setAttribute('aria-pressed', S.micOn ? 'true' : 'false');
+}
+
 function renderMic() {
-  if (!D.hud) return;
-  D.hud.classList.toggle('coop-touch', !!(BR.input && BR.input.isTouch));
-  D.mic.hidden = !S.active;
-  D.mic.classList.toggle('coop-on', S.micOn);
-  D.mic.classList.toggle('coop-busy', S.micBusy);
-  D.micTxt.textContent = S.micBusy ? '申请麦克风…' : S.micOn ? '开麦中' : '已闭麦';
-  D.mic.setAttribute('aria-pressed', S.micOn ? 'true' : 'false');
-  D.mic.setAttribute('aria-label', S.micOn ? '麦克风已打开，点击闭麦' : '麦克风已关闭，点击开麦');
+  if (D.hud) {
+    D.hud.classList.toggle('coop-touch', !!(BR.input && BR.input.isTouch));
+    D.mic.hidden = !S.active;
+    D.mic.classList.toggle('coop-on', S.micOn);
+    D.mic.classList.toggle('coop-busy', S.micBusy);
+    D.micTxt.textContent = S.micBusy ? '申请麦克风…' : S.micOn ? '开麦中' : '已闭麦';
+    D.mic.setAttribute('aria-pressed', S.micOn ? 'true' : 'false');
+    D.mic.setAttribute('aria-label', S.micOn ? '麦克风已打开，点击闭麦' : '麦克风已关闭，点击开麦');
+  }
+  renderLobbyMic();
+  // 暂停菜单、结算页、主页游玩弹窗里的开麦按钮（hud / death / home）靠这个事件刷新，状态没变不发
+  const sig = (S.active ? '1' : '0') + (S.micOn ? '1' : '0') + (S.micBusy ? '1' : '0');
+  if (sig !== S.micSig) {
+    S.micSig = sig;
+    BR.bus.emit('coop:mic', { on: S.micOn, busy: S.micBusy, active: S.active });
+  }
 }
 
 function renderBadges() {
@@ -824,6 +923,10 @@ function renderBadges() {
   const me = S.active && S.localHold > 0, peer = S.active && S.peerHold > 0;
   if (D.badgeMe.hidden === me) D.badgeMe.hidden = !me;
   if (D.badgePeer.hidden === peer) D.badgePeer.hidden = !peer;
+  if (!peer) return;
+  // 对方语音的 <audio> 被自动播放策略拦着（iOS）时角标亮着却没声音：提示点一下，onGesture 会补 play()。每帧都跑，文字变了才写 DOM
+  const t = BR.net && BR.net.remotePaused ? (BR.input && BR.input.isTouch ? PEER_TAP_TOUCH : PEER_TAP_CLICK) : PEER_TALK;
+  if (t !== D.badgePeerTxt) { D.badgePeerTxt = t; D.badgePeer.textContent = t; }
 }
 
 // ---------- 开麦与音量电平 ----------
@@ -1229,8 +1332,11 @@ function init() {
   BR.bus.on('item:pickRequest', onPickRequest);
   BR.bus.on('item:pickup', onItemPickup);
   BR.bus.on('skin:change', onSkinChange);
-  document.addEventListener('pointerdown', onGesture, true);
-  document.addEventListener('keydown', onGesture, true);
+  // 对方语音的播放要在用户手势里补一次：iOS 上 pointerdown 不一定算用户激活，和 audio.js 的解锁一样多听 touchend / click
+  // （触屏层对 touchstart 的 preventDefault 不影响 touchend 到达 document 捕获阶段）
+  ['pointerdown', 'touchend', 'click', 'keydown'].forEach(n => document.addEventListener(n, onGesture, { capture: true, passive: true }));
+  document.addEventListener('keydown', onDocKeyDown, true);
+  window.addEventListener('popstate', onPopState);
   setInterval(watchdog, WATCHDOG_MS);
 }
 
@@ -1239,6 +1345,7 @@ BR.coop = {
   get active() { return S.active; },
   get role() { return S.role; },
   get mic() { return S.micOn; },
+  get micBusy() { return S.micBusy; },   // 正在申请麦克风；这时再切一次 = 取消（别处的开麦按钮按 !(mic || micBusy) 调 setMic）
   get localSpeaking() { return S.localLevel; },
   get peerSpeaking() { return S.peerLevel; },
   get peerName() { return S.peerName; },

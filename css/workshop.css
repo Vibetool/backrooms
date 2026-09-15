@@ -88,7 +88,8 @@
 .ws-stage { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background: transparent; touch-action: none; cursor: grab; }
 .ws-stage.is-panning { cursor: grabbing; }
 .ws-stage.is-tool-wall { cursor: crosshair; }
-.ws-svg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+/* touch-action 必须设在 svg 根上：只设在圆点上不管用，浏览器仍按 body 的 manipulation 接管手势，拖标记会被 pointercancel 打断 */
+.ws-svg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; touch-action: none; }
 .ws-mask-rect { fill: rgba(6, 5, 2, .62); pointer-events: none; }
 .ws-bounds-rect { fill: none; stroke: #e8c547; stroke-width: 2; stroke-dasharray: 6 5; pointer-events: none; }
 .ws-edge-hi { stroke: #7fe7a0; stroke-width: 4; stroke-linecap: round; }
@@ -103,6 +104,15 @@
 .ws-exit-label { font-size: 11px; fill: #fff6d8; paint-order: stroke; stroke: rgba(0,0,0,.75); stroke-width: 3px; text-anchor: middle; pointer-events: none; }
 .ws-spawn-flag { fill: #ffd76a; stroke: rgba(0,0,0,.5); stroke-width: 1.5; }
 .ws-add-cursor { fill: rgba(232,197,71,.35); stroke: #e8c547; stroke-width: 1.5; pointer-events: none; }
+/* 触屏命中圆：看不见但能点（fill:none 不参与命中，必须 transparent） */
+.ws-hit { fill: transparent; stroke: none; pointer-events: auto; cursor: pointer; }
+
+/* 3D 预览中收起俯视标记和编辑控件，只留「返回俯视」、保存、退出（js 给 .ws-editor 加 is-preview） */
+.ws-editor.is-preview .ws-svg,
+.ws-editor.is-preview .ws-section,
+.ws-editor.is-preview .ws-panelslide,
+.ws-editor.is-preview .ws-tool-sep,
+.ws-editor.is-preview .ws-edit-only { display: none !important; }
 
 /* 工具栏：桌面顶部横排，手机底部横排可滚动 */
 .ws-toolbar {
@@ -141,16 +151,26 @@
 }
 .ws-hint { flex: 1; min-width: 90px; font-size: 12px; color: rgba(244,236,208,.75); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* 侧滑面板：实体 / 出口 / 设置，桌面右侧固定宽度，手机底部抽屉 */
+/* 侧滑面板：实体 / 出口 / 设置，桌面右侧固定宽度，手机底部抽屉。
+   上下各让出工具栏和底栏（44px 按钮 + 上下 8px 内边距 = 60px，再加安全区），不盖住撤销/保存/退出 */
 .ws-panelslide {
-  position: absolute; right: 0; top: 0; bottom: 0; width: min(300px, 86vw);
+  position: absolute; right: 0; width: min(300px, 86vw);
+  top: 60px; top: calc(60px + env(safe-area-inset-top));
+  bottom: 60px; bottom: calc(60px + env(safe-area-inset-bottom));
   background: rgba(18, 15, 7, .94); border-left: 1px solid rgba(232,197,71,.28);
   display: flex; flex-direction: column; box-shadow: -10px 0 30px rgba(0,0,0,.4);
 }
 .ws-panelslide[hidden] { display: none !important; }
-.ws-panelslide-head { display: flex; align-items: center; padding: calc(8px + env(safe-area-inset-top)) 10px 8px 14px; flex: none; border-bottom: 1px solid rgba(232,197,71,.16); }
+/* 面板本身已经让开了顶部/底部安全区，这里只补右侧（iPhone 横屏刘海/灵动岛那一侧） */
+.ws-panelslide-head {
+  display: flex; align-items: center; padding: 8px 10px 8px 14px; flex: none; border-bottom: 1px solid rgba(232,197,71,.16);
+  padding-right: calc(10px + env(safe-area-inset-right));
+}
 .ws-panelslide-title { flex: 1; font-size: 14px; font-weight: 800; }
-.ws-panelslide-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 10px 14px calc(14px + env(safe-area-inset-bottom)); }
+.ws-panelslide-body {
+  flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 10px 14px 14px;
+  padding-right: calc(14px + env(safe-area-inset-right));
+}
 
 .ws-group-label { font-size: 12px; font-weight: 800; color: #f1d467; margin: 10px 0 6px; }
 .ws-group-label:first-child { margin-top: 0; }
@@ -167,7 +187,7 @@
 .ws-exit-row-main { flex: 1; min-width: 0; }
 .ws-exit-row-title { font-weight: 700; font-size: 13px; }
 .ws-exit-row-sub { color: rgba(244,236,208,.6); }
-.ws-icon-btn { flex: none; min-width: 40px; min-height: 40px; border-radius: 8px; border: 1px solid rgba(232,197,71,.3); background: rgba(255,240,190,.06); color: #f4ecd0; cursor: pointer; }
+.ws-icon-btn { flex: none; min-width: 44px; min-height: 44px; border-radius: 8px; border: 1px solid rgba(232,197,71,.3); background: rgba(255,240,190,.06); color: #f4ecd0; cursor: pointer; }
 .ws-icon-btn.ws-btn-danger { color: #ffb0a2; }
 
 .ws-set-field { margin: 0 0 14px; }
@@ -184,6 +204,7 @@
   max-width: min(92%, 420px); padding: 10px 16px; border-radius: 10px;
   background: rgba(20,17,8,.94); border: 1px solid rgba(232,197,71,.4); color: #fff6d8;
   font-size: 13px; text-align: center; box-shadow: 0 8px 24px rgba(0,0,0,.4);
+  pointer-events: none;   /* 只是提示，不能挡住下面弹窗的输入框 */
 }
 .ws-toast[hidden] { display: none !important; }
 
@@ -202,12 +223,48 @@
 .ws-coop-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 .ws-coop-status { font-size: 12px; color: rgba(244,236,208,.65); }
 
-@media (max-aspect-ratio: 17/20) {
+/* 窄屏底栏提示折行显示，不再只露出几个字。最多三行、总高不超过 44px 的按钮：
+   底栏保持 60px 高，底部抽屉按 60px 让开时才不会压到底栏 */
+@media (max-width: 480px) {
+  .ws-hint { white-space: normal; font-size: 12px; line-height: 1.2; max-height: 3.6em; overflow: hidden; }
+}
+
+/* 手机横屏（440px 高以内）不弹键盘时，新增出口弹窗的三个字段放不进正文滚动区，标签输入框整个落在按钮行后面，
+   点输入框会误触「取消」。这个弹窗改成整块一起滚，按钮行跟在输入框后面。
+   只改这一个：列表、新建地图、信息卡的按钮行照旧固定在底部。
+   选择器与 .ws-panel 同权重，靠书写顺序让竖屏抽屉段的 max-height 生效 */
+@media (max-height: 440px) {
+  .ws-exit-dlg { max-height: calc(100% - 8px); overflow-y: auto; }
+  .ws-exit-dlg .ws-body { flex: none; overflow: visible; }
+  .ws-exit-dlg .ws-head { margin-bottom: 2px; }
+}
+
+/* 矮屏（软键盘把布局视口压矮的 WebView）：整个弹窗一起滚，按钮行跟着内容走，聚焦的输入框才滚得进可见区。
+   写在竖屏段前面：两段同时成立时，底部抽屉的 top/transform/max-height 以竖屏段为准 */
+@media (max-height: 300px) {
+  .ws-panel { top: 4px; transform: translateX(-50%); max-height: calc(100% - 8px); overflow-y: auto; }
+  .ws-panel .ws-body { flex: none; overflow: visible; }
+  .ws-head { margin-bottom: 2px; }
+}
+
+/* 竖屏或窄屏：弹窗改底部抽屉。加 max-width 条件是为了 360 宽的手机弹出键盘、宽高比翻过 17/20 时布局不突然翻成居中弹窗 */
+@media (max-aspect-ratio: 17/20), (max-width: 480px) {
   .ws-panel { left: 0; right: 0; bottom: 0; top: auto; transform: none; width: 100%; max-height: 82vh; max-height: 82dvh; border-radius: 16px 16px 0 0; }
-  .ws-section { top: auto; bottom: 96px; right: 8px; height: 150px; flex-direction: row; width: auto; padding: 6px 10px; }
+  /* 剖切高度：只包住滑条本身，不再是挡地图的大盒子 */
+  .ws-section { top: auto; bottom: 72px; bottom: calc(72px + env(safe-area-inset-bottom)); right: 8px; height: auto; flex-direction: row; width: auto; padding: 6px 10px; }
   .ws-section-label { writing-mode: horizontal-tb; }
-  .ws-section input[type=range] { -webkit-appearance: none; appearance: none; width: 110px; height: 30px; }
-  .ws-panelslide { width: 100%; left: 0; right: 0; top: auto; bottom: 0; height: 46vh; height: 46dvh; border-left: 0; border-top: 1px solid rgba(232,197,71,.28); border-radius: 14px 14px 0 0; }
+  .ws-section input[type=range] { -webkit-appearance: none; appearance: none; width: 110px; height: 30px; background: transparent; }
+  .ws-section input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: rgba(232,197,71,.35); }
+  .ws-section input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 20px; height: 20px; margin-top: -8px; border-radius: 50%; background: #e8c547; border: 2px solid rgba(20,17,8,.9); }
+  .ws-section input[type=range]::-moz-range-track { height: 4px; border-radius: 2px; background: rgba(232,197,71,.35); }
+  .ws-section input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: #e8c547; border: 2px solid rgba(20,17,8,.9); }
+  /* 抽屉放在底栏上方，不盖撤销/重做/保存/退出 */
+  .ws-panelslide { width: 100%; left: 0; right: 0; top: auto; bottom: 60px; bottom: calc(60px + env(safe-area-inset-bottom)); height: 40vh; height: 40dvh; border-left: 0; border-top: 1px solid rgba(232,197,71,.28); border-radius: 14px 14px 0 0; }
+  .ws-panelslide-head { padding-left: 14px; padding-left: calc(14px + env(safe-area-inset-left)); }
+  .ws-panelslide-body { padding-left: 14px; padding-left: calc(14px + env(safe-area-inset-left)); }
+  /* 工具栏首屏放不下：右侧渐隐提示还能横滑；末尾补一段空白，滑到头时最后一个按钮能完全移出渐隐区 */
+  .ws-toolbar { -webkit-mask-image: linear-gradient(90deg, #000 85%, transparent); mask-image: linear-gradient(90deg, #000 85%, transparent); }
+  .ws-toolbar::after { content: ''; flex: none; width: 48px; height: 1px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

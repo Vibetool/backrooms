@@ -25,7 +25,7 @@
   transition: opacity .25s ease;
 }
 .home-title-zh { font-size: clamp(34px, 8vmin, 76px); font-weight: 800; letter-spacing: .14em; line-height: 1.05; }
-.home-title-en { margin-top: 4px; font-size: clamp(11px, 2vmin, 18px); font-weight: 700; letter-spacing: .42em; opacity: .9; }
+.home-title-en { margin-top: 4px; font-size: clamp(12px, 2vmin, 18px); font-weight: 700; letter-spacing: .42em; opacity: .9; }
 
 /* ---------- 人物下方提示 ---------- */
 .home-hint {
@@ -80,14 +80,19 @@
   font-size: 14px; font-weight: 700;
   letter-spacing: .12em;
   color: #f4ecd0;
-  background: rgba(255, 240, 190, .08);
-  border: 1px solid rgba(232, 197, 71, .45);
+  /* 背后是亮黄墙面和浅黄地毯，浅色半透明底上浅色字几乎看不见，改用深色底 */
+  background: rgba(24, 20, 9, .72);
+  border: 1px solid rgba(232, 197, 71, .6);
   border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(20, 14, 0, .25);
   cursor: pointer;
   transition: background-color .15s ease, border-color .15s ease;
 }
-.home-secondary-btn:hover { background: rgba(232, 197, 71, .16); border-color: #e8c547; }
-.home-secondary-btn:active { background: rgba(232, 197, 71, .26); }
+/* 手机点按后会残留 :hover，只给真能悬停的设备加 */
+@media (hover: hover) {
+  .home-secondary-btn:hover { background: rgba(48, 40, 16, .82); border-color: #e8c547; }
+}
+.home-secondary-btn:active { background: rgba(72, 60, 22, .9); }
 .home-secondary-btn:focus-visible { outline: 2px solid #e8c547; outline-offset: 2px; }
 /* 和 .home-play / .home-credit 一样：主页自己的弹层开着时收起，别跟弹窗叠在一起 */
 .home-root.is-open .home-secondary-actions { opacity: 0; visibility: hidden; }
@@ -193,6 +198,14 @@
 .home-dialog :focus:not(:focus-visible), .home-skin :focus:not(:focus-visible) { outline: none; }
 
 .home-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+/* 矮屏上弹窗要滚动才看得到「开始」：操作行吸底，盖住弹窗底部内边距，下面不留缝 */
+.home-dialog .home-actions {
+  position: sticky; bottom: -18px; z-index: 1;
+  margin: 14px -18px -18px;
+  padding: 10px 18px 18px;
+  background: rgba(24, 20, 9, .97);
+  box-shadow: 0 -12px 12px -4px rgba(24, 20, 9, .93);
+}
 .home-btn {
   flex: 1 1 auto;
   min-height: 48px; padding: 0 18px;
@@ -205,6 +218,7 @@
 }
 .home-btn:hover { background: rgba(232, 197, 71, .14); }
 .home-btn:disabled { opacity: .4; cursor: not-allowed; background: rgba(255, 255, 255, .03); }
+.home-btn[hidden] { display: none; }
 .home-btn-primary { flex-grow: 2; color: #1d1705; background: linear-gradient(#f3d65e, #dcb434); border-color: #e8c547; }
 .home-btn-primary:hover { background: linear-gradient(#f7de74, #e2bc40); }
 .home-coop-status { width: 100%; font-size: 12px; color: #9fe3a6; }
@@ -231,6 +245,8 @@
 .home-credits-list { margin: 8px 0 0; padding: 0; list-style: none; font-size: 13px; line-height: 1.5; }
 .home-credits-list li { padding: 8px 0; border-top: 1px solid rgba(232, 197, 71, .15); word-break: break-word; }
 .home-credits-list a { color: #f1d467; }
+/* 条目标题链接只有一行字高，手机上容易点空：撑高点击区，负外边距抵掉多出来的高度 */
+.home-credits-list li > a:first-child { display: block; padding: 12px 0; margin: -8px 0; }
 .home-credits-key { color: rgba(244, 236, 208, .6); }
 
 /* ---------- 皮肤色板（z-index 70，挂在 #ui 下与主页根节点并列） ---------- */
@@ -296,6 +312,15 @@
     border-bottom: 0;
     padding: 12px calc(16px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
   }
+  /* 抽屉的内边距带安全区，吸底操作行跟着按竖屏内边距抵消，否则左右会溢出 2px */
+  .home-dialog .home-actions {
+    bottom: -16px;
+    bottom: calc(-16px - env(safe-area-inset-bottom));
+    margin: 14px -16px -16px;
+    margin: 14px calc(-16px - env(safe-area-inset-right)) calc(-16px - env(safe-area-inset-bottom)) calc(-16px - env(safe-area-inset-left));
+    padding: 10px 16px 16px;
+    padding: 10px calc(16px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+  }
   .home-play { min-width: 140px; min-height: 58px; padding: 0 36px; }
   .home-credit { max-width: calc(100% - 200px - env(safe-area-inset-left) - env(safe-area-inset-right)); }
   .home-skin-panel {
@@ -317,6 +342,8 @@
   .home-card { min-height: 70px; }
   .home-play { min-height: 54px; }
   .home-secondary-actions { bottom: calc(88px + env(safe-area-inset-bottom)); gap: 8px; }
+  .home-note { margin: 2px 0 6px; }
+  .home-field { margin-bottom: 6px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

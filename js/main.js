@@ -14,7 +14,13 @@ const S = {
   auto: true,                // false：rAF 只渲染不推进逻辑，测试用 step 精确推进
   failed: new Set(),         // 同一个模块函数只报一次错，免得每帧刷屏
   frames: 0,
+  lastRender: 0,             // 上一次 rAF 渲染的时刻（ms）：单机暂停/结算时按它降帧
+  landscapeHinted: false,
 };
+
+const PAUSED_RENDER_MS = 250;   // 单机暂停/结算画面是静止的，4 次/秒足够，省电省发热
+const CTX_TIMEOUT_MS = 3000;    // WebGL 上下文丢失后前台等这么久还没恢复，就提示刷新
+const LANDSCAPE_HINT_KEY = 'backrooms_landscape_hint';
 
 function has(o, f) { return !!o && typeof o[f] === 'function'; }
 
@@ -69,6 +75,132 @@ function unlockAudio() {
     const p = A.unlock();
     if (p && typeof p.catch === 'function') p.catch(() => {});
   } catch (err) { /* 下次手势再试 */ }
+}
+
+// ---------- 游戏内返回键 ----------
+// 开局压一条 { brGame: 1 } 历史：安卓返回键 / iOS 左缘右滑 / 微信返回先退掉这一条，页面不离开，改成打开暂停菜单。
+// 坑：从主页弹层开局时 home.hide() 会 history.go(-n) 退弹层历史，那次 popstate 在 game:start 之后才到，
+// 不能当成返回键（否则每次开局都直接进暂停），要等它落地再压
+const H = { armed: false, pending: false, timer: 0 };
+
+function live() {
+  const s = BR.game.screen;
+  return s === 'playing' || s === 'paused' || s === 'dead';
+}
+
+function pushGameEntry() {
+  try { history.pushState({ brGame: 1 }, ''); H.armed = true; } catch (err) { /* file:// 或沙箱不让改历史：返回键照旧离开页面 */ }
+}
+
+function armHistory() {
+  if (H.armed) return;
+  let hs = null;
+  try { hs = history.state; } catch (err) { hs = null; }
+  // brHome > 0：主页弹层刚被收起，退栈还没落地。{ brHome: 0, brPanel } 这类面板状态不会触发 go(-n)，直接压
+  if (hs && typeof hs.brHome === 'number' && hs.brHome > 0) {
+    H.pending = true;
+    clearTimeout(H.timer);
+    // 兜底：有的内核 history.go 不发 popstate，1 秒后还没等到就直接压
+    H.timer = setTimeout(() => { H.timer = 0; if (H.pending && live()) pushGameEntry(); }, 1000);
+    return;
+  }
+  pushGameEntry();
+}
+
+function onPopState(e) {
+  if (H.pending) {
+    // home.hide() 自己退弹层历史的那一次，不是返回键：不暂停，只保证当前停在哨兵上。
+    // 1 秒兜底已经压过、这次才迟到（或 go(-n) 根本没发 popstate、这次其实是返回键）时也照样补压
+    H.pending = false;
+    clearTimeout(H.timer);
+    H.timer = 0;
+    if (live() && !(e.state && e.state.brGame)) pushGameEntry();
+    return;
+  }
+  if (!H.armed || (e.state && e.state.brGame)) return;
+  // 返回键退掉了开局压的那条：补回去，页面留住
+  H.armed = false;
+  if (live()) pushGameEntry();
+  if (BR.game.screen !== 'playing') return;
+  // 测试面板开着时和 Esc 一样先关面板；否则暂停，免得面板和暂停菜单叠在一起、继续后面板还开着就能走动
+  if (BR.test && BR.test.isOpen) safe('test', 'close');
+  else safe('hud', 'pause', true);
+}
+
+// 竖屏开局提示一次（本次会话内）：竖屏水平视野窄，gfx 已把竖直视野放大，但横屏仍然看得更开
+function hintLandscape() {
+  if (S.landscapeHinted || !(BR.input && BR.input.isTouch) || !(window.innerHeight > window.innerWidth)) return;
+  S.landscapeHinted = true;
+  try {
+    if (window.sessionStorage.getItem(LANDSCAPE_HINT_KEY)) return;
+    window.sessionStorage.setItem(LANDSCAPE_HINT_KEY, '1');
+  } catch (err) { /* 隐私模式读写不了存储：本页只提示一次 */ }
+  safe('hud', 'toast', '横屏游玩视野更开阔', 3500);
+}
+
+// ---------- WebGL 上下文丢失 ----------
+// iOS 切后台回收显存、驱动重置时会丢上下文：画面全黑但 HUD 照常，单机世界还在跑。
+// 丢失时暂停并挂提示；只在前台计时（手机常常回到前台才补发 restored），超时才让玩家刷新
+const C = { lost: false, failed: false, timer: 0, box: null, text: null, btn: null };
+
+function ctxIsLost() {
+  const r = BR.gfx && BR.gfx.renderer;
+  try { return !!(r && r.getContext().isContextLost()); } catch (err) { return false; }
+}
+
+function renderCtxBox() {
+  if (!C.box) {
+    const box = document.createElement('div');
+    box.className = 'ctx-lost';
+    box.setAttribute('role', 'alert');
+    const text = document.createElement('p');
+    text.className = 'ctx-lost-text';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'ctx-lost-btn';
+    btn.textContent = '刷新页面';
+    btn.addEventListener('click', () => location.reload());
+    box.appendChild(text);
+    box.appendChild(btn);
+    C.box = box; C.text = text; C.btn = btn;
+  }
+  C.text.textContent = C.failed ? '画面没能恢复，请刷新页面继续' : '画面暂时丢失，正在恢复…';
+  C.btn.hidden = !C.failed;
+  if (!C.box.parentNode) (document.getElementById('ui') || document.body).appendChild(C.box);
+}
+
+function stopCtxTimer() {
+  clearTimeout(C.timer);
+  C.timer = 0;
+}
+
+function armCtxTimer() {
+  stopCtxTimer();
+  if (!C.lost || C.failed || document.hidden) return;
+  C.timer = setTimeout(() => {
+    C.timer = 0;
+    if (!C.lost) return;
+    if (!ctxIsLost()) { onContextRestored(); return; }   // 已恢复但 restored 没发到：按恢复处理
+    C.failed = true;
+    renderCtxBox();
+  }, CTX_TIMEOUT_MS);
+}
+
+function onContextLost() {
+  C.lost = true;
+  C.failed = false;
+  if (BR.game.screen === 'playing') safe('hud', 'pause', true);
+  renderCtxBox();
+  armCtxTimer();
+}
+
+function onContextRestored() {
+  const was = C.lost;
+  C.lost = false;
+  C.failed = false;
+  stopCtxTimer();
+  if (C.box && C.box.parentNode) C.box.parentNode.removeChild(C.box);
+  if (was) safe('hud', 'toast', '画面已恢复');
 }
 
 // ---------- 状态切换 ----------
@@ -148,6 +280,8 @@ function onGameStart(payload) {
   safe('hud', 'show', true);
   g.screen = 'playing';
   setInput(true);
+  armHistory();
+  hintLandscape();
 }
 
 function onPlayerDeath(p) {
@@ -172,6 +306,11 @@ function onDeathContinue() {
 }
 
 function onGameHome() {
+  // 开局压的那条返回键历史退掉，回到主页后返回键和没开过局一样；退回来的那次 popstate armed 已清，不会当成返回键
+  if (H.armed) {
+    H.armed = false;
+    try { if (history.state && history.state.brGame) history.back(); } catch (err) { /* 忽略 */ }
+  }
   // world / entities / hud / death / testmode 各自也监听了 game:home，这里再显式调一遍，
   // 保证不管脚本注册顺序如何，回到主页时场景和界面都是干净的
   safe('world', 'clear');
@@ -190,6 +329,11 @@ function onGameHome() {
 function onVisibility() {
   // 切到后台：单机世界要停下来，回来时停在暂停菜单而不是已经被咬死
   if (document.hidden && BR.game.screen === 'playing') safe('hud', 'pause', true);
+  // 上下文丢失的恢复计时只在前台走：切后台先停，回到前台还没恢复就重新计时
+  if (C.lost) {
+    if (document.hidden) stopCtxTimer();
+    else if (ctxIsLost()) armCtxTimer();
+  }
 }
 
 // ---------- 主循环 ----------
@@ -233,8 +377,14 @@ function loop(now) {
   S.raf = requestAnimationFrame(loop);
   const dt = S.last ? Math.min(MAX_DT, Math.max(0, (now - S.last) / 1000)) : 0;
   S.last = now;
-  if (S.auto) tick(dt, true);
-  else safe('gfx', 'render', 0);
+  // 只降渲染不降逻辑：tick 照常每帧跑（Esc 继续、测试面板、input.endFrame 都靠它）。
+  // 联机时暂停/结算不停世界，照常满帧
+  const g = BR.game;
+  const stat = (g.screen === 'paused' || g.screen === 'dead') && !(BR.coop && BR.coop.active);
+  const doRender = !stat || now - (S.lastRender || 0) >= PAUSED_RENDER_MS;
+  if (S.auto) tick(dt, doRender);
+  else if (doRender) safe('gfx', 'render', 0);
+  if (doRender) S.lastRender = now;
 }
 
 // ---------- 启动 ----------
@@ -266,10 +416,15 @@ function boot() {
   BR.bus.on('player:death', onPlayerDeath);
   BR.bus.on('death:continue', onDeathContinue);
   BR.bus.on('game:home', onGameHome);
+  BR.bus.on('gfx:contextlost', onContextLost);
+  BR.bus.on('gfx:contextrestored', onContextRestored);
   document.addEventListener('visibilitychange', onVisibility);
+  window.addEventListener('popstate', onPopState);
   window.addEventListener('pointerdown', unlockAudio, true);
   window.addEventListener('keydown', unlockAudio, true);
   window.addEventListener('touchend', unlockAudio, true);
+  // 游戏中刷新页面：历史里残留的开局哨兵清掉，免得回到主页后返回键行为错乱
+  try { if (history.state && history.state.brGame) history.replaceState(null, ''); } catch (err) { /* 忽略 */ }
 
   BR.game.screen = 'home';
   setInput(false);

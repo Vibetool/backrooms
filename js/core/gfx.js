@@ -123,6 +123,10 @@ function init(canvas) {
   BR.gfx.antialias = antialias;
   BR.gfx.qualityNeedsReload = false;
 
+  // 上下文丢失 / 恢复：three 自己已在 lost 里 preventDefault 并在 restored 里重建 GL 资源，这里只通知 main 暂停、挂提示
+  el.addEventListener('webglcontextlost', () => { BR.bus.emit('gfx:contextlost'); }, false);
+  el.addEventListener('webglcontextrestored', () => { resize(); BR.bus.emit('gfx:contextrestored'); }, false);
+
   window.addEventListener('resize', requestResize, { passive: true });
   window.addEventListener('orientationchange', onOrientation, { passive: true });
   // iOS Safari 地址栏伸缩时 window 不一定发 resize，visualViewport 会
@@ -136,10 +140,15 @@ function isTouchDevice() {
   return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
 }
 
+// 触屏高画质每帧像素上限：手机横竖屏（≤0.8MP）碰不到，只压平板——iPad Air 横屏 1.5 倍是 2.2MP + MSAA，帧缓冲约 75MB
+const TOUCH_MAX_PX = 1.2e6;
+
 function pixelRatioFor(w, h) {
   if (quality === 'low') return 1;
   const dpr = window.devicePixelRatio || 1;
-  let pr = Math.min(dpr, isTouchDevice() ? 1.5 : 2);
+  const touch = isTouchDevice();
+  let pr = Math.min(dpr, touch ? 1.5 : 2);
+  if (touch && w * h * pr * pr > TOUCH_MAX_PX) pr = Math.max(Math.min(pr, 1), Math.sqrt(TOUCH_MAX_PX / (w * h)));
   // 4K 屏再乘 2 倍像素比是每帧 3000 万像素，填充率扛不住：总像素封顶约一块 4K，但不低于 1 倍
   const MAX_PX = 3840 * 2160;
   if (w * h * pr * pr > MAX_PX) pr = Math.max(Math.min(dpr, 1), Math.sqrt(MAX_PX / (w * h)));
@@ -167,6 +176,17 @@ function onOrientation() {
   requestResize();
   // 部分 iOS 版本转屏事件先到、innerWidth 稍后才更新，补一次
   setTimeout(requestResize, 350);
+}
+
+// 竖屏视野下限：竖直视野固定 75° 时，手机竖屏水平视野只剩约 39°，整屏只看得到正前方一面墙。
+// 水平视野不足 60° 时改成保住水平 60°，竖直最多放到 100°（再大边缘拉伸太狠）；
+// 横屏照旧固定竖直视野（Hor+），超宽屏水平视野变宽是正常结果，不设上限
+function gameFov(aspect) {
+  const base = BR.gfx && +BR.gfx.baseFov > 0 ? +BR.gfx.baseFov : 75;
+  const a = aspect > 0 ? aspect : camera.aspect;
+  const h = 2 * Math.atan(Math.tan(base * Math.PI / 360) * a) * 180 / Math.PI;
+  if (!(h < 60)) return base;
+  return Math.min(100, 2 * Math.atan(Math.tan(Math.PI / 6) / a) * 180 / Math.PI);
 }
 
 function resize() {
@@ -387,13 +407,14 @@ const CSS = [
   '.gfx-sanity-vignette{left:0;top:0;width:100%;height:100%;',
   'background:radial-gradient(ellipse at 50% 50%,rgba(0,0,0,0) 36%,rgba(0,0,0,.55) 70%,rgba(0,0,0,.93) 100%);',
   'animation:gfx-breathe 2.4s ease-in-out infinite;}',
-  // 噪点层只比屏幕大一圈，用 transform 跳位（只走合成器，不重绘）；比 200% 大图层省 3/4 显存
-  '.gfx-sanity-noise{left:-128px;top:-128px;width:calc(100% + 256px);height:calc(100% + 256px);',
+  // 噪点层只比屏幕四周各大 64px，用 transform 跳位（只走合成器，不重绘）；关键帧位移都在 ±60px 内，边缘不会露底。
+  // 颗粒图 128px 平铺，跳位幅度够看不出重复
+  '.gfx-sanity-noise{left:-64px;top:-64px;width:calc(100% + 128px);height:calc(100% + 128px);',
   'background-repeat:repeat;animation:gfx-grain .5s steps(1) infinite;}',
-  '@keyframes gfx-grain{0%{transform:translate3d(0,0,0)}12%{transform:translate3d(-37px,-61px,0)}',
-  '25%{transform:translate3d(-89px,23px,0)}37%{transform:translate3d(41px,-97px,0)}',
-  '50%{transform:translate3d(-17px,83px,0)}62%{transform:translate3d(-101px,47px,0)}',
-  '75%{transform:translate3d(71px,5px,0)}87%{transform:translate3d(13px,107px,0)}100%{transform:translate3d(0,0,0)}}',
+  '@keyframes gfx-grain{0%{transform:translate3d(0,0,0)}12%{transform:translate3d(-20px,-34px,0)}',
+  '25%{transform:translate3d(-49px,13px,0)}37%{transform:translate3d(23px,-53px,0)}',
+  '50%{transform:translate3d(-9px,46px,0)}62%{transform:translate3d(-56px,26px,0)}',
+  '75%{transform:translate3d(39px,3px,0)}87%{transform:translate3d(7px,59px,0)}100%{transform:translate3d(0,0,0)}}',
   '@keyframes gfx-fringe{from{transform:translate3d(-.8%,0,0) scale(1.01)}to{transform:translate3d(.8%,.3%,0) scale(1.03)}}',
   '@keyframes gfx-breathe{0%,100%{transform:scale(1.08)}50%{transform:scale(1)}}',
   '@media (prefers-reduced-motion:reduce){.gfx-sanity>div{animation:none!important}}',
@@ -464,6 +485,9 @@ function ensureNoise() {
 // ---------- 低 san ----------
 let sanTarget = 0, sanCur = 0, sanShown = false;
 const sanOp = { fringe: -1, vignette: -1, noise: -1 };
+// 每层自己是否参与合成：噩梦模式 san 一掉就开覆盖层，但刚开始三层不透明度都在 0.4% 以下，肉眼看不出却各占一个全屏合成层
+const SAN_LAYER_MIN = 0.004;
+const sanVis = { fringe: null, vignette: null, noise: null };
 
 function setSanityEffect(v, immediate) {
   sanTarget = U.clamp(+v || 0, 0, 1);
@@ -471,6 +495,15 @@ function setSanityEffect(v, immediate) {
 }
 
 function setLayerOpacity(key, o) {
+  // 跨过阈值时一定写 display，并顺带把不透明度写准（下面的差值门槛可能拦住这次写入）
+  const vis = o >= SAN_LAYER_MIN;
+  if (sanVis[key] !== vis) {
+    sanVis[key] = vis;
+    dom[key].style.display = vis ? '' : 'none';
+    sanOp[key] = o;
+    dom[key].style.opacity = o.toFixed(3);
+    return;
+  }
   // 只在变化明显时写 style：稳定状态下每帧零 DOM 写入
   if (Math.abs(sanOp[key] - o) < 0.004) return;
   sanOp[key] = o;
@@ -503,6 +536,7 @@ function hideSanity() {
   dom.sanity.style.display = 'none';
   sanShown = false;
   sanOp.fringe = sanOp.vignette = sanOp.noise = -1;
+  sanVis.fringe = sanVis.vignette = sanVis.noise = null;   // 下次显示时每层的 display 重新写一遍
 }
 
 // 相机抖动只在 renderer.render 前后临时加上再原样还原：不管谁每帧写相机，都不会累积漂移
@@ -632,6 +666,14 @@ function render(dt) {
   updateLights(dt);
   updateSanity(dt);
 
+  // 游戏内视野每帧对齐 gameFov：开局时 home.hide() 写回的旧 fov、转屏后的新 aspect，都在这里纠正。
+  // 主页 / 工坊 / 载入中不管，它们自己摆相机
+  const scr = BR.game && BR.game.screen;
+  if (scr === 'playing' || scr === 'paused' || scr === 'dead') {
+    const f = gameFov(camera.aspect);
+    if (Math.abs(camera.fov - f) > 1e-3) { camera.fov = f; camera.updateProjectionMatrix(); }
+  }
+
   const shake = sanCur > 0.001;
   if (shake) applyShake(sanCur);
   renderer.render(scene, camera);
@@ -665,6 +707,8 @@ BR.gfx = {
   quality,
   antialias: false,
   qualityNeedsReload: false,   // true = 抗锯齿开关要刷新页面后才生效，设置界面可据此提示
+  baseFov: 75,                 // 游戏内竖直视野；竖屏太窄时 gameFov 会放大，见 gameFov
+  gameFov,                     // (aspect) → 游戏内应使用的竖直视野（度），render 每帧据此对齐 camera.fov
   init,
   applyEnv,
   setLightSources,

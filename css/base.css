@@ -1,4 +1,4 @@
-/* 后室 · 页面底座：全屏画布 + UI 挂载点。只写 html/body/#gl/#ui 和 main.js 自己的 boot- 前缀 */
+/* 后室 · 页面底座：全屏画布 + UI 挂载点。只写 html/body/#gl/#ui 和 main.js 自己的 boot- / ctx-lost 前缀 */
 
 html, body {
   margin: 0;
@@ -84,4 +84,52 @@ input, textarea {
   font-size: 12px;
   color: #a89f86;
   word-break: break-all;
+}
+
+/* main.js：WebGL 上下文丢失提示（只在丢失时创建）。顶部居中，压过 HUD / 暂停 / toast 90，按钮要能点 */
+.ctx-lost {
+  position: fixed;
+  left: 50%;
+  top: 12px;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  z-index: 95;
+  transform: translateX(-50%);
+  pointer-events: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: calc(100% - 32px);
+  max-width: calc(100% - 32px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+  padding: 6px 14px;
+  border: 1px solid rgba(231, 194, 74, .55);
+  border-radius: 8px;
+  background: rgba(11, 10, 7, .92);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .45);
+  color: #f3ead2;
+  font-size: 14px;
+  line-height: 1.4;
+  text-align: center;
+}
+.ctx-lost-text {
+  margin: 6px 0;
+}
+/* 不用 flex gap：老 X5 内核不认，靠外边距隔开 */
+.ctx-lost-btn {
+  min-width: 44px;
+  min-height: 44px;
+  margin: 2px 0 2px 12px;
+  padding: 0 16px;
+  border: 1px solid #e7c24a;
+  border-radius: 6px;
+  background: rgba(231, 194, 74, .16);
+  color: #f3ead2;
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+}
+.ctx-lost-btn:active {
+  background: rgba(231, 194, 74, .32);
 }

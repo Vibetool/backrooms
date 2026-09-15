@@ -51,8 +51,9 @@ const S = {
   inited: false, shown: false,
   // DOM
   root: null, modal: null, hint: null, skinRoot: null, swatches: [],
-  coopBtn: null, coopStatus: null, modalView: null,
+  coopBtn: null, coopStatus: null, micBtn: null, modalView: null,
   hintW: 0, hintH: 0, hintX: -1, hintY: -1, hintPortrait: null,
+  secEl: null, secRect: null,   // 「创意工坊 / 设置」按钮组和它的矩形缓存（resize 时清空）
   // 弹层栈：'menu' | 'casual' | 'nightmare' | 'test' | 'credits' | 'skin'
   layers: [], hist: 0, expectDepth: null,
   // 3D
@@ -484,6 +485,12 @@ function updateHint() {
     _v.set(FIG_POS.x, -0.04, FIG_POS.z).project(cam);
     x = (_v.x + 1) / 2 * w - S.hintW / 2;
     y = (1 - _v.y) / 2 * h + 10;
+    // 360 宽这类窄屏上脚下会压到右下的「创意工坊」按钮：碰上就挪到按钮组上方 8px。
+    // 按钮组矩形只在 resize 后量一次，别每帧 getBoundingClientRect 强制重排
+    const r = secRect();
+    if (r && x < r.right + 8 && x + S.hintW + 8 > r.left && y < r.bottom && y + S.hintH + 8 > r.top) {
+      y = r.top - S.hintH - 8;
+    }
   } else {
     // 横屏：放在人物右侧胸口高度，避开左下署名和右下按钮
     _v.set(FIG_POS.x + 0.36, 1.2, FIG_POS.z).project(cam);
@@ -495,6 +502,15 @@ function updateHint() {
   if (Math.abs(x - S.hintX) < 0.5 && Math.abs(y - S.hintY) < 0.5) return;
   S.hintX = x; S.hintY = y;
   el.style.transform = 'translate3d(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px,0)';
+}
+
+function secRect() {
+  if (!S.secRect && S.secEl) {
+    const r = S.secEl.getBoundingClientRect();
+    // 根节点还没显示时量出来是 0，不缓存，下次再量
+    if (r.width && r.height) S.secRect = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+  }
+  return S.secRect;
 }
 
 // ===================================================================
@@ -655,6 +671,7 @@ function renderLayers() {
     S.modal.textContent = '';
     S.coopBtn = null;
     S.coopStatus = null;
+    S.micBtn = null;
     if (modalTop) buildDialog(modalTop);
     S.modalView = modalTop;
   }
@@ -737,6 +754,15 @@ function slider(body, label, value01, fmt, onChange) {
     onChange(v / 100);
   };
   inp.addEventListener('input', upd);
+  // 竖向滑动滚弹窗时，手指落在滑条上 Chrome 会先把值跳到手指位置，再把手势转成滚动（发 pointercancel），这里把值还原。
+  // 不能给滑条设 touch-action:none，那样从滑条起手就滚不动弹窗了
+  let touchV0 = null;
+  inp.addEventListener('pointerdown', e => { touchV0 = e.pointerType === 'touch' ? inp.value : null; });
+  inp.addEventListener('pointercancel', () => {
+    if (touchV0 !== null && inp.value !== touchV0) { inp.value = touchV0; upd(); }
+    touchV0 = null;
+  });
+  inp.addEventListener('pointerup', () => { touchV0 = null; });
   upd();
   return inp;
 }
@@ -791,6 +817,17 @@ function buildCasual(body) {
   const actions = mk('div', 'home-actions', body);
   S.coopBtn = button('home-btn', actions, '联机');
   S.coopBtn.addEventListener('click', () => { if (BR.coop && has(BR.coop, 'openLobby')) BR.coop.openLobby(); });
+  // 右上角的麦克风按钮（.coop-hud，z-index 35）被主页弹层盖住点不到，接通后在弹窗里自己放一个开关
+  S.micBtn = button('home-btn home-btn-mic', actions, '开麦');
+  S.micBtn.hidden = true;
+  S.micBtn.addEventListener('click', () => {
+    const C = BR.coop;
+    if (!C || !has(C, 'setMic')) return;
+    // 申请麦克风途中再点一次 = 取消，和 coop.js 的 toggleMic 一致
+    const p = C.setMic(!(C.mic || C.micBusy));
+    if (p && typeof p.then === 'function') p.then(updateMic, updateMic);
+    updateMic();
+  });
   const start = button('home-btn home-btn-primary', actions, '开始');
   start.addEventListener('click', () => startGame('casual', null));
   S.coopStatus = mk('div', 'home-coop-status', actions);
@@ -805,6 +842,21 @@ function updateCoop() {
   S.coopBtn.title = ok ? '' : '联机模块未加载';
   const txt = ok && BR.coop.active ? ('已联机 · ' + (BR.coop.role === 'host' ? '你是房主' : '你是客机')) : '';
   if (S.coopStatus.textContent !== txt) S.coopStatus.textContent = txt;
+  updateMic();
+}
+
+// 开麦按钮：只在联机接通时显示；文案 开麦 / 闭麦 / 申请麦克风…（BR.coop.micBusy 由联机模块导出，没有时当作不在申请）
+function updateMic() {
+  const b = S.micBtn;
+  if (!b) return;
+  const C = BR.coop;
+  const show = !!(C && C.active && has(C, 'setMic'));
+  if (b.hidden === show) b.hidden = !show;
+  if (!show) return;
+  const txt = C.micBusy ? '申请麦克风…' : C.mic ? '闭麦' : '开麦';
+  if (b.textContent !== txt) b.textContent = txt;
+  const pressed = C.mic ? 'true' : 'false';
+  if (b.getAttribute('aria-pressed') !== pressed) b.setAttribute('aria-pressed', pressed);
 }
 
 function nightmareLevel() {
@@ -949,7 +1001,7 @@ function buildDom() {
 
   // 「游玩」正上方竖排两个次要按钮：创意工坊、设置（WORKSHOP.md 第 9 节）。
   // 两个模块都是独立文件，可能还没接进 index.html，这里只做存在性判断，不存在就提示"制作中"而不是报错。
-  const secondary = mk('div', 'home-secondary-actions', root);
+  const secondary = S.secEl = mk('div', 'home-secondary-actions', root);
   const workshopBtn = button('home-secondary-btn', secondary, '创意工坊');
   workshopBtn.addEventListener('click', () => {
     if (BR.workshopUI && typeof BR.workshopUI.open === 'function') BR.workshopUI.open();
@@ -1056,9 +1108,11 @@ function init() {
   document.documentElement.addEventListener('mouseleave', () => { S.ptr.ok = false; S.ptr.dirty = true; });
   window.addEventListener('touchend', onTouchEndUnlock, true);
   window.addEventListener('popstate', onPopState);
-  window.addEventListener('resize', () => { S.hintW = 0; });
+  window.addEventListener('resize', () => { S.hintW = 0; S.secRect = null; });
 
   BR.bus.on('skin:change', () => applySkin());
+  // 联机模块在开麦状态变化时发这个事件，弹窗里的开麦按钮立即刷新，不用等 0.5 秒一次的轮询
+  BR.bus.on('coop:mic', () => updateMic());
   // world.js 在 game:home 里会清空灯光列表；它先于本文件注册，这里补回主页的灯和环境
   BR.bus.on('game:home', () => { if (S.shown) enterEnv(); });
 
@@ -1084,6 +1138,7 @@ function show() {
   applySkin();
   S.snapFrame = true;
   S.hintW = 0;
+  S.secRect = null;
   S.hintX = S.hintY = -1;
   S.last = 0;
   if (!S.raf) S.raf = requestAnimationFrame(loop);

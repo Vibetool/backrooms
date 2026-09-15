@@ -10,10 +10,11 @@ const IS_FILE = location.protocol === 'file:';
 
 // 预载清单：init() 里并行探测这些贴图，之后同步 texture() 就不会先闪一帧占位色。
 // 不在清单里的名字照样能用，只是第一次 texture() 时才去探测文件。
+// ceiling_light（65KB 文件）和 noise（CPU 上画 256² 分形噪声）目前没有模块在用，不预载；兜底画法仍保留，按需 texture() 照样取得到
 const MANIFEST = {
   textures: [
-    'wallpaper_l0', 'carpet_l0', 'carpet_light', 'ceiling_tile', 'ceiling_light',
-    'light_panel', 'concrete', 'concrete_wet', 'metal', 'noise', 'baseboard_wood',
+    'wallpaper_l0', 'carpet_l0', 'carpet_light', 'ceiling_tile',
+    'light_panel', 'concrete', 'concrete_wet', 'metal', 'baseboard_wood',
   ],
   models: ['hazmat'],   // 主页人物 / 测试人 / 联机对方共用（tools/blender_hazmat.py 生成）
 };

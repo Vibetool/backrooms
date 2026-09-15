@@ -137,6 +137,15 @@ function sliderField(parent, label, opts) {
     val.textContent = opts.fmt(v);
     opts.onInput(v);
   });
+  // 竖向滑动滚面板时，手指落在滑条上 Chrome 会先把值跳到手指位置，再把手势转成滚动（发 pointercancel），这里把值还原，
+  // 重发 input 走原来的 onInput + persist，存档里的误改也一起改回来。不能设 touch-action:none，那样从滑条起手就滚不动了
+  let touchV0 = null;
+  inp.addEventListener('pointerdown', e => { touchV0 = e.pointerType === 'touch' ? inp.value : null; });
+  inp.addEventListener('pointercancel', () => {
+    if (touchV0 !== null && inp.value !== touchV0) { inp.value = touchV0; inp.dispatchEvent(new Event('input')); }
+    touchV0 = null;
+  });
+  inp.addEventListener('pointerup', () => { touchV0 = null; });
   return field;
 }
 
@@ -210,6 +219,21 @@ function buildDom() {
   dom.qualityBtns = qBtns;
   dom.qualityHint = mk('p', 'set-note', qf, '抗锯齿开关需要刷新页面后生效。');
   dom.qualityHint.hidden = true;
+  // 手机上没有顺手的刷新入口，提示旁边直接给个按钮。设置改动已经实时存档，刷新不丢；
+  // 只在主页刷新（目前设置只从主页打开），以后局内也能打开时不会把一局刷掉
+  dom.reloadBtn = button('set-reload', qf, '立即刷新');
+  dom.reloadBtn.hidden = true;
+  dom.reloadBtn.addEventListener('click', () => {
+    if (BR.game && BR.game.screen !== 'home') return;
+    let reloading = false;
+    const reload = () => { if (reloading) return; reloading = true; location.reload(); };
+    if (!panelState()) { reload(); return; }
+    // 直接刷新会把打开面板时压的那条记录留在栈里（刷新后 home.js 只把它清成 null），回主页第一次按返回没反应：
+    // 先关面板把它 back() 掉，popstate 落地再刷新；有的内核 back() 不发 popstate，500ms 兜底刷新
+    window.addEventListener('popstate', reload, { once: true });
+    setTimeout(reload, 500);
+    closePanel(false);
+  });
 
   dom.visibility = sliderField(body, '默认能见度', {
     min: 0, max: 100, step: 1, unit: 0.01, fmt: v => fmtPct(v),
@@ -228,7 +252,9 @@ function renderQualitySeg() {
 }
 function refreshQualityHint() {
   if (!dom) return;
-  dom.qualityHint.hidden = !(BR.gfx && BR.gfx.qualityNeedsReload);
+  const need = !!(BR.gfx && BR.gfx.qualityNeedsReload);
+  dom.qualityHint.hidden = !need;
+  dom.reloadBtn.hidden = !need;
 }
 
 function renderAll() {
@@ -259,20 +285,43 @@ function ensureDom() {
 
 function onKeydown(e) { if (e.key === 'Escape') close(); }
 
+// ---------- 安卓返回键 / iOS 边缘返回：打开时压一条历史记录，返回时只关面板，不离开页面 ----------
+// 状态格式和主页、联机大厅约定一致：{ brHome: 主页弹层层数, brPanel: 'settings' }。带上当前 brHome，主页 onPopState 算出的层数不变
+function panelState() {
+  try { return history.state && history.state.brPanel === 'settings'; } catch (err) { return false; }
+}
+
 function open() {
   if (!ensureDom()) return;
+  const wasHidden = root.hidden;
   renderAll();
   root.hidden = false;
   prevInputEnabled = BR.input ? BR.input.enabled : null;
   if (BR.input) BR.input.enabled = false;
   document.addEventListener('keydown', onKeydown);
+  if (wasHidden) {
+    try {
+      const st = history.state;
+      history.pushState({ brHome: st && typeof st.brHome === 'number' ? st.brHome : 0, brPanel: 'settings' }, '');
+    } catch (err) { /* file:// 或沙箱环境可能不让改历史，面板照常工作 */ }
+  }
 }
-function close() {
+// fromHistory：返回键触发的关闭，历史已经退回去了，不能再 back 一次
+function closePanel(fromHistory) {
   if (!root || root.hidden) return;
   root.hidden = true;
   if (BR.input && prevInputEnabled != null) BR.input.enabled = prevInputEnabled;
   document.removeEventListener('keydown', onKeydown);
+  // 点 ×、点背景、按 Esc：把打开时压的那条退掉，免得之后按返回键要多按一次
+  if (!fromHistory && panelState()) {
+    try { history.back(); } catch (err) { /* 忽略 */ }
+  }
 }
+function close() { closePanel(false); }
+
+window.addEventListener('popstate', e => {
+  if (root && !root.hidden && !(e.state && e.state.brPanel === 'settings')) closePanel(true);
+});
 
 // ---------- 启动即应用（不需要打开面板），改动都是实时生效 ----------
 applyAll();

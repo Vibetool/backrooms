@@ -8,6 +8,7 @@
 //   「返回主页」：收起 → emit 'game:home'。不锁指针（主页要用鼠标点菜单），输入保持禁用
 //   弹出后 ARM_MS 内按钮不响应：死的那一下玩家往往正在连点，免得误触直接重生或丢掉整局
 //   game:start / game:home 时自动收起；player:respawn（别的路径复活）时收起并恢复 screen 和输入
+//   联机时在按钮组下面补一个开关麦（.death-mic，惰性创建，不带 death-btn 类），同样受 ARM_MS 保护
 //   额外只读：visible
 (function () {
 'use strict';
@@ -35,6 +36,12 @@ function mk(tag, cls, parent, text) {
   if (text != null) n.textContent = text;
   if (parent) parent.appendChild(n);
   return n;
+}
+
+// 结算按钮用 input 的轻点判定：死的时候玩家往往正按着摇杆，浏览器不合成 click；input 没载入时退回 click
+function tap(el, fn) {
+  if (BR.input && typeof BR.input.tap === 'function') BR.input.tap(el, fn);
+  else el.addEventListener('click', fn);
 }
 
 function isTouch() {
@@ -116,7 +123,7 @@ function build() {
   mk('span', 'death-osd-stop', osd, '■ STOP');
   dom.osdTime = mk('span', 'death-osd-time', osd, '00:00:00');
 
-  const panel = mk('div', 'death-panel', root);
+  const panel = dom.panel = mk('div', 'death-panel', root);
   mk('div', 'death-tag', panel, 'SIGNAL LOST · 信号中断');
   mk('div', 'death-title', panel, '你死了');
 
@@ -134,8 +141,48 @@ function build() {
   dom.btnHome = buildBtn(actions, 'death-btn-home', '返回主页', '');
   dom.hint = mk('div', 'death-hint', panel, '按 Enter 继续');
 
-  dom.btnContinue.addEventListener('click', onContinue);
-  dom.btnHome.addEventListener('click', onHome);
+  tap(dom.btnContinue, onContinue);
+  tap(dom.btnHome, onHome);
+}
+
+// ---------- 联机开关麦 ----------
+function micCoop() {
+  const c = BR.coop;
+  return c && c.active && typeof c.setMic === 'function' ? c : null;
+}
+
+// 联机时结算不停世界，死后常要喊队友，但结算层盖住了右上角的麦克风按钮：只在联机时创建，文案与 coop.js 一致
+function syncMic() {
+  if (!dom.ready) return;
+  const c = micCoop();
+  if (!c && !dom.mic) return;
+  if (!dom.mic) {
+    // 不带 death-btn 类：结算主按钮保持「继续」「返回主页」两个
+    const b = dom.mic = mk('button', 'death-mic');
+    b.type = 'button';
+    mk('span', 'death-mic-ico', b, '🎙');
+    dom.micTxt = mk('span', 'death-mic-txt', b, '');
+    dom.panel.insertBefore(b, dom.hint);
+    tap(b, onMic);
+  }
+  const on = !!(c && c.mic), busy = !!(c && c.micBusy);
+  dom.mic.hidden = !c;
+  dom.mic.classList.toggle('death-mic-on', on);
+  dom.mic.classList.toggle('death-mic-busy', busy);
+  dom.micTxt.textContent = busy ? '申请麦克风…' : on ? '开麦中' : '已闭麦';
+  dom.mic.setAttribute('aria-pressed', on ? 'true' : 'false');
+  dom.mic.setAttribute('aria-label', busy ? '正在申请麦克风，点击取消' : on ? '麦克风已打开，点击闭麦' : '麦克风已关闭，点击开麦');
+}
+
+function onMic() {
+  // 和主按钮一样等 ARM_MS：死的那一下连点不能顺手把麦开了
+  if (!S.visible || nowMs() < S.armAt) return;
+  const c = micCoop();
+  if (!c) return;
+  // 申请途中再点 = 取消，和 coop.js 的麦克风按钮一致
+  const r = c.setMic(!(c.mic || c.micBusy));
+  syncMic();
+  if (r && typeof r.then === 'function') r.then(syncMic, syncMic);
 }
 
 function ensureDom() {
@@ -188,6 +235,7 @@ function show(info) {
   dom.level.textContent = levelLabel(levelId);
   dom.deepest.textContent = levelLabel(deepest);
   dom.hint.hidden = isTouch();
+  syncMic();
 
   // 挪到 #ui 最后：和暂停菜单同为 z-index 60，后挂的盖在上面
   const h = host(), root = dom.root;
@@ -247,6 +295,8 @@ function onHome() {
 BR.bus.on('game:start', hide);
 BR.bus.on('game:home', hide);
 BR.bus.on('player:respawn', () => { if (S.visible) release(); });
+// 麦克风状态变了（coop.js 发）；没有这个事件时，点击后等 setMic 的结果回来再刷新一次
+BR.bus.on('coop:mic', () => { if (S.visible) syncMic(); });
 
 // ---------- 导出 ----------
 function init() {

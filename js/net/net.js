@@ -5,7 +5,8 @@
 //     'peerLeft' | 'msg' 对方消息（除 bye 外全部） | 'error' { code, text, fatal }
 //     'remoteStream' / 'localStream' MediaStream | 'mic' bool（麦克风被系统收回时）
 //   createRoom(name) → 房号；joinRoom(code, name) → 房主昵称；roomInfo(code) → { state, host_name, guest_name }
-//   send(obj, { lossy }) → bool；setMic(on) → Promise<bool>；leave()；errorText(code)
+//   send(obj, { lossy }) → bool；setMic(on) → Promise<bool>；leave()；errorText(code)（按微信/QQ、iOS 调整文案）
+//   remotePaused：对方语音的 <audio> 有流但被自动播放策略拦着没播；pagehide 时也会发 'disconnected' { reason: 'closed' }
 //   语音：建连时就协商一条收发音频的通道（不带轨道），开麦时才申请麦克风并 replaceTrack，不必重新协商
 (function () {
 'use strict';
@@ -92,9 +93,27 @@ const ERROR_TEXT = {
   mic_timeout: '麦克风权限请求没有响应，请检查浏览器是否拦截了权限弹窗。',
   mic_failed: '打开麦克风失败。',
 };
+// 微信 / QQ 内置浏览器没有地址栏，这几类问题的出路是换到系统浏览器
+const IN_APP_CODES = { no_webrtc: 1, mic_unsupported: 1, mic_denied: 1 };
+function inAppBrowser() { return /MicroMessenger|QQ\//i.test(navigator.userAgent || ''); }
+// iPadOS 默认发桌面 UA（Macintosh），靠多点触控区分
+function isIOS() {
+  const ua = navigator.userAgent || '';
+  return /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+}
 function errorText(code) {
   if (!code) return '联机出错。';
-  if (ERROR_TEXT[code]) return ERROR_TEXT[code];
+  if (ERROR_TEXT[code]) {
+    const inApp = inAppBrowser();
+    let t = ERROR_TEXT[code];
+    if (code === 'mic_denied') {
+      // 默认文案按桌面 Chrome 写的；内置浏览器的权限归宿主应用管，iOS Safari 的入口不在地址栏左侧
+      if (inApp) t = '麦克风权限被拒绝。请在系统设置里允许微信 / QQ 使用麦克风，然后再点开麦。';
+      else if (isIOS()) t = '麦克风权限被拒绝。请在 Safari 的网站设置里允许使用麦克风（或到系统设置里的 Safari → 麦克风），然后再点开麦。';
+    }
+    if (inApp && IN_APP_CODES[code]) t += '可点右上角「…」选择「在浏览器打开」。';
+    return t;
+  }
   if (/^http_\d+$/.test(code)) return '联机服务器出错（HTTP ' + code.slice(5) + '），请稍后再试。';
   return '联机出错：' + code;
 }
@@ -501,6 +520,8 @@ function teardown(sendBye) {
 
 async function createRoom(name) {
   if (N.active) teardown(true);
+  // 和 joinRoom 一样先查：不然会先在服务器上建好房，到 setupPeer 才失败再关房
+  if (typeof RTCPeerConnection !== 'function') throw netError('no_webrtc');
   const gen = N.gen;
   N.myName = cleanName(name);
   const d = await api('create', {}, { name: N.myName });
@@ -563,8 +584,15 @@ function clearHint() {
   try { sessionStorage.removeItem(HINT_KEY); } catch (err) { /* 忽略 */ }
 }
 
-// 关页面时尽量通知对方，对方不必等 ICE 超时才知道人走了
-window.addEventListener('pagehide', () => { if (N.active) teardown(true); });
+// 关页面时尽量通知对方，对方不必等 ICE 超时才知道人走了；
+// 同时告诉 coop.js 连接没了：页面万一从往返缓存恢复，不会卡在"联机中、实体不归本机管"的状态
+window.addEventListener('pagehide', () => {
+  if (N.active) {
+    const was = N.connected;
+    teardown(true);
+    emit('disconnected', { reason: 'closed', wasConnected: was });
+  }
+});
 
 BR.net = {
   on(fn) { listeners.add(fn); return () => listeners.delete(fn); },
@@ -582,5 +610,7 @@ BR.net = {
   get micPending() { return !!N.micPending; },
   get localStream() { return N.localStream; },
   get remoteStream() { return N.remoteStream; },
+  // 对方语音已接上却没在播（自动播放被拦着）：coop.js 据此把说话角标换成"轻触收听"
+  get remotePaused() { return !!N.remoteAudio && !!N.remoteAudio.srcObject && N.remoteAudio.paused; },
 };
 })();
