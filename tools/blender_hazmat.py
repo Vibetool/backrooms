@@ -41,7 +41,10 @@ MAT_SPECS = {
     'Visor':  (0x0a0e11, 0.06, 0.30),  # 深色目镜：低粗糙度，灯下有高光
     'Filter': (0x353535, 0.45, 0.35),
     'Belt':   (0x1a1a1a, 0.85, 0.0),
-    'Metal':  (0x9a9a9a, 0.30, 1.0),
+    # 反光条 / 腰带扣 / 滤罐端盖 / 镜框螺钉共用这一个材质。metallic 原来是 1.0：Blender 里有世界背景照着好看，
+    # 但游戏里没有环境贴图，纯金属没有漫反射项，这些件在场景里一律发黑（b1-H 出图实测反光条是黑的）。
+    # 降到 0.25 并把底色提亮，游戏里才是银灰的反光条，Blender 预览里也还是金属件
+    'Metal':  (0xb9bec4, 0.42, 0.25),
     'Pouch':  (0x2b2a22, 0.90, 0.0),
 }
 MATS = {}
@@ -121,7 +124,7 @@ def make_wr(seed, f_axis=22.0, f_ring=1.3):
 
 
 def loft(mat, rings, segs, cap0=True, cap1=True, n=2.0, wr=None, ref=None,
-         dome0=0.0, dome1=0.0, smooth=True, cap_smooth=False):
+         dome0=0.0, dome1=0.0, smooth=True, cap_smooth=False, s0=0.0):
     """沿路径放样。rings: [[x, y, z, rx, ryf, ryb, amp], ...]
     横截面在垂直于切线的平面里：side 轴半径 rx，front 轴半径 ryf（正向）/ ryb（反向），n 为超椭圆指数。
     面的绕序按构造保证朝外：quad (a_j, b_j, b_j+1, a_j+1) 法线 = t × front = side。"""
@@ -135,7 +138,9 @@ def loft(mat, rings, segs, cap0=True, cap1=True, n=2.0, wr=None, ref=None,
         d = P[-1] - P[0]
         avg = d.normalized() if d.length > 1e-6 else T[0]
         ref = Vector((1, 0, 0)) if abs(avg.x) < 0.85 else Vector((0, 0, 1))
-    s_acc = 0.0
+    # s0：这一段在整条肢体上的起始弧长。贴在肢体上的带子（反光条、翻边）拿它接着算褶皱相位，
+    # 褶子才对得上，不会是一条光溜溜的圈浮在褶皱上面
+    s_acc = s0
     for i in range(m):
         if i > 0:
             s_acc += (P[i] - P[i - 1]).length
@@ -268,10 +273,47 @@ def at_z(rings, z):
     return [u + (v - u) * t for u, v in zip(a, b)]
 
 
+def arc_at_z(rings, z):
+    """沿中心线从 rings[0] 累计到高度 z 的弧长，配合 loft 的 s0 用"""
+    s = 0.0
+    for i in range(len(rings) - 1):
+        a, b = rings[i], rings[i + 1]
+        seg = (Vector(b[:3]) - Vector(a[:3])).length
+        if (a[2] - z) * (b[2] - z) <= 0 and a[2] != b[2]:
+            return s + seg * (z - a[2]) / (b[2] - a[2])
+        s += seg
+    return s
+
+
+def band(mat, rings, z_hi, z_lo, dr, segs=18, wr=None, n=2.0, amp=None):
+    """箍在肢体上的一圈带子（反光条、靴口翻边）：沿同一条中心线取两圈、半径加 dr，两端不封口，
+    看过去就是贴在布面上的一条带子。带上原肢体的褶皱函数和弧长，带子跟着褶子起伏，不会浮起来。
+    amp 显式给 0 = 这条带子自己是硬的（橡胶翻边），不跟着褶：否则短短一圈上褶皱忽大忽小，
+    边缘会成锯齿状，看起来像撕破的口子"""
+    ks = []
+    for z in (z_hi, z_lo):
+        r = at_z(rings, z)
+        a = r[6] if amp is None else amp
+        ks.append([r[0], r[1], r[2], r[3] + dr, r[4] + dr, r[5] + dr, a])
+    loft(mat, ks, segs, cap0=False, cap1=False, n=n, wr=wr, ref=Vector((1, 0, 0)), s0=arc_at_z(rings, z_hi))
+
+
+def seam(mat, rings, z0, z1, ang, r=0.005, n=5, segs=5, dr=0.0025):
+    """沿肢体表面走的一条压胶条：按方位角 ang 在表面外侧取点，穿一条细管"""
+    pts = []
+    for i in range(n):
+        z = z0 + (z1 - z0) * i / (n - 1)
+        c = at_z(rings, z)
+        rad = c[3] * (1 + c[6] * 0.9) + dr
+        pts.append([c[0] + math.cos(ang) * rad, c[1] + math.sin(ang) * rad, c[2], r, r, r, 0])
+    loft(mat, pts, segs, ref=Vector((1, 0, 0)))
+
+
 # ---------------------------------------------------------------------------
 # 人体各部件（建模朝 -Y；x>0 是人物左侧）
 # ---------------------------------------------------------------------------
 TORSO = []
+HOOD = []
 MC = Vector((0.0, -0.078, 1.615))      # 面罩椭球中心
 MRX, MRY, MRZ = 0.098, 0.075, 0.118
 
@@ -338,9 +380,10 @@ def build_suit():
         k[3] *= HOOD_S
         k[4] *= HOOD_S
         k[5] *= HOOD_S
-    loft('Suit', spline(hood, 3), 24, wr=wr_h, dome1=0.015)
+    HOOD[:] = spline(hood, 3)
+    loft('Suit', HOOD, 24, wr=wr_h, dome1=0.015)
 
-    arms = {}
+    arms, legs = {}, {}
     for sx in (1, -1):
         # 手臂自然下垂、肘部略后、手腕略前，手腕离髋部约 7 cm；肩头压低，不要垫肩似的鼓包
         ak = [
@@ -355,7 +398,7 @@ def build_suit():
         ]
         rings = spline(ak, 4)
         arms[sx] = rings
-        loft('Suit', rings, 20, wr=make_wr(3 + sx, f_axis=20.0), dome0=0.02)
+        loft('Suit', rings, 18, wr=make_wr(3 + sx, f_axis=20.0), dome0=0.02)
 
         # 裤腿：膝盖和靴口上方堆褶；胶带那一段褶皱压低，免得褶子顶穿胶带像破布
         lk = [
@@ -368,8 +411,44 @@ def build_suit():
             [sx * 0.146, 0.004, 0.380, 0.073, 0.071, 0.075, 0.0],
             [sx * 0.150, 0.008, 0.300, 0.066, 0.064, 0.068, 0.0],
         ]
-        loft('Suit', spline(lk, 4), 20, wr=make_wr(7 + sx, f_axis=20.0))
+        # 裤腿的周向分段退回 20：靴口胶带也是 20 段，两边分段数不一样时，裤腿的棱正好顶在胶带的棱之间，
+        # 靴口就露出一排交替的黑齿。手臂那边没有这个问题（护腕胶带比前臂粗一大圈），保持 18 段省面数
+        legs[sx] = spline(lk, 4)
+        loft('Suit', legs[sx], 20, wr=make_wr(7 + sx, f_axis=20.0))
+    build_suit_detail(arms, legs)
     return arms
+
+
+def build_suit_detail(arms, legs):
+    """M2 打磨：防化服上可指认的件 —— 反光条、压胶条、护膝。
+    反光条走 Metal 材质（本来就有，不新增材质 / draw call），银灰的一圈压在黄制服上，隔着走廊就认得出。
+    压胶条走 Tape：防化服是热合缝，每条缝上都压一条胶带"""
+    wr_t = make_wr(1, f_axis=16.0)
+    wr_hood = make_wr(2, f_axis=22.0)
+    for sx in (1, -1):
+        wr_a, wr_l = make_wr(3 + sx, f_axis=20.0), make_wr(7 + sx, f_axis=20.0)
+        ar, lr = arms[sx], legs[sx]
+        # 反光条：上臂、前臂、小腿各一道（前臂那道在手套胶带以上，小腿那道在靴口以上）
+        band('Metal', ar, 1.300, 1.245, 0.004, segs=18, wr=wr_a)
+        band('Metal', ar, 1.050, 1.000, 0.004, segs=18, wr=wr_a)
+        band('Metal', lr, 0.500, 0.450, 0.004, segs=18, wr=wr_l)
+        # 压胶条：手臂和裤腿的外侧缝
+        ang = 0.0 if sx > 0 else math.pi
+        seam('Tape', ar, 1.400, 0.900, ang, r=0.005, n=5)
+        seam('Tape', lr, 0.920, 0.320, ang, r=0.005, n=5)
+        # 护膝：膝盖前面一块加强布（制服色，跟着换肤变色）
+        c = at_z(lr, 0.570)
+        rbox('Suit', (c[0], c[1] - c[4] * (1 + c[6] * 0.9) - 0.004, 0.570), 0.045, 0.012, 0.062, n=5.0, segs=12)
+    # 胸前和兜帽各一圈反光条
+    band('Metal', TORSO, 1.290, 1.235, 0.005, segs=24, wr=wr_t)
+    band('Metal', HOOD, 1.700, 1.665, 0.004, segs=24, wr=wr_hood)
+    # 前襟两侧的压胶条（门襟压条，夹着中间那条拉链）
+    for sx in (1, -1):
+        pts = []
+        for i in range(6):
+            z = 1.420 - (1.420 - 0.900) * i / 5
+            pts.append([sx * 0.026, torso_surface_y(z, sx * 0.026) - 0.003, z, 0.005, 0.005, 0.005, 0])
+        loft('Tape', pts, 5, ref=Vector((1, 0, 0)))
 
 
 def build_hands(arms):
@@ -405,19 +484,24 @@ def build_hands(arms):
                            ((inward * 0.011, 0, -0.05), 0.0115), ((inward * 0.02, 0, -0.068), 0.0100)):
                 p = P + Vector((off[0] * f, yo * (1.0 if off[2] > 0 else 1.05), off[2] * f))
                 fk.append([p.x, p.y, p.z, r, r, r, 0.0])
-            loft('Gloves', spline(fk, 2), 8, dome1=0.006)
+            loft('Gloves', spline(fk, 1), 8, dome1=0.006)
+        # 手背护块：指节上面压一块（面数从手指那边省出来的）
+        rbox('Gloves', (P.x, P.y, P.z + 0.020), 0.017, 0.040, 0.010, n=5.0, segs=10)
         tk = []
         B = W + d * 0.035
         for off, r in (((0, -0.030, 0.0), 0.0125), ((inward * 0.01, -0.046, -0.035), 0.0115),
                        ((inward * 0.022, -0.050, -0.065), 0.0095)):
             p = B + Vector(off)
             tk.append([p.x, p.y, p.z, r, r, r, 0.0])
-        loft('Gloves', spline(tk, 2), 8, dome1=0.006)
+        loft('Gloves', spline(tk, 1), 8, dome1=0.006)
 
 
 def build_boots():
     for sx in (1, -1):
         x = sx * 0.150
+        # 靴筒保持原样（不加褶皱、不加翻边）：试过给靴筒加横褶、再加一圈翻边，靴口都会出现一圈黑色锯齿
+        # （裤腿轮廓压在靴口胶带的顶盖上，边界跟着裤腿的褶子抖）。改胶带半径、改褶皱幅度都没能消掉，
+        # 与其留一圈"撕烂的"靴口，不如把这一段退回基线那套干净几何，靴子的细节改由别处补
         shaft = [
             [x, 0.008, 0.060, 0.066, 0.066, 0.070, 0.0],
             [x, 0.008, 0.120, 0.064, 0.064, 0.072, 0.0],
@@ -426,7 +510,7 @@ def build_boots():
             [x, 0.008, 0.365, 0.073, 0.072, 0.074, 0.0],
         ]
         loft('Boots', spline(shaft, 2), 20)
-        # 靴口胶带：盖住裤腿和靴筒的接缝
+        # 靴口胶带：盖住裤腿和靴筒的接缝（半径和高度都退回基线值，理由见上面靴筒那段注释）
         loft('Tape', [[x, 0.008, 0.345, 0.079, 0.079, 0.079, 0], [x, 0.008, 0.350, 0.081, 0.081, 0.081, 0],
                       [x, 0.008, 0.390, 0.081, 0.081, 0.081, 0], [x, 0.008, 0.395, 0.078, 0.078, 0.078, 0]], 20)
         # 鞋头沿 -Y：front 轴朝下，ryf 是下半厚度、ryb 是上半厚度
@@ -439,8 +523,8 @@ def build_boots():
             [x, -0.175, 0.045, 0.045, 0.028, 0.030, 0],
             [x, -0.200, 0.042, 0.030, 0.020, 0.022, 0],
         ]
-        loft('Boots', spline(foot, 2), 18, dome0=0.012, dome1=0.010)
-        rbox('Boots', (x, -0.058, 0.016), 0.064, 0.150, 0.016, n=4.0, bevel=0.35, segs=28)
+        loft('Boots', spline(foot, 1), 18, dome0=0.012, dome1=0.010)
+        rbox('Boots', (x, -0.058, 0.016), 0.064, 0.150, 0.016, n=4.0, bevel=0.35, segs=22)
 
 
 def build_mask():
@@ -448,7 +532,7 @@ def build_mask():
 
     # 大视野深色目镜：贴在面罩外的圆角矩形曲面片，前后两层 + 侧壁闭合
     A = acc('Visor')
-    nu, nv = 26, 6
+    nu, nv = 20, 6
     th_half, ph_lo, ph_hi = 1.0, 0.13, 0.70
     phm, phh = (ph_lo + ph_hi) / 2, (ph_hi - ph_lo) / 2
 
@@ -484,6 +568,10 @@ def build_mask():
     # 橡胶镜框
     rim = [uv(i, j, 0.0045) for i, j in border]
     tube_loop('Mask', rim, 0.0055, segs=6, refs=[(p - MC).normalized() for p in rim])
+    # 镜框四角的固定螺钉：面罩特写里一眼看得出镜片是拧在面罩上的
+    for th, ph in ((1.05, 0.62), (-1.05, 0.62), (1.05, 0.18), (-1.05, 0.18)):
+        p, nrm = mask_pt(th, ph), mask_nrm(th, ph)
+        cylinder('Metal', p - nrm * 0.002, p + nrm * 0.007, 0.0055, segs=6)
 
     # 下巴的呼气阀
     p, nrm = mask_pt(0.0, -0.5), mask_nrm(0.0, -0.5)
@@ -499,6 +587,12 @@ def build_mask():
                         [*(p + nrm * 0.052), 0.043, 0.043, 0.043, 0], [*(p + nrm * 0.058), 0.037, 0.037, 0.037, 0]],
              28, ref=Vector((0, 0, 1)))
         cylinder('Metal', p + nrm * 0.055, p + nrm * 0.0615, 0.024, segs=20, dome1=0.002)
+        # 滤盒外壳的两道加强筋 + 接软管的小嘴：圆罐子上有了分层，不再是一颗素圆饼
+        for t0 in (0.028, 0.044):
+            loft('Filter', [[*(p + nrm * t0), 0.046, 0.046, 0.046, 0],
+                            [*(p + nrm * (t0 + 0.006)), 0.046, 0.046, 0.046, 0]],
+                 20, cap0=False, cap1=False, ref=Vector((0, 0, 1)))
+        cylinder('Metal', p + nrm * 0.061, p + nrm * 0.072, 0.008, segs=8)
 
     # 面罩外沿胶带圈（与 y 轴垂直的平面椭圆）
     y = -0.092
@@ -512,8 +606,8 @@ def build_mask():
         ct, st = math.cos(tilt), math.sin(tilt)
         pts = []
         b0, b1 = -0.8, math.pi + 0.8
-        for i in range(31):
-            b = b0 + (b1 - b0) * i / 30
+        for i in range(25):
+            b = b0 + (b1 - b0) * i / 24
             lx, ly = rx * math.cos(b), ry * math.sin(b)
             pts.append(Vector((lx, 0.012 + ly * ct, cz + ly * st)))
         tube_loop('Mask', pts, 0.006, segs=6, refs=[Vector((0, -st, ct))], closed=False)
@@ -528,6 +622,14 @@ def build_gear():
                   [0, r[1], 1.022, rx + 0.008, ryf + 0.008, ryb + 0.008, 0],
                   [0, r[1], 1.028, rx + 0.003, ryf + 0.003, ryb + 0.003, 0]], 40, n=2.3)
     rbox('Metal', (0, -(ryf + 0.008) - 0.004, 1.0), 0.030, 0.005, 0.022, n=8.0, bevel=0.4)
+    # 腰带扣：原来只有一块扁金属片，补上插舌和两侧的穿带环，看得出是一副带扣
+    by = -(ryf + 0.008) - 0.004
+    cylinder('Metal', (0, by - 0.004, 1.0), (0, by - 0.016, 1.0), 0.004, segs=6)
+    rbox('Metal', (0, by - 0.010, 0.988), 0.020, 0.004, 0.010, n=6.0, bevel=0.4, segs=10)
+    for sx in (1, -1):
+        kx = sx * 0.075
+        ky = -(ryf + 0.008) * (1 - abs(kx / (rx + 0.008)) ** 2.3) ** (1 / 2.3) - 0.004
+        rbox('Belt', (kx, ky, 1.0), 0.010, 0.010, 0.032, n=5.0, segs=10)
     # 右胯挂一个小包
     rbox('Pouch', (-0.150, -0.118, 0.965), 0.036, 0.024, 0.048, n=5.0)
     rbox('Pouch', (-0.150, -0.121, 1.004), 0.038, 0.027, 0.013, n=5.0)
@@ -539,6 +641,8 @@ def build_gear():
         y = min(torso_surface_y(z, xx) for xx in (-0.014, 0.0, 0.014)) - 0.002
         zk.append([0, y, z, 0.016, 0.0035, 0.0035, 0])
     loft('Tape', zk, 12, n=6.0, ref=Vector((1, 0, 0)))
+    # 拉链头：拉链顶端一小块金属，看得出这条黑带子是拉链不是贴条
+    rbox('Metal', (0, torso_surface_y(1.425, 0.0) - 0.010, 1.425), 0.008, 0.004, 0.012, n=6.0, bevel=0.4, segs=8)
 
     # 左胸小工具包：包身 + 盖 + 挂带
     x, z = 0.085, 1.255

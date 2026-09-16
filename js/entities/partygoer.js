@@ -8,6 +8,40 @@
 // 用户特别提醒：这是社区最知名实体之一（俗称"黄色笑脸派对客"），本文件严格只做选中版本写到的样子——
 // 光滑革质亮黄色皮肤（变种暗黄/棕黄/橙/白）、脸上纯红色卡通笑脸（原文没提眼睛，不画）、手臂末端是
 // 长满牙的七鳃鳗状嘴——不额外加同人形象里常见但原文没写的派对帽或衣物。
+//
+// ---- M2 打磨第 1 批（ENGINE_PLAN 第 4 节）：只动 build / extend / 模型辅助函数，行为与数值字段一字未改 ----
+// M1 打分员在基线截图上指出的问题，逐条对应下面的改动：
+// ①「手端七鳃鳗齿口……是贴在手上的圆片，不是从手臂延伸出的管状口」「远处看像飞镖靶」
+//    → mouthFunnel()：从前臂末端顺着一条前倾的轴线长出一截漏斗形口管，五段粗细交替的环节（依据
+//      「类似红虫或七鳃鳗的嘴」——红虫/七鳃鳗都是环节状的身体），末端外翻成唇缘。
+// ②「嘴里有几排锋利牙齿」原来只有两圈、而且是从球面朝四周辐射（看着像手指）
+//    → 改成三圈同心齿列，由外到内一圈比一圈小、齿尖一律朝开口中心收拢（七鳃鳗口盘的排法）。
+// ③「笑脸只是一条很细的红弧线、远处看不见」「偏在头侧」（平面弧片贴在球面前方，3/4 视角会浮在脸外）
+//    → smileArc()：笑脸改成贴着头部椭球表面走的一条有厚度的红色弧管，中间粗、嘴角收细，正脸和 3/4
+//      视角都读得出来。依据「脸上是一个由红色物质构成的卡通笑脸」——红色物质堆在脸上，本来就该有厚度。
+//      仍然不画眼睛（原文「未描述眼睛」）。
+// ④「身体是分节木人偶，没有光滑革质的连续体表」
+//    → addSkinSmoothing()：髋部方块外面罩一层圆滑外壳，腰、颈根、肩头、脚踝加过渡肉块，把构件之间的
+//      硬接缝盖掉。依据「皮肤光滑呈革质」。
+// ⑤「圆台底座是一根窄锥、不像跳棋棋子那种宽扁圆台，胯部方盒子悬在锥顶衔接生硬」（侧面截图里被圆台
+//    盖住的那两条腿还会从底座前面露出来）
+//    → addPedestalBase()：底座改成宽扁的多级圆台——外张的底盘、收腰、中段凸出的棱环、收进去接住髋部的
+//      顶盖，宽度顶到实体自己的碰撞半径附近，腿完全藏进去。依据「有时像跳棋棋子的底座，呈圆台形」。
+// ⑥ 任务点名的「圆台底座形态看不出在走路」
+//    → 底座分成三节骨骼（hips / pedA / pedB），配 anim.onFrame 的 pedestalGait()：走起来时下节左右摆、
+//      上节反向补偿，躯干随步伐起伏、手臂轻微前后摆；站住不动时完全按原来的样子。这一段是纯表现
+//      （只读 u.sp / u.phase，只叠加骨骼旋转位移），speed、brain 和其余行为数值一律没碰。
+// 顶点色 tint 只用在"底座棱环凹槽"一处，而且只给中性灰（把这一块压暗），不引入原文没写的新色相；
+// 不新增材质槽位，draw call 仍然是 body/head/claw/glow/mouth 五个。
+//
+// ---- 复评返修（第 2 轮）----
+// 复评在 before/after 局部放大和 6 m 层级灯光截图上指出：口管的形态是改对了，但整根管子和身体同为亮黄、
+// 开口又小又侧对镜头，6 m 外整只读成一个没有特征的黄色剪影——而基线那两枚"深色圆盘 + 白色放射状牙"
+// 虽然形状不对（打分员说"像飞镖靶"），却是这只知名实体在远处唯一认得出的特征，等于用对的形态换掉了
+// 辨识度。这一轮只动 mouthFunnel：① 前倾角 50°→66°，开口正对前方并抬回大腿中段；② 口腔从"细圆盘 +
+// 顶点色压暗的内唇"换成 mouth 槽位（basic 不受光照）的深色喉管，封口盘半径 0.4hr→0.5hr 并缩进唇缘里
+// 0.07L，任何距离都是一块黑；③ 三圈齿列全部移到封口盘前面，白牙直接衬在黑洞上。牙本身仍是细牙。
+// 缓存键随模型改动升到 _v4（同一页面里不会复用旧几何）。
 (function () {
 'use strict';
 const BR = window.BR;
@@ -18,6 +52,11 @@ const A = BR.arch;
 const FACE_RED = 0xd42a20;     // 依据："脸上是一个由红色物质构成的卡通笑脸"
 const TEETH_COLOR = 0xf2ede0;  // 依据：手臂末端嘴"里有几排锋利牙齿"——原文没给牙齿颜色，取普通牙齿浅色，非设定
 const MOUTH_DARK = 0x160a0a;   // 手臂末端嘴的口腔开口色：原文没写颜色，取深色让"嘴"读起来是个洞而不是一颗球，非设定
+
+// 顶点色 tint：只是把同一块皮肤压暗，让凹进去的地方读得出是凹的（底座棱环下的凹槽）。
+// 纯中性灰乘数，不带色相，等于给这一块打阴影，不是新颜色，非设定。
+// （口腔内壁本来也用 tint 压暗，复评返修后整个换成 mouth 槽位的深色喉管，原来的 SHADE_DEEP 随之删掉）
+const SHADE_SOFT = 0xc2c2c2;   // ×0.76：底座凹槽
 
 // 依据："皮肤光滑呈革质，通常亮黄色，变种可为暗黄、棕黄、橙色或白色"——亮黄色权重更高（呼应"通常"），
 // 其余四种变种各占一份；具体比例原文没给，非设定，只保证亮黄仍是抽到最多的颜色
@@ -31,35 +70,164 @@ function pickBodyColor(ctx) {
   return PALETTE[h % PALETTE.length];
 }
 
+// 画质分档：extend 只拿得到 dims，拿不到 humanoid 解析后的 detail，按 _archetypes.js resolveDetail 的同一条
+// 规则自己再算一次（hazmat 构件也是这么做的）。humanoid 的几何缓存键里带着解析后的 detail，两边同一时刻
+// 读同一个设置，高低画质各自缓存各自的几何，不会互相顶掉
+function isHigh() {
+  const s = BR.game && BR.game.settings;
+  return !(s && s.quality === 'low');
+}
+
 // 笑脸尺寸换算：A.parts.humanoid 的 face 选项内部把 glowFaceGeo 的 width 设成 headR×1.5（_archetypes.js
 // buildFace 调用处）。早期版本借用 glowFaceGeo 的 teeth 型笑脸（一排离散的牙齿方块拼成弧线）来表现
-// "卡通笑脸"，验收截图发现牙齿方块之间天然留有间隙（glowFaceGeo 里 tw = sw/n*0.78，无论 n 给多大都
-// 留约两三成缝隙——这套公式是为了露出"一颗颗牙"设计的，不是为了拼出一条实心弧线），远看是一串分开的
-// 红色小点/十字，不是原文"由红色物质构成的卡通笑脸"要的一条连续弧线。这里不再用 humanoid 的内置 smile，
-// 改在 addFaceSmile() 里用 ShapeGeometry 直接画一条连续的实心笑弧（见下方）。
+// "卡通笑脸"，验收截图发现牙齿方块之间天然留有间隙，远看是一串分开的红色小点，不是原文要的一条连续弧线；
+// 后来改成一片 ShapeGeometry 月牙（连续了，但太薄、而且是一片平面贴在球形脸前面，3/4 视角会浮在脸侧边，
+// 就是 M1 两名打分员同时点名的"笑脸过细、偏在头侧"）。现在改成沿着头部椭球表面走的一条弧管，见 smileArc()。
 const HEAD_R = 0.068 * 1.72;          // 依据：两个下肢型 height 都是 1.72，套用 _archetypes.js 的头部半径公式反推
 const FACE_W = HEAD_R * 1.5;          // 依据：buildFace 里 face 选项的 glowFaceGeo width 固定传 headR*1.5
-// 依据："未描述眼睛"——不画眼睛；"红色物质构成的卡通笑脸"由下方 addFaceSmile() 画一条连续实心弧线
-// （见上方换算说明），不用 humanoid 内置的离散牙齿笑脸。
+// 依据："未描述眼睛"——不画眼睛。
 // 之前给 humanoid() 传 face:{eyes:0,smile:false} 想借这组参数关掉内置五官，结果 eyes=0 且 smile=false
 // 时 glowFaceGeo() 内部 list 为空，返回一个没有 position 属性的空 BufferGeometry，_archetypes.js
-// finishRig 合并几何时读它的 attributes.position.count 直接崩溃（用品红占位块兜底，整个模型建不出来，
-// 预览报错确认过）——humanoid() 的 face 选项默认就是 null（不画），这里干脆不传 face 字段，
-// 完全跳过内置五官逻辑，眼睛和笑脸都由 extend 里的 addLampreyMouths/addFaceSmile 自己画
+// finishRig 合并几何时读它的 attributes.position.count 直接崩溃——humanoid() 的 face 选项默认就是
+// null（不画），这里干脆不传 face 字段，完全跳过内置五官逻辑，笑脸由 extend 里的 smileArc() 自己画
 
-// 卡通笑脸：一条连续的实心红色弧带，避免上面提到的"离散牙齿拼不成一条线"的问题。用 Shape 画一片
-// 中间厚、两端收尖的月牙形（外缘/内缘两条抛物线共享同一对端点，端点处自然收尖，形状不会露洞），
-// 半宽/下垂弧度/粗细都是"卡通笑脸"的形状取舍，原文没给具体曲率数字，非设定
-function addFaceSmile(b, d) {
-  const T = THREE, hr = d.headR, W = FACE_W;
-  const halfW = W * 0.42, dip = halfW * 0.85, thCtl = halfW * 0.32;
-  const shape = new T.Shape();
-  shape.moveTo(-halfW, 0);
-  shape.quadraticCurveTo(0, -dip, halfW, 0);
-  shape.quadraticCurveTo(0, -dip + thCtl, -halfW, 0);
-  const geo = new T.ShapeGeometry(shape, 24).rotateY(Math.PI);   // 翻面朝 -Z，同 glowFaceGeo 里眼睛的处理
-  b.geo('head', 'glow', geo.translate(0, d.headY - hr * 0.28, -hr * 0.95));
-  // 位置：头部前方（-Z），竖直方向放在鼻子和下颌之间，约等于人脸嘴的位置，非设定精确坐标
+// 卡通笑脸：一条贴着头部椭球表面走的实心红色弧管。取样点先按抛物线定出正面的 x / y，再解椭球方程求这一点
+// 的表面 z，所以嘴角会自然绕到脸的侧面上去，不会像平面弧片那样在 3/4 视角浮在脸外面。中间最粗、嘴角收细，
+// 是"卡通笑脸"的形状取舍；半宽/下垂弧度/粗细原文没给具体数字，非设定
+function smileArc(b, d, hi) {
+  const hr = d.headR;
+  const ra = hr * 0.92, rb = hr * 1.08, rc = hr * 0.98;   // 头部椭球三个半轴（同 _archetypes.js head:'round' 的 scale）
+  const halfW = FACE_W * 0.5, yTop = -hr * 0.1, dip = hr * 0.36;
+  const n = hi ? 8 : 4;
+  const pt = function (u) {
+    const px = halfW * u, py = yTop - dip * (1 - u * u);
+    const k = Math.max(0.05, 1 - (px / ra) * (px / ra) - (py / rb) * (py / rb));
+    return [px, d.headY + py, -rc * Math.sqrt(k) * 1.01];   // ×1.01：贴在表面上，有一半埋进脸里，像糊上去的一团红色物质
+  };
+  const rad = function (u) { return Math.max(0.0016, hr * 0.115 * (1 - 0.55 * u * u)); };
+  for (let i = 0; i < n; i++) {
+    const u0 = -1 + (2 * i) / n, u1 = -1 + (2 * (i + 1)) / n;
+    b.limb('head', 'glow', pt(u0), pt(u1), rad(u0), rad(u1), hi ? 5 : 4);
+  }
+}
+
+// 手臂末端的七鳃鳗状嘴：从前臂末端顺着一条前倾的轴线伸出的一截漏斗形口管——粗细交替的环节肉管 + 外翻唇缘
+// + 压暗的内壁 + 深色口腔开口 + 三圈朝开口中心收拢的尖牙。依据「手臂末端长着类似红虫或七鳃鳗的嘴，嘴里有
+// 几排锋利牙齿」。轴线前倾（而不是笔直朝下或笔直朝前）是为了让垂在身侧的手臂末端从正面和侧面都看得见这是
+// 一张开着的嘴——前倾角度原文没写，非设定
+// 前倾角：复评指出 50° 时开口几乎是侧对镜头，6 m 外整只读成一根黄色袖口（见下方 mouthFunnel 注释），
+// 改成 ≈66°（离水平只差 24°），开口正对前方——正面和 3/4 视角看到的是洞口本身而不是洞口的侧棱；
+// 同时轴线的下垂分量从 0.645L 减到 0.409L，开口自然抬回大腿中段。角度原文没写，非设定
+const TILT = 1.15;                       // ≈66°，相对"手臂垂下"方向的前倾
+const AXY = -Math.cos(TILT), AXZ = -Math.sin(TILT);   // 轴线单位向量（面朝 -Z，向下偏前）
+
+function mouthFunnel(b, bone, x, y0, hr, hi) {
+  const L = hr * 1.15;
+  // 轴线上距离 t 处的点
+  const P = function (t) { return [x, y0 + AXY * t, AXZ * t]; };
+  // 轴线上距离 t 处、绕轴半径 r、角度 a 的点（轴线躺在 YZ 平面里，所以横向基向量就是 X 轴）
+  const ring = function (a, r, t) {
+    return [x + Math.cos(a) * r, y0 + AXY * t + Math.sin(a) * r * AXZ, AXZ * t - Math.sin(a) * r * AXY];
+  };
+  // 环节状肉管：粗细交替，读起来像红虫/七鳃鳗那种一节一节的身体；末端一段猛地外张成唇缘
+  const cut = hi ? [0, 0.3, 0.5, 0.72, 0.88, 1] : [0, 0.34, 0.66, 0.88, 1];
+  const rad = hi ? [0.26, 0.36, 0.3, 0.4, 0.42, 0.66] : [0.26, 0.36, 0.32, 0.44, 0.66];
+  const seg = hi ? 8 : 6;
+  for (let i = 0; i + 1 < cut.length; i++) {
+    b.limb(bone, 'body', P(cut[i] * L), P(cut[i + 1] * L), rad[i] * hr, rad[i + 1] * hr, seg);
+  }
+  // 口腔：一截朝里收窄的深色喉管。mouth 槽位是 basic 材质（不受光照影响），所以不管场景多亮、离多远，
+  // 这一块都是接近纯黑的。
+  // ★ 这里有个 RigBuilder 的坑，也是"远看读不出那是嘴"的真正原因（不是开口太小）：b.limb 内部用的是
+  //   CylinderGeometry 且 openEnded 默认 false，两端各带一张端盖。喇叭口最后一节在 t=1.0 有一整张
+  //   半径 0.66hr、和身体同色的黄色端盖，等于给这张嘴盖了个盖子——任何缩在它里面的深色盘（改前的
+  //   0.4hr、本轮先试的 0.5hr）都会被它整个挡住，只有极斜的角度能从边上瞄到一条缝。
+  //   所以喉管末端要探到 t=1.01（黄端盖 t=1.0 的前面）才挡得住它；半径 0.56hr 比唇缘 0.66hr 小一圈，
+  //   黄色唇缘仍然露成一环，读起来就是"外翻的唇 + 里面一个黑洞"
+  b.limb(bone, 'mouth', P(0.72 * L), P(1.01 * L), 0.1 * hr, 0.56 * hr, seg);
+  // 「几排锋利牙齿」：三圈同心齿列，由外到内一圈比一圈小，齿尖一律朝开口中心收拢。三圈的齿根全部排在
+  // 黑色封口盘（t=1.01）前面、半径都小于封口盘的 0.56hr，所以白牙是直接衬在黑洞上的——高对比度的
+  // 「黑洞 + 白牙」正是基线截图里唯一能在 6 m 外认出这只实体的特征，复评要求保留细牙，所以牙本身仍然细，
+  // 靠对比度而不是靠体积来读。圈数/每圈颗数原文没给，取三圈近似，非设定
+  const rows = hi
+    ? [{ n: 9, r: 0.54, t0: 1.012, t1: 1.10, r1: 0.42, w: 0.075, off: 0 },
+       { n: 7, r: 0.42, t0: 1.016, t1: 1.08, r1: 0.27, w: 0.065, off: Math.PI / 7 },
+       { n: 5, r: 0.30, t0: 1.020, t1: 1.06, r1: 0.15, w: 0.055, off: Math.PI / 5 }]
+    : [{ n: 10, r: 0.5, t0: 1.012, t1: 1.09, r1: 0.35, w: 0.075, off: 0 }];
+  for (let k = 0; k < rows.length; k++) {
+    const row = rows[k];
+    for (let i = 0; i < row.n; i++) {
+      const a = (i / row.n) * Math.PI * 2 + row.off;
+      b.cone(bone, 'claw', ring(a, row.r * hr, row.t0 * L), ring(a, row.r1 * hr, row.t1 * L), row.w * hr, 4);
+    }
+  }
+}
+
+// 两条手臂完全一致；笑脸也在这里一起加，两个下肢形态共用这个入口
+function addMouthsAndFace(b, d, hi) {
+  const y0 = d.handY + 0.035;   // 前臂几何到 handY + 0.02*H 收口，从这里接上口管，不留断茬
+  mouthFunnel(b, 'foreL', -d.shoulderW, y0, d.headR, hi);
+  mouthFunnel(b, 'foreR', d.shoulderW, y0, d.headR, hi);
+  smileArc(b, d, hi);
+}
+
+// 「皮肤光滑呈革质」：把构件之间的硬接缝盖掉——髋部方块罩一层圆壳、腰和颈根加过渡肉块、肩头加圆帽、
+// 脚踝加袖口。全部叠在已有骨骼和 body 槽位上，不新增槽位；低画质不加（保持简版）
+function addSkinSmoothing(b, d, hi, ankles) {
+  if (!hi) return;
+  const H = d.H;
+  b.sphere('hips', 'body', 0.1 * H, [0, d.hipY + 0.022 * H, 0], [0.95, 0.52, 0.58], [8, 6]);          // 髋部圆壳
+  b.limb('spine', 'body', [0, d.hipY + 0.05 * H, 0], [0, d.hipY + 0.115 * H, 0], 0.083 * H, 0.072 * H, 8);   // 腰部过渡
+  b.limb('head', 'body', [0, d.shoulderY - 0.012 * H, 0], [0, d.shoulderY + 0.03 * H, 0], 0.043 * H, 0.03 * H, 8);   // 颈根过渡
+  for (const s of [-1, 1]) {
+    const L = s < 0 ? 'L' : 'R';
+    b.sphere('arm' + L, 'body', 0.042 * H, [s * d.shoulderW, d.shoulderY - 0.005 * H, 0], [1.02, 0.95, 1], [8, 6]);   // 肩头圆帽
+    if (ankles) b.limb('shin' + L, 'body', [s * d.hipW, 0.078 * H, 0], [s * d.hipW, 0.043 * H, 0], 0.03 * H, 0.035 * H, 6);
+  }
+}
+
+// 圆台底座（跳棋棋子型下肢）：依据「下肢……有时像跳棋棋子的底座，呈圆台形」。做成宽扁的多级圆台——
+// 外张的底盘、压暗的收腰凹槽、中段凸出的棱环、收进去接住髋部的顶盖；最宽处（0.245 m）压在实体自己的
+// 碰撞半径 0.34 以内，视觉宽度和站位对得上，原来那两条"只为骨架能用"的短腿这下完全藏进底座里了。
+// 底座分三节骨骼（hips 不动 → pedA → pedB），走动时由 anim.onFrame 的 pedestalGait() 逐节摆
+function addPedestalBase(b, d, hi) {
+  const H = d.H, topY = d.hipY + 0.06 * H;
+  b.bone('pedA', 'hips', [0, 0.04 * H, 0]);
+  b.bone('pedB', 'pedA', [0, 0.115 * H, 0]);
+  if (hi) {
+    b.limb('hips', 'body', [0, 0, 0], [0, 0.022 * H, 0], 0.135 * H, 0.142 * H, 12);                       // 底盘
+    b.limb('hips', 'body', [0, 0.022 * H, 0], [0, 0.036 * H, 0], 0.142 * H, 0.129 * H, 12, { tint: SHADE_SOFT });   // 底盘上的收腰凹槽
+    b.limb('pedA', 'body', [0, 0.036 * H, 0], [0, 0.102 * H, 0], 0.132 * H, 0.102 * H, 12);               // 主体圆台
+    b.limb('pedA', 'body', [0, 0.102 * H, 0], [0, 0.119 * H, 0], 0.102 * H, 0.112 * H, 12);               // 中段外凸的棱环
+    b.limb('pedB', 'body', [0, 0.119 * H, 0], [0, 0.189 * H, 0], 0.112 * H, 0.094 * H, 12);               // 上段圆台
+    b.limb('pedB', 'body', [0, 0.189 * H, 0], [0, topY, 0], 0.094 * H, 0.072 * H, 10);                    // 接住髋部的顶盖
+  } else {
+    b.limb('hips', 'body', [0, 0, 0], [0, 0.029 * H, 0], 0.135 * H, 0.142 * H, 8);
+    b.limb('pedA', 'body', [0, 0.029 * H, 0], [0, 0.116 * H, 0], 0.142 * H, 0.108 * H, 8);
+    b.limb('pedB', 'body', [0, 0.116 * H, 0], [0, topY, 0], 0.108 * H, 0.072 * H, 8);
+  }
+}
+
+// 圆台底座型的"走路"表现：原文只说下肢有时是圆台，移动方式页面没写（unverified），这里不编造步态细节，
+// 只把"在移动"这件事做得看得出来——底座下节左右摆、上节反向补偿（一节一节地挪），躯干随之起伏、手臂
+// 轻微前后摆。幅度是表现取舍，非设定。纯表现：只读 u.sp（由位移算出来的速度，房主客机都对得上）和
+// u.phase，只往骨骼上叠加旋转/位移，不碰 e.x/y/z/yaw，也不读 e.data；站着不动时（amt < 0.04）完全
+// 不介入，和改动前一样只有 breathe/twitch
+function pedestalGait(e, dt, api, u) {
+  const rig = u.rig;
+  if (!rig || e.dead) return;
+  const sp = e.def.speed || {};
+  const walk = typeof sp.walk === 'number' ? sp.walk : 1.8;
+  const amt = Math.min(1, u.sp / Math.max(0.3, walk));
+  if (amt < 0.04) return;
+  const s = Math.sin(u.phase), ac = Math.abs(Math.cos(u.phase)), an = A.anim;
+  an.addRot(rig, 'pedA', 0, 0, s * 0.1 * amt);                  // 下节左右摆
+  an.addRot(rig, 'pedB', -ac * 0.05 * amt, 0, -s * 0.05 * amt);  // 上节反向补偿 + 随步伐轻微前后点
+  an.addPos(rig, 'spine', 0, ac * 0.025 * amt, 0);               // 身体随步伐起伏
+  an.addRot(rig, 'spine', -0.04 * amt, 0, s * 0.045 * amt);
+  an.addRot(rig, 'head', 0, 0, -s * 0.03 * amt);
+  an.addRot(rig, 'armL', s * 0.26 * amt);
+  an.addRot(rig, 'armR', -s * 0.26 * amt);
 }
 
 const PERCEPTION = { sight: A.SIGHT.normal, hearing: A.HEARING.normal, fov: 150 };
@@ -89,51 +257,6 @@ function makeBrain() {
   // 派对客发现猎物那一刻发出的也是笑声，而不是威吓的咆哮
 }
 
-// 手臂末端的七鳃鳗状嘴：拉长的肉管 + 深色口腔开口 + 两圈朝开口中心排列的尖牙——依据"手臂末端长着
-// 类似红虫或七鳃鳗的嘴，嘴里有几排锋利牙齿"；两条手臂完全一致，写成公用函数供两个下肢形态共用。
-// 验收截图指出原版本只是一颗和身体同色的小球、周围几根很短的白刺，正常距离看不出是"嘴"：这里把肉团
-// 放大约 1.8 倍并沿手臂悬垂方向拉长成管状（原尺寸 mr = headR*0.42 太小，且没有沿手臂方向拉伸），
-// 前端嵌一枚深色圆盘当口腔开口，牙齿改成沿开口边缘、尖端指向开口中心排列（原来是从球面朝四周辐射，
-// 看着像手指/尖刺而不是嘴里的牙）
-function addLampreyMouths(b, d) {
-  const mr = d.headR * 0.75;
-  const openR = mr * 0.7;                 // 口腔开口半径，比肉管本身略窄，露出一圈"唇"
-  const rows = [
-    { r: openR, n: 7, off: 0 },
-    { r: openR * 0.6, n: 6, off: Math.PI / 7 },
-  ];
-  // 两圈交错排列的牙齿模拟"几排锋利牙齿"——原文没给具体排数/形状，取两圈近似，非设定
-  for (const s of [-1, 1]) {
-    const bone = s < 0 ? 'foreL' : 'foreR';
-    const x = s * d.shoulderW, y = d.handY;
-    b.sphere(bone, 'body', mr, [x, y, 0], [0.82, 1.7, 0.82], [8, 6]);
-    // 唇部肉团：沿 Y（手臂悬垂方向）拉长成管状，看起来像从手臂末端伸出的一截肉管而不是一颗球
-    const disc = new THREE.CircleGeometry(openR, 14).rotateY(Math.PI).translate(x, y, -mr * 0.95);
-    b.geo(bone, 'mouth', disc);
-    // 深色口腔开口：嵌在肉管前端（面朝 -Z，同头部正面朝向）的一枚扁圆盘，给"嘴"一个看得见的洞
-    for (const row of rows) {
-      for (let i = 0; i < row.n; i++) {
-        const a = (i / row.n) * Math.PI * 2 + row.off;
-        const ox = Math.cos(a) * row.r, oy = Math.sin(a) * row.r * 0.85;
-        b.cone(bone, 'claw',
-          [x + ox, y + oy, -mr * 0.88],
-          [x + ox * 0.3, y + oy * 0.3, -mr * 0.98],
-          mr * 0.12, 4);
-        // 牙齿贴着开口边缘、尖端朝口腔中心收拢——依据"嘴里有几排锋利牙齿"，原文没给具体排列方式
-      }
-    }
-  }
-  addFaceSmile(b, d);   // 脸上的红色卡通笑脸，两个下肢形态共用这个入口一起加（见上方 addFaceSmile 说明）
-}
-
-// 圆台底座（跳棋棋子型下肢）：从地面到臀部收窄的圆台，套住极短的隐藏腿骨——依据"下肢...有时像跳棋
-// 棋子的底座，呈圆台形"。这一型的移动方式原文完全没写（unverified），保留极短的腿骨骼只是为了让引擎
-// 现成的站立/移动骨架能正常工作，视觉上完全被圆台盖住、看不出在"走路"，具体见下方 notImplemented
-function addPedestalBase(b, d) {
-  b.limb('hips', 'body', [0, 0, 0], [0, d.hipY * 0.95, 0], d.hipW * 1.3, d.hipW * 0.65, 10, 1);
-  addLampreyMouths(b, d);
-}
-
 // ---------------- 人腿型 ----------------
 A.register({
   type: 'partygoer_biped', en: 'Partygoer (Legged)', zh: '派对客·人腿型', version: 'wikidot-cn',
@@ -158,6 +281,7 @@ A.register({
   // strike:'bite' 呼应"用手臂末端的嘴咬人"
 
   build(ctx) {
+    const hi = isHigh();
     return A.wrap(A.parts.humanoid({
       height: 1.72, thin: 0, bulk: 1.0, pose: 'upright',
       head: 'round', hands: false, feet: true, claws: 0, hair: 0,
@@ -165,17 +289,15 @@ A.register({
       // （clothes 不设置=默认关闭，用户特别提醒不要加同人形象常见但原文没写的派对帽）；
       // 没提脚部细节，保留普通脚掌
       // 依据："脸上是一个由红色物质构成的卡通笑脸（未描述眼睛）"——不传 face 字段（humanoid 默认
-      // face:null，完全跳过内置五官），不画眼睛，笑脸改由 extend 里的 addFaceSmile() 画一条连续实心弧线；
-      // 原因见文件顶部 HEAD_R/FACE_W 下面的注释（曾经用 face:{eyes:0,smile:false} 想关掉内置五官，
-      // 结果触发 glowFaceGeo 返回空几何、finishRig 合并崩溃）
+      // face:null，完全跳过内置五官），不画眼睛，笑脸由 extend 里的 smileArc() 画
       colors: { body: pickBodyColor(ctx), glow: FACE_RED, claw: TEETH_COLOR, mouth: MOUTH_DARK },
       look: { body: 'skin', mouth: 'basic' },
       // 依据："皮肤光滑呈革质"——用 skin 材质预设（程序化皮革斑驳纹理×颜色）；
       // mouth 用 basic（不受光照影响）——保证手臂末端的口腔开口不管场景灯光多亮都读得出是一个深色的洞
       mats: { glow: A.mat.lambert(FACE_RED) },
       // 依据：appearance 没写发光部位——笑脸用普通受光材质而不是 glowFace 默认的自发光材质，避免编造发光效果
-      extend: addLampreyMouths,
-      key: 'partygoer_biped_v2',
+      extend(b, d) { addSkinSmoothing(b, d, hi, true); addMouthsAndFace(b, d, hi); },
+      key: 'partygoer_biped_v4',
     }), { label: 'partygoer_biped' });
   },
 });
@@ -192,24 +314,29 @@ A.register({
   attack: ATTACK,
   sounds: SOUNDS,
   brain: makeBrain(),
-  anim: { gait: 'none', breathe: 0.02, twitch: 0.04, strike: 'bite', recoil: 0.2, fall: 'crumple' },
-  // 依据：locomotion"圆台底座型的移动方式页面未写(unverified)"——不编造具体步态，gait:'none' 让它贴地
-  // 滑行（水平移动仍由骨架/速度正常驱动位置，只是不播放双足步态动画）；twitch 给很小幅度避免完全静止
-  // 显得像贴图，非设定精确数值；fall 用 crumple（原地塌陷）而不是"back"，因为没有腿摔倒的姿势没有意义
+  anim: {
+    gait: 'none', breathe: 0.02, twitch: 0.04, strike: 'bite', recoil: 0.2, fall: 'crumple',
+    onFrame: pedestalGait,
+  },
+  // 依据：locomotion"圆台底座型的移动方式页面未写(unverified)"——不编造具体步态，gait:'none' 不播双足
+  // 步态动画（水平移动仍由骨架/速度正常驱动位置）；但"贴地滑行"在截图和实机里完全看不出它在移动，
+  // 所以补一个 onFrame（pedestalGait）让底座逐节摆、躯干随步伐起伏，只是表现，没有改速度和行为；
+  // twitch 给很小幅度避免完全静止显得像贴图，非设定精确数值；fall 用 crumple（原地塌陷）而不是"back"，
+  // 因为没有腿摔倒的姿势没有意义
 
   build(ctx) {
+    const hi = isHigh();
     return A.wrap(A.parts.humanoid({
       height: 1.72, thin: 0, bulk: 1.0, pose: 'upright', legLen: 0.35,
       // 依据：这一型的"腿"完全没有独立信息——保留很短的腿骨骼只是引擎现成站立骨架需要的最小骨架，
       // 视觉上完全被下面 extend 加的圆台盖住，legLen 数值非设定，纯粹为了让圆台贴地、腿不会露出来
       head: 'round', hands: false, feet: false, claws: 0, hair: 0,
-      // 不传 face 字段——原因同人腿型 build() 里的注释（humanoid 默认 face:null，完全跳过内置五官，
-      // 不画眼睛，笑脸改由 addFaceSmile() 画）
+      // 不传 face 字段——原因同人腿型 build() 里的注释
       colors: { body: pickBodyColor(ctx), glow: FACE_RED, claw: TEETH_COLOR, mouth: MOUTH_DARK },
       look: { body: 'skin', mouth: 'basic' },   // mouth 用 basic，保证口腔开口不受光照影响、始终读得出是个洞
       mats: { glow: A.mat.lambert(FACE_RED) },
-      extend: addPedestalBase,
-      key: 'partygoer_pedestal_v2',
+      extend(b, d) { addPedestalBase(b, d, hi); addSkinSmoothing(b, d, hi, false); addMouthsAndFace(b, d, hi); },
+      key: 'partygoer_pedestal_v4',
     }), { label: 'partygoer_pedestal' });
   },
 });
@@ -231,4 +358,5 @@ A.register({
 //   没有对应的派对之主实体类型，中立个体是原文点名的特定个体而非"派对客"这个通用类型的常见变体，
 //   不在本文件的两个 type 里实现。
 // - 与扫兴客（享乐战争历史关系）：扫兴客不在本批实体范围内，不实现关系判定。
-// - 圆台底座型的具体移动方式（unverified）：按引擎需要贴地滑行，非设定，见文件内 anim 注释。
+// - 圆台底座型的具体移动方式（unverified）：原文没写，不编造步态；M2 打磨只补了"看得出在移动"的表现
+//   （底座逐节摆动 + 躯干起伏，见 pedestalGait），幅度非设定，速度与行为数值未改。

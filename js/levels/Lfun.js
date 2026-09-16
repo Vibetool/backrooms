@@ -69,20 +69,49 @@ function defineMaterials() {
 const BALLOON_COLORS = [0xffcf40, 0xff5f7a, 0x4fc3ff, 0x74e28a, 0xffffff];
 
 // 气球串：细分档 1 的二十面体（80 面）比原来的 0 档（20 面，截图里读成一个个色块六边形）更接近圆球，
-// 三角面预算还有大量富余，换得起（验收⑤）；系一根细绳到 baseY 那个高度（桌面或地面都能用）
-function balloonCluster(b, rng, radius, baseY) {
+// 三角面预算还有大量富余，换得起（验收⑤）。
+//
+// M2 打磨第 1 批（ENGINE_PLAN 第 4 节）：气球原来是"从 baseY 笔直往上的一根细杆"，截图里读成插在棍子上
+// 的糖葫芦，不像系着的气球。现在三根绳子一起系在桌面/地面的一个小绳结上，每根绳沿一条控制点下垂的二次
+// 贝塞尔曲线拆成 3 段短圆柱（横截面 3 边、半径 8 mm，正常观看距离看不出棱），斜着上去接在气球底部的小结上，
+// 一根绳 18 面、比原来的直杆多 8 面。绳子颜色沿用原来的 0xd8d0c0，气球颜色表 BALLOON_COLORS 一个字没动
+// （原文没写享乐层的材质/颜色，本次不许改色）。
+// rng 的调用次数和顺序保持原样（每颗气球 3 次：角度、高度、颜色）——本层的房间挑选、围墙门洞位置、摆件
+// 朝向和这里吃的是同一条 rng 流，多抽或少抽一次会把整层的布局/碰撞体/刷怪点全冲掉（tests/golden.mjs）
+function balloonCluster(b, rng, radius, baseY, knotX, knotZ) {
   const T = window.THREE;
+  const kx = knotX || 0, kz = knotZ || 0;
+  // 绳结：三根绳子系在一起的那一小团，压在桌面/地面上，给"系着"一个落点
+  b.box(kx, baseY, kz, 0.05, 0.022, 0.05, 'kit:prop', { color: 0xd8d0c0, solid: false });
   for (let k = 0; k < 3; k++) {
     const ang = (k / 3) * Math.PI * 2 + rng() * 0.6;
     const ax = Math.cos(ang) * radius, az = Math.sin(ang) * radius;
     const by = baseY + 1.1 + rng() * 0.4;
     const col = BALLOON_COLORS[(rng() * BALLOON_COLORS.length) | 0];
-    b.cylinder(ax, baseY, az, 0.008, by - baseY, 'kit:prop', { color: 0xd8d0c0, segments: 5, caps: false, solid: false });
+    // 绳子：绳结 → 气球底部的小结，控制点往下偏 0.12 m 让绳身自然松垂（3 段折线近似曲线）
+    const x0 = kx, y0 = baseY + 0.022, z0 = kz;
+    const x1 = ax, y1 = by - 0.135, z1 = az;
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2 - 0.12, cz = (z0 + z1) / 2;
+    let px = x0, py = y0, pz = z0;
+    for (let i = 1; i <= 3; i++) {
+      const t = i / 3, it = 1 - t;
+      const qx = it * it * x0 + 2 * it * t * cx + t * t * x1;
+      const qy = it * it * y0 + 2 * it * t * cy + t * t * y1;
+      const qz = it * it * z0 + 2 * it * t * cz + t * t * z1;
+      const dx = qx - px, dy = qy - py, dz = qz - pz;
+      const len = Math.hypot(dx, dy, dz) || 1e-4;
+      const g = new T.CylinderGeometry(0.006, 0.006, len, 3, 1, true);
+      g.translate(0, len / 2, 0);
+      g.applyQuaternion(new T.Quaternion().setFromUnitVectors(new T.Vector3(0, 1, 0), new T.Vector3(dx / len, dy / len, dz / len)));
+      b.mesh(g, 'kit:prop', { x: px, y: py, z: pz, color: 0xd8d0c0, solid: false });
+      g.dispose();
+      px = qx; py = qy; pz = qz;
+    }
     const geo = new T.IcosahedronGeometry(0.13, 1);
     b.mesh(geo, 'kit:prop', { x: ax, y: by, z: az, color: col, solid: false });
     geo.dispose();
-    // 气球底部打结的小结——原文没写具体形状，只是给这颗"球"一个能看出上下方向的小细节，不是设定
-    b.cylinder(ax, by - 0.12, az, 0.02, 0.03, 'kit:prop', { color: col, segments: 5, solid: false });
+    // 气球底部打结的小结——原文没写具体形状，只是给这颗"球"一个能看出上下方向的小细节，也是绳子系上去的那个点
+    b.cylinder(ax, by - 0.145, az, 0.02, 0.035, 'kit:prop', { color: col, segments: 5, solid: false });
   }
 }
 
@@ -115,7 +144,8 @@ function partyTable(b, rng) {
   }
   b.pop();
 
-  balloonCluster(b, rng, 0.55, topY);
+  // 绳结落在桌面中央：蛋糕在 (-0.25, -0.05)、饼干堆在 (0.35, 0.15)，中间这块是空的，不会穿模
+  balloonCluster(b, rng, 0.55, topY, 0, 0);
 }
 
 // 房间较大时额外撒的一撮"地摊式"蛋糕+饼干堆（没有桌子撑着，直接堆在地上），配合气球——
@@ -127,7 +157,8 @@ function foodPile(b, rng) {
     const jx = (rng() - 0.5) * 0.3, jz = (rng() - 0.5) * 0.3;
     b.cylinder(jx, k * 0.02, jz, 0.06, 0.014, 'kit:prop', { color: 0xc98d4a, segments: 8, solid: false });
   }
-  balloonCluster(b, rng, 0.4, 0);
+  // 地摊堆的正中间是蛋糕（半径 0.16）和撒开的饼干，绳结挪到旁边 0.36 m 处的地面上，像一小团压着绳子的结
+  balloonCluster(b, rng, 0.4, 0, 0.3, -0.2);
 }
 
 // 出生格所在的 2×2 区域另外单独 g.carve/g.reserve（见 buildChunk），这里判断某个自动生成的 g.rooms

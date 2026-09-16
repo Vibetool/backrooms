@@ -154,18 +154,100 @@ function shroudTexture() {
   shroudTex.needsUpdate = true;
   return shroudTex;
 }
-function shroudMaterial() {
-  const make = () => {
-    const tex = shroudTexture();
-    return new THREE.SpriteMaterial({
-      map: tex, color: 0x000000, transparent: true, depthWrite: false, opacity: 1,
-    });
-  };
-  return BR.assets && typeof BR.assets.material === 'function' ? BR.assets.material('smiler:shroud', make) : make();
+// M2 打磨新增：外面再罩一层更宽、落得更慢的黑 —— 打分员两人都写「黑色躯体是边缘规整的渐变椭圆」，
+// 单层径向渐变收得太齐，两层叠起来边缘才有「由浓到无」的过渡层次。仍然只是黑影，不加任何身体轮廓
+let shroudTexOuter = null;
+function shroudTextureOuter() {
+  if (shroudTexOuter) return shroudTexOuter;
+  if (typeof document === 'undefined') return null;
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d');
+  const grd = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grd.addColorStop(0, 'rgba(0,0,0,0.85)');
+  grd.addColorStop(0.45, 'rgba(0,0,0,0.6)');
+  grd.addColorStop(0.75, 'rgba(0,0,0,0.26)');
+  grd.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = grd; g.fillRect(0, 0, 128, 128);
+  shroudTexOuter = new THREE.CanvasTexture(c);
+  shroudTexOuter.needsUpdate = true;
+  return shroudTexOuter;
+}
+function spriteMaterial(key, texFn) {
+  const make = () => new THREE.SpriteMaterial({
+    map: texFn(), color: 0x000000, transparent: true, depthWrite: false, opacity: 1,
+  });
+  return BR.assets && typeof BR.assets.material === 'function' ? BR.assets.material(key, make) : make();
+}
+function shroudMaterial() { return spriteMaterial('smiler:shroud', shroudTexture); }
+function shroudMaterialOuter() { return spriteMaterial('smiler:shroud2', shroudTextureOuter); }
+
+// ---------- high 档的脸 ----------
+// 打磨范围严格限制在用户指定的「漂浮的白色笑脸」之内：只加牙列厚度与牙缝、牙龈脊、眼窝层次，
+// 不加任何身体、四肢或人形轮廓。几何按模块级缓存，全体笑魇共享一份（不在 build 里 new 材质）
+let faceGeoHi = null, socketGeoHi = null;
+// glowFace 的坑：smileWidth / curve / toothH / smileY 是米制绝对值，不是按 width 的倍数，
+// 所以这里一律写成「FACE_W × 系数」算出来的绝对米数，和打磨前那次调用的写法保持一致
+function faceGeometryHigh() {
+  if (faceGeoHi) return faceGeoHi;
+  const T = THREE, W = FACE_W, list = [];
+  // 眼睛沿用 glowFace 的布局（外加眼角高光），牙不要它的——下面自己画才控制得了厚度和牙缝
+  list.push(A.geo.glowFace({ width: W, eyes: 2, eyeShape: 'round', eyeSize: W * 0.1, eyeHighlight: true, smile: false }));
+  const sw = W * 0.8, sy = -W * 0.14, cv = W * 0.16, th = W * 0.16, n = 16, tw = sw / n;
+  const bow = u => -W * 0.07 * (1 - 4 * u * u);      // 齿列沿一条浅弧往前凸，侧面 / 三分面才看得出这是一排有厚度的牙
+  const lipY = u => sy + cv * (4 * u * u - 0.5);     // 和打磨前 glowFace 的嘴角弧度公式一致
+  for (let i = 0; i < n; i++) {
+    const u = i / (n - 1) - 0.5;
+    // 牙宽从占满 0.78 收到 0.66 → 牙缝明显变宽；Z 方向厚度从 W*0.02 加到 W*0.05 → 牙有实体感。
+    // rotateY 只给很小的角度：第一轮用 atan(u*0.9)（嘴角快 42°）把角上几颗转成侧对镜头，
+    // 加上厚度后互相叠在一起糊成一坨白，牙缝全没了，比打磨前还差
+    const g = new T.BoxGeometry(tw * 0.66, th * (1 - 0.45 * Math.abs(2 * u)), W * 0.05);
+    g.rotateZ(Math.atan(8 * cv * u / sw));
+    g.rotateY(Math.atan(u * 0.3));                   // 跟着弧面微微转，够看出厚度又不会糊成一片
+    list.push(g.translate(u * sw, lipY(u), bow(u)));
+  }
+  for (let k = 0; k < 7; k++) {                      // 牙龈脊：贴着牙齿上缘、跟着同一条弧走
+    const u = (k + 0.5) / 7 - 0.5;
+    const g = new T.BoxGeometry(sw / 7 * 1.04, th * 0.17, W * 0.04);
+    g.rotateZ(Math.atan(8 * cv * u / sw));
+    g.rotateY(Math.atan(u * 0.3));
+    list.push(g.translate(u * sw, lipY(u) + th * 0.52, bow(u)));
+  }
+  faceGeoHi = T.BufferGeometryUtils.mergeBufferGeometries(list, false);
+  return faceGeoHi;
+}
+// 眼窝：每只眼上方一道很淡的暗弧，退在脸后面一点 —— 做出「眼睛是凹进去的洞」的第二层次。
+// 第一轮做成两圈同心的粗环，出图是一副圆眼镜；第二轮收成单圈仍然是一副圆眼镜（复评在 b1-after 的
+// smiler-4-head 上又点了一次，确实还在）。根因不是粗细而是「闭合」：脸是纯黑底，mat.glow 是不受光的
+// basic 材质，画上去的灰是比背景亮的描边，一旦闭合成圈，人眼先读到的就是镜框而不是眼眶。
+// 所以这一轮改成开口弧：只留眼睛上缘那段（约 120°），宽度再砍一半，灰度从 0x53535a 压到接近背景，
+// 只剩一道眉骨般的暗部暗示，凑不成环就不会再读成眼镜
+function socketGeometryHigh() {
+  if (socketGeoHi) return socketGeoHi;
+  const T = THREE, W = FACE_W, list = [];
+  const es = W * 0.1, gap = W * 0.42, ey = W * 0.18;   // 和 glowFace 缺省的眼间距 / 眼高一致
+  for (const s of [-1, 1]) {
+    list.push(new T.RingGeometry(es * 1.16, es * 1.27, 10, 1, Math.PI * 0.17, Math.PI * 0.66)
+      .rotateY(Math.PI).translate(s * gap * 0.5, ey, 0.006));
+  }
+  socketGeoHi = T.BufferGeometryUtils.mergeBufferGeometries(list, false);
+  return socketGeoHi;
 }
 
 function buildModel() {
+  // 画质在建模这一刻定下来：low 档完全保持打磨前的构造（同一份 glowFace 缓存几何，面数逐字节不变）
+  const hi = !(BR.game && BR.game.settings && BR.game.settings.quality === 'low');
   const group = new THREE.Group();
+
+  // 外层软边（只有 high）：比内层大一圈、落得更慢，给「一团化不开的黑」加一层渐隐过渡
+  if (hi) {
+    const outer = new THREE.Sprite(shroudMaterialOuter());
+    outer.scale.set(2.46, 3.4, 1);
+    outer.position.set(0, -0.6, 0.1);
+    outer.renderOrder = -1;
+    outer.name = 'smilerShroudOuter';
+    group.add(outer);
+  }
 
   // 「笑脸周围和身后是一团浓黑」：软边黑精灵，比脸大一圈并往下拖一点（隐约像拖着一团影子），
   // renderOrder 排在脸之前，脸（不透明发光材质）会在它之上正常画出来，其余方向只看得到这团黑。
@@ -179,14 +261,26 @@ function buildModel() {
   group.add(shroud);
 
   // 「一排发光的白牙组成的大笑嘴 + 两只发光白眼」：用户说的是「一排」，取单排咧嘴（rows:1）比常见的
-  // 上下两排牙更贴用户描述，也更像典型的"漂浮笑脸"形象
-  const face = A.parts.glowFace({
-    width: FACE_W, eyes: 2, eyeShape: 'round', eyeSize: FACE_W * 0.1,
-    smile: true, teeth: 16, rows: 1, toothH: FACE_W * 0.16, curve: FACE_W * 0.16,
-    color: 0xffffff,
-  });
-  face.renderOrder = 1;
+  // 上下两排牙更贴用户描述，也更像典型的"漂浮笑脸"形象。
+  // anim.onFrame 靠名字 smilerFace 找这一坨做攻击时的放大，所以名字挂在整组上（high 档是两块网格）
+  const face = new THREE.Group();
   face.name = 'smilerFace';
+  if (hi) {
+    const socket = new THREE.Mesh(socketGeometryHigh(), A.mat.glow(0x2b2b31));   // 压到接近背景黑，只当眼眶上缘的暗部暗示
+    socket.renderOrder = 1;
+    face.add(socket);
+    const teeth = new THREE.Mesh(faceGeometryHigh(), A.mat.glow(0xffffff));
+    teeth.renderOrder = 2;
+    face.add(teeth);
+  } else {
+    const flat = A.parts.glowFace({
+      width: FACE_W, eyes: 2, eyeShape: 'round', eyeSize: FACE_W * 0.1,
+      smile: true, teeth: 16, rows: 1, toothH: FACE_W * 0.16, curve: FACE_W * 0.16,
+      color: 0xffffff,
+    });
+    flat.renderOrder = 1;
+    face.add(flat);
+  }
   group.add(face);
 
   return A.wrap(group, { label: 'smiler', budget: A.TRIS.normal });

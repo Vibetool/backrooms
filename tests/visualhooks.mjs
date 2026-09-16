@@ -248,9 +248,27 @@ async function tintRender(page) {
 // 已经用了 tint 的实体形态 → 该形态里出现 tint 的槽位（M1 回填：skin_stealer 真身的白眼和眼窝、wretch 的残留衣物）。
 // 写到"形态 + 槽位"这么细，而不是整个类型放行：伪装形态、同一骨架里其他槽位仍要逐字节保持原样；
 // 以后哪个实体新用了 tint，这里会报出来，逼着改的人确认并补进白名单，而不是悄悄放行。形态名 '' = 单一模型（没有多形态）
+// 按画质分列：M2 打磨规定「高画质加细节、低画质保持简版」，所以同一形态在两档里用 tint 的槽位可以不同
+// （例如无面灵高档用 tint 把衣物压成布色、低档根本没有那些图元）。分开写才能既放行该有的，又挡住低档偷偷加 tint。
 const TINTED_FORMS = {
-  skin_stealer: { true: ['head'] },
-  wretch: { '': ['body'] },
+  high: {
+    skin_stealer: { true: ['body', 'head'], disguise: ['gear'] },   // M1：真身白眼与眼窝；M2：真身吸盘、伪装反光条
+    wretch: { '': ['body'] },
+    bacteria: { '': ['head', 'glow'] },                             // M2：头部纵向裂口的唇边与穿出裂缝的齿尖
+    hound: { '': ['body', 'head'] },                                // M2：骨节与牙
+    duller: { '': ['body', 'head'] },
+    clump: { '': ['body'] },
+    faceling: { '': ['body'] },                                     // M2：头发与衣物都压在 body 槽位里
+    faceling_polygonal: { '': ['body'] },
+    partygoer_pedestal: { '': ['body'] },                           // M2：底座棱环下的凹槽
+  },
+  low: {
+    skin_stealer: { true: ['body', 'head'] },
+    wretch: { '': ['body'] },
+    hound: { '': ['body', 'head'] },
+    duller: { '': ['body'] },
+    clump: { '': ['body'] },
+  },
 };
 
 // 现有实体：白名单以外的骨架一个都不带 color 属性、不开 vertexColors；白名单里的形态只有 tint 槽位换 vc 材质（键以 /vc 结尾），
@@ -281,7 +299,8 @@ async function existing(page) {
             const form = formOf.has(o) ? formOf.get(o) : '';
             const tag = q + ':' + type + (form ? '/' + form : '');
             const ms = Array.isArray(o.material) ? o.material : [o.material];
-            const want = tintedForms[type] && tintedForms[type][form];
+            const fm = tintedForms[q] || {};
+            const want = fm[type] && fm[type][form];
             if (!want) {
               if (o.geometry.attributes.color) out.colorAttr.push(tag);
               if (ms.some(m => m && m.vertexColors)) out.vcMats.push(tag);
@@ -300,7 +319,8 @@ async function existing(page) {
           });
           BR.entities.remove(e);
         }
-        for (const type in tintedForms) for (const form in tintedForms[type]) {
+        const fmq = tintedForms[q] || {};
+        for (const type in fmq) for (const form in fmq[type]) {
           const tag = q + ':' + type + (form ? '/' + form : '');
           if (out.tintSeen.indexOf(tag) < 0) out.tintMissing.push(tag);
         }
@@ -308,7 +328,7 @@ async function existing(page) {
     } finally { S.quality = q0; BR.entities.clear(); }
     return out;
   }, TINTED_FORMS);
-  check('现有实体（高低两档）：白名单外骨架都没有 color 属性、材质都没开 vertexColors；白名单形态（skin_stealer 真身 head、wretch body）只有 tint 槽位开 vc（键 /vc）；默认不克隆材质',
+  check('现有实体（高低两档）：白名单外骨架都没有 color 属性、材质都没开 vertexColors；白名单形态（按画质分列，见 TINTED_FORMS）只有 tint 槽位开 vc（键 /vc）；默认不克隆材质',
     r.types > 50 && r.rigs > 50 && !r.colorAttr.length && !r.vcMats.length && !r.tintBad.length && !r.tintMissing.length && !r.cloned.length && !r.noSlotMat.length && !r.errors.length,
     { types: r.types, rigs: r.rigs, colorAttr: r.colorAttr, vcMats: r.vcMats, tintSeen: r.tintSeen, tintBad: r.tintBad, tintMissing: r.tintMissing, cloned: r.cloned, noSlotMat: r.noSlotMat, errors: r.errors });
 }

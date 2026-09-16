@@ -19,27 +19,92 @@ const FLASH_HEX = 0xff2a2a;
 const INFECT_HEX = 0x7a4a34;     // 目标色：和悲尸皮肤同色（wretch.js colors.body），看得出是在往悲尸变
 const SUIT_RAMP_SEC = 12;        // 第二阶段开始后多久过渡到最终色：一点点变，不是一下子换色
 const SUIT_MAX = 0.85;           // 最终色占比：留一点原制服色，还认得出是测试人
-const PUS_HEX = 0xb49a5c;        // 脓疱：发黄的脓色，和红褐色的制服拉开
-const PUS_GROW_SEC = 1.6;        // 脓疱从皮下顶出来的时长
-const PUS_SEG = [7, 5];          // 每颗脓疱的分段
-// 脓疱位置：[离地高度 m, 绕身体的方位角（0 = 正前方，正值偏 +X）, 半径 m]；贴到模型表面的深度由射线决定，GLB 和兜底胶囊体都能贴上
-const PUSTULES = [[1.24, 0.35, 0.045], [1.04, -0.55, 0.038], [0.9, 0.12, 0.05], [1.3, 2.75, 0.042], [1.12, -1.75, 0.036]];
-// 第一阶段一眼能认出来的记号：胸口三道斜爪痕在渗棕色淤泥、下面淌下两道，右臂侧面再抹一块（侧面看过去也有）。
-// 为什么要有：只靠抽搐的话，第一阶段九成时间和健康测试人一模一样（验收实测），而用户最初的抱怨正是"咬到测试人后没反应"。
-// 依据：选中版本"棕色淤泥，接触后使人开始转变"，第一阶段玩家提示也写"伤口在渗棕色淤泥"，画面和文字对得上；深棕压在黄制服上隔几米也看得清
-const SLIME_HEX = 0x3a2313;
-const SLIME_GROW_SEC = 1.2;      // 划伤后淤泥从伤口洇开的时长
-const SLIME_SEG = [6, 4];
-// [离地高度 m, 方位角, 长半轴 m, 短半轴 m, 厚度半轴 m, 倾角（0 = 水平，π/2 = 竖直，正值往 +X 抬）]
-const SLIME = [
-  [1.21, -0.34, 0.085, 0.014, 0.012, 1.0], [1.17, -0.12, 0.09, 0.015, 0.012, 1.0], [1.13, 0.1, 0.08, 0.013, 0.012, 1.0],   // 三道爪痕
-  [1.05, -0.24, 0.05, 0.011, 0.01, 1.52], [1.01, -0.02, 0.045, 0.01, 0.01, 1.52],                                          // 往下淌
-  [1.2, 1.5, 0.06, 0.04, 0.012, 0.35],                                                                                     // 右臂侧面
-];
 // 淤泥划痕和脓疱合成一个网格（只多 1 个 draw call，GLB 测试人本来就有 10 个网格，不能再加）。
 // 各块的"长出来"用两组相对形变目标：基础位置是每块的中心点（退化成一个点，画不出东西），
 // 形变 0 把淤泥撑到全尺寸、形变 1 把脓疱撑到全尺寸，影响度是每个实例自己的，共享几何不用拷
 const SORE_SLIME = 0, SORE_PUS = 1;
+const PUS_HEX = 0xb49a5c;        // 脓疱：发黄的脓色，和红褐色的制服拉开
+const PUS_TIP_HEX = 0xe4d7a8;    // 脓头：更淡的一点，顶在大脓疱正中，看得出是"鼓起来、顶出头"的疱，不是一颗光溜溜的球
+const PORE_HEX = 0x241a12;       // 孔洞：比淤泥还暗，读作皮肤上的一个洞
+const PUS_GROW_SEC = 1.6;        // 脓疱从皮下顶出来的时长
+// 分段（2026-09-16 返修）：整张伤口网格有 ≤ 600 面的硬预算（tests/infection.mjs：只许比健康测试人多 1 个网格、600 面）。
+// M2 第一版把块数从 11 加到 41，分段却照抄 M1，合计 1404 面撞穿了预算。块数（也就是"看得出多少处伤"）一块不减，
+// 改成按块的实际尺寸分档发面数：只有 3 cm 以上的大块值得细分，1 cm 上下的小件在 3 m 外本来就只有几个像素
+const PUS_SEG = [6, 3];          // 每颗脓疱（半径 3~5 cm）：24 面的六棱穹顶；原来 [7,5] 的 56 面有一半埋在衣服里看不见
+const BIG_SEG = [5, 3];          // 长半轴 ≥ BIG_LA 的淤泥块（三道爪痕、手臂那抹、背面那爪）：20 面
+const SMALL_SEG = [4, 2];        // 脓头 / 孔洞 / 布边 / 细淌痕这类一两厘米的小件：8 面
+// "大块"要长和宽都够：翻起的布边跟着爪痕一样长，却只有 6 mm 宽，按大块发面数纯属浪费
+const BIG_LA = 0.06;             // 长半轴门槛
+const BIG_WA = 0.012;            // 短半轴门槛
+// 脓疱与孔洞位置：[离地高度 m, 绕身体的方位角 az（0 = 正前方，正值偏 +X）, 半径 m]；贴到模型表面的深度由射线决定，GLB 和兜底模型都能贴上
+// 依据（悲尸选中版本 wikidot-cn appearance）：「红褐色干燥皮肤，覆盖孔洞和脓疱」+ 第二阶段玩家提示「皮肤发干开裂、冒出脓疱」。
+// M1 只在胸腹做了五颗脓疱、一个孔洞也没有，谈不上"覆盖"：这次补到十颗并铺开到肩、背、前臂、大腿，另加六个孔洞；
+// 大的几颗顶上再点一颗淡色脓头。tip = 加脓头；lo = 低画质也出（低画质保持 M1 的简版）
+const PUSTULES = [
+  { y: 1.24, az: 0.35, r: 0.045, tip: 1, lo: 1 },
+  { y: 1.04, az: -0.55, r: 0.038, tip: 0, lo: 1 },
+  { y: 0.90, az: 0.12, r: 0.050, tip: 1, lo: 1 },
+  { y: 1.30, az: 2.75, r: 0.042, tip: 1, lo: 1 },
+  { y: 1.12, az: -1.75, r: 0.036, tip: 0, lo: 1 },
+  { y: 1.38, az: -1.30, r: 0.034, tip: 0, lo: 0 },   // 左肩
+  { y: 1.31, az: 1.45, r: 0.040, tip: 1, lo: 0 },    // 右肩
+  { y: 0.99, az: 1.72, r: 0.030, tip: 0, lo: 0 },    // 右前臂
+  { y: 1.15, az: 3.05, r: 0.044, tip: 1, lo: 0 },    // 背
+  { y: 0.72, az: 0.45, r: 0.038, tip: 0, lo: 0 },    // 右大腿
+];
+// 第一阶段一眼能认出来的记号：胸口三道斜爪痕在渗棕色淤泥、下面淌下两道，右臂侧面再抹一块（侧面看过去也有）。
+// 为什么要有：只靠抽搐的话，第一阶段九成时间和健康测试人一模一样（验收实测），而用户最初的抱怨正是"咬到测试人后没反应"。
+// 依据：选中版本"棕色淤泥，接触后使人开始转变"，第一阶段玩家提示也写"伤口在渗棕色淤泥"，画面和文字对得上；深棕压在黄制服上隔几米也看得清
+const SLIME_HEX = 0x3a2313;
+const LIP_HEX = 0x6b5418;        // 划开的防化服翻起来的布边：压暗的制服黄，夹着划口
+const SLIME_GROW_SEC = 1.2;      // 划伤后淤泥从伤口洇开的时长
+// 压扁的椭球，行格式：y 离地高度 m、az 方位角、la 长半轴、wa 短半轴、th 厚度半轴、tilt 倾角（0 = 水平，π/2 = 竖直，正值往 +X 抬）、
+// c 颜色（0 淤泥 / 1 布边 / 2 孔洞）、g 属于哪组形变、lo 低画质是否出
+const SLASH = [
+  { y: 1.21, az: -0.34, la: 0.085, wa: 0.014, th: 0.012, tilt: 1.0, c: 0, g: SORE_SLIME, lo: 1 },
+  { y: 1.17, az: -0.12, la: 0.090, wa: 0.015, th: 0.012, tilt: 1.0, c: 0, g: SORE_SLIME, lo: 1 },
+  { y: 1.13, az: 0.10, la: 0.080, wa: 0.013, th: 0.012, tilt: 1.0, c: 0, g: SORE_SLIME, lo: 1 },
+];
+// 每道爪痕两侧翻起的防化服布边：沿划口在表面内的法向（垂直于长轴）偏开一点，两条更细的脊夹住划口。
+// 依据：第一阶段提示原文是"被悲尸划伤了"——划的是穿着防化服的人，衣服该有被划开的口子；
+// M1 的三道深色条没有边，近看像画上去的条纹而不是划开的伤。BODY_R 只是把偏移量换算成方位角用的躯干半径近似值
+const BODY_R = 0.2;
+function lipsOf(s) {
+  const off = s.wa + 0.011, dy = off * Math.cos(s.tilt), daz = off * Math.sin(s.tilt) / BODY_R;
+  return [1, -1].map(k => ({
+    y: s.y + k * dy, az: s.az - k * daz, la: s.la * 0.94, wa: 0.006, th: 0.009, tilt: s.tilt, c: 1, g: SORE_SLIME, lo: 0,
+  }));
+}
+// 往下淌的淤泥、手臂上的一抹、背面那一爪
+const DRIPS = [
+  { y: 1.05, az: -0.24, la: 0.050, wa: 0.011, th: 0.010, tilt: 1.52, c: 0, g: SORE_SLIME, lo: 1 },
+  { y: 1.01, az: -0.02, la: 0.045, wa: 0.010, th: 0.010, tilt: 1.52, c: 0, g: SORE_SLIME, lo: 1 },
+  { y: 1.20, az: 1.50, la: 0.060, wa: 0.040, th: 0.012, tilt: 0.35, c: 0, g: SORE_SLIME, lo: 1 },
+  // 依据「分泌厚重的红褐色物质」：厚重的东西会顺着身体一路挂下去，所以从肚子接着淌到大腿，末端再挂一滴
+  { y: 0.93, az: -0.22, la: 0.055, wa: 0.010, th: 0.009, tilt: 1.52, c: 0, g: SORE_SLIME, lo: 0 },
+  { y: 0.86, az: -0.05, la: 0.050, wa: 0.009, th: 0.009, tilt: 1.52, c: 0, g: SORE_SLIME, lo: 0 },
+  { y: 0.76, az: -0.20, la: 0.045, wa: 0.009, th: 0.009, tilt: 1.52, c: 0, g: SORE_SLIME, lo: 0 },
+  { y: 0.69, az: -0.20, la: 0.016, wa: 0.013, th: 0.012, tilt: 0.00, c: 0, g: SORE_SLIME, lo: 0 },
+  { y: 1.00, az: 1.55, la: 0.050, wa: 0.011, th: 0.010, tilt: 1.45, c: 0, g: SORE_SLIME, lo: 0 },
+  // 背面也挨了一爪：悲尸抓的是乱跑的测试人，抓痕不会只在胸口，背面镜头也得看得出它受了伤
+  { y: 1.24, az: 2.95, la: 0.075, wa: 0.013, th: 0.011, tilt: -0.9, c: 0, g: SORE_SLIME, lo: 0 },
+  { y: 1.18, az: 3.25, la: 0.080, wa: 0.013, th: 0.011, tilt: -0.9, c: 0, g: SORE_SLIME, lo: 0 },
+  { y: 1.04, az: 3.10, la: 0.050, wa: 0.010, th: 0.010, tilt: 1.52, c: 0, g: SORE_SLIME, lo: 0 },
+];
+// 孔洞：贴在表面的暗色圆片，跟着脓疱那一组一起长出来（同属"皮肤开始变成悲尸"的病变，不跟着伤口的淤泥走）
+const PORES = [
+  { y: 1.33, az: -0.85, la: 0.022, wa: 0.019, th: 0.007, tilt: 0, c: 2, g: SORE_PUS, lo: 0 },
+  { y: 1.27, az: 0.95, la: 0.020, wa: 0.017, th: 0.006, tilt: 0, c: 2, g: SORE_PUS, lo: 0 },
+  { y: 1.09, az: -1.50, la: 0.019, wa: 0.016, th: 0.006, tilt: 0, c: 2, g: SORE_PUS, lo: 0 },
+  { y: 0.97, az: 1.62, la: 0.018, wa: 0.015, th: 0.006, tilt: 0, c: 2, g: SORE_PUS, lo: 0 },
+  { y: 1.21, az: 3.00, la: 0.021, wa: 0.018, th: 0.007, tilt: 0, c: 2, g: SORE_PUS, lo: 0 },
+  { y: 0.82, az: 0.50, la: 0.020, wa: 0.017, th: 0.006, tilt: 0, c: 2, g: SORE_PUS, lo: 0 },
+];
+const SLIME = [];
+for (const s of SLASH) SLIME.push(s);
+for (const s of SLASH) { const l = lipsOf(s); SLIME.push(l[0], l[1]); }
+for (const r of DRIPS) SLIME.push(r);
+for (const r of PORES) SLIME.push(r);
 // 抽搐：时间切成槽，每槽按 (实体 id, 槽号) 的确定性哈希决定抽不抽、什么时候抽、往哪边抽。
 // 不用 Math.random：同一只在房主和客机上抽法一样；也不耗 entities 的 aiRng，不会打乱任何需要同步的随机流。
 // 第一阶段的幅度按验收意见加大（原来 0.2 s、约 7° 的小抽动几乎看不出来）：侧倾约 15°、持续近半秒、带一下侧向踉跄
@@ -57,25 +122,55 @@ const RISE_KEYS = [[0, Math.PI / 2], [0.3, 1.0], [0.48, 1.32], [0.8, -0.24], [1,
 const HEAD_RE = /(^|_)(mask|visor|filter)$/i;
 const SUIT_RE = /^Suit(\.\d+)?$/;
 
-// ---------- 兜底模型：胶囊体身子 + 头罩 + 防毒面具 + 靴子 ----------
+// ---------- 兜底模型：hazmat.glb 还没加载完 / 加载失败时的程序化防化服 ----------
+// 只有掉到这条路上才用得到（有 GLB 就永远用 GLB，M1 打分员看到的"细节最完整"说的也是 GLB）。
+// 原来这里只是一个胶囊体加两只靴子，连胳膊腿都没有，真掉下来时和 GLB 判若两人；
+// 现在按 GLB 那身制服的构成重建：兜帽、面罩 + 目镜 + 两侧滤罐、四肢、手套、腰带、胸前拉链与口袋、靴子加鞋底。
+// 分四块网格三种材质（制服 / 深色装具 / 靴子）：面罩组必须单独成一块网格，makeHead 只把它挂到脖子枢轴下甩头，
+// 腰带和手套跟着甩就穿帮了。约 1.1k 面、4 个 draw call
 let geo = null;
 function fallbackGeo(T) {
   if (geo) return geo;
   const merge = T.BufferGeometryUtils && T.BufferGeometryUtils.mergeBufferGeometries;
-  // r139+ 才有 CapsuleGeometry，r147 有；保险起见没有就用圆柱
-  const body = T.CapsuleGeometry
-    ? new T.CapsuleGeometry(0.25, 0.8, 4, 10).translate(0, 0.77, 0)    // 0.12–1.42 m
-    : new T.CylinderGeometry(0.25, 0.25, 1.3, 10).translate(0, 0.77, 0);
-  const hood = new T.SphereGeometry(0.19, 12, 8).translate(0, 1.58, 0);  // 顶到 1.77 m
-  const mask = new T.BoxGeometry(0.26, 0.2, 0.12).translate(0, 1.55, -0.15);
-  const filter = new T.CylinderGeometry(0.06, 0.07, 0.1, 10).rotateX(Math.PI / 2).translate(0, 1.47, -0.25);
-  const bootL = new T.BoxGeometry(0.16, 0.14, 0.28).translate(-0.11, 0.07, -0.03);
-  const bootR = new T.BoxGeometry(0.16, 0.14, 0.28).translate(0.11, 0.07, -0.03);
-  geo = {
-    suit: merge ? [merge([body, hood])] : [body, hood],
-    mask: merge ? [merge([mask, filter])] : [mask, filter],
-    boots: merge ? [merge([bootL, bootR])] : [bootL, bootR],
+  // 一段竖直圆台：rTop / rBot 是上下半径，y0→y1 是高度区间，flat < 1 把截面前后压扁（人不是圆柱）
+  const cyl = (rTop, rBot, y0, y1, x, z, seg, flat) => {
+    const g = new T.CylinderGeometry(rTop, rBot, y1 - y0, seg || 8, 1);
+    if (flat && flat !== 1) g.scale(1, 1, flat);
+    return g.translate(x || 0, (y0 + y1) / 2, z || 0);
   };
+  const box = (sx, sy, sz, x, y, z) => new T.BoxGeometry(sx, sy, sz).translate(x, y, z);
+  const suit = [
+    cyl(0.175, 0.195, 0.86, 1.12, 0, 0, 10, 0.8),    // 腰（收）
+    cyl(0.225, 0.175, 1.12, 1.38, 0, 0, 10, 0.8),    // 胸（张）
+    cyl(0.185, 0.225, 1.38, 1.44, 0, 0, 10, 0.82),   // 肩线收口
+    cyl(0.075, 0.09, 1.42, 1.50, 0, 0, 8),           // 脖子
+    new T.SphereGeometry(0.19, 12, 8).translate(0, 1.58, 0),   // 兜帽，顶到 1.77 m
+  ];
+  for (const s of [-1, 1]) {
+    suit.push(new T.SphereGeometry(0.088, 8, 6).translate(s * 0.205, 1.35, 0));   // 肩
+    suit.push(cyl(0.072, 0.062, 0.98, 1.34, s * 0.205));                          // 上臂
+    suit.push(cyl(0.062, 0.052, 0.72, 0.98, s * 0.215));                          // 前臂
+    suit.push(cyl(0.095, 0.082, 0.48, 0.88, s * 0.105));                          // 大腿
+    suit.push(cyl(0.082, 0.062, 0.16, 0.48, s * 0.105));                          // 小腿
+  }
+  const gear = [
+    cyl(0.205, 0.205, 0.885, 0.95, 0, 0, 12, 0.82),   // 腰带
+    box(0.022, 0.40, 0.05, 0, 1.18, -0.16),           // 胸前拉链条
+    box(0.10, 0.11, 0.035, 0.085, 1.22, -0.172),      // 胸口袋
+  ];
+  const mask = [
+    box(0.26, 0.20, 0.12, 0, 1.55, -0.15),            // 面罩框
+    box(0.21, 0.085, 0.035, 0, 1.585, -0.203),        // 目镜
+  ];
+  const boots = [];
+  for (const s of [-1, 1]) {
+    gear.push(box(0.10, 0.13, 0.115, s * 0.22, 0.655, 0));                                              // 手套
+    mask.push(new T.CylinderGeometry(0.05, 0.055, 0.09, 8).rotateX(Math.PI / 2).translate(s * 0.115, 1.505, -0.17));   // 两侧滤罐
+    boots.push(box(0.16, 0.15, 0.30, s * 0.11, 0.10, -0.03));                                           // 靴筒
+    boots.push(box(0.17, 0.03, 0.32, s * 0.11, 0.016, -0.03));                                          // 鞋底
+  }
+  const one = list => (merge ? [merge(list)] : list);
+  geo = { suit: one(suit), gear: one(gear), mask: one(mask), boots: one(boots) };
   return geo;
 }
 
@@ -95,6 +190,7 @@ function fallbackModel(T) {
   const maskMat = sharedMat('test_dummy/mask', () => new T.MeshLambertMaterial({ color: 0x1d1d1f }));
   const bootMat = sharedMat('test_dummy/boot', () => new T.MeshLambertMaterial({ color: 0x141414 }));
   for (const x of g.suit) { const m = new T.Mesh(x, suitMat); m.userData.suit = true; root.add(m); }
+  for (const x of g.gear) root.add(new T.Mesh(x, maskMat));        // 装具和面罩同一份材质，但不是同一块网格：只有面罩跟着头甩
   for (const x of g.mask) { const m = new T.Mesh(x, maskMat); m.userData.head = true; root.add(m); }
   for (const x of g.boots) root.add(new T.Mesh(x, bootMat));
   return root;
@@ -231,7 +327,8 @@ function riseLean(r) {
   return RISE_KEYS[RISE_KEYS.length - 1][1];
 }
 
-// 同一种模型（GLB / 兜底）的测试人伤口和脓疱贴法一样：几何按模型种类缓存共享，不随实例释放；第一次有测试人被感染时才算
+// 同一种模型（GLB / 兜底）、同一档画质的测试人伤口和脓疱贴法一样：几何按 模型种类 + 画质 缓存共享，不随实例释放；
+// 第一次有测试人被感染时才算。键尾的 v3 是版本号：形状表或分段改了就得换键，否则同一页面里先感染的那只会把旧几何传给后面的
 const soresGeoCache = new Map();
 
 // 把各块（完整形状 + 中心点 + 颜色 + 属于哪组）合成一个带顶点色和两组相对形变的几何，见 SORE_SLIME / SORE_PUS 的说明
@@ -263,8 +360,9 @@ function mergeSores(T, parts) {
   return out;
 }
 
-function soresGeo(T, u, root) {
-  const cached = soresGeoCache.get(u.kind);
+function soresGeo(T, u, root, hi) {
+  const key = u.kind + (hi ? '/high' : '/low') + '/v3';
+  const cached = soresGeoCache.get(key);
   if (cached) return cached;
   // 从身体外面朝中轴打射线找表面：先把枢轴上的后仰/抽搐/踉跄和头的甩动清零，算完再还原（结果按模型种类缓存，不能带上某一帧的姿势）
   const piv = u.pivot, head = u.head;
@@ -290,27 +388,37 @@ function soresGeo(T, u, root) {
     return new T.Vector3(dx * 0.2, h, dz * 0.2);   // 没打到（模型异常）就贴在 0.2 m 半径上
   };
   const parts = [];
-  const slimeCol = linColor(T, SLIME_HEX), pusCol = linColor(T, PUS_HEX);
+  const COL = [linColor(T, SLIME_HEX), linColor(T, LIP_HEX), linColor(T, PORE_HEX)];   // 行里的 c 就是这张表的下标
+  const pusCol = linColor(T, PUS_HEX), tipCol = linColor(T, PUS_TIP_HEX);
   const up = new T.Vector3(0, 1, 0), n = new T.Vector3(), t = new T.Vector3(), la = new T.Vector3(), wa = new T.Vector3();
   const M = new T.Matrix4(), sc = new T.Vector3();
   for (const p of SLIME) {
+    if (!hi && !p.lo) continue;   // 低画质保持 M1 的简版：三道爪痕 + 两道淌痕 + 手臂那一抹，没有布边、孔洞和背面那组
     // 压扁的椭球贴在表面：长轴沿划痕方向、短轴在表面内、最薄的一轴朝外；中心往外挪三成厚度，里面一半藏进衣服，看着是糊在表面的一层
-    const c = surface(p[0], p[1]);
-    n.set(Math.sin(p[1]), 0, -Math.cos(p[1]));
-    t.set(Math.cos(p[1]), 0, Math.sin(p[1]));
-    la.copy(t).multiplyScalar(Math.cos(p[5])).addScaledVector(up, Math.sin(p[5]));
+    const c = surface(p.y, p.az);
+    n.set(Math.sin(p.az), 0, -Math.cos(p.az));
+    t.set(Math.cos(p.az), 0, Math.sin(p.az));
+    la.copy(t).multiplyScalar(Math.cos(p.tilt)).addScaledVector(up, Math.sin(p.tilt));
     wa.crossVectors(n, la).normalize();   // la × wa = n，基是右手系，面的朝向不会被翻过来
-    c.addScaledVector(n, p[4] * 0.3);
-    M.makeBasis(la, wa, n).scale(sc.set(p[2], p[3], p[4])).setPosition(c);
-    const g = new T.SphereGeometry(1, SLIME_SEG[0], SLIME_SEG[1]);
+    c.addScaledVector(n, p.th * 0.3);
+    M.makeBasis(la, wa, n).scale(sc.set(p.la, p.wa, p.th)).setPosition(c);
+    const seg = p.la >= BIG_LA && p.wa >= BIG_WA ? BIG_SEG : SMALL_SEG;   // 按块自己的大小发面数：布边、孔洞、细淌痕都是小件
+    const g = new T.SphereGeometry(1, seg[0], seg[1]);
     g.applyMatrix4(M);
-    parts.push({ g, c, col: slimeCol, group: SORE_SLIME });
+    parts.push({ g, c, col: COL[p.c], group: p.g });
   }
   for (const p of PUSTULES) {
-    const c = surface(p[0], p[1]);
-    c.x += Math.sin(p[1]) * p[2] * 0.35;   // 往外露出三分之一多，看得出是鼓包
-    c.z += -Math.cos(p[1]) * p[2] * 0.35;
-    parts.push({ g: new T.SphereGeometry(p[2], PUS_SEG[0], PUS_SEG[1]).translate(c.x, c.y, c.z), c, col: pusCol, group: SORE_PUS });
+    if (!hi && !p.lo) continue;
+    const c = surface(p.y, p.az);
+    const dx = Math.sin(p.az), dz = -Math.cos(p.az);
+    c.x += dx * p.r * 0.35;   // 往外露出三分之一多，看得出是鼓包
+    c.z += dz * p.r * 0.35;
+    parts.push({ g: new T.SphereGeometry(p.r, PUS_SEG[0], PUS_SEG[1]).translate(c.x, c.y, c.z), c, col: pusCol, group: SORE_PUS });
+    // 脓头：顶在疱正中、再往外探出一点的一颗淡色小球，几颗大疱才有（低画质那点像素分不出来，不出）
+    if (hi && p.tip) {
+      const tc = new T.Vector3(c.x + dx * p.r * 0.62, c.y, c.z + dz * p.r * 0.62);
+      parts.push({ g: new T.SphereGeometry(p.r * 0.42, SMALL_SEG[0], SMALL_SEG[1]).translate(tc.x, tc.y, tc.z), c: tc, col: tipCol, group: SORE_PUS });
+    }
   }
   piv.rotation.set(saved[0], saved[1], saved[2]);
   piv.position.x = saved[3];
@@ -318,7 +426,7 @@ function soresGeo(T, u, root) {
   if (head) head.rotation.set(hr[0], hr[1], hr[2]);
   root.updateMatrixWorld(true);
   const g = mergeSores(T, parts);
-  soresGeoCache.set(u.kind, g);
+  soresGeoCache.set(key, g);
   return g;
 }
 
@@ -327,7 +435,10 @@ function ensureSores(T, u, root) {
   // 材质是本实例独有的：挨打闪红要跟着闪（改的是 emissive），移除时由 entities.js 按 entityOwned 释放；颜色走顶点色
   const mat = new T.MeshLambertMaterial({ vertexColors: true });
   mat.userData = { entityOwned: true, em0: mat.emissive.getHex(), col0: mat.color.getHex(), colNow: null, suit: false };
-  const mesh = new T.Mesh(soresGeo(T, u, root), mat);   // 构造时按几何的形变组数建好 morphTargetInfluences（本实例独有）
+  // 画质在这一刻定下（和构件库 resolveDetail 同一口径）：这只已经建好的伤口网格不会因为中途改设置而重建，
+  // 换画质之后新感染的测试人才用另一档
+  const hi = !(BR.game && BR.game.settings && BR.game.settings.quality === 'low');
+  const mesh = new T.Mesh(soresGeo(T, u, root, hi), mat);   // 构造时按几何的形变组数建好 morphTargetInfluences（本实例独有）
   mesh.name = 'dummy-sores';
   mesh.visible = false;
   u.pivot.add(mesh);

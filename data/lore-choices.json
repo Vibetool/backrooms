@@ -1056,6 +1056,7 @@
       "file": "/Users/xuanjiang/Downloads/project/backrooms-research/entities/growler.json"
     },
     "hound": {
+      "userOverride": "形态按用户指定（2026-09-16，M2 前置决定）：改成四肢着地的人形，不用犬形四足。依据选中的 fandom 版「人被咬、感染 Egremond 综合征后约 20–30 分钟变形而成」，以及社区经典形象；保留 fandom 版的背上一长条黑色蓬乱毛发、双眼闪白光。只重做模型，radius/height/speed/attack/brain 不变。",
       "candidates": [
         "wikidot-en",
         "wikidot-cn",

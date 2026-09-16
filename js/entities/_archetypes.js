@@ -1143,6 +1143,17 @@ function swarmPart(o, ctx) {
 // 测试人/玩家外形（拟态用）：防化服 + 玩家当前皮肤色。
 // 缺省用程序化仿制品（约 1k 三角面）：hazmat.glb 有一万八千面，拟态类实体一层刷十几只就压垮手机；
 // { full: true } 才借 test_dummy 的 build（和测试人一模一样，只适合单只特写）
+const HAZMAT_GEAR = 0x1b1b1d;   // gear 槽位基色：面罩/滤罐/手套/靴子/腰带，不随皮肤变
+// 顶点色 tint = 目标色分量 / 槽位基色分量（和 skin_stealer 的眼睛用同一套换算）。gear 槽位很深，
+// 反光条和金属件的乘数 >1 —— 正是 _TEMPLATE 6.10 写的"把这一块提亮到超过槽位材质色"：不新增材质槽位、
+// 不多一次 draw call，就能在同一个槽位里分出银色反光条、金属扣和更深的目镜玻璃
+function hazTint(target) {
+  const c = (hex, s) => ((hex >> s) & 255) / 255;
+  return [c(target, 16) / c(HAZMAT_GEAR, 16), c(target, 8) / c(HAZMAT_GEAR, 8), c(target, 0) / c(HAZMAT_GEAR, 0)];
+}
+const HAZ_TAPE = hazTint(0xd8dce2);    // 反光条：银白
+const HAZ_METAL = hazTint(0x9aa0a6);   // 腰带扣、滤罐端盖、拉链头
+const HAZ_GLASS = hazTint(0x0c1015);   // 面罩视窗：比面罩本体更深，看得出是块玻璃
 function hazmat(ctx, o) {
   o = o || {};
   if (o.full) {
@@ -1155,13 +1166,14 @@ function hazmat(ctx, o) {
   const suit = BR.skin && has(BR.skin, 'color') ? BR.skin.color() : 0xd8b21f;
   const hi = resolveDetail(o.detail) === 'high';
   return humanoid({
-    height: 1.8, bulk: 1.35, headSize: 1.3, neck: 0.4, key: 'hazmat_lite', detail: o.detail,
+    height: 1.8, bulk: 1.35, headSize: 1.3, neck: 0.4, key: 'hazmat_lite_v2', detail: o.detail,
     colors: { body: suit, head: suit, gear: 0x1b1b1d },   // body/head 是制服，跟着 BR.skin 变色；gear 固定深色，面罩/滤罐/手套/靴子/腰带不随皮肤变
     extend(b, d) {
       const hr = d.headR, hy = d.headY;
-      if (hi) b.sphere('head', 'head', hr * 1.12, [0, hy + hr * 0.12, hr * 0.02], [1, 0.82, 1.05], [10, 8]);             // 兜帽轮廓：罩在头骨外一层，制服色（head 槽位）
+      if (hi) b.sphere('head', 'head', hr * 1.12, [0, hy + hr * 0.12, hr * 0.02], [1, 0.82, 1.05], [8, 6]);              // 兜帽轮廓：罩在头骨外一层，制服色（head 槽位）
       b.box('head', 'gear', [hr * 1.25, hr * 0.95, hr * 0.5], [0, hy - hr * 0.15, -hr * 0.8]);                           // 面罩框
-      if (hi) for (const s of [-1, 1]) b.sphere('head', 'gear', hr * 0.28, [s * hr * 0.42, hy - hr * 0.1, -hr * 1.02], [1, 1, 0.6], [6, 5]);   // 目镜
+      // 原来这里是两颗目镜小球：兜帽球面在 z ≈ -0.184 就把它们盖住了，正面只剩两个黑点（M1 打分原话"面罩只是几颗黑块"）。
+      // 改成下面 high 档里那一整片伸到兜帽前面的观察窗，和测试人 hazmat.glb 的大视野面罩对上；low 档还是只有面罩框，不受影响
       if (hi) for (const s of [-1, 1]) b.limb('head', 'gear', [s * hr * 0.75, hy - hr * 0.35, -hr * 0.85], [s * hr * 0.8, hy - hr * 0.4, -hr * 1.25], hr * 0.22, hr * 0.25, 6);   // 两侧滤罐
       else b.limb('head', 'gear', [0, hy - hr * 0.45, -hr * 1.0], [0, hy - hr * 0.5, -hr * 1.45], hr * 0.32, hr * 0.36, 8);                     // 低画质简版：单个中置滤罐
       if (hi) b.box('spine', 'gear', [0.02, (d.shoulderY - d.hipY) * 0.68, 0.015], [0, (d.shoulderY + d.hipY) / 2, -d.headR * 0.95]);   // 胸前拉链条
@@ -1175,6 +1187,67 @@ function hazmat(ctx, o) {
         b.box('shin' + L, 'gear', [0.14, 0.13, 0.27], [s * d.hipW, 0.065, -0.03]);                                       // 靴子
         if (hi) b.box('shin' + L, 'gear', [0.15, 0.02, 0.29], [s * d.hipW, 0.01, -0.03]);                                // 靴子鞋底
       }
+      if (!hi) return;
+      // ---------- M2 打磨：可指认的防化服细节（只在 high 档加形状，low 档保持上面那套简版） ----------
+      // 依据：窃皮者选中版本（wikidot-en）"伪装方式：凸起吸附从人身上撕下的皮……看起来和真人一模一样" ——
+      // 伪装态越贴近测试人穿的那套 hazmat.glb 越符合设定。下面每一处都照着 glb 上已经有、这个仿制品上还缺的件补，
+      // 全部叠在已有的 body / gear 槽位上（不新增槽位、不多 draw call），颜色差别一律走顶点色 tint。
+      // 形状一律挑便宜的：能用方块说清楚的就不用圆柱 —— 圆柱两端的盖子埋在衣服里看不见，白花一倍面数。
+      // 这份构件和窃皮者真身共用 4000 面的预算（真身归另一个组），所以这里能省则省
+      const H = d.H, shY = d.shoulderY, sw = d.shoulderW, hw = d.hipW, TH = 1.35;   // TH = 上面传的 bulk
+      const lerpR = (y, y0, y1, r0, r1) => r0 + (r1 - r0) * U.clamp((y - y0) / (y1 - y0), 0, 1);
+      const armR = y => lerpR(y, shY - 0.005 * H, d.elbowY, 0.03 * H * TH, 0.024 * H * TH);
+      const foreR = y => lerpR(y, d.elbowY, d.handY + 0.02 * H, 0.024 * H * TH, 0.018 * H * TH);
+      const shinR = y => lerpR(y, d.kneeY, 0.045 * H, 0.032 * H * TH, 0.022 * H * TH);
+
+      // 面罩：一整片伸到兜帽前面的深色观察窗（z 要比兜帽球面的 -1.16·hr 更靠前，否则被黄兜帽吃掉）+ 呼气阀 + 头带 + 颈封
+      b.box('head', 'gear', [hr * 1.3, hr * 0.52, hr * 0.16], [0, hy - hr * 0.04, -hr * 1.3], { tint: HAZ_GLASS });
+      b.box('head', 'gear', [hr * 0.44, hr * 0.32, hr * 0.24], [0, hy - hr * 0.62, -hr * 1.16]);
+      b.limb('head', 'gear', [0, hy + hr * 0.5, hr * 0.02], [0, hy + hr * 0.45, hr * 0.02], hr * 1.08, hr * 1.1, 6, 1.06);
+      b.limb('head', 'gear', [0, shY + 0.028, 0], [0, shY - 0.004, 0], 0.076, 0.084, 6);
+      for (const s of [-1, 1]) {
+        b.box('head', 'gear', [hr * 0.34, hr * 0.34, hr * 0.1], [s * hr * 0.81, hy - hr * 0.41, -hr * 1.3], { tint: HAZ_METAL });   // 滤罐端盖
+        b.box('head', 'gear', [hr * 0.1, hr * 0.17, hr * 0.46], [s * hr * 0.68, hy - hr * 0.38, -hr * 1.0]);                        // 滤罐固定带
+      }
+
+      // 反光条：上臂、前臂、小腿各一道，胸前和兜帽各一圈 —— 隔着走廊先认出来的就是这几条
+      for (const s of [-1, 1]) {
+        const L = s < 0 ? 'L' : 'R';
+        b.limb('arm' + L, 'gear', [s * sw, 1.35, 0], [s * sw, 1.29, 0], armR(1.35) + 0.004, armR(1.29) + 0.004, 5, { tint: HAZ_TAPE });
+        b.limb('fore' + L, 'gear', [s * sw, 0.95, 0], [s * sw, 0.89, 0], foreR(0.95) + 0.004, foreR(0.89) + 0.004, 5, { tint: HAZ_TAPE });
+        b.limb('shin' + L, 'gear', [s * hw, 0.33, 0], [s * hw, 0.27, 0], shinR(0.33) + 0.004, shinR(0.27) + 0.004, 5, { tint: HAZ_TAPE });
+      }
+      b.limb('spine', 'gear', [0, 1.27, 0], [0, 1.21, 0], 0.199, 0.196, 6, 0.82, { tint: HAZ_TAPE });
+      b.limb('head', 'gear', [0, hy + hr * 0.85, hr * 0.02], [0, hy + hr * 0.79, hr * 0.02], hr * 0.75, hr * 0.8, 6, 1.06, { tint: HAZ_TAPE });
+
+      // 压胶条（防化服是热合缝，每条缝上压一条胶带）、肩上的反光章、臂章
+      for (const s of [-1, 1]) {
+        const L = s < 0 ? 'L' : 'R';
+        b.box('spine', 'gear', [0.14, 0.014, 0.1], [s * 0.1, 1.478, 0]);
+        b.box('spine', 'gear', [0.075, 0.016, 0.06], [s * 0.135, 1.474, -0.02], { tint: HAZ_TAPE });
+        b.box('arm' + L, 'gear', [0.016, 0.3, 0.014], [s * sw, 1.26, 0.068]);
+        b.box('leg' + L, 'gear', [0.016, 0.34, 0.014], [s * hw, 0.72, 0.095]);
+        b.box('arm' + L, 'gear', [0.055, 0.07, 0.016], [s * sw, 1.36, -0.072]);
+      }
+
+      // 腿和靴：护膝（制服色，跟着换肤变色）、大腿侧袋和袋盖、靴口翻边、靴侧拉带
+      for (const s of [-1, 1]) {
+        const L = s < 0 ? 'L' : 'R';
+        b.box('shin' + L, 'body', [0.085, 0.1, 0.022], [s * hw, 0.47, -0.082]);
+        b.box('leg' + L, 'gear', [0.07, 0.095, 0.024], [s * (hw + 0.052), 0.72, -0.07]);
+        b.box('leg' + L, 'gear', [0.076, 0.02, 0.028], [s * (hw + 0.052), 0.775, -0.072]);
+        b.limb('shin' + L, 'gear', [s * hw, 0.135, -0.03], [s * hw, 0.112, -0.03], 0.082, 0.089, 5);
+        b.box('shin' + L, 'gear', [0.018, 0.05, 0.06], [s * (hw + 0.072), 0.1, -0.03]);
+      }
+
+      // 腰带扣（扣片 + 扣舌）、胸前口袋和袋盖、上半段拉链和拉链头。
+      // 原来那条拉链只有下半截露在外面，上半截被胸廓鼓包盖住了，这里顺着胸口曲面补一段，整条才连得起来
+      b.box('hips', 'gear', [0.075, 0.05, 0.022], [0, d.hipY - 0.015, -0.185], { tint: HAZ_METAL });
+      b.box('hips', 'gear', [0.022, 0.035, 0.012], [0, d.hipY - 0.015, -0.2], { tint: HAZ_METAL });
+      b.box('spine', 'gear', [0.085, 0.1, 0.03], [0.085, 1.26, -0.185]);
+      b.box('spine', 'gear', [0.092, 0.022, 0.034], [0.085, 1.318, -0.188]);
+      b.limb('spine', 'gear', [0, 1.4, -0.186], [0, 1.22, -0.166], 0.012, 0.013, 4);
+      b.box('spine', 'gear', [0.026, 0.03, 0.014], [0, 1.412, -0.19], { tint: HAZ_METAL });
     },
   });
 }
