@@ -35,12 +35,14 @@ BR.assets.registerProcedural('l18_wall_nursery', 256, (g, s) => {
 // 幼儿园地面：验收①指出原来用 carpet_light（和 Level 0 同款浅色地毯）+ 方格吊顶太像办公层，
 // 改成彩色泡沫拼图地垫——没有现成贴图，也不占新增 jpg 的包体预算，直接用 canvas 画（规则⑩：没有 jpg 就必须 noFile）
 BR.assets.registerProcedural('l18_floor_foam', 256, (g, s) => {
-  const cols = ['#d9524a', '#e8c94a', '#4a90d9', '#5aa06a'];
+  // 用户 2026-09-19：原来四色饱和度太高，整间房铺满后很刺眼（幼儿园占本层 55% 的房间）。
+  // 改成用旧了、晒褪色的泡沫垫配色——色相不变，饱和度压低、亮度提上去，仍然认得出是儿童地垫
+  const cols = ['#c98a80', '#d9c795', '#93a8bf', '#98ae94'];
   const n = 4, cell = s / n;
   for (let j = 0; j < n; j++) {
     for (let i = 0; i < n; i++) { g.fillStyle = cols[(i + j) % cols.length]; g.fillRect(i * cell, j * cell, cell, cell); }
   }
-  g.fillStyle = 'rgba(0,0,0,0.15)';   // 拼图咬合缝，纯装饰细节，不是设定
+  g.fillStyle = 'rgba(0,0,0,0.10)';   // 拼图咬合缝，纯装饰细节，不是设定（跟着配色一起调淡）
   for (let j = 0; j <= n; j++) g.fillRect(0, j * cell - 2, s, 4);
   for (let i = 0; i <= n; i++) g.fillRect(i * cell - 2, 0, 4, s);
 }, { noFile: true });

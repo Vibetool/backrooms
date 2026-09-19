@@ -1451,8 +1451,11 @@ function crate(b, x, z, rot, opts) {
   b.push(x, z, rot);
   part(b, 0, 0, 0, S, S, S, c, { faces: 'noBottom' });
   const h = S / 2 + 0.005;
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) part(b, sx * (h - t / 2), 0, sz * (h - t / 2), t, S, t, e, { faces: 'noBottom' });
-  for (const y of [0, S - t]) {
+  // 角柱和上压边比箱顶高出一点：原来这三者的顶面都落在 y=S 同一个平面上，深度缓冲分不出先后，
+  // 顶面会出现闪烁的杂纹（Level 18 幼儿园那个粉色玩具箱最明显）。错开之后不再共面，也更像真木箱的护边
+  const LIP = 0.004;
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) part(b, sx * (h - t / 2), 0, sz * (h - t / 2), t, S + LIP * 2, t, e, { faces: 'noBottom' });
+  for (const y of [0, S - t + LIP]) {
     for (const s of [-1, 1]) {
       part(b, 0, y, s * (h - t / 2), S + 0.01, t, t, e);
       part(b, s * (h - t / 2), y, 0, t, t, S + 0.01, e);
