@@ -6,7 +6,7 @@
   "spawnFactor": 1,
   "radius": 2,
   "chunkSize": 32,
-  "hash": "02f0b94c132cb6d4882addab1ebd6b9efde1e7a718cca6dd3f92f34d7585324b",
+  "hash": "1d0664461130653da85467ca2cd1ab94629bc3f0566e912002c3b190b6d83b35",
   "chunks": [
     {
       "cx": -2,
@@ -947,15 +947,15 @@
     {
       "cx": 2,
       "cz": -1,
-      "hash": "acef5d708706f708",
-      "verts": 3224,
+      "hash": "aa887410a9296d60",
+      "verts": 3530,
       "mats": ["kit|L1:ceiling","kit|L1:floor","kit|L1:wall","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L1:wall",196],
-        ["kit|kit:prop",2956],
+        ["kit|kit:prop",3188],
         ["kit|L1:floor",4],
-        ["kit|L1:ceiling",4],
-        ["kit|kit:glow",64]
+        ["kit|L1:ceiling",8],
+        ["kit|kit:glow",134]
       ],
       "solids": [
         [64,0,-12.133,64.133,2.8,-3.867],
@@ -973,11 +973,15 @@
         [83.75,0,-4.25,84.25,2.8,-3.75],
         [81.447,0,-26.553,82.553,0.8,-25.447],
         [69.585,0,-30.415,70.415,0.8,-29.585],
-        [89.442,0,-18.558,90.558,0.8,-17.442]
+        [89.442,0,-18.558,90.558,0.8,-17.442],
+        [80.13,0,-5.55,80.29,2.05,-5.47],
+        [80.13,0,-6.53,80.29,2.05,-6.45],
+        [80.16,0,-6.45,80.26,2.05,-5.55],
+        [80.238,1,-6.042,80.244,1.54,-5.957],
+        [80.238,0.82,-6.042,80.244,0.905,-5.957]
       ],
       "spawnPoints": [
         [66,0,-30,{"tag":"floor"}],
-        [74,0,-30,{"tag":"floor"}],
         [78,0,-30,{"tag":"floor"}],
         [82,0,-30,{"tag":"floor"}],
         [86,0,-30,{"tag":"floor"}],
@@ -1025,7 +1029,6 @@
         [70,0,-6,{"tag":"floor"}],
         [74,0,-6,{"tag":"floor"}],
         [78,0,-6,{"tag":"floor"}],
-        [82,0,-6,{"tag":"floor"}],
         [86,0,-6,{"tag":"floor"}],
         [90,0,-6,{"tag":"floor"}],
         [94,0,-6,{"tag":"floor"}],
@@ -1038,7 +1041,10 @@
         [90,0,-2,{"tag":"floor"}],
         [94,0,-2,{"tag":"floor"}]
       ],
-      "exits": [],
+      "exits": [
+        {"x":74,"y":0,"z":-30,"to":"fun","kind":"zone","sealed":false,"radius":1.2,"active":true},
+        {"x":80.91,"y":0,"z":-6,"to":"run","kind":"door","sealed":false,"radius":0.8,"active":true}
+      ],
       "entities": []
     },
     {
@@ -1162,15 +1168,15 @@
     {
       "cx": -1,
       "cz": 0,
-      "hash": "fe6f44c883aca334",
-      "verts": 3268,
+      "hash": "cee5ca3b3de5bc76",
+      "verts": 3342,
       "mats": ["kit|L1:ceiling","kit|L1:floor","kit|L1:wall","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L1:wall",196],
         ["kit|kit:prop",2976],
         ["kit|L1:floor",4],
-        ["kit|L1:ceiling",4],
-        ["kit|kit:glow",64],
+        ["kit|L1:ceiling",8],
+        ["kit|kit:glow",134],
         ["kit|L1:wall",24]
       ],
       "solids": [
@@ -1224,7 +1230,6 @@
         [-30,0,18,{"tag":"floor"}],
         [-26,0,18,{"tag":"floor"}],
         [-22,0,18,{"tag":"floor"}],
-        [-18,0,18,{"tag":"floor"}],
         [-14,0,18,{"tag":"floor"}],
         [-10,0,18,{"tag":"floor"}],
         [-2,0,18,{"tag":"floor"}],
@@ -1254,7 +1259,8 @@
         [-2,0,30,{"tag":"floor"}]
       ],
       "exits": [
-        {"x":-8,"y":0,"z":10,"to":"1.5","kind":"noclip","sealed":true,"radius":1.4,"active":true}
+        {"x":-8,"y":0,"z":10,"to":"1.5","kind":"noclip","sealed":true,"radius":1.4,"active":true},
+        {"x":-18,"y":0,"z":18,"to":"fun","kind":"zone","sealed":false,"radius":1.2,"active":true}
       ],
       "entities": []
     },
@@ -2418,15 +2424,15 @@
     {
       "cx": 1,
       "cz": 2,
-      "hash": "66eb2abad22323f1",
-      "verts": 2316,
+      "hash": "dc2a39b6c0423abc",
+      "verts": 2390,
       "mats": ["kit|L1:ceiling","kit|L1:floor","kit|L1:wall","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L1:wall",192],
         ["kit|kit:prop",2052],
         ["kit|L1:floor",4],
-        ["kit|L1:ceiling",4],
-        ["kit|kit:glow",64]
+        ["kit|L1:ceiling",8],
+        ["kit|kit:glow",134]
       ],
       "solids": [
         [32,0,63.867,32.133,2.8,72.133],
@@ -2499,7 +2505,6 @@
         [50,0,90,{"tag":"room"}],
         [54,0,90,{"tag":"room"}],
         [58,0,90,{"tag":"room"}],
-        [34,0,94,{"tag":"floor"}],
         [38,0,94,{"tag":"floor"}],
         [42,0,94,{"tag":"floor"}],
         [46,0,94,{"tag":"room"}],
@@ -2508,7 +2513,9 @@
         [58,0,94,{"tag":"room"}],
         [62,0,94,{"tag":"room"}]
       ],
-      "exits": [],
+      "exits": [
+        {"x":34,"y":0,"z":94,"to":"fun","kind":"zone","sealed":false,"radius":1.2,"active":true}
+      ],
       "entities": [
         ["nguithrxurh",58,66]
       ]

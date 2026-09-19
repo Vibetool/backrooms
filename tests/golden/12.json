@@ -6,7 +6,7 @@
   "spawnFactor": 1,
   "radius": 2,
   "chunkSize": 32,
-  "hash": "623e777ca04156c3e4bd9f047051f647dd4de68725434252e762fba9192fc653",
+  "hash": "b2d0bae7846b1ff1902d64e6486f04dd9188fbd938dedf47b1e4e728c8d4307a",
   "chunks": [
     {
       "cx": -2,
@@ -534,7 +534,7 @@
     {
       "cx": 0,
       "cz": 0,
-      "hash": "bf7a126d7ee3f40d",
+      "hash": "25039b413b5d04cf",
       "verts": 1054,
       "mats": ["kit|L12:white","kit|kit:glow","kit|kit:prop"],
       "meshes": [
@@ -588,7 +588,7 @@
         {"x":16,"y":0,"z":12.8,"to":"4","kind":"event","sealed":false,"radius":1,"active":false},
         {"x":16,"y":0,"z":12.8,"to":"10","kind":"event","sealed":false,"radius":1,"active":false},
         {"x":16,"y":0,"z":12.8,"to":"19","kind":"event","sealed":false,"radius":1,"active":false},
-        {"x":16,"y":0,"z":12.8,"to":"23","kind":"event","sealed":true,"radius":1.4,"active":false},
+        {"x":16,"y":0,"z":12.8,"to":"23","kind":"event","sealed":false,"radius":1,"active":false},
         {"x":16,"y":0,"z":12.8,"to":"25","kind":"event","sealed":true,"radius":1.4,"active":false},
         {"x":16,"y":0,"z":12.8,"to":"34","kind":"event","sealed":true,"radius":1.4,"active":false},
         {"x":16,"y":0,"z":12.8,"to":"287","kind":"event","sealed":true,"radius":1.4,"active":false}

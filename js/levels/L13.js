@@ -168,6 +168,116 @@ function ruin283(b, g, room) {
   kit.prop.sign(b, c.x, c.z - 1.35, 0, { color: 0x805030, backColor: 0x1a1a1a });   // 无文字渲染能力，只能放一块牌子近似"283 号残迹标记"（见 apiRequests）
 }
 
+// =====================================================================
+// 「补入口」批次新增（用户 2026-09-19）：Level ! 的感叹号门 + Level 21 的 Warp Tear。
+// 两条都走独立派生流、只从上面没被用掉的 plain 墙段里挑位置，本层原有的出口/门脸/黄墙一条没动。
+// =====================================================================
+// 依据：level-run.json 的 wikidot-cn「尘封已久的感叹号…」entrances[1]「走进一扇画有感叹号符号的门，
+//      资料说这是『进入该走廊最常规的方式之一』」——原文写任意层级都可能出现，本层照摆；罕见
+const RUN_DOOR_CHANCE = 0.04;
+// 依据：level-21.json 的 wikidot-en 版 entrances[0]「进入 Level 13 墙壁上的各种裂口（Warp Tears）」，
+//      备注写明「Level 13 与本层之间的 Warp Tears 最稳定，且会发出高音尖啸」「这是本层的主要入口」。
+//      既然是 Level 21 的主入口、原文又说是「各种裂口」（复数），按周期性可遇到的密度摆：
+//      每块最多一处、约五分之一的区块有一处，出生点周围 3×3 块里基本找得到（硬规则：出口 3–5 块内可达）
+const WARP_TEAR_CHANCE = 0.2;
+const WHINE_RANGE = 20;               // 尖啸的出声半径（m）：更远处音量已经衰减到听不见，见 warpTear 里的说明
+// 一块里独立的切出墙 mesh 到了这个数就不再摆裂隙（验收 minor）：本层每处黄墙 289 与每处裂隙各占一个独立 mesh
+// （kit 的切出墙不进合并几何），基础 5 个 + 切出墙数 = 每块 mesh 数。黄墙本来就让少数区块到了 9–10 个、
+// 超过模板建议的 ≤8，裂隙不该再往这些块上加——挑 ≤2 处黄墙的区块摆，裂隙块封顶 8 个 mesh，
+// 9–10 个的区块回到加裂隙之前的样子。±8 共 289 块实测：闸上之前 mesh 分布 {5:59,6:80,7:77,8:48,9:17,10:8}、
+// 超过 8 个的有 25 块，闸上之后 {5:59,6:80,7:77,8:54,9:14,10:5}、超过 8 个的 19 块，正好等于没有裂隙时的 HEAD 水平；
+// 代价只是裂隙密度从 18.0% 的区块降到 14.9%，出生点 5×5 块内仍有 5 处，照样找得到
+const TEAR_PATCH_BUDGET = 2;
+const RUN_DOOR_COLOR = 0x23262a;      // 深炭灰铁门：本层墙是暗白/米色、公寓门是木色，这扇一眼就和周围不一样
+
+// 感叹号门的门板标记：引擎没有文字渲染/贴花能力（见 apiRequests），用两块褪色小面片拼出 "!" 的形状。
+// 坐标系与 kit.exit 建门时一致（门板中心在本地 x=0，板厚 0.045）；门嵌在打通的墙洞里，两面都画
+function exclamationGlyph(b, x, z, rot) {
+  const OFF = 0.045 / 2 + 0.008;
+  const FADED = [0.55, 0.53, 0.47];
+  b.push(x, z, rot);
+  for (const s of [1, -1]) {
+    b.box(0, 1.00, OFF * s, 0.085, 0.54, 0.006, 'kit:prop', { color: FADED });   // 竖杠
+    b.box(0, 0.82, OFF * s, 0.085, 0.085, 0.006, 'kit:prop', { color: FADED });  // 点
+  }
+  b.pop();
+}
+
+// Warp Tear（空间裂隙）：拆掉一段墙，原位放一段会错位闪烁的切出墙（kind:'noclip'），
+// 再在墙面两侧各画一道上下收窄的黑缝 + 冷白的边，看着像墙被撕开了一道口子。
+// 面片全进已有的 kit:glow，不新建材质/mesh
+function warpTear(b, g, ed) {
+  g.setWall(ed.axis, ed.i, ed.j, false);   // 先拆真墙，否则切出墙背后还有一堵实心墙（第 9 节）
+  const h = kit.exit(b, {
+    to: '21', kind: 'noclip', x: ed.x, z: ed.z, rot: ed.rot, w: ed.len - 0.22, h: H,
+    // thickness 跟着本层墙厚（默认 0.2 会比两边的墙薄一截，裂口贴面也就贴不到墙面上）
+    matKey: 'L13:wall', thickness: WALL_HALF_T * 2, glitch: 1.8, radius: 1.0,
+    label: '墙上一道撕开的裂口，靠近时有高音尖啸 (level-21.json wikidot-en entrances[0]：Level 13 墙上的 Warp Tear)',
+  });
+  const off = WALL_HALF_T + 0.02;
+  // [底边高, 高, 宽, 横向偏移]：宽窄不一、左右错开，看着像撕裂而不是一条灯管
+  const SEGS = [[0.20, 0.44, 0.05, -0.04], [0.60, 0.42, 0.11, 0.01], [0.98, 0.48, 0.17, -0.02], [1.42, 0.40, 0.09, 0.04], [1.78, 0.34, 0.04, 0.01]];
+  b.push(ed.x, ed.z, ed.rot);
+  for (const s of [1, -1]) {
+    const face = s > 0 ? '+z' : '-z';
+    for (const seg of SEGS) {
+      b.plane(seg[3], seg[0] - 0.015, off * s, seg[2] + 0.05, seg[1] + 0.03, 'kit:glow', { facing: face, uv: 'solid', color: [0.42, 0.66, 0.9] });   // 冷白的边
+      b.plane(seg[3], seg[0], (off + 0.008) * s, seg[2], seg[1], 'kit:glow', { facing: face, uv: 'solid', color: 0 });                               // 裂口本身：全黑
+    }
+  }
+  b.pop();
+  // 依据：同一条 notes「会发出高音尖啸（high-pitched whine）」——用现有 'screech' 提高音调、压低音量间歇播放。
+  // 频次（验收 minor）：改之前裂隙占 17% 的区块、游玩时同时载入 25 块 → 场上常有 4 处，每处 12–19 s 响一次，
+  // 合起来平均 3.6 s 一声，太吵。两道闸一起收：
+  //   ①间隔拉到 18–30 s；②只有玩家在 20 m 内才出声——音效是 inverse 距离模型（refDistance 1.6、rolloff 1.1、
+  //     js/core/audio.js），20 m 外增益只剩 0.073×0.22 ≈ 0.016，本来就听不见，白占一条音轨。
+  // 收完之后（并上 TEAR_PATCH_BUDGET 把密度压到 14.9%/块）：站在裂隙边上约 24 s 一声，
+  // 在走廊里晃悠时 20 m 内平均只有 0.32 处裂隙 → 约 74 s 才听到一声
+  const wp = b.world(ed.x, ed.z);
+  const phase = (U.hashInts(b.seed, 'L13-whine', b.cx, b.cz) % 101) / 101;
+  let next = 2 + phase * 7;
+  b.update((dt, t) => {
+    if (t < next) return;
+    next = t + 18 + phase * 12;
+    const p = BR.player;
+    if (!p || U.dist2(p.x, p.z, wp.x, wp.z) > WHINE_RANGE * WHINE_RANGE) return;
+    BR.audio.play('screech', { x: wp.x, y: 1.5, z: wp.z }, { volume: 0.22, rate: 1.7 });
+  });
+  return h;
+}
+
+// 在没被门脸/黄墙/保底门用掉的墙段里挑位置，摆这一批新增入口。
+// 全程只用 levelSeed 派生流，不动本块 rng，原有内容逐字节不变
+// patchWalls = 本块这一趟已经摆了几处黄墙 289（每处一个独立的切出墙 mesh），用来给裂隙让出 mesh 预算
+function placeWiredEntrances(b, g, ctx, cx, cz, plainEdges, isSpawn, patchWalls) {
+  if (isSpawn) return;
+  // 楼梯/电梯占掉的死胡同格（已 reserve）两侧的墙段不碰：拆了会把它们那一格开成通路，改到已有地标的样子
+  const edges = plainEdges.filter(e => e.axis === 'v'
+    ? !g.isReserved(e.i - 1, e.j) && !g.isReserved(e.i, e.j)
+    : !g.isReserved(e.i, e.j - 1) && !g.isReserved(e.i, e.j));
+  if (!edges.length) return;
+  let usedIdx = -1;
+  const rr = U.rng(ctx.levelSeed, 'L13-run-door', cx, cz);
+  if (rr() < RUN_DOOR_CHANCE) {
+    usedIdx = Math.floor(rr() * edges.length);
+    const ed = edges[usedIdx];
+    g.setWall(ed.axis, ed.i, ed.j, false);   // 门要看得见就得先把这段墙拆掉（和本层保底门 exits[0] 同一套做法）
+    kit.exit(b, {
+      to: 'run', kind: 'door', x: ed.x, z: ed.z, rot: ed.rot, style: 'metal',
+      label: '一扇和公寓门格格不入的深色铁门，门板上有个褪色、刮花的感叹号 (level-run.json wikidot-cn entrances[1])',
+      door: { color: RUN_DOOR_COLOR, frameColor: 0x3a3e42, solid: false },
+    });
+    exclamationGlyph(b, ed.x, ed.z, ed.rot);
+  }
+  // mesh 预算闸（验收 minor）：黄墙已经占掉 >TEAR_PATCH_BUDGET 个独立切出墙 mesh 的区块不再摆裂隙，
+  // 这些块本来就是 9–10 个 mesh 的那一小撮，加了裂隙只会更重。先抽数再判断，保持派生流的消耗次序稳定
+  const wr = U.rng(ctx.levelSeed, 'L13-warp-tear', cx, cz);
+  if (wr() < WARP_TEAR_CHANCE && patchWalls <= TEAR_PATCH_BUDGET) {
+    const avail = edges.filter((e, i) => i !== usedIdx);
+    if (avail.length) warpTear(b, g, avail[Math.floor(wr() * avail.length)]);
+  }
+}
+
 // Michael Corvette 访谈彩蛋（他把玻璃杯砸向采访组）：门口散落的玻璃碎片，纯装饰，不做对话
 function corvetteGlass(b, x, z, rot) {
   b.push(x, z, rot);
@@ -282,6 +392,8 @@ function buildChunk(ctx, cx, cz, rng) {
 
   // ---------- 墙面：黄色特殊墙（切入到 289）与门脸装饰（走廊两侧排门的视觉，第 5 条问题）----------
   const wallEdges = g.edges({ wall: true, interior: true, unlocked: true });
+  const plainEdges = [];   // 这一趟没被门脸/黄墙/保底门用掉的墙段，留给下面新增的感叹号门与 Warp Tear
+  let patchWalls = 0;      // 本块摆了几处黄墙 289：每处一个独立的切出墙 mesh，下面的裂隙按它让预算
   wallEdges.forEach((ed, idx) => {
     const cat = U.weighted(rng, [['plain', 0.61], ['doorface', 0.35], ['yellow289', 0.04]]);
     const forced = forceDoorExit && idx === 0;
@@ -293,9 +405,12 @@ function buildChunk(ctx, cx, cz, rng) {
     } else if (cat === 'yellow289') {
       g.setWall(ed.axis, ed.i, ed.j, false);
       kit.exit(b, { to: '289', kind: 'noclip', x: ed.x, z: ed.z, rot: ed.rot, w: ed.len - 0.22, h: H, matKey: 'L13:wall_yellow', label: '颜色比别处更深黄的墙 (exits[5])' });
+      patchWalls++;
     } else if (cat === 'doorface') {
       // 依据：landmarks「米色长走廊，两侧排列公寓门」——大多数门背后不建真实房间，画一块门脸贴面近似
       doorFace(b, ed);
+    } else {
+      plainEdges.push(ed);   // 'plain'：原来什么都不做，这里只是记下来，不改任何既有行为
     }
   });
 
@@ -344,6 +459,11 @@ function buildChunk(ctx, cx, cz, rng) {
     }
   }
 
+  // ---------- 新增入口：Level ! 的感叹号门、Level 21 的 Warp Tear ----------
+  // 放在最后、gridWalls 之前：只用 levelSeed 派生流不吃本块 rng，又排在楼梯/电梯挑死胡同之后，
+  // 拆墙不会改变上面 g.deadEnds() 的结果，原有内容一字不变（第 9 节：gridWalls 之前必须做完 setWall）
+  placeWiredEntrances(b, g, ctx, cx, cz, plainEdges, isSpawn, patchWalls);
+
   kit.gridWalls(b, g, { matKey: 'L13:wall', trim: { color: 0x6b5f48 } });
   kit.prop.floor(b, null, null, 0, { matKey: 'L13:floor' });
   kit.prop.ceiling(b, null, null, 0, { matKey: 'L13:ceil', y: H });
@@ -384,6 +504,9 @@ BR.levels.register({
     { to: '289', kind: 'noclip', note: 'Level 289 不在首期范围：切入颜色更深黄的墙 (exits[5])' },
     { to: '387', kind: 'door', note: 'Level 387 不在首期范围：理论上任何公寓门都可能通往，几乎没有记录 (exits[6])' },
     { to: '280', kind: 'stairs', note: 'Level 280 不在首期范围：楼梯罕见地无止境向上延伸 (exits[7])' },
+    // ---------- 「补入口」批次新增（用户 2026-09-19）：本层选中版本的 exits[] 里没有这两条，依据在对方层级的 entrances ----------
+    { to: 'run', kind: 'door', note: '罕见（约 4% 的区块）：走廊上一扇深炭灰铁门，门板上有褪色刮花的感叹号；依据 level-run.json wikidot-cn entrances[1]「走进一扇画有感叹号符号的门…进入该走廊最常规的方式之一」（原文写任意层级都可能出现）' },
+    { to: '21', kind: 'noclip', note: '约 20% 的区块：墙上一道撕开的裂口（Warp Tear），伴随高音尖啸；依据 level-21.json wikidot-en entrances[0]「进入 Level 13 墙壁上的各种裂口」，备注写明这是 Level 21 最稳定的主入口。Level 21 还没进 BR.LEVEL_ORDER 时 kit 自动 sealed，只提示尚未开放' },
   ],
   enter(ctx) {}, update(ctx, dt) {}, leave(ctx) {},
 });

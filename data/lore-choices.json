@@ -789,6 +789,110 @@
       "title": "尘封已久的感叹号…",
       "method": "random-on-conflict",
       "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-run.json"
+    },
+    "21": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "核心结构完全不同：wikidot-en/cn 是「四条约 26 英里长的走廊在中央小广场十字交汇」的简单几何体；fandom 是「规模至今未定的巨大迷宫式建筑群」，由无数走廊、廊道、房间组成，根本没有四条走廊或 26 英里的说法。",
+        "生存难度直接对冲：wikidot-en 和 wikidot-cn 都标 Class 4 / 等级 4（高危）；fandom 标 Threat Index Class 0，并明确写出 Safe（安全）、Stable（稳定）、Devoid of Entities（无实体）。",
+        "实体有无是最大矛盾：wikidot-en/cn 说走廊「极端危险，有时会充满实体」，Clickers（咔嗒机）相对常见，还目击过未知实体；fandom 明写「本层级没有已知实体」，只在 Shifting Area 墙上留有非人为的抓痕，据此推测「这里曾经有过实体」。",
+        "中央枢纽的性质不同：wikidot-en/cn 的中央是四条走廊交汇的小型开放广场（椅子+一张桌子/前台），实体永远不会进入；fandom 的中央枢纽叫 The Lobby Room，是结构荒谬的非欧几里得大厅（错位的门、无入口的封闭房间、房间正中的墙和柱子、同一处堆叠的多套灯具和多种地毯），并且是最容易找到出口的地方。",
+        "温度：wikidot-en/cn 完全没写温度；fandom 说天花板有通风和空调系统送来清新微风，人们觉得非常舒适，温度可达 18°C。",
+        "材质与照明的详略天差地别：wikidot-en/cn 完全没描述墙面、地面、天花板和灯光（只有一处红色霓虹「Exit」标志）；fandom 详写地毯（白/灰/棕褐等现代色）、石膏与混凝土混合的光滑墙面、办公室吊顶、不发声的荧光吊灯（明确点出与 Level 0 的荧光灯不同）、可开关的墙上电灯开关。",
+        "门的规格：wikidot-en/cn 只说「重复出现在走廊两侧的门」，不给任何尺寸材质（唯一例外是 en 提到的砂岩门）；fandom 详写标准金属框门、高约 7 英尺、宽约 40 英寸、右侧永远有发亮的金属门把手。",
+        "编号门的对应关系是否可靠：wikidot-en/cn 给出一张固定对照表（105→Level 0、356→Level 356、34→Level 669、8-20→对应层级、无标签→Level 1.5）；fandom 说门上是随机三位数、通往随机层级，并明说「每层有固定编号」这个说法被各流浪者互相矛盾的证词否定、无法确认，且出口每 2 小时到 2 天就会变一次。",
+        "砂岩门/石墙门：wikidot-en 有「由砂岩构成的门可通向 Level 46」这一条，wikidot-cn 的门径列表里完全没有这一条（漏译或据不同版本翻译）；fandom 的对应条目则是「被石墙包围的门通向 Level 898」，目标层级也不同。",
+        "主入口来源冲突：wikidot-en/cn 说主入口是 Level 13 墙上的 Warp Tears（最稳定、会发出高音尖啸），并把 Level 11、Level 9、Level 6 列为「偶尔」能遇到 Warp Tears 的层；fandom 把主入口改成 Level 20 墙上的 Warp Tears，并把 Level 13 降格到和 Level 11/9/6 并列的「偶尔」级别。",
+        "通往 Level 0 的方式冲突：wikidot-en/cn 是「打开标签 105 的门」；fandom 是「找到并破开一扇上锁的、发霉的木门」，两者完全不同。",
+        "Level 1.5 相关的出入口只有 wikidot-en/cn 有（无标签门通往 Level 1.5、可从 Level 1.5 随机穿墙进入本层）；fandom 完全没提 Level 1.5，反而多出 Level 216 楼梯间的门作为入口。",
+        "「Exit」门这条重要设定只有 wikidot 有：wikidot-en/cn 写中央前台右侧走廊里有一扇挂着巨大红色霓虹「Exit」标志的门，门后是三条不会移位、资源丰富、实体成群结队且组织异常的黑暗走廊；fandom 完全没有这个设定，其对应的「破败区」是 Shifting Area，而 Shifting Area 明确无实体，只有高压电线和装着不明液体的管道。",
+        "走廊是否会变形：wikidot-en/cn 说走廊本身一直在移位变形、可能变得无法通行或被封锁，门的位置是唯一不变的常态；fandom 反过来说走廊由「protection（保护）」现象维持洁净稳定，真正会变的是门后房间的内容和出口编号，只有缺失该现象的 Shifting Area 才会逐渐破败。",
+        "门后有没有房间：wikidot-en/cn 的门本质是传送门（直接把人送到别的层、Level 21 别处，或让人撞墙/出现在墙里）；fandom 的门后普遍是非欧几里得的隐藏房间（仿酒店房、办公室、教室），会自行上锁 5 分钟到 2 小时以上，期间墙内机器会清洁修复并更换陈设。",
+        "对「层里遇到的人」的态度相反：wikidot-en/cn 特别警告「在本层级发现的任何人都不能信任，不惜一切代价避免与他们接触」；fandom 反过来说层内可能存在流浪者或探险者小队（只是难找），M.E.G. 还把这里当作旅途中的休息站。",
+        "基地：三个来源都说没有已知基地/前哨/社区，但 fandom 额外写了一整段 M.E.G. 的「Failure Plan」——曾建过短命的前哨，因为原本通往 Level 4 的出口突然变成通往 Level 37 而失败；wikidot-en/cn 对此只字未提。",
+        "物品清单：wikidot-en/cn 是杏仁水、层级密钥、火盐（Firesalt）；fandom 是杏仁水、层级密钥、食物、武器，完全没有火盐。",
+        "声音：wikidot-en/cn 层内没有任何环境音描述（唯一的声音是入口处 Warp Tears 的高音尖啸/尖声哀鸣）；fandom 说荧光灯不发声，但墙内有低沉的机器运转声（要贴耳到墙上才听得见），Shifting Area 偶尔还会充满巨大的机器噪音。",
+        "跨层理论只有 fandom 有：fandom 提出本层是 Level 483 的镜像、Level 483 就在 Level 21 地板之下、The Void 在天花板之上等理论；wikidot-en/cn 完全没有这类说法。",
+        "页面状态与出处：wikidot-en 顶部挂着「本文已过时」告示（按现行写作标准需重写，作者 Stretchsterz），wikidot-cn 是对该英文旧版的翻译（原始作者为匿名 Fandom 用户、由 captaiin 重写）；fandom 现行版本是 WindXD 的全新重写稿，两边内容几乎不同源，因此「随机选一版整体采用」时必须整版取用，不能混搭。",
+        "笑脸门的目的地写法一致但都不点名：wikidot-en 写 \"Doors labelled with a smiley face lead to a party! =)\"，wikidot-cn 写「标签为笑脸的门通向一场 Party! =)」，两者都只有 \"=)\" 暗示 Level Fun =) 而没有明文点名；fandom 版完全没有笑脸门这一条。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-21",
+      "title": "Level 21 - \"Numbered Doors\"",
+      "method": "random-on-conflict",
+      "en": "Level 21",
+      "zh": "\"Numbered Doors\"（编号门）",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-21.json"
+    },
+    "22": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "核心设定根本不同：wikidot-en / wikidot-cn 的 Level 22 是无限延伸的 20 世纪多层停车场废墟（\"Ruins Left Behind\" / \"颓垣\"），有完整的 Emstable 微型国家历史；fandom 的 Level 22 则是一篇叫 \"Merry-go-mash!\" 的 Format Screw 诗歌，主角 Ruiter 与旋转木马对话，全文没有停车场、没有 Emstable、没有任何环境设定。",
+        "生存难度：wikidot-cn 明确写「等级 5e - 环境危害：不安全 / 不稳定 / 非实体危害」；wikidot-en 的难度框只渲染出 \"5e\"，三行描述词是未替换的占位符 {$one}/{$two}/{$three}；fandom 只有分类 Class Undetermined（未定级）。",
+        "层级归类：wikidot-en 标签为 infinite / settlement / commercial / wonder / bittersweet；wikidot-cn 标签为 封闭性 / 建筑 / 奇异 / 劣化 / 环境危害 / 悲喜交加；fandom 却把它归进 Forest（森林）和 Frigid（严寒）两个分类——三边对本层的基本环境属性判断互不相容。",
+        "与 B.N.T.G. 建立贸易的年份：wikidot-en 写 2016 年，wikidot-cn 写 2015 年（与 M.E.G. 的 2012 年两边一致）；fandom 完全没提。",
+        "汽车残骸的状态：wikidot-en 说绝大多数汽车被撕成碎片，剩下的只是「曾经是 50 年代汽车的外壳」；wikidot-cn 译成「大多呈碎片状，唯一一块相对完整的是一辆 50 年代汽车的外壳」，即把复数的普遍状态说成了唯一一辆车。",
+        "底层居民的处境描述：wikidot-en 说底层人靠上层「克制、不多拿食物和补给以留够给底层」的善意活命；wikidot-cn 译成底层人「不敢食用太多的嗟来之食，而是保留其中的大部分以备不时之需」，因果主语被调换。",
+        "无限性：wikidot-en 直接说停车场是 infinite（无限）；wikidot-cn 写成「在一定角度上无限延伸」，留了余地；fandom 未涉及。",
+        "低层居民的逃亡方向：wikidot-en 说很多人会往更下面的楼层逃（flee down even more floors）以求抵达别的层级；wikidot-cn 只写「很多人会逃到其他楼层」，没写方向。",
+        "帐篷内尸体的程度：wikidot-en 说帐篷「known to house the corpses」（已知藏有尸体）；wikidot-cn 写成帐篷「装满了前 Emstable 居民的尸体」，语气更重。",
+        "出入口：wikidot-en / wikidot-cn 完全一致（入口 Level 21、Level 23、Level 1、Level 69、Level 172；出口 Level 21、Level 23、Level 817）；fandom 版没有任何出入口信息，只在页脚有 Prev=21 / Next=23 的顺序导航。",
+        "实体：wikidot-en / wikidot-cn 都只说「敌对实体数量很少」且不点名任何实体；fandom 版没有实体信息（诗中的 mare／carousel 是文学形象，页面未把它们定义为实体）。",
+        "页面署名：wikidot-en 的作者栏写「original Level by u/Macks1999, rewritten by BoringTalking」，但页面底部的引用格式署名 Greggita Mahayfaio；wikidot-cn 只写「原文作者为 u/Macks1999，由 BoringTalking 重写」；fandom 作者是 ILikeChiskake。",
+        "页面状态：wikidot-en 顶部挂着「This article is being rewritten!」，wikidot-cn 也带「原文重写中」标签——两边现有内容都可能被再次推翻；fandom 版则已经被整页替换成与层级设定无关的诗歌。"
+      ],
+      "source": "wikidot-cn",
+      "url": "https://backrooms-wiki-cn.wikidot.com/level-22",
+      "title": "Level 22 - \"颓垣\"",
+      "method": "random-on-conflict",
+      "en": "Level 22",
+      "zh": "颓垣；原居民自称的国名为 \"Emstable\"",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-22.json",
+      "excludedCandidates": [
+        {
+          "source": "fandom",
+          "reason": "该页正文是一首名为 Merry-go-mash! 的 Format Screw 诗，没有任何环境/布局/实体设定，不构成一版可用的设定，故不参与随机；见 level-22.json 的 conflicts"
+        }
+      ]
+    },
+    "23": {
+      "candidates": [
+        "wikidot-en",
+        "wikidot-cn",
+        "fandom"
+      ],
+      "conflicts": [
+        "核心设定完全不同：wikidot-en/cn 的 Level 23 是一颗行星体级、由相互缠结的树木组成的超级有机体「The Petrified Garden / 石化花园」；fandom 的 Level 23 是永久停在白天、无限延伸的维也纳历史城区复制品「Viennese Sunday」。两者除了都叫 Level 23、都称自己是后室第 24 层之外，环境、危险、实体、出入口没有任何交集。",
+        "生存难度：wikidot-en 为 Class 4（Unsafe / Overgrown / Medium Entity Count），wikidot-cn 完全一致（等级 4 / 不安全 / 杂草丛生 / 中等数量实体）；fandom 没有生存难度信息框，只在底部分类里标 Category:Class 2。",
+        "出入口：wikidot-en/cn 有完整的「入口和出口」章节（从 Level 37、Level 47、Level 121 和 Level 135/深红森林进入；核心水库随机切入 Level 7、Level 121、Level 43，基苗的空心树双向通回 Level 135/深红森林）；fandom 整篇没有入口或出口章节，只说「离开层级极其困难」，一个可连接的层级都没给。",
+        "同一条出入口的层级名不同：wikidot-en 写「Level 135」（那棵通向 Base Seedling 的空心树、以及基苗中央通回去的空心树），wikidot-cn 在这两处都译作「深红森林」且没有给出层级编号。需要接线时要注意这是同一条通道的两种写法。",
+        "实体：wikidot-en/cn 列出具名实体——Volpes/双尾狐、Hounds/猎犬、Clumps/肢团、Smilers/笑魇、Death Rats/尸鼠、雌雄 Deathmoths/死亡飞蛾、Curabitur Birds/受眷鸟、罕见的 Wranglers/牧蛇，加上本层特有的 Gardener's Sorries/园丁之歉与 Buried Sentries/掩没哨兵；fandom 一个具名实体都没有，只有泛称的「快速、有敌意的实体」，以及故事里一只像海胆、千百条手臂的无名实体。",
+        "食物与水：wikidot-en/cn 版有 Heart of Water/水之心 这个滋养全层的巨大水库，基苗水源供应稳定、只是食物有限；fandom 版明确说层级没有任何可持续的食物或水源，剩菜数小时变质、饮水台完全不存在、也没有降水，饿死是首要死因。",
+        "光照与昼夜：wikidot-en/cn 是地表几乎不透光的茂密森林、没有昼夜循环、天空有一颗位置永不改变的恒星、整颗行星被来自各方向的阳光永久沐浴；fandom 是永久停在白天的城市街道，没有提到任何异常光源。",
+        "温度与天气：wikidot-en/cn 没有给出温度数值，只说光穴内「十分潮湿凉爽」；fandom 给出恒定 10–27°C 的春季气候、高湿有雾、无降水。",
+        "人类社群：wikidot-en/cn 有 M.E.G. Base Seedling/基苗（约 30 名活跃成员 + 5 名获救流浪者，友善、可贸易、守卫唯一已知稳定出口）；fandom 明确说所有进入者一进入就被隔离，社群和互助团体根本无法建立，正文没有任何据点，只有嵌入故事里一个下水道矿业基地和 M.E.G./Aurielle/Kauer 的尸体。",
+        "核心危险机制：wikidot-en/cn 的招牌危险是说出禁忌语句「it's only a matter of time / 这只是时间问题」唤醒掩没哨兵，尖叫可刺破耳膜；fandom 的招牌危险是进入建筑物内部（窗户通往虚空、门通往非欧空间、沉重物件坍塌）、饥饿，以及靠近可疑车辆导致偏执/精神分裂/PTSD。",
+        "建筑与年代：wikidot-en/cn 有覆满苔藓的古老遗迹、墙上总是拉丁文、没有任何公元 1000 年之后的建筑；fandom 以二战为界，二战开战后的一切结构（含防空塔）不存在，却同时有隐藏的先进现代监控设备和能正常使用的手机。",
+        "fandom 页面内部自相矛盾：正文说地铁、罗马遗迹和下水道等地下设施「明显缺席」，但同一页嵌入的故事《The Prophet》里主角却通过街上的井盖进入被挖宽的下水道矿业基地（页面属于 Format Screws 分类，叙述者本身可能不可靠）。",
+        "被发现的时间：fandom 给出明确年代（1938 年初被发现，1947 年起出现可疑车辆现象，另有一张 1929 年至 2023 年的预言记录表）；wikidot-en/cn 完全没有提到发现时间或任何年代。",
+        "招牌特性：fandom 版的核心卖点是「用报纸预言前厅的历史事件」，wikidot-en/cn 版完全没有任何预言或时间相关的设定；反过来，wikidot 版的水循环生态、深绿巨人、拉丁文牌匾《园丁的失败大地》在 fandom 版完全不存在。",
+        "wikidot-cn 是 wikidot-en 的逐句翻译，两者在结构、数值（3.2 km / 18.3 m、谷神星、约 30 名成员 + 5 名流浪者、公元 1000 年）上完全一致，唯一的实质差异就是上面那条「深红森林 vs Level 135」的写法。"
+      ],
+      "source": "wikidot-en",
+      "url": "https://backrooms-wiki.wikidot.com/level-23",
+      "title": "Level 23 - \"The Petrified Garden\"",
+      "method": "random-on-conflict",
+      "en": "Level 23",
+      "zh": "The Petrified Garden",
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-23.json"
     }
   },
   "entities": {
