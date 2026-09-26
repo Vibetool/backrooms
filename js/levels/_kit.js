@@ -1170,6 +1170,101 @@ function glowBox(b, x, y, z, w, h, d, color) {
 function hash01(a, b2, c) { return U.hashInts(a, b2, c) / 4294967296; }
 function posHash(b, k) { const p = b.point(0, 0); return hash01(Math.round((b.ox + p.x) * 100), Math.round((b.oz + p.z) * 100), k | 0); }
 
+// ---------- 细节档（用户 2026-09-24：除了墙壁、人物和实体，所有道具都要做得更细） ----------
+// 高画质：在原构件上加缝线、把手、合页、横撑、螺栓、脚轮之类能在画面上认出来的小零件；
+// 低画质（设置里选"低"）保持原来的简版，一个三角形都不多。
+// 两档只差可见几何：碰撞体（b.solid 的调用）、灯、刷新点、rng 消耗、占地尺寸完全一致，
+// 所以联机两边画质不同也不影响同步（画质本来就按本机，不跟房主）。
+// 细节零件只进这个构件原来就用的材质槽位（绝大多数是 'kit:prop' 顶点色）：不新增材质，
+// 也不给原来没用 'kit:glow'/'kit:glass' 的构件加这两种 —— 否则一块区块会多出一个 mesh / draw call。
+// 叠放的零件各自错开 ≥ 2 mm，不和底下的面共面（共面会 z-fighting 闪杂纹，玩具箱顶面踩过）
+// 三种情况退回简版：① 低画质；② 调用时传了 opts.detail = false / 'low'（层级成片摆的小件想省面时用）；
+// ③ 这一块已经累积到 DETAIL_TRI_CAP 个三角面 —— 每块预算 8000，墙和层级自己的几何已经很满的块，后面的构件不再加细节，
+// 免得细节把一块顶破预算。只看本块已建的几何（与建块顺序有关、与 rng 无关），同一画质下结果确定
+const DETAIL_TRI_CAP = 7200;
+function hiDetail(b, o) {
+  if (o && (o.detail === false || o.detail === 'low')) return false;
+  const s = BR.game && BR.game.settings;
+  if (s && s.quality === 'low') return false;
+  if (b && b._accs) {
+    let n = 0;
+    b._accs.forEach(a => { if (a.idx) n += a.idx.length; });
+    if (n / 3 >= DETAIL_TRI_CAP) return false;
+  }
+  return true;
+}
+// 贴面薄片（缝线、标签、面板线、按钮）：2 个三角形，不出碰撞体。
+// facing 'up'/'down'：(x,y,z) 是面中心、w 沿 x、h 沿 z；'+z' '-z' '+x' '-x'：(x,z) 是底边中点、y 是底边高度、w 水平、h 竖直
+function face(b, x, y, z, w, h, facing, color, key) {
+  const k = key || 'kit:prop';
+  return b.plane(x, y, z, w, h, k, { facing, color, solid: false, uv: k === 'kit:glow' ? 'solid' : k === 'kit:prop' ? 'stretch' : 'world' });
+}
+// 两点之间的方梁（斜撑、斜扶手、斜拉杆）：A、B 是当前坐标系下的 [x, y, z]；
+// 截面 w 沿侧向 s（= 梁向 × 竖直，梁接近竖直时取本地 x）、t 沿 s × 梁向。o.ends === false 省掉两个端面（两头插进别的零件里时）
+function beam(b, A, B, w, t, color, o) {
+  const oo = o || {};
+  let dx = B[0] - A[0], dy = B[1] - A[1], dz = B[2] - A[2];
+  const L = Math.hypot(dx, dy, dz);
+  if (!(L > 1e-6)) return null;
+  dx /= L; dy /= L; dz /= L;
+  let sx = -dz, sz = dx;
+  const sl = Math.hypot(sx, sz);
+  if (sl < 1e-4) { sx = 1; sz = 0; } else { sx /= sl; sz /= sl; }
+  const ux = -sz * dy, uy = sz * dx - sx * dz, uz = sx * dy;     // u = s × d（s.y = 0）
+  const mx = (A[0] + B[0]) / 2, my = (A[1] + B[1]) / 2, mz = (A[2] + B[2]) / 2;
+  const hw = w / 2, ht = t / 2, hl = L / 2;
+  const D = [dx, dy, dz], S = [sx, 0, sz], Uv = [ux, uy, uz];
+  const neg = a => [-a[0], -a[1], -a[2]];
+  // 每个面：[法线 n, 面内"上"方向 q, 沿 r = q × n 的半宽, 沿 q 的半长, 面中心离梁轴的距离]
+  const faces = [[S, D, ht, hl, hw], [neg(S), D, ht, hl, hw], [Uv, D, hw, hl, ht], [neg(Uv), D, hw, hl, ht]];
+  if (oo.ends !== false) faces.push([neg(D), Uv, hw, ht, hl], [D, Uv, hw, ht, hl]);
+  return b._piece(oo.matKey || 'kit:prop', 0, 0, 0, 0, (v, t) => {
+    let k = 0;
+    for (const f of faces) {
+      const n = f[0], q = f[1], a = f[2], c = f[3];
+      const rx = q[1] * n[2] - q[2] * n[1], ry = q[2] * n[0] - q[0] * n[2], rz = q[0] * n[1] - q[1] * n[0];
+      const cx = mx + n[0] * f[4], cy = my + n[1] * f[4], cz = mz + n[2] * f[4];
+      v(cx - rx * a - q[0] * c, cy - ry * a - q[1] * c, cz - rz * a - q[2] * c, n[0], n[1], n[2], 0, 0);
+      v(cx + rx * a - q[0] * c, cy + ry * a - q[1] * c, cz + rz * a - q[2] * c, n[0], n[1], n[2], 1, 0);
+      v(cx + rx * a + q[0] * c, cy + ry * a + q[1] * c, cz + rz * a + q[2] * c, n[0], n[1], n[2], 1, 1);
+      v(cx - rx * a + q[0] * c, cy - ry * a + q[1] * c, cz - rz * a + q[2] * c, n[0], n[1], n[2], 0, 1);
+      t(k, k + 1, k + 2); t(k, k + 2, k + 3);
+      k += 4;
+    }
+  }, { color, uv: 'stretch', solid: false });
+}
+// 本地坐标系下的 3D 点 → 顶点列表里的扁平三角形（碎石、尖顶这类不规则小件）：tris = [[p0,p1,p2], ...]，法线按每个三角形算
+function tris3(b, list, color, key) {
+  return b._piece(key || 'kit:prop', 0, 0, 0, 0, (v, t) => {
+    let k = 0;
+    for (const tr of list) {
+      const a = tr[0], p1 = tr[1], p2 = tr[2];
+      const ex = p1[0] - a[0], ey = p1[1] - a[1], ez = p1[2] - a[2], fx = p2[0] - a[0], fy = p2[1] - a[1], fz = p2[2] - a[2];
+      let nx = ey * fz - ez * fy, ny = ez * fx - ex * fz, nz = ex * fy - ey * fx;
+      const l = Math.hypot(nx, ny, nz) || 1;
+      nx /= l; ny /= l; nz /= l;
+      v(a[0], a[1], a[2], nx, ny, nz, 0, 0); v(p1[0], p1[1], p1[2], nx, ny, nz, 1, 0); v(p2[0], p2[1], p2[2], nx, ny, nz, 0, 1);
+      t(k, k + 1, k + 2);
+      k += 3;
+    }
+  }, { color, uv: key === 'kit:glow' ? 'solid' : 'stretch', solid: false });
+}
+// 颜色乘系数（细节件用底色深一点/浅一点，跟着层级传进来的颜色走）
+function shade(c, m) { return rgb(c, m); }
+// 挂在某件上的零件跟着它一起显隐：层级会把门扇、地上的坑、水坑藏起来再放出来（事件门、塌陷坑、时有时无的水坑），
+// 把手、合页、坑边碎石这些不能留在原地飘着。只改这一件实例的 setVisible，Piece 类本身不动
+function linkVisible(primary, extras) {
+  const list = (extras || []).filter(p => p && p !== primary);
+  if (!primary || !list.length) return primary;
+  const base = primary.setVisible;
+  primary.setVisible = function (on) {
+    base.call(this, on);
+    for (let i = 0; i < list.length; i++) list[i].setVisible(on);
+    return this;
+  };
+  return primary;
+}
+
 // 墙上开洞：总宽 w、总高 h、厚 t 的墙，中间留出 x∈[−ow/2, ow/2]、y∈[oy0, oy1] 的洞（门、电梯、窗户嵌进格子开口用）
 function wallWithOpening(b, x, z, rot, o) {
   const tw = num(o.w, 3), th = num(o.h, b.height), t = num(o.t, 0.2);
@@ -1205,6 +1300,17 @@ function lightPanel(b, x, z, rot, opts) {
     part(b, 0, y - 0.03, d / 2 + ft / 2, w + ft * 2, 0.03, ft, fc);
     part(b, -w / 2 - ft / 2, y - 0.03, 0, ft, 0.03, d, fc);
     part(b, w / 2 + ft / 2, y - 0.03, 0, ft, 0.03, d, fc);
+    if (hiDetail(b, o)) {
+      // ① 吊顶压边：灯框外一圈更宽更薄的扣边贴着天花板（看得出灯盘是嵌进吊顶里的）。顶面贴天花板看不见，只画底面和朝外的侧面
+      const fl = 0.025, fh = 0.008, fd = shade(fc, 0.86), X = w / 2 + ft + fl / 2, Z = d / 2 + ft + fl / 2;
+      part(b, 0, y - fh, -Z, w + (ft + fl) * 2, fh, fl, fd, { faces: ['ny', 'nz'] });
+      part(b, 0, y - fh, Z, w + (ft + fl) * 2, fh, fl, fd, { faces: ['ny', 'pz'] });
+      part(b, -X, y - fh, 0, fl, fh, d + ft * 2, fd, { faces: ['ny', 'nx'] });
+      part(b, X, y - fh, 0, fl, fh, d + ft * 2, fd, { faces: ['ny', 'px'] });
+      // ② 中间纵向龙骨、③ 横档：压在贴图格栅的分界线上（uvRepeat 让面板中线正好是贴图接缝），两根底面错开 2 mm，端头插进灯框不画
+      part(b, 0, y - 0.032, 0, w, 0.011, 0.02, fc, { faces: ['ny', 'pz', 'nz'] });
+      part(b, 0, y - 0.03, 0, 0.02, 0.009, d, fc, { faces: ['ny', 'px', 'nx'] });
+    }
   }
   let src = null;
   if (state !== 'broken' && o.light !== false) {
@@ -1238,7 +1344,16 @@ function baseboard(b, x, z, rot, opts) {
   const o = opts || {};
   const L = num(o.length, 1), h = num(o.h, 0.1), t = num(o.t, 0.015);
   b.push(x, z, rot);
-  const p = part(b, 0, 0, t / 2, L, h, t, o.color != null ? o.color : 0x5a4a32, { matKey: o.matKey, faces: 'noBottom' });
+  const bc = o.color != null ? o.color : 0x5a4a32;
+  const p = part(b, 0, 0, t / 2, L, h, t, bc, { matKey: o.matKey, faces: 'noBottom' });
+  if (hiDetail(b, o)) {
+    // ① 上沿压线：比板身高 2 mm、凸出 3 mm 的一道窄条；② 底部护脚条：贴地凸出 4 mm；③ 两条之间板面上一道浅凹线。
+    // 都用同一个材质槽位（层级给的木纹贴图或顶点色），深浅靠顶点色（贴图材质不开顶点色时靠侧面受光区分）
+    // 两条压线两头各比板身长 2 mm：端面不和板身端面共面（首尾相接的几段踢脚线，压线在接缝处重叠 4 mm、同色不闪）
+    part(b, 0, h - 0.012, (t + 0.003) / 2, L + 0.004, 0.014, t + 0.003, shade(bc, 0.82), { matKey: o.matKey, faces: ['py', 'pz', 'px', 'nx'] });
+    part(b, 0, 0, t + 0.002, L + 0.004, 0.018, 0.004, shade(bc, 0.7), { matKey: o.matKey, faces: ['py', 'pz', 'px', 'nx'] });
+    if (h > 0.06) face(b, 0, h * 0.55, t + 0.002, L, 0.004, '+z', shade(bc, 0.6), o.matKey);
+  }
   b.pop();
   return p;
 }
@@ -1252,6 +1367,7 @@ function door(b, x, z, rot, opts) {
   const leafC = o.color != null ? o.color : style === 'metal' ? 0x8c9197 : style === 'fire' ? 0x9e2f26 : PC.wood;
   const frameC = o.frameColor != null ? o.frameColor : style === 'wood' ? PC.woodDark : 0x6e7378;
   const jw = 0.08, jd = 0.16, lt = 0.045;
+  const hi = hiDetail(b, o);
   b.push(x, z, rot);
   part(b, -W / 2 - jw / 2, 0, 0, jw, H + jw, jd, frameC, { faces: 'noBottom' });
   part(b, W / 2 + jw / 2, 0, 0, jw, H + jw, jd, frameC, { faces: 'noBottom' });
@@ -1260,27 +1376,87 @@ function door(b, x, z, rot, opts) {
     b.solid(-W / 2 - jw, 0, -jd / 2, -W / 2, H, jd / 2);
     b.solid(W / 2, 0, -jd / 2, W / 2 + jw, H, jd / 2);
   }
+  if (hi) {
+    // 门框线：门框正反两面各一道倒 U 形深色细线（离框面 2 mm）
+    const lc = shade(frameC, 0.62);
+    for (const sz of [1, -1]) {
+      const zf = sz * (jd / 2 + 0.002), fcg = sz > 0 ? '+z' : '-z';
+      face(b, -W / 2 - jw / 2, 0, zf, 0.012, H + jw / 2 + 0.006, fcg, lc);
+      face(b, W / 2 + jw / 2, 0, zf, 0.012, H + jw / 2 + 0.006, fcg, lc);
+      face(b, 0, H + jw / 2 - 0.006, zf, W + jw - 0.012, 0.012, fcg, lc);
+    }
+    // 门槛：两框之间一条压条（门扇底 12 mm 藏进门槛里）
+    part(b, 0, 0, 0, W + 0.01, 0.012, jd - 0.02, style === 'wood' ? shade(frameC, 0.8) : 0x8a8d90, { faces: ['py', 'pz', 'nz'] });
+  }
   b.push(-W / 2, 0, open * Math.PI / 2);
+  const pa = b._acc('kit:prop'), n0 = pa.pieces.length;   // 门扇坐标系里摆的所有零件都跟门扇一起显隐（见 linkVisible）
   const leaf = part(b, W / 2, 0, 0, W - 0.01, H - 0.01, lt, leafC);
   const knob = style === 'wood' ? 0xc9b27a : 0xc2c5c8;
-  for (const sz of [1, -1]) part(b, W - 0.1, 0.98, sz * (lt / 2 + 0.02), 0.13, 0.03, 0.04, knob);
+  if (!hi) {
+    for (const sz of [1, -1]) part(b, W - 0.1, 0.98, sz * (lt / 2 + 0.02), 0.13, 0.03, 0.04, knob);
+  } else if (style !== 'fire') {
+    // 执手：两面各一块竖长的门锁面板 + 压把（脖子 + 朝合页一侧伸出的把手）+ 面板下方的锁孔（防火门用推杠，不装）
+    const hx = W - 0.085;
+    for (const sz of [1, -1]) {
+      const zf = sz * lt / 2, fz = sz > 0 ? 'nz' : 'pz';
+      part(b, hx, 0.86, zf + sz * 0.004, 0.05, 0.2, 0.008, knob, { faces: ['pz', 'nz', 'py', 'ny', 'px', 'nx'].filter(f => f !== fz) });
+      part(b, hx, 0.975, zf + sz * 0.024, 0.024, 0.024, 0.034, knob, { faces: ['py', 'ny', 'px', 'nx', sz > 0 ? 'pz' : 'nz'] });
+      part(b, hx - 0.05, 0.977, zf + sz * 0.043, 0.13, 0.02, 0.02, knob);
+      face(b, hx, 0.895, zf + sz * 0.0105, 0.012, 0.022, sz > 0 ? '+z' : '-z', 0x1c1c1c);
+    }
+  }
+  if (hi) {
+    // 合页：门扇合页边上三片，包住门扇边缘、两面各露 5 mm
+    const hc = style === 'wood' ? 0xb59a5a : 0x9a9ea3;
+    for (const hy of [0.2, H / 2 - 0.05, H - 0.32]) part(b, 0.006, hy, 0, 0.024, 0.11, lt + 0.01, hc, { faces: ['pz', 'nz', 'py', 'ny'] });
+  }
   if (style === 'wood') {
     const dk = 0x654329;
     for (const sz of [1, -1]) {
       part(b, W / 2, 0.22, sz * (lt / 2 + 0.004), W - 0.26, 0.72, 0.008, dk);
       part(b, W / 2, 1.14, sz * (lt / 2 + 0.004), W - 0.26, 0.72, 0.008, dk);
+      if (hi) {
+        // 凸起的门芯板：两块门板中间再浅一层（离门板面 2.5 mm），一深一浅看出斜面层次
+        const zf = sz * (lt / 2 + 0.0105), fcg = sz > 0 ? '+z' : '-z', lc2 = shade(leafC, 0.93);
+        face(b, W / 2, 0.29, zf, W - 0.4, 0.58, fcg, lc2);
+        face(b, W / 2, 1.21, zf, W - 0.4, 0.58, fcg, lc2);
+      }
     }
   } else if (style === 'metal') {
     for (const sz of [1, -1]) part(b, W / 2, 0.02, sz * (lt / 2 + 0.004), W - 0.06, 0.25, 0.008, 0x6d7278);
+    if (hi) {
+      // 压筋：门扇两面各两道横向浅线；闭门器：推开一侧（−Z）顶上的方盒 + 连杆
+      for (const sz of [1, -1]) for (const yy of [0.72, 1.52]) face(b, W / 2, yy, sz * (lt / 2 + 0.002), W - 0.12, 0.01, sz > 0 ? '+z' : '-z', shade(leafC, 0.8));
+      part(b, W - 0.3, H - 0.2, -lt / 2 - 0.03, 0.3, 0.07, 0.06, 0x4a4d52);
+      part(b, W - 0.52, H - 0.14, -lt / 2 - 0.035, 0.22, 0.018, 0.018, 0x5c6066);
+    }
   } else {
     for (const sz of [1, -1]) {
       part(b, W / 2, 1.3, sz * (lt / 2 + 0.004), 0.22, 0.5, 0.008, 0x273034);          // 夹丝玻璃小窗
       part(b, W / 2, 0.98, sz * (lt / 2 + 0.05), W - 0.2, 0.05, 0.05, 0xb8bcc0);         // 推杠
+      if (hi) {
+        const zf = sz * (lt / 2 + 0.0105), fcg = sz > 0 ? '+z' : '-z', bc = 0xb9bdc1;
+        // 小窗压条（窗四周一圈亮色边）+ 夹丝（一竖两横）
+        face(b, W / 2, 1.28, zf, 0.26, 0.02, fcg, bc);
+        face(b, W / 2, 1.8, zf, 0.26, 0.02, fcg, bc);
+        face(b, W / 2 - 0.12, 1.3, zf, 0.02, 0.5, fcg, bc);
+        face(b, W / 2 + 0.12, 1.3, zf, 0.02, 0.5, fcg, bc);
+        face(b, W / 2, 1.3, zf, 0.004, 0.5, fcg, 0x8a9296);
+        for (const wy of [1.46, 1.63]) face(b, W / 2, wy, zf, 0.22, 0.004, fcg, 0x8a9296);
+        // 推杠两端的支座
+        for (const ex of [0.12, W - 0.12]) part(b, ex, 0.955, sz * (lt / 2 + 0.03), 0.05, 0.1, 0.06, 0x7d8286, { faces: ['py', 'ny', 'px', 'nx', sz > 0 ? 'pz' : 'nz'] });
+      }
     }
+    if (hi) part(b, W - 0.3, H - 0.2, -lt / 2 - 0.03, 0.3, 0.07, 0.06, 0x4a4d52);   // 闭门器
   }
   b.pop();
+  linkVisible(leaf, pa.pieces.slice(n0));
   if (open < 0.35 && o.solid !== false) b.solid(-W / 2, 0, -0.05, W / 2, H, 0.05);
-  if (o.sign) glowBox(b, 0, H + jw + 0.1, jd / 2 + 0.02, 0.36, 0.14, 0.04, o.sign === true ? EXIT_GREEN : rgb(o.sign));
+  if (o.sign) {
+    glowBox(b, 0, H + jw + 0.1, jd / 2 + 0.02, 0.36, 0.14, 0.04, o.sign === true ? EXIT_GREEN : rgb(o.sign));
+    // 灯箱外壳：比发光面大一圈、往后多 2 mm（背面不和发光盒共面），正面比发光面退后 4 mm（发光面凸出来、四周一圈白边）
+    if (hi) part(b, 0, H + jw + 0.08, jd / 2 + 0.017, 0.4, 0.18, 0.038, 0xe4e4dc);
+  }
   if (o.wall) wallWithOpening(b, 0, 0, 0, Object.assign({ openW: W + jw * 2, openY0: 0, openY1: H + jw }, o.wall));
   b.pop();
   return { leaf };
@@ -1291,6 +1467,7 @@ function stairwell(b, x, z, rot, opts) {
   const o = opts || {};
   const W = num(o.w, 1.3), D = num(o.depth, 2.6), down = o.down !== false;
   const rc = o.railColor != null ? o.railColor : PC.rail;
+  const hi = hiDetail(b, o);
   b.push(x, z, rot);
   if (down) {
     b.plane(0, 0.004, -D / 2, W, D, 'kit:glow', { facing: 'up', uv: 'solid', color: 0 });
@@ -1309,6 +1486,18 @@ function stairwell(b, x, z, rot, opts) {
     part(b, 0, rh, -D - 0.03, W + 0.1, 0.05, 0.05, rc);
     part(b, 0, 0.5, -D - 0.03, W, 0.03, 0.03, rc);
     b.solid(-W / 2 - 0.06, 0, -D - 0.06, W / 2 + 0.06, rh, -D);
+    if (hi) {
+      // ① 洞口一圈 2 cm 高的护沿：入口那条是深色防滑踏口，另外三面是水泥色（各段首尾相接不重叠，顶面不共面）
+      const lip = shade(rc, 0.78), z0 = -0.05, z1 = -D + 0.04;
+      part(b, 0, 0, -0.025, W, 0.02, 0.05, 0x3e3c38, { faces: ['py', 'pz', 'nz'] });
+      for (const sx of [-1, 1]) part(b, sx * (W / 2 - 0.022), 0, (z0 + z1) / 2, 0.044, 0.02, z0 - z1, lip, { faces: ['py', sx > 0 ? 'nx' : 'px'] });
+      part(b, 0, 0, -D + 0.02, W - 0.088, 0.02, 0.04, lip, { faces: ['py', 'pz'] });
+      // ② 三面栏杆底部 10 cm 高的踢脚挡板（在原碰撞体范围内）
+      for (const sx of [-1, 1]) part(b, sx * (W / 2 + 0.03), 0, -D / 2, 0.016, 0.1, D - 0.04, rc, { faces: ['py', 'px', 'nx'] });
+      part(b, 0, 0, -D - 0.03, W + 0.02, 0.1, 0.016, rc, { faces: ['py', 'pz', 'nz'] });
+      // ③ 四根角柱的底座法兰
+      for (const sx of [-1, 1]) for (const pz of [0, -D]) part(b, sx * (W / 2 + 0.03), 0, pz, 0.1, 0.012, 0.1, shade(rc, 0.85), { faces: ['py', 'px', 'nx', 'pz', 'nz'] });
+    }
   } else {
     const n = Math.max(3, num(o.steps, 6) | 0), rise = 0.18, run = 0.3;
     const sc = o.stepColor != null ? o.stepColor : 0x8a8680;
@@ -1320,8 +1509,31 @@ function stairwell(b, x, z, rot, opts) {
     b.solid(-W / 2 - 0.1, 0, -n * run, W / 2 + 0.1, 0.5, -run * 0.8);
     b.solid(-W / 2 - 0.1, 0, -n * run, -W / 2, H, 0);
     b.solid(W / 2, 0, -n * run, W / 2 + 0.1, H, 0);
+    if (hi) {
+      // ① 每级踏口一条深色防滑条（高出踏面 3 mm、凸出立面 4 mm）
+      const nc = shade(sc, 0.6), kc = shade(wc, 0.72), hc = 0x6a6e72;
+      for (let k = 0; k < n; k++) part(b, 0, (k + 1) * rise - 0.022, -k * run - 0.013, W - 0.004, 0.025, 0.034, nc, { faces: ['py', 'pz'] });
+      // 踏口连线：z = 0 处高 rise，每往 −Z 走 run 升 rise
+      const nose = zz => rise * (1 - zz / run);
+      for (const sx of [-1, 1]) {
+        // ② 两侧墙根顺着台阶斜下来的踢脚板（贴墙那面朝墙里，看不见，不和墙面共面）
+        const xk = sx * (W / 2 - 0.006);
+        beam(b, [xk, nose(0) + 0.02, 0], [xk, nose(-n * run) + 0.02, -n * run], 0.012, 0.13, kc, { ends: false });
+        // ③ 两侧墙上的斜扶手（踏口线上 0.9 m）+ 两个墙托
+        const xr = sx * (W / 2 - 0.06), za = -0.1, zb = -(n - 0.6) * run;
+        beam(b, [xr, nose(za) + 0.9, za], [xr, nose(zb) + 0.9, zb], 0.04, 0.04, hc);
+        for (const f of [0.2, 0.8]) {
+          const bz = za + f * (zb - za), ry = nose(bz) + 0.9;
+          part(b, sx * (W / 2 - 0.03), ry - 0.09, bz, 0.06, 0.075, 0.02, hc, { faces: ['py', 'pz', 'nz', sx > 0 ? 'nx' : 'px'] });
+        }
+      }
+    }
   }
-  if (o.sign) glowBox(b, 0, down ? 2.3 : num(o.h, b.height) - 0.3, 0.02, 0.4, 0.15, 0.03, o.sign === true ? EXIT_GREEN : rgb(o.sign));
+  if (o.sign) {
+    const sy = down ? 2.3 : num(o.h, b.height) - 0.3;
+    glowBox(b, 0, sy, 0.02, 0.4, 0.15, 0.03, o.sign === true ? EXIT_GREEN : rgb(o.sign));
+    if (hi) part(b, 0, sy - 0.02, 0.018, 0.44, 0.19, 0.03, 0xe4e4dc);   // 灯箱外壳：正面比发光面退后 2 mm、背面往后 2 mm
+  }
   b.pop();
   return {};
 }
@@ -1345,6 +1557,25 @@ function elevator(b, x, z, rot, opts) {
   const bx = W / 2 + jw + 0.16;
   part(b, bx, 0.95, 0.015, 0.12, 0.3, 0.03, 0x7b8085);
   glowBox(b, bx, 1.1, 0.035, 0.05, 0.05, 0.02, [1.4, 1.2, 0.7]);
+  if (hiDetail(b, o)) {
+    const zf = jd / 2 + 0.002, lc = shade(fc, 0.66);
+    // ① 地坎：门前一条金属地坎（顶面 8 mm）+ 中间一道导轨槽
+    part(b, 0, 0, 0.055, W + 0.06, 0.008, 0.11, 0x9a9ea2, { faces: ['py', 'pz'] });
+    face(b, 0, 0.0105, 0.06, W, 0.008, 'up', 0x2c2e30);
+    // ② 楼层显示外框（深色）+ 右侧上下行箭头（上行亮、下行暗）
+    part(b, 0, H + 0.1, jd / 2 + 0.002, 0.42, 0.14, 0.006, 0x2a2c2e, { faces: ['pz', 'py', 'ny', 'px', 'nx'] });
+    const ax = 0.3, ay = H + 0.12, az = jd / 2 + 0.003;
+    tris3(b, [[[ax - 0.03, ay + 0.06, az], [ax + 0.03, ay + 0.06, az], [ax, ay + 0.105, az]]], o.indicator != null ? rgb(o.indicator) : [1.5, 0.75, 0.2], 'kit:glow');
+    tris3(b, [[[ax - 0.03, ay + 0.045, az], [ax, ay, az], [ax + 0.03, ay + 0.045, az]]], [0.22, 0.14, 0.06], 'kit:glow');
+    // ③ 呼梯盒：深色底座一圈边 + 下行按钮（不亮）
+    part(b, bx, 0.94, 0.012, 0.135, 0.32, 0.024, 0x5d6166, { faces: ['pz', 'py', 'ny', 'px', 'nx'] });
+    glowBox(b, bx, 1.02, 0.035, 0.05, 0.05, 0.02, [0.24, 0.21, 0.15]);
+    // ④ 门框线、⑤ 两扇门底部的踢脚深色带（跟着门扇一起滑）
+    for (const sx of [-1, 1]) face(b, sx * (W / 2 + jw / 2), 0, zf, 0.01, H + 0.03, '+z', lc);
+    face(b, 0, H + 0.03, zf, W + jw + 0.01, 0.01, '+z', lc);
+    linkVisible(left, [face(b, -(pw / 2 + shift), 0.012, 0.0425, pw - 0.03, 0.1, '+z', shade(dc, 0.78))]);
+    linkVisible(right, [face(b, pw / 2 + shift, 0.012, 0.0425, pw - 0.03, 0.1, '+z', shade(dc, 0.78))]);
+  }
   if (o.solid !== false) {
     if (open < 0.3) b.solid(-W / 2 - jw, 0, -jd / 2, W / 2 + jw, H + hd, jd / 2);
     else { b.solid(-W / 2 - jw, 0, -jd / 2, -W / 2, H + hd, jd / 2); b.solid(W / 2, 0, -jd / 2, W / 2 + jw, H + hd, jd / 2); }
@@ -1368,6 +1599,15 @@ function vent(b, x, z, rot, opts) {
     part(b, W / 2 + 0.02, y - 0.03, 0, 0.04, 0.03, Hh, c);
     const n = Math.max(3, Math.round(Hh / 0.07));
     for (let k = 0; k < n; k++) part(b, 0, y - 0.025, -Hh / 2 + (k + 0.5) * Hh / n, W, 0.02, 0.014, c);
+    if (hiDetail(b, o)) {
+      // ① 贴天花板的外法兰（比框大一圈、6 mm 厚、颜色深一点）；② 中间一根加强筋（底面比框低 2 mm）；③ 四角螺钉
+      const sc = shade(c, 0.55);
+      const fl = shade(c, 0.86), X0 = W / 2 + 0.04, Z0 = Hh / 2 + 0.04, e = 0.02;   // 法兰是框外一圈 2 cm 的环，不盖住洞口
+      for (const sz of [-1, 1]) part(b, 0, y - 0.006, sz * (Z0 + e / 2), (X0 + e) * 2, 0.006, e, fl, { faces: ['ny', sz > 0 ? 'pz' : 'nz'] });
+      for (const sx of [-1, 1]) part(b, sx * (X0 + e / 2), y - 0.006, 0, e, 0.006, Z0 * 2, fl, { faces: ['ny', sx > 0 ? 'px' : 'nx'] });
+      part(b, 0, y - 0.032, 0, 0.022, 0.012, Hh, c, { faces: ['ny', 'px', 'nx'] });
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) face(b, sx * (W / 2 + 0.02), y - 0.0325, sz * (Hh / 2 + 0.02), 0.012, 0.012, 'down', sc);
+    }
   } else {
     const y = num(o.y, 2.3);
     b.plane(0, y - Hh / 2, 0.004, W, Hh, 'kit:glow', { facing: '+z', uv: 'solid', color: 0.02 });
@@ -1377,6 +1617,15 @@ function vent(b, x, z, rot, opts) {
     part(b, W / 2 + 0.015, y - Hh / 2, 0.015, 0.03, Hh, 0.03, c);
     const n = Math.max(3, Math.round(Hh / 0.07));
     for (let k = 0; k < n; k++) part(b, 0, y - Hh / 2 + (k + 0.5) * Hh / n - 0.008, 0.014, W, 0.016, 0.02, c);
+    if (hiDetail(b, o)) {
+      // ① 贴墙的外法兰（比框大一圈、6 mm 厚、颜色深一点，背面朝墙里看不见）；② 中间一根竖向加强筋；③ 四角螺钉
+      const sc = shade(c, 0.55);
+      const fl = shade(c, 0.86), X0 = W / 2 + 0.03, Y0 = Hh / 2 + 0.03, e = 0.03, ey = 0.015;   // 法兰是框外一圈的环，不盖住洞口
+      for (const sy of [-1, 1]) part(b, 0, y + (sy > 0 ? Y0 : -Y0 - ey), 0.003, (X0 + e) * 2, ey, 0.006, fl, { faces: ['pz', sy > 0 ? 'py' : 'ny'] });
+      for (const sx of [-1, 1]) part(b, sx * (X0 + e / 2), y - Y0, 0.003, e, Y0 * 2, 0.006, fl, { faces: ['pz', sx > 0 ? 'px' : 'nx'] });
+      part(b, 0, y - Hh / 2, 0.022, 0.022, Hh, 0.012, c, { faces: ['pz', 'px', 'nx'] });
+      for (const sx of [-1, 1]) for (const sy of [-1, 1]) face(b, sx * (W / 2 + 0.015), y + sy * (Hh / 2 + 0.015) - 0.006, 0.0325, 0.012, 0.012, '+z', sc);
+    }
   }
   b.pop();
   return {};
@@ -1401,6 +1650,39 @@ function pipe(b, x, z, rot, opts) {
       b.cylinder(px, y, pz, r * 1.6, 0.05, 'kit:prop', Object.assign({}, po, { axis, solid: false }));
     }
   }
+  if (hiDetail(b, o)) {
+    // u = 从管子起点量的轴向距离（竖管从底往上，横管从 −x/−z 端开始）
+    const cyl = (u, rr, len, cc, caps) => {
+      const q = Object.assign({}, po, { color: cc, solid: false, caps });
+      if (axis === 'y') b.cylinder(0, y + u - len / 2, 0, rr, len, 'kit:prop', q);
+      else b.cylinder(axis === 'x' ? u - L / 2 : 0, y, axis === 'z' ? u - L / 2 : 0, rr, len, 'kit:prop', Object.assign(q, { axis }));
+    };
+    // ① 管卡/管接头：每 3 m 左右一个加粗的环（颜色深一点），一根最多 6 个（贯穿整块的长管不至于堆几百个面）；电线那么细的不加
+    const nR = r >= 0.025 ? Math.min(6, Math.floor(L / 3)) : 0;
+    for (let k = 0; k < nR; k++) cyl(L * (k + 1) / (nR + 1), r * 1.22, 0.06, shade(c, 0.82), true);
+    // ② 靠起点一段浅色色环（管道标识带），和管卡错开
+    if (L >= 0.8 && r >= 0.025) {
+      const bc = rgb(c), m = 0.55;
+      cyl(nR ? L / (nR + 1) * 0.5 : L * 0.3, r * 1.03, 0.16, [bc[0] + (0.85 - bc[0]) * m, bc[1] + (0.82 - bc[1]) * m, bc[2] + (0.74 - bc[2]) * m], false);
+    }
+    // ③ 两端法兰内侧各 4 颗螺栓头（细管子看不见，不加）
+    if (r >= 0.035) {
+      const R = r * 1.3, bs = Math.max(0.012, r * 0.28), bh = 0.018, bcol = shade(c, 0.62);
+      for (let k = 0; k < 4; k++) {
+        const th = Math.PI / 4 + k * Math.PI / 2, ca = Math.cos(th) * R, sa = Math.sin(th) * R;
+        for (const s of [-1, 1]) {
+          if (axis === 'y') {
+            const by = s < 0 ? y + 0.05 : y + L - 0.05 - bh;
+            part(b, ca, by, sa, bs, bh, bs, bcol, { faces: ['px', 'nx', 'pz', 'nz', s < 0 ? 'py' : 'ny'] });
+          } else {
+            const a = s * (L / 2 - 0.05 - bh / 2);
+            if (axis === 'x') part(b, a, y + sa - bs / 2, ca, bh, bs, bs, bcol, { faces: ['py', 'ny', 'pz', 'nz', s < 0 ? 'px' : 'nx'] });
+            else part(b, ca, y + sa - bs / 2, a, bs, bs, bh, bcol, { faces: ['py', 'ny', 'px', 'nx', s < 0 ? 'pz' : 'nz'] });
+          }
+        }
+      }
+    }
+  }
   b.pop();
   return {};
 }
@@ -1409,18 +1691,53 @@ function pipe(b, x, z, rot, opts) {
 function puddle(b, x, z, rot, opts) {
   const o = opts || {};
   const rx = num(o.rx, 0.8), rz = num(o.rz, 0.5), seg = 14;
+  const hi = hiDetail(b, o);
+  const py = num(o.y, 0.006);
   b.push(x, z, rot);
   const radii = [];
   for (let k = 0; k < seg; k++) radii.push(0.72 + 0.4 * posHash(b, k + 11));
-  const piece = b._piece('kit:water', 0, num(o.y, 0.006), 0, 0, (v, t) => {
+  // 高画质：水面缩到 0.9，外面 0.9–1.0 那圈是一道更淡的湿边 —— 总轮廓（占地）和低画质一样
+  const inner = hi ? 0.9 : 1;
+  const piece = b._piece('kit:water', 0, py, 0, 0, (v, t) => {
     v(0, 0, 0, 0, 1, 0, 0, 0);
     for (let k = 0; k < seg; k++) {
       const a = k / seg * TAU;
-      v(Math.cos(a) * rx * radii[k], 0, Math.sin(a) * rz * radii[k], 0, 1, 0, 0, 0);
+      v(Math.cos(a) * rx * radii[k] * inner, 0, Math.sin(a) * rz * radii[k] * inner, 0, 1, 0, 0, 0);
     }
     for (let k = 0; k < seg; k++) t(0, 1 + (k + 1) % seg, 1 + k);
     // 深灰偏冷：半透明叠在地毯上是"湿的一滩发暗"，高光由灯打出来；浅色会像地毯褪色的一块
   }, { uv: 'world', color: o.color != null ? o.color : [0.2, 0.22, 0.23], solid: false });
+  if (hi) {
+    const base = rgb(o.color != null ? o.color : [0.2, 0.22, 0.23]);
+    const wa = b._acc('kit:water'), n0 = wa.pieces.length;
+    // ① 湿边：水面外一圈更浅更薄的一环（和水面首尾相接不重叠，透明件不写深度，不会闪）
+    b._piece('kit:water', 0, py - 0.001, 0, 0, (v, t) => {
+      for (let k = 0; k < seg; k++) {
+        const a = k / seg * TAU, ca = Math.cos(a) * rx * radii[k], sa = Math.sin(a) * rz * radii[k];
+        v(ca * 0.9, 0, sa * 0.9, 0, 1, 0, 0, 0);
+        v(ca, 0, sa, 0, 1, 0, 0, 0);
+      }
+      for (let k = 0; k < seg; k++) { const k2 = (k + 1) % seg; t(k * 2, k2 * 2, k * 2 + 1); t(k2 * 2, k2 * 2 + 1, k * 2 + 1); }
+    }, { uv: 'world', color: [base[0] * 1.9, base[1] * 1.9, base[2] * 1.9], solid: false });
+    // ② 水面上一道斜的亮反光条；③ 旁边两三个小水点（都在原轮廓内）
+    const ang = posHash(b, 3) * Math.PI;
+    b._piece('kit:water', 0, py + 0.0005, 0, ang, (v, t) => {
+      const l = Math.min(rx, rz) * 0.55, wd = Math.min(rx, rz) * 0.07;
+      v(-l, 0, -wd, 0, 1, 0, 0, 0); v(l, 0, -wd * 0.4, 0, 1, 0, 0, 0); v(l * 0.8, 0, wd * 0.6, 0, 1, 0, 0, 0); v(-l * 0.9, 0, wd, 0, 1, 0, 0, 0);
+      t(0, 3, 2); t(0, 2, 1);
+    }, { uv: 'world', color: [0.62, 0.66, 0.7], solid: false });
+    for (let d = 0; d < 3; d++) {
+      const k = Math.floor(posHash(b, 40 + d) * seg), a = k / seg * TAU, rr = 0.03 + 0.03 * posHash(b, 50 + d);
+      const cx = Math.cos(a) * rx * radii[k] * 0.78, cz = Math.sin(a) * rz * radii[k] * 0.78;
+      if (posHash(b, 60 + d) < 0.35) continue;
+      b._piece('kit:water', cx, py + 0.001, cz, 0, (v, t) => {
+        v(0, 0, 0, 0, 1, 0, 0, 0);
+        for (let m = 0; m < 6; m++) { const q = m / 6 * TAU; v(Math.cos(q) * rr, 0, Math.sin(q) * rr, 0, 1, 0, 0, 0); }
+        for (let m = 0; m < 6; m++) t(0, 1 + (m + 1) % 6, 1 + m);
+      }, { uv: 'world', color: base, solid: false });
+    }
+    linkVisible(piece, wa.pieces.slice(n0));
+  }
   b.pop();
   return { piece };
 }
@@ -1431,12 +1748,25 @@ function box(b, x, z, rot, opts) {
   const W = num(o.w, 0.5), Hh = num(o.h, 0.38), D = num(o.d, 0.4);
   const c = o.color != null ? o.color : PC.cardboard;
   const stack = Math.max(1, o.stack | 0 || 1);
+  const hi = hiDetail(b, o);
   b.push(x, z, rot);
   for (let k = 0; k < stack; k++) {
     b.push(0, 0, (posHash(b, k) - 0.5) * 0.35, k * Hh);
     part(b, 0, 0, 0, W, Hh, D, c, { faces: 'noBottom' });
     part(b, 0, Hh, 0, 0.07, 0.004, D + 0.004, PC.tape);
     part(b, 0, Hh, 0, W + 0.002, 0.003, 0.006, 0x7d6140);
+    if (hi) {
+      // ① 封箱胶带顺着前后两面往下折 10 cm；② 正面一张白色快递单（带一道条码）；③ 左右两侧的提手孔
+      const tl = Math.min(0.1, Hh * 0.35);
+      for (const sz of [1, -1]) face(b, 0, Hh - tl, sz * (D / 2 + 0.003), 0.07, tl, sz > 0 ? '+z' : '-z', PC.tape);
+      if (W > 0.25 && Hh > 0.28) {
+        // 快递单顶边比折下来的胶带底边低 1 cm 以上：两者不重叠，免得前后只差 0.5 mm 闪烁
+        const lx = (posHash(b, 7) - 0.5) * (W - 0.24), ly = Math.min(Hh * (0.3 + 0.15 * posHash(b, 8)), Hh - tl - 0.1);
+        face(b, lx, ly, D / 2 + 0.0025, 0.14, 0.09, '+z', 0xe9e6dc);
+        face(b, lx, ly + 0.012, D / 2 + 0.0045, 0.1, 0.022, '+z', 0x2a2a2a);
+        for (const sx of [-1, 1]) face(b, sx * (W / 2 + 0.002), Hh * 0.68, 0, Math.min(0.11, D * 0.3), 0.035, sx > 0 ? '+x' : '-x', shade(c, 0.35));
+      }
+    }
     b.pop();
   }
   if (o.solid !== false) b.solid(-W / 2 - 0.06, 0, -D / 2 - 0.06, W / 2 + 0.06, Hh * stack, D / 2 + 0.06);
@@ -1462,6 +1792,18 @@ function crate(b, x, z, rot, opts) {
     }
   }
   for (const s of [-1, 1]) part(b, 0, S / 2 - 0.035, s * h, S * 0.9, 0.07, 0.012, e, { rotY: 0 });
+  if (hiDetail(b, o) && S >= 0.35) {
+    const seam = shade(c, 0.5), inW = S - 2 * t, y0 = t, y1 = S - t;
+    // ① 木板缝：左右两面三道、前后两面（中间横带下方）一道、箱盖两道，离板面 2 mm
+    for (const sx of [-1, 1]) for (let k = 1; k <= 3; k++) face(b, sx * (S / 2 + 0.002), y0 + (y1 - y0) * k / 4 - 0.004, 0, inW, 0.008, sx > 0 ? '+x' : '-x', seam);
+    for (const sz of [-1, 1]) face(b, 0, y0 + (y1 - y0) / 4 - 0.004, sz * (S / 2 + 0.002), inW, 0.008, sz > 0 ? '+z' : '-z', seam);
+    for (const k of [-1, 1]) face(b, 0, S + 0.002, k * inW / 6, inW, 0.008, 'up', seam);
+    // ② 左右两面各一根斜撑（从左下角斜到右上角）
+    const hd = inW / 2 - 0.02;
+    for (const sx of [-1, 1]) beam(b, [sx * (S / 2 + 0.007), y0 + 0.03, -hd], [sx * (S / 2 + 0.007), y1 - 0.03, hd], 0.012, 0.06, e);
+    // ③ 前后两面上半块的深色喷印标记
+    for (const sz of [-1, 1]) face(b, 0, S / 2 + 0.07, sz * (S / 2 + 0.0035), inW * 0.5, Math.min(0.1, (y1 - S / 2 - 0.07) * 0.7), sz > 0 ? '+z' : '-z', shade(c, 0.35));
+  }
   if (o.solid !== false) b.solid(-S / 2, 0, -S / 2, S / 2, S, S / 2);
   b.pop();
   return {};
@@ -1471,17 +1813,52 @@ function crate(b, x, z, rot, opts) {
 function desk(b, x, z, rot, opts) {
   const o = opts || {};
   const W = num(o.w, 1.4), D = num(o.d, 0.7), Hh = num(o.h, 0.75);
+  const hi = hiDetail(b, o);
+  const topC = o.color != null ? o.color : PC.laminate;
   b.push(x, z, rot);
-  part(b, 0, Hh - 0.03, 0, W, 0.03, D, o.color != null ? o.color : PC.laminate);
+  part(b, 0, Hh - 0.03, 0, W, 0.03, D, topC);
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) part(b, sx * (W / 2 - 0.04), 0, sz * (D / 2 - 0.04), 0.04, Hh - 0.03, 0.04, 0x55585c, { faces: 'noBottom' });
   part(b, 0, 0.25, -D / 2 + 0.03, W - 0.1, Hh - 0.3, 0.015, 0x8c8272);
-  const dx = W / 2 - 0.24;
+  const dx = W / 2 - 0.24, dh = (Hh - 0.03) / 3;
   part(b, dx, 0, 0, 0.4, Hh - 0.03, D - 0.06, 0xb3a78e, { faces: 'noBottom' });
   for (let k = 1; k <= 2; k++) part(b, dx, k * (Hh - 0.03) / 3, D / 2 - 0.03, 0.38, 0.008, 0.006, 0x6e6658);
-  for (let k = 0; k < 3; k++) part(b, dx, (k + 0.6) * (Hh - 0.03) / 3, D / 2 - 0.02, 0.1, 0.02, 0.02, 0x3d4044);
+  if (!hi) {
+    for (let k = 0; k < 3; k++) part(b, dx, (k + 0.6) * (Hh - 0.03) / 3, D / 2 - 0.02, 0.1, 0.02, 0.02, 0x3d4044);
+  } else {
+    // ① 抽屉：三块独立的抽屉面板（缝里露出原来那两道深色线）+ 贴在面板上的拉手 + 顶层抽屉右上角的锁芯
+    const fz = D / 2 - 0.03;
+    for (let k = 0; k < 3; k++) {
+      part(b, dx, k * dh + 0.006, fz + 0.006, 0.376, dh - 0.012, 0.012, 0xc1b59b, { faces: ['pz', 'py', 'ny', 'px', 'nx'] });   // 比缝里的深色线窄 4 mm，侧面不共面
+      part(b, dx, k * dh + dh * 0.62, fz + 0.02, 0.12, 0.022, 0.016, 0x3d4044, { faces: ['pz', 'py', 'ny', 'px', 'nx'] });
+    }
+    face(b, dx + 0.15, 2 * dh + dh * 0.7, fz + 0.014, 0.018, 0.018, '+z', 0xb9bcbf);
+    // ② 桌沿封边：桌面四周一圈深色封边条（凸出 3 mm、比桌面高 1.5 mm）
+    const eb = shade(topC, 0.55), ey = Hh - 0.0305, eh = 0.032;
+    for (const sz of [-1, 1]) part(b, 0, ey, sz * (D / 2 + 0.0015), W + 0.006, eh, 0.003, eb, { faces: [sz > 0 ? 'pz' : 'nz', 'py'] });
+    for (const sx of [-1, 1]) part(b, sx * (W / 2 + 0.0015), ey, 0, 0.003, eh, D, eb, { faces: [sx > 0 ? 'px' : 'nx', 'py'] });
+    // ③ 左侧两条腿之间的横撑（右边是抽屉柜）
+    part(b, -(W / 2 - 0.04), 0.1, 0, 0.022, 0.035, D - 0.12, 0x55585c, { faces: ['py', 'ny', 'px', 'nx'] });
+  }
   if (o.monitor) {
-    part(b, -0.15, Hh, -0.08, 0.42, 0.36, 0.4, 0xd8d0bd);
-    b.plane(-0.15, Hh + 0.05, 0.121, 0.32, 0.25, 'kit:glow', { facing: '+z', uv: 'solid', color: o.screen != null ? rgb(o.screen) : 0.03 });
+    const my = hi ? Hh + 0.025 : Hh;
+    part(b, -0.15, my, -0.08, 0.42, 0.36, 0.4, 0xd8d0bd);
+    b.plane(-0.15, my + 0.05, 0.121, 0.32, 0.25, 'kit:glow', { facing: '+z', uv: 'solid', color: o.screen != null ? rgb(o.screen) : 0.03 });
+    if (hi) {
+      // 显示器：底座（把机身垫高 2.5 cm）、后壳凸起、屏幕四周深一圈的边框、电源灯和按钮；桌上一副键盘 + 鼠标
+      part(b, -0.15, Hh, -0.06, 0.26, 0.025, 0.24, 0xc8c0ab, { faces: 'noBottom' });
+      part(b, -0.15, my + 0.05, -0.3, 0.3, 0.25, 0.04, 0xcdc5b1, { faces: ['nz', 'py', 'ny', 'px', 'nx'] });
+      const bz = 0.1225, bc = 0xb4ac98;
+      face(b, -0.15, my + 0.03, bz, 0.36, 0.02, '+z', bc);
+      face(b, -0.15, my + 0.30, bz, 0.36, 0.02, '+z', bc);
+      face(b, -0.32, my + 0.05, bz, 0.02, 0.25, '+z', bc);
+      face(b, 0.02, my + 0.05, bz, 0.02, 0.25, '+z', bc);
+      face(b, 0.01, my + 0.008, bz, 0.012, 0.008, '+z', [0.3, 1.4, 0.4], 'kit:glow');
+      face(b, -0.02, my + 0.006, bz, 0.02, 0.012, '+z', 0x6f6a5e);
+      part(b, -0.15, Hh, 0.215, 0.44, 0.022, 0.15, 0xcfc6b0, { faces: 'noBottom' });
+      face(b, -0.15, Hh + 0.024, 0.22, 0.41, 0.11, 'up', 0xa39b88);
+      for (let r = 0; r < 3; r++) face(b, -0.15, Hh + 0.026, 0.186 + r * 0.03, 0.4, 0.004, 'up', 0x6f6a5e);
+      part(b, 0.2, Hh, 0.2, 0.06, 0.028, 0.1, 0xcfc6b0, { faces: 'noBottom' });
+    }
   }
   if (o.solid !== false) b.solid(-W / 2, 0, -D / 2, W / 2, Hh, D / 2);
   b.pop();
@@ -1492,6 +1869,7 @@ function desk(b, x, z, rot, opts) {
 function chair(b, x, z, rot, opts) {
   const o = opts || {};
   const c = o.color != null ? o.color : PC.fabric;
+  const hi = hiDetail(b, o);
   b.push(x, z, rot);
   part(b, 0, 0.42, 0, 0.46, 0.08, 0.46, c);
   part(b, 0, 0.56, -0.22, 0.44, 0.48, 0.06, c);
@@ -1500,7 +1878,22 @@ function chair(b, x, z, rot, opts) {
   for (let k = 0; k < 5; k++) {
     b.push(0, 0, k * TAU / 5);
     part(b, 0, 0.03, 0.15, 0.05, 0.04, 0.3, PC.dark);
+    if (hi) part(b, 0, 0, 0.275, 0.03, 0.032, 0.05, 0x1a1a1c, { faces: 'noBottom' });   // ① 五爪脚末端的脚轮
     b.pop();
+  }
+  if (hi) {
+    // ② 坐垫、靠背上浅一号的软包面（四周一圈原色就是缝线边）
+    const pc = shade(c, 1.2);
+    face(b, 0, 0.502, 0.01, 0.38, 0.38, 'up', pc);
+    face(b, 0, 0.63, -0.188, 0.36, 0.34, '+z', pc);
+    // ③ 靠背后面的横档（腰托）、座板下的调节机构
+    part(b, 0, 0.6, -0.262, 0.4, 0.035, 0.022, PC.dark, { faces: ['nz', 'py', 'ny', 'px', 'nx'] });
+    part(b, 0, 0.38, 0, 0.2, 0.04, 0.22, 0x2e3034, { faces: 'noTop' });
+    // ④ 扶手：贴着座板两侧的立柱 + 扶手垫
+    for (const sx of [-1, 1]) {
+      part(b, sx * 0.245, 0.43, -0.04, 0.03, 0.23, 0.04, PC.dark, { faces: ['px', 'nx', 'pz', 'nz'] });
+      part(b, sx * 0.245, 0.66, -0.02, 0.06, 0.025, 0.24, 0x2a2c2f);
+    }
   }
   if (o.solid !== false) b.solid(-0.28, 0, -0.28, 0.28, 1.0, 0.28);
   b.pop();
@@ -1522,8 +1915,21 @@ function cubicle(b, x, z, rot, opts) {
   b.solid(-W / 2, 0, -D / 2, W / 2, Hh, -D / 2 + t);
   b.solid(-W / 2, 0, -D / 2, -W / 2 + t, Hh, D / 2);
   b.solid(W / 2 - t, 0, -D / 2, W / 2, Hh, D / 2);
-  if (o.desk !== false) desk(b, 0, -D / 2 + t + 0.36, 0, { w: W - t * 2 - 0.1, d: 0.7, monitor: o.monitor !== false });
-  if (o.chair !== false) chair(b, 0.15, -D / 2 + t + 1.0, Math.PI, {});
+  if (hiDetail(b, o)) {
+    // ① 三块隔板底部的深色踢脚条（两侧比后面高 2 mm，拐角处不共面）；② 两侧隔板敞口端的铝包边；③ 后板内侧钉着的便条、纸、日历
+    const kc = shade(c, 0.5);
+    part(b, 0, 0, -D / 2 + t / 2, W - 2 * t, 0.08, t + 0.006, kc, { faces: ['py', 'pz', 'nz'] });
+    for (const sx of [-1, 1]) {
+      part(b, sx * (W / 2 - t / 2), 0, -0.002, t + 0.006, 0.082, D - 0.004, kc, { faces: ['py', 'px', 'nx', 'pz'] });
+      part(b, sx * (W / 2 - t / 2), 0, D / 2 + 0.004, t + 0.008, Hh + 0.02, 0.01, tc, { faces: ['pz', 'px', 'nx', 'py'] });
+    }
+    const pz = -D / 2 + t + 0.002;
+    face(b, -W / 2 + t + 0.25, Hh * 0.66, pz, 0.21, 0.28, '+z', 0xeeebe2);
+    face(b, W / 2 - t - 0.6, Hh * 0.78, pz, 0.1, 0.1, '+z', 0xe8d66a);
+    face(b, W / 2 - t - 0.2, Hh * 0.68, pz, 0.26, 0.2, '+z', 0xbcd0e0);
+  }
+  if (o.desk !== false) desk(b, 0, -D / 2 + t + 0.36, 0, { w: W - t * 2 - 0.1, d: 0.7, monitor: o.monitor !== false, detail: o.detail });
+  if (o.chair !== false) chair(b, 0.15, -D / 2 + t + 1.0, Math.PI, { detail: o.detail });
   b.pop();
   return {};
 }
@@ -1554,6 +1960,38 @@ function windowProp(b, x, z, rot, opts) {
   } else {
     pane = b.box(0, y, 0, W, Hh, 0.01, 'kit:glass', { color: o.tint != null ? o.tint : 0xa9c4cc, uv: 'stretch', solid: false });
   }
+  if (hiDetail(b, o)) {
+    // ① 窗框内侧两面各一圈压条（比外框细、凸出玻璃 2 cm，看得出玻璃是嵌在框里的）
+    const bc = shade(fc, 0.9), bw = 0.02;
+    for (const sz of [1, -1]) {
+      const zc = sz * 0.015, fz = sz > 0 ? 'pz' : 'nz';
+      part(b, -W / 2 + bw / 2, y, zc, bw, Hh, 0.02, bc, { faces: [fz, 'px'] });
+      part(b, W / 2 - bw / 2, y, zc, bw, Hh, 0.02, bc, { faces: [fz, 'nx'] });
+      part(b, 0, y + Hh - bw, zc, W - bw * 2, bw, 0.02, bc, { faces: [fz, 'ny'] });
+      part(b, 0, y, zc, W - bw * 2, bw, 0.02, bc, { faces: [fz, 'py'] });
+    }
+    // ② 中横档上的月牙锁（正面一侧）
+    if (o.mullions !== false) part(b, 0.07, y + Hh / 2 + 0.015, 0.03, 0.07, 0.016, 0.02, 0xb9bcbf, { faces: ['pz', 'py', 'px', 'nx'] });
+    // ③ 按窗型：涂黑窗两面各三道竖向刷痕；发光窗拉下一截卷帘；玻璃窗两道斜的反光条（玻璃材质，不写深度不会闪）
+    if (o.blackout) {
+      const pc = rgb(o.paint != null ? o.paint : 0x0b0b0b);
+      const sc = [pc[0] * 1.9 + 0.02, pc[1] * 1.9 + 0.02, pc[2] * 1.9 + 0.02];
+      for (const sz of [1, -1]) for (let k = 0; k < 3; k++) {
+        const sx = (posHash(b, 20 + k) - 0.5) * (W - 0.2), sh = Hh * (0.35 + 0.4 * posHash(b, 30 + k));
+        face(b, sx * sz, y + Hh - sh - 0.03, sz * 0.0075, 0.03 + 0.04 * posHash(b, 40 + k), sh, sz > 0 ? '+z' : '-z', sc);
+      }
+    } else if (o.glow) {
+      // 外面很亮的窗：正面拉下来一截卷帘（遮住顶上两成）+ 卷帘底杆
+      const hb = Hh * 0.2, yb = y + Hh - bw - hb;
+      face(b, 0, yb, 0.009, W - bw * 2, hb, '+z', 0xd8d2c4);
+      part(b, 0, yb - 0.012, 0.012, W - bw * 2, 0.014, 0.008, 0x9a948a, { faces: ['pz', 'py', 'ny'] });
+    } else {
+      for (const [f0, bw2] of [[0.12, 0.12], [0.36, 0.05]]) {
+        const x0 = -W / 2 + W * f0, x1 = x0 + W * 0.28, yb = y + Hh * 0.12, yt = y + Hh * 0.88, zz = 0.0065;
+        b.quad([x0, yb, zz], [x0 + bw2, yb, zz], [x1 + bw2, yt, zz], [x1, yt, zz], 'kit:glass', { color: [0.92, 0.96, 1.0], uv: 'stretch' });
+      }
+    }
+  }
   if (o.solid !== false) b.solid(-W / 2 - ft, y - ft, -fd / 2, W / 2 + ft, y + Hh + ft, fd / 2);
   if (o.wall) wallWithOpening(b, 0, 0, 0, Object.assign({ openW: W + ft * 2, openY0: y - ft, openY1: y + Hh + ft }, o.wall));
   b.pop();
@@ -1576,6 +2014,27 @@ function vending(b, x, z, rot, opts) {
   part(b, 0.33, 0.9, D / 2 + 0.01, 0.16, 0.5, 0.02, 0x2b2b2b);
   glowBox(b, 0.33, 1.25, D / 2 + 0.025, 0.06, 0.04, 0.01, [1.4, 0.4, 0.3]);
   b.plane(gx, 0.12, D / 2 + 0.004, gw, 0.28, 'kit:glow', { facing: '+z', uv: 'solid', color: 0.01 });
+  if (hiDetail(b, o)) {
+    const fz = D / 2, dk = 0x2a2a2c;
+    // ① 展示窗一圈深色窗框（比饮料罐还凸出一点）
+    const X0 = gx - gw / 2, X1 = gx + gw / 2, e = 0.03, fd = 0.045;
+    part(b, gx, 0.55 - e, fz + fd / 2, gw + e * 2, e, fd, dk, { faces: ['pz', 'py', 'ny', 'px', 'nx'] });
+    part(b, gx, 1.7, fz + fd / 2, gw + e * 2, e, fd, dk, { faces: ['pz', 'py', 'ny', 'px', 'nx'] });
+    part(b, X0 - e / 2, 0.55, fz + fd / 2, e, 1.15, fd, dk, { faces: ['pz', 'px', 'nx'] });
+    part(b, X1 + e / 2, 0.55, fz + fd / 2, e, 1.15, fd, dk, { faces: ['pz', 'px', 'nx'] });
+    // ② 顶上一条亮的招牌灯带（机身颜色调亮）
+    const cc = rgb(c);
+    face(b, 0, 1.738, fz + 0.004, W - 0.06, 0.048, '+z', [cc[0] * 1.5 + 0.15, cc[1] * 1.5 + 0.15, cc[2] * 1.5 + 0.15], 'kit:glow');
+    // ③ 投币面板：3×4 选货按键、纸币口、退币口
+    const kz = fz + 0.0225;
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 4; j++) face(b, 0.295 + i * 0.035, 1.0 + j * 0.03, kz, 0.026, 0.018, '+z', 0xb8bcc0);
+    face(b, 0.33, 1.14, kz, 0.09, 0.05, '+z', 0x121212);
+    face(b, 0.33, 0.93, kz, 0.06, 0.04, '+z', 0x121212);
+    // ④ 取货口上半截的翻板 + 把手；⑤ 底部深色踢脚板
+    part(b, gx, 0.26, fz + 0.006, gw - 0.02, 0.13, 0.008, 0x3a3a3a, { faces: ['pz', 'py', 'ny', 'px', 'nx'] });
+    face(b, gx, 0.36, fz + 0.0125, 0.12, 0.015, '+z', 0x7a7a7a);
+    face(b, 0, 0.02, fz + 0.003, W - 0.04, 0.08, '+z', shade(c, 0.45));
+  }
   let src = null;
   if (o.light !== false) src = b.light({ x: 0, z: D / 2 + 0.6, y: 1.1, color: 0xdfe8ff, intensity: num(o.intensity, 0.35), range: num(o.range, 3.5) });
   if (o.solid !== false) b.solid(-W / 2, 0, -D / 2, W / 2, Hh, D / 2);
@@ -1593,6 +2052,17 @@ function bed(b, x, z, rot, opts) {
   part(b, 0, 0.3, L * 0.18, W + 0.02, 0.2, L * 0.62, o.color != null ? o.color : 0x5a6f8a);
   part(b, 0, 0.48, -L / 2 + 0.25, W * 0.6, 0.1, 0.32, 0xf2efe6);
   part(b, 0, 0, -L / 2 - 0.03, W + 0.1, 0.95, 0.06, wood, { faces: 'noBottom' });
+  if (hiDetail(b, o)) {
+    const wd = shade(wood, 0.8);
+    // ① 床头两根立柱（比床头板高 7 cm）+ 床头板顶上的压顶木条
+    for (const sx of [-1, 1]) part(b, sx * (W / 2 + 0.02), 0, -L / 2 - 0.03, 0.07, 1.02, 0.08, shade(wood, 0.88), { faces: 'noBottom' });
+    part(b, 0, 0.95, -L / 2 - 0.03, W + 0.04, 0.03, 0.076, wd, { faces: 'noBottom' });   // 比立柱薄 4 mm：前后面不和立柱共面
+    // ② 矮床尾板 + 压顶（在原碰撞体里，只往外多 2 mm）
+    part(b, 0, 0, L / 2 + 0.0085, W + 0.064, 0.55, 0.047, wood, { faces: 'noBottom' });
+    part(b, 0, 0.55, L / 2 + 0.0085, W + 0.08, 0.025, 0.065, wd, { faces: 'noBottom' });
+    // ③ 被子床头那端翻出来的一截白被单
+    part(b, 0, 0.3, L * 0.18 - L * 0.31 + 0.069, W + 0.03, 0.206, 0.142, 0xf0ede4, { faces: 'noBottom' });   // 头端比被子多出 2 mm
+  }
   if (o.solid !== false) b.solid(-W / 2 - 0.05, 0, -L / 2 - 0.06, W / 2 + 0.05, 0.6, L / 2 + 0.03);
   b.pop();
   return {};
@@ -1611,12 +2081,36 @@ function cabinet(b, x, z, rot, opts) {
     part(b, 0, H, 0, W + 0.06, 0.05, D + 0.04, 0x5f432b);
     part(b, 0, 0.06, D / 2 + 0.003, 0.01, H - 0.12, 0.006, 0x3e2b1b);
     for (const s of [-1, 1]) part(b, s * 0.06, H * 0.5, D / 2 + 0.02, 0.02, 0.16, 0.03, 0xc9b27a);
+    if (hiDetail(b, o)) {
+      // ① 两扇门各上下两块凸起的门板；② 底部深色踢脚；③ 外侧边上的合页、右门把手下的锁孔
+      const pw = W / 2 - 0.14, pc = shade(c, 1.1);
+      for (const sx of [-1, 1]) {
+        part(b, sx * W / 4, H * 0.52, D / 2 + 0.004, pw, H - 0.16 - H * 0.52, 0.008, pc, { faces: ['pz', 'py', 'ny', 'px', 'nx'] });
+        part(b, sx * W / 4, 0.14, D / 2 + 0.004, pw, H * 0.46 - 0.14, 0.008, pc, { faces: ['pz', 'py', 'ny', 'px', 'nx'] });
+        for (const hy of [0.3, H - 0.4]) face(b, sx * (W / 2 - 0.02), hy, D / 2 + 0.003, 0.02, 0.08, '+z', 0xb59a5a);
+      }
+      face(b, 0, 0.005, D / 2 + 0.003, W - 0.02, 0.05, '+z', shade(c, 0.5));
+      face(b, 0.06, H * 0.5 - 0.05, D / 2 + 0.003, 0.012, 0.02, '+z', 0x1c140c);
+    }
   } else if (kind === 'locker') {
     W = num(o.w, 0.4); H = num(o.h, 1.8); D = num(o.d, 0.5);
     const c = o.color != null ? o.color : 0x5b6f86;
     part(b, 0, 0, 0, W, H, D, c, { faces: 'noBottom' });
     for (let k = 0; k < 3; k++) part(b, 0, H - 0.25 - k * 0.05, D / 2 + 0.002, W * 0.6, 0.015, 0.004, 0x1f2833);
     part(b, W / 2 - 0.07, H * 0.5, D / 2 + 0.015, 0.03, 0.12, 0.03, 0xb8bcc0);
+    if (hiDetail(b, o)) {
+      const lz = D / 2 + 0.003, lc = shade(c, 0.55);
+      // ① 柜门轮廓线（门缝）；② 底部再三道通风百叶；③ 顶上的号码牌、把手上方的挂锁扣、左边两片合页
+      face(b, -W / 2 + 0.02, 0.05, lz, 0.006, H - 0.08, '+z', lc);
+      face(b, W / 2 - 0.02, 0.05, lz, 0.006, H - 0.08, '+z', lc);
+      face(b, 0, H - 0.03, lz, W - 0.034, 0.006, '+z', lc);
+      face(b, 0, 0.05, lz, W - 0.034, 0.006, '+z', lc);
+      for (let k = 0; k < 3; k++) face(b, 0, 0.15 + k * 0.05, lz, W * 0.6, 0.015, '+z', 0x1f2833);
+      face(b, 0, H - 0.11, lz, 0.1, 0.045, '+z', 0xd9d6cc);
+      face(b, 0, H - 0.1, lz + 0.002, 0.035, 0.025, '+z', 0x2a2a2a);
+      part(b, W / 2 - 0.07, H * 0.5 + 0.13, D / 2 + 0.012, 0.035, 0.03, 0.024, 0x9a9ea3, { faces: ['pz', 'py', 'ny', 'px', 'nx'] });
+      for (const hy of [0.3, H - 0.35]) face(b, -W / 2 + 0.01, hy, lz, 0.012, 0.07, '+z', 0x9a9ea3);
+    }
   } else {
     W = num(o.w, 0.46); H = num(o.h, 1.32); D = num(o.d, 0.62);
     const c = o.color != null ? o.color : PC.metal;
@@ -1625,6 +2119,13 @@ function cabinet(b, x, z, rot, opts) {
     for (let k = 0; k < 4; k++) {
       part(b, 0, 0.04 + k * dh, D / 2 + 0.005, W - 0.04, dh - 0.02, 0.01, 0xa2a7ac);
       part(b, 0, 0.04 + k * dh + dh * 0.62, D / 2 + 0.02, 0.12, 0.025, 0.02, PC.dark);
+    }
+    if (hiDetail(b, o)) {
+      // ① 每个抽屉拉手上方的标签框；② 顶层抽屉右上角的锁芯；③ 顶面压边、底部深色踢脚
+      for (let k = 0; k < 4; k++) if (dh > 0.12) face(b, 0, 0.04 + k * dh + dh * 0.78, D / 2 + 0.0125, 0.1, Math.min(0.035, dh * 0.12), '+z', 0xe6e2d6);
+      face(b, W / 2 - 0.06, 0.04 + 3 * dh + dh * 0.72, D / 2 + 0.0125, 0.02, 0.02, '+z', 0xc7cacd);
+      part(b, 0, H, 0, W + 0.01, 0.012, D + 0.01, shade(c, 0.85), { faces: 'noBottom' });
+      face(b, 0, 0.004, D / 2 + 0.003, W - 0.02, 0.03, '+z', PC.dark);
     }
   }
   if (o.solid !== false) b.solid(-W / 2, 0, -D / 2, W / 2, H, D / 2);
@@ -1645,6 +2146,20 @@ function streetlight(b, x, z, rot, opts) {
   part(b, 0, Hh - 0.1, 0.6, 0.06, 0.06, 1.2, c);
   part(b, 0, Hh - 0.22, 1.25, 0.28, 0.14, 0.5, 0x3a3c3e);
   const lens = b.plane(0, Hh - 0.225, 1.25, 0.22, 0.42, 'kit:glow', { facing: 'down', uv: 'solid', color: base, glow: state === 'broken' ? 0.15 : lit ? 1 : 0.06 });
+  if (hiDetail(b, o)) {
+    // ① 灯座：底板 + 灯座顶上收一圈的台阶 + 正面的检修小门
+    part(b, 0, 0, 0, 0.32, 0.02, 0.32, shade(c, 0.8), { faces: 'noBottom' });
+    part(b, 0, 0.4, 0, 0.2, 0.05, 0.2, shade(c, 0.9), { faces: 'noBottom' });
+    face(b, 0, 0.1, 0.152, 0.14, 0.2, '+z', shade(c, 0.7));
+    // ② 灯杆上的编号牌（杆子 40% 高处，朝灯臂那面）
+    const ty = Hh * 0.4, tr = 0.09 - 0.03 * 0.4;
+    part(b, 0, ty, tr - 0.006, 0.06, 0.13, 0.018, 0xd8d4c8, { faces: ['pz', 'py', 'ny', 'px', 'nx'] });
+    face(b, 0, ty + 0.04, tr + 0.0055, 0.04, 0.05, '+z', 0x2a2c2e);
+    // ③ 灯臂下的斜撑；④ 灯罩顶上的遮檐 + 光控探头
+    beam(b, [0, Hh - 0.75, 0.05], [0, Hh - 0.1, 0.55], 0.035, 0.035, c);
+    part(b, 0, Hh - 0.08, 1.25, 0.3, 0.025, 0.54, shade(0x3a3c3e, 1.25));
+    part(b, 0, Hh - 0.055, 1.42, 0.05, 0.03, 0.05, 0x8a8d90, { faces: 'noBottom' });
+  }
   let src = null;
   if (state !== 'broken' && o.light !== false) {
     src = b.light({
@@ -1671,14 +2186,47 @@ function fence(b, x, z, rot, opts) {
     for (const y of [0.3, Hh - 0.35]) part(b, 0, y, -0.06, L, 0.08, 0.03, c);
     const m = Math.max(2, Math.floor(L / 0.14));
     for (let k = 0; k < m; k++) part(b, -L / 2 + (k + 0.5) * L / m, 0.05, 0.0, 0.08, Hh - 0.1, 0.02, c, { faces: 'noBottom' });
+    if (hiDetail(b, o)) {
+      // ① 每根尖桩顶上的尖头（前后两个三角 + 两个斜面）；② 立柱顶的方帽；③ 尖桩后面贴地的一条踢脚板
+      const yb = Hh - 0.05, yt = yb + 0.055, tl = [];
+      for (let k = 0; k < m; k++) {
+        const px = -L / 2 + (k + 0.5) * L / m, l = px - 0.04, r = px + 0.04, f = 0.01, bk = -0.01;
+        tl.push([[l, yb, f], [r, yb, f], [px, yt, f]], [[r, yb, bk], [l, yb, bk], [px, yt, bk]]);
+        tl.push([[l, yb, bk], [l, yb, f], [px, yt, f]], [[l, yb, bk], [px, yt, f], [px, yt, bk]]);
+        tl.push([[r, yb, f], [r, yb, bk], [px, yt, bk]], [[r, yb, f], [px, yt, bk], [px, yt, f]]);
+      }
+      tris3(b, tl, c);
+      for (let k = 0; k < n; k++) part(b, -L / 2 + k * sp, Hh + 0.05, 0, 0.11, 0.025, 0.11, shade(c, 0.92), { faces: 'noBottom' });
+      part(b, 0, 0, -0.035, L, 0.12, 0.02, shade(c, 0.85), { faces: ['py', 'pz', 'nz'] });
+    }
   } else {
     const c = o.color != null ? o.color : 0x8a8e91;
     for (let k = 0; k < n; k++) b.cylinder(-L / 2 + k * sp, 0, 0, 0.035, Hh, 'kit:prop', { color: c, uv: 'stretch', solid: false, segments: 6 });
+    const hi = hiDetail(b, o), cd = shade(c, 0.82);
     if (kind === 'rail') {
       for (const y of [Hh - 0.05, Hh * 0.55, Hh * 0.15]) part(b, 0, y, 0, L, 0.06, 0.05, c);
+      if (hi) {
+        // ① 立柱顶的小帽（压在顶横杆上）；② 顶横杆和立柱交接处的抱箍；③ 立柱底的方形法兰（不比立柱宽，不扩大占地）
+        for (let k = 0; k < n; k++) {
+          const px = -L / 2 + k * sp;
+          part(b, px, Hh + 0.01, 0, 0.06, 0.015, 0.06, cd, { faces: 'noBottom' });
+          part(b, px, Hh - 0.058, 0, 0.09, 0.076, 0.062, cd);
+          part(b, px, 0, 0, 0.07, 0.015, 0.07, cd, { faces: 'noBottom' });
+        }
+      }
     } else {
       b.cylinder(0, Hh - 0.02, 0, 0.025, L, 'kit:prop', { axis: 'x', color: c, uv: 'stretch', solid: false, segments: 6 });
       b.box(0, 0.05, 0, L, Hh - 0.1, 0.01, 'kit:glass', { color: o.meshColor != null ? o.meshColor : 0x6f7478, uv: 'stretch', solid: false });
+      if (hi) {
+        // ① 立柱顶帽；② 贴地的一根拉紧横杆；③ 两头第一格的中横撑 + 斜拉杆（铁丝网围栏端柱的标准加固）
+        for (let k = 0; k < n; k++) part(b, -L / 2 + k * sp, Hh - 0.005, 0, 0.074, 0.035, 0.074, cd, { faces: 'noBottom' });
+        part(b, 0, 0.045, 0, L, 0.018, 0.018, c, { faces: ['py', 'ny', 'pz', 'nz'] });
+        for (const s2 of n > 2 ? [-1, 1] : [-1]) {
+          const x0 = s2 * L / 2, x1 = s2 * (L / 2 - sp);
+          part(b, (x0 + x1) / 2, Hh * 0.5, 0, sp - 0.05, 0.03, 0.03, c, { faces: ['py', 'ny', 'pz', 'nz'] });
+          beam(b, [x0 - s2 * 0.03, Hh * 0.5, 0], [x1 + s2 * 0.03, 0.12, 0], 0.012, 0.012, c);
+        }
+      }
     }
   }
   if (o.solid !== false) b.solid(-L / 2, 0, -0.07, L / 2, Hh, 0.07);
@@ -1692,6 +2240,26 @@ function pillar(b, x, z, rot, opts) {
   const W = num(o.w, 0.6), Hh = num(o.h, b.height), key = o.matKey || 'kit:prop';
   b.push(x, z, rot);
   const p = b.box(0, 0, 0, W, Hh, num(o.d, W), key, { faces: Hh >= b.height - 0.01 ? 'sides' : 'noBottom', color: o.color, solid: o.solid !== false, uv: key === 'kit:prop' ? 'stretch' : 'world' });
+  // 天然材质（岩柱、石笋、树干之类）的柱子不加人造细节
+  const natural = !!o.matKey && /rock|cave|stone|boulder|cliff|ice|tree|trunk|root|moss|crystal|coral|flesh|soil|dirt/i.test(String(o.matKey));
+  if (hiDetail(b, o) && !natural) {
+    const D = num(o.d, W), full = Hh >= b.height - 0.01, m = Math.min(0.044, Math.min(W, D) * 0.09);
+    const kc = shade(o.color, 0.82), mo = { matKey: key };
+    // ① 柱脚：比柱身宽一圈、12 cm 高的底座（同一种材质）；② 柱头：顶天的柱子在顶上收一圈 10 cm 的柱帽，矮柱子顶上压一块盖板
+    part(b, 0, 0, 0, W + m, 0.12, D + m, kc, Object.assign({ faces: ['py', 'px', 'nx', 'pz', 'nz'] }, mo));
+    if (full) part(b, 0, Hh - 0.1, 0, W + m, 0.1, D + m, kc, Object.assign({ faces: ['ny', 'px', 'nx', 'pz', 'nz'] }, mo));
+    else part(b, 0, Hh, 0, W + m, 0.03, D + m, kc, Object.assign({ faces: 'noBottom' }, mo));
+    // ③ 四条竖棱上的钢护角（柱脚往上 1 m，只画朝外的两面和顶面）；④ 两面齐眼高的白色编号牌
+    const gh = Math.min(1.0, Hh - 0.3);
+    if (gh > 0.2) for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      part(b, sx * (W / 2 - 0.019), 0.12, sz * (D / 2 - 0.019), 0.05, gh, 0.05, 0x8f9499, { faces: [sx > 0 ? 'px' : 'nx', sz > 0 ? 'pz' : 'nz', 'py'] });
+    }
+    if (Hh > 1.8 && W > 0.3) for (const sz of [-1, 1]) {
+      const zf = sz * (D / 2 + 0.003), fc = sz > 0 ? '+z' : '-z';
+      face(b, 0, 1.5, zf, 0.16, 0.1, fc, 0xe8e6de);
+      face(b, 0, 1.525, sz * (D / 2 + 0.005), 0.08, 0.05, fc, 0x2a2c2e);
+    }
+  }
   b.pop();
   return { piece: p };
 }
@@ -1701,8 +2269,23 @@ function sign(b, x, z, rot, opts) {
   const o = opts || {};
   const W = num(o.w, 0.4), Hh = num(o.h, 0.15), y = num(o.y, 2.2);
   b.push(x, z, rot);
-  part(b, 0, y - 0.02, 0, W + 0.04, Hh + 0.04, 0.04, o.backColor != null ? o.backColor : 0xe8e8e0);
+  const bk = o.backColor != null ? o.backColor : 0xe8e8e0;
+  part(b, 0, y - 0.02, 0, W + 0.04, Hh + 0.04, 0.04, bk);
   const piece = b.plane(0, y, 0.021, W, Hh, 'kit:glow', { facing: '+z', uv: 'solid', color: o.color != null ? rgb(o.color) : EXIT_GREEN });
+  if (hiDetail(b, o)) {
+    // ① 发光面四周一圈深色压框（紧贴发光面外沿，不盖住它；比发光面凸出 4 mm）
+    const bz = shade(bk, 0.62), e = 0.018, zc = 0.022, dz = 0.006;
+    part(b, 0, y + Hh, zc, W + e * 2, e, dz, bz, { faces: ['pz', 'py'] });
+    part(b, 0, y - e, zc, W + e * 2, e, dz, bz, { faces: ['pz', 'ny'] });
+    for (const sx of [-1, 1]) part(b, sx * (W / 2 + e / 2), y, zc, e, Hh, dz, bz, { faces: ['pz', sx > 0 ? 'px' : 'nx'] });
+    // ② 外壳侧面一圈合缝线；③ 顶上两只安装耳
+    const sc = shade(bk, 0.45), hw = W / 2 + 0.0225, t2 = 0.004;
+    face(b, 0, y + Hh + 0.0225, 0, W + 0.04, t2, 'up', sc);
+    face(b, 0, y - 0.0225, 0, W + 0.04, t2, 'down', sc);
+    face(b, hw, y - 0.02, 0, t2, Hh + 0.04, '+x', sc);
+    face(b, -hw, y - 0.02, 0, t2, Hh + 0.04, '-x', sc);
+    for (const sx of [-1, 1]) part(b, sx * W * 0.3, y + Hh + 0.02, 0, 0.03, 0.015, 0.016, shade(bk, 0.8), { faces: 'noBottom' });
+  }
   b.pop();
   return { piece };
 }
@@ -1722,8 +2305,45 @@ function hole(b, x, z, rot, opts) {
     }
     for (let k = 0; k < seg; k++) t(0, 1 + (k + 1) % seg, 1 + k);
   }, { uv: uvm, color, solid: false });
-  const rim = fan('kit:prop', 0.003, 1.12, o.rimColor != null ? o.rimColor : 0x2a261d, 'stretch');
-  const disc = fan('kit:glow', 0.006, 1, 0, 'solid');
+  const rimC = o.rimColor != null ? o.rimColor : 0x2a261d;
+  const hi = hiDetail(b, o);
+  const rim = fan('kit:prop', 0.003, 1.12, rimC, 'stretch');
+  // 高画质：黑洞缩到 0.86，外面 0.86–1.0 是坑壁顶端那圈往下暗过去的斜坡 —— 黑洞 + 斜坡的总轮廓和低画质的黑洞一样大
+  const disc = fan('kit:glow', 0.006, hi ? 0.86 : 1, 0, 'solid');
+  if (hi) {
+    // ① 洞口内沿：外圈是脏边的颜色，往里逐顶点暗到接近黑（顶点色渐变，一圈只要 40 个三角形）
+    const lip = b._piece('kit:prop', 0, 0.005, 0, 0, (v, t) => {
+      for (let k = 0; k < seg; k++) {
+        const a = k / seg * TAU, ca = Math.cos(a) * r * radii[k], sa = Math.sin(a) * r * radii[k];
+        v(ca * 0.86, 0, sa * 0.86, 0, 1, 0, 0, 0);
+        v(ca, 0, sa, 0, 1, 0, 0, 0);
+      }
+      for (let k = 0; k < seg; k++) { const k2 = (k + 1) % seg; t(k * 2, k2 * 2, k * 2 + 1); t(k2 * 2, k2 * 2 + 1, k * 2 + 1); }
+    }, { uv: 'stretch', color: shade(rimC, 0.8), solid: false });
+    const col = lip.acc.col, dk = shade(rimC, 0.12);
+    for (let k = 0; k < seg; k++) { const i = lip.start + k * 2; col[i * 3] = dk[0]; col[i * 3 + 1] = dk[1]; col[i * 3 + 2] = dk[2]; }
+    linkVisible(disc, [lip]);
+    // ② 洞边五块碎石（四面体，不挡路）；③ 从坑边往外裂开的四道裂缝（都在原来的脏边范围内）
+    const rubble = [], cracks = [];
+    for (let k = 0; k < 5; k++) {
+      const i = Math.floor(posHash(b, 200 + k) * seg), a = i / seg * TAU + 0.1;
+      const rr = r * radii[i] * (1.02 + 0.06 * posHash(b, 210 + k)), sz = 0.03 + 0.035 * posHash(b, 220 + k);
+      const cx = Math.cos(a) * rr, cz = Math.sin(a) * rr, h = sz * (0.4 + 0.3 * posHash(b, 230 + k));   // 碎块压得很扁，最高 4.5 cm
+      const p0 = [cx + sz, 0, cz], p1 = [cx - sz * 0.5, 0, cz + sz * 0.87], p2 = [cx - sz * 0.5, 0, cz - sz * 0.87], ap = [cx + sz * 0.1, h, cz];
+      rubble.push([p0, p2, ap], [p2, p1, ap], [p1, p0, ap]);
+    }
+    const rb = tris3(b, rubble, shade(rimC, 1.6));
+    // 裂缝从坑边一直裂到脏边外面的地上（深色细楔形），最远不超过原来最大外沿的 8%
+    let rMax = 0;
+    for (let k = 0; k < seg; k++) rMax = Math.max(rMax, radii[k]);
+    for (let k = 0; k < 4; k++) {
+      const i = Math.floor(posHash(b, 240 + k) * seg), a = i / seg * TAU, ri = r * radii[i];
+      const ro = Math.min(r * rMax * 1.12 * 1.08, ri * 1.12 + 0.08 + 0.14 * posHash(b, 250 + k)), w = 0.02;
+      const ca = Math.cos(a), sa = Math.sin(a), nx = -sa * w, nz = ca * w, y = 0.007;   // 比内沿斜坡（0.005）高 2 mm
+      cracks.push([[ca * ri * 0.98 + nx, y, sa * ri * 0.98 + nz], [ca * ro, y, sa * ro], [ca * ri * 0.98 - nx, y, sa * ri * 0.98 - nz]]);
+    }
+    linkVisible(rim, [rb, tris3(b, cracks, shade(rimC, 0.55))]);
+  }
   b.pop();
   return { disc, rim };
 }

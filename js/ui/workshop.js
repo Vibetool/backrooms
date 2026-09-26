@@ -92,7 +92,11 @@ const S = {
   selectedEntityType: null,
   toolHint: '',
   cam: { cx: 0, cz: 0, altitude: 60, section: SECTION_DEFAULT },
-  proj: null,                // { ox, oy, sx, sy }：世界→屏幕仿射映射缓存
+  proj: null,                // { cx, cz, ox, oy, sx, sy }：世界→叠加层像素的仿射映射缓存（世界点 cx,cz 落在 ox,oy）
+  drawnProj: null,           // 叠加层上次是按哪一份 proj 画的（与 proj 不同 = 标签没跟上镜头，要重画）
+  camSig: [],                // 上次校准时的相机/画布指纹，兜底巡检用
+  watchRaf: 0,               // 兜底巡检的 rAF
+  hoverEdge: null,           // 墙工具当前高亮的格子边（世界坐标），镜头动了要跟着重投影
   boundary: null,            // { minX, maxX, minZ, maxZ }
   chunkSize: 24,
   saved3D: null,             // 进入编辑器前的相机/雾状态，退出时还原
@@ -370,6 +374,9 @@ function buildEditor() {
   const gExit = svgEl('g', null, svg);
   const gSpawn = svgEl('g', null, svg);
   const gCursor = svgEl('g', null, svg);
+  // 3D 预览里的标签层：俯视的 SVG 标签在预览里收起，改由这一层按实体/出口的 3D 位置每帧投影（见 updateFpTags）
+  const fpTags = mk('div', 'ws-fp-tags', root);
+  fpTags.setAttribute('aria-hidden', 'true');
 
   // 工具栏
   const toolbar = mk('div', 'ws-toolbar', root);
@@ -455,6 +462,7 @@ function buildEditor() {
   S.els.editor = root;
   S.els.stage = stage;
   S.els.svg = svg; S.els.gMask = gMask; S.els.gEdge = gEdge; S.els.gEnt = gEnt; S.els.gExit = gExit; S.els.gSpawn = gSpawn; S.els.gCursor = gCursor;
+  S.els.fpTags = fpTags;
   S.els.toolBtns = toolBtns;
   S.els.previewBtn = previewBtn;
   S.els.sectionRange = sectionRange;
@@ -482,7 +490,7 @@ function onWindowResize() {
   // gfx 把 camera.aspect 的更新推迟到下一帧；不先同步刷新，校准用的就是旧宽高比，标记和点击换算都会错位
   if (has(BR.gfx, 'resize')) BR.gfx.resize();
   if (S.fp) return;
-  applyCamera(); redrawOverlay();
+  applyCamera({ force: true });   // 舞台尺寸变了，遮罩外圈也要按新尺寸重画，投影没变也画
 }
 function onEditorKeydown(e) {
   if (S.view !== 'editor') return;
@@ -544,16 +552,18 @@ function openScene() {
   S.cam.section = SECTION_DEFAULT;
   extendFog();
   S.editorSceneOpen = true;
-  applyCamera();
+  S.drawnProj = null; S.hoverEdge = null;
+  applyCamera({ defer: true });
   // 触屏默认视角下一格墙（3 米）在手机上只有十来个像素，手指点不准：按比例降低初始高度，保证一格至少 28px
   if (isTouch() && S.proj) {
     const cellPx = Math.abs(S.proj.sx) * 3;
     if (cellPx > 0 && cellPx < 28) {
       S.cam.altitude = clamp(S.cam.altitude * cellPx / 28, Math.max(ALT_MIN, S.cam.section + 0.5), ALT_MAX);
-      applyCamera();
+      applyCamera({ defer: true });
     }
   }
   redrawOverlay();
+  startOverlayWatch();
 }
 
 // 场景重新读到的雾/相机远裁剪面每次 world.start 都会被 present() 按层级 env 重设，
@@ -570,6 +580,8 @@ function closeScene() {
   // 预览中直接点「退出」或「保存」：先停掉预览循环，否则它会一直占着相机，下次进编辑器没法平移
   if (S.fp) exitPreview();
   S.editorSceneOpen = false;
+  stopOverlayWatch();
+  S.drawnProj = null; S.hoverEdge = null;
   clearTimeout(S.reloadTimer);
   const gfx = BR.gfx;
   if (S.saved3D) {
@@ -593,8 +605,12 @@ function requestExitEditor() {
   }
 }
 
-// ---------- 相机：仿射投影（世界 xz 平面 → 屏幕像素） ----------
-function applyCamera() {
+// ---------- 相机：仿射投影（世界 xz 平面 → 叠加层像素） ----------
+// 标签跟镜头的规矩：摆相机只走 applyCamera，它校准完投影就顺手把叠加层（遮罩、实体、出口、出生点、标签）
+// 按新投影重画，不再靠每个调用方记得补一句 redrawOverlay——以前滚轮缩放就漏了这一句，
+// 地图放大缩小了，标签和圆点还停在原地，要等下一次点击才跳回去。
+// opts.defer：一次操作里要连摆两次相机（缩放后再平移回锚点），前一次先不画；opts.force：数据也变了，投影没变也要重画
+function applyCamera(opts) {
   const gfx = BR.gfx;
   const c = gfx.camera;
   c.fov = FOV_TOP;
@@ -605,29 +621,82 @@ function applyCamera() {
   c.updateProjectionMatrix();
   c.updateMatrixWorld(true);
   calibrateProjection();
+  if (!(opts && opts.defer)) syncOverlay(!!(opts && opts.force));
 }
 
+// 叠加层（.ws-stage 与 .ws-svg 是同一个盒子）用自己的局部像素坐标，3D 画面画在 #gl 画布上。
+// 投影按画布的矩形算，再换到叠加层坐标：两者平时重合；iOS 地址栏伸缩、软键盘收放的过渡里
+// 画布（innerWidth×innerHeight）和 fixed 100% 高的叠加层可能差一截，按舞台算的话整层标签会被拉歪
+function canvasEl() { return BR.gfx && BR.gfx.renderer ? BR.gfx.renderer.domElement : null; }
+function canvasRect() {
+  const c = canvasEl();
+  const r = c ? c.getBoundingClientRect() : null;
+  return r && r.width > 0 && r.height > 0 ? r : stageRect();
+}
 function calibrateProjection() {
-  const gfx = BR.gfx;
-  const rect = stageRect();
-  const p0 = worldPointToPx(S.cam.cx, S.cam.cz, rect);
-  const p1 = worldPointToPx(S.cam.cx + 10, S.cam.cz, rect);
-  const p2 = worldPointToPx(S.cam.cx, S.cam.cz + 10, rect);
+  const st = stageRect(), cv = canvasRect();
+  const dx = cv.left - st.left, dy = cv.top - st.top;
+  const p0 = worldPointToPx(S.cam.cx, S.cam.cz, cv);
+  const p1 = worldPointToPx(S.cam.cx + 10, S.cam.cz, cv);
+  const p2 = worldPointToPx(S.cam.cx, S.cam.cz + 10, cv);
   const sx = (p1.x - p0.x) / 10, sy = (p2.y - p0.y) / 10;
-  S.proj = { ox: p0.x, oy: p0.y, sx: sx || 1, sy: sy || 1 };
+  // cx/cz 是校准用的世界参考点（落在 ox/oy 上）：平移只改它，ox/oy/sx/sy 都不变，比较投影时必须带上
+  S.proj = { cx: S.cam.cx, cz: S.cam.cz, ox: p0.x + dx, oy: p0.y + dy, sx: sx || 1, sy: sy || 1 };
+  readCamSig(S.camSig);
 }
 function worldPointToPx(x, z, rect) {
   const v = new THREE.Vector3(x, 0, z).project(BR.gfx.camera);
   return { x: (v.x * 0.5 + 0.5) * rect.width, y: (1 - (v.y * 0.5 + 0.5)) * rect.height };
 }
 function stageRect() { return S.els.stage.getBoundingClientRect(); }
+
+// 叠加层是按哪一版投影画的（S.drawnProj）；与当前投影不一致 = 镜头动过、标签还停在旧位置
+function projDiffers(a, b) {
+  if (!a || !b) return true;
+  return Math.abs((a.cx - b.cx) * b.sx) > 0.05 || Math.abs((a.cz - b.cz) * b.sy) > 0.05 ||
+    Math.abs(a.ox - b.ox) > 0.05 || Math.abs(a.oy - b.oy) > 0.05 ||
+    Math.abs(a.sx - b.sx) > Math.abs(b.sx) * 1e-5 || Math.abs(a.sy - b.sy) > Math.abs(b.sy) * 1e-5;
+}
+function syncOverlay(force) {
+  if (force || projDiffers(S.proj, S.drawnProj)) redrawOverlay();
+}
+
+// 相机/画布指纹：投影校准时记一份，兜底巡检每帧比一次（见 overlayWatch）
+function readCamSig(out) {
+  const c = BR.gfx.camera, cv = canvasEl(), pm = c.projectionMatrix.elements;
+  out[0] = c.position.x; out[1] = c.position.y; out[2] = c.position.z;
+  out[3] = c.quaternion.x; out[4] = c.quaternion.y; out[5] = c.quaternion.z; out[6] = c.quaternion.w;
+  out[7] = c.fov; out[8] = c.aspect; out[9] = c.zoom; out[10] = pm[0]; out[11] = pm[5];
+  out[12] = cv ? cv.clientWidth : 0; out[13] = cv ? cv.clientHeight : 0;
+  out[14] = viewW(); out[15] = viewH();
+  return out;
+}
+const sigNow = [];
+function camSigChanged() {
+  readCamSig(sigNow);
+  const a = S.camSig;
+  if (a.length !== sigNow.length) return true;
+  for (let i = 0; i < sigNow.length; i++) if (Math.abs(sigNow[i] - a[i]) > 1e-7) return true;
+  return false;
+}
+// 兜底巡检：俯视编辑期间每帧核对一次相机和画布，被别处改过（gfx 推迟到下一帧的 resize、像素比变化、
+// 以后新加的镜头操作忘了走 applyCamera……）就把俯视相机摆回来并按新投影重画，标签不会再停在旧位置
+function startOverlayWatch() { if (!S.watchRaf) S.watchRaf = requestAnimationFrame(overlayWatch); }
+function stopOverlayWatch() { if (S.watchRaf) cancelAnimationFrame(S.watchRaf); S.watchRaf = 0; }
+function overlayWatch() {
+  S.watchRaf = 0;
+  if (!S.editorSceneOpen) return;
+  S.watchRaf = requestAnimationFrame(overlayWatch);
+  if (S.fp || S.view !== 'editor') return;
+  if (camSigChanged()) applyCamera();
+}
 function worldToScreen(x, z) {
   const pr = S.proj; if (!pr) return { x: 0, y: 0 };
-  return { x: pr.ox + (x - S.cam.cx) * pr.sx, y: pr.oy + (z - S.cam.cz) * pr.sy };
+  return { x: pr.ox + (x - pr.cx) * pr.sx, y: pr.oy + (z - pr.cz) * pr.sy };
 }
 function screenToWorld(px, py) {
   const pr = S.proj; if (!pr) return { x: S.cam.cx, z: S.cam.cz };
-  return { x: S.cam.cx + (px - pr.ox) / pr.sx, z: S.cam.cz + (py - pr.oy) / pr.sy };
+  return { x: pr.cx + (px - pr.ox) / pr.sx, z: pr.cz + (py - pr.oy) / pr.sy };
 }
 function clientToWorld(clientX, clientY) {
   const rect = stageRect();
@@ -644,7 +713,7 @@ function zoomBy(factor, aroundClientX, aroundClientY) {
   const rect = stageRect();
   const before = aroundClientX != null ? screenToWorld(aroundClientX - rect.left, aroundClientY - rect.top) : null;
   S.cam.altitude = clamp(S.cam.altitude * factor, Math.max(ALT_MIN, S.cam.section + 0.5), ALT_MAX);
-  applyCamera();
+  applyCamera({ defer: !!before });
   if (before) {
     // 让缩放围绕鼠标/双指中点进行：缩放后重新算一次那个点现在对应的世界坐标，把差值再平移回去
     const after = screenToWorld(aroundClientX - rect.left, aroundClientY - rect.top);
@@ -662,6 +731,9 @@ function redrawOverlay() {
   drawEntities();
   drawExits();
   drawSpawn();
+  if (S.hoverEdge) drawHoverEdge(S.hoverEdge);
+  if (S.drag && S.drag.w0 && S.drag.moved) drawFreewallGhost();
+  S.drawnProj = S.proj;
 }
 
 function rectPath(x0, y0, x1, y1) { return 'M' + x0 + ' ' + y0 + 'H' + x1 + 'V' + y1 + 'H' + x0 + 'Z'; }
@@ -738,15 +810,14 @@ function drawExits() {
   const hit = wantHitCircles('exit');
   for (const ex of list) {
     const p = worldToScreen(ex.x, ex.z);
-    const opened = !!(BR.levels && BR.levels.has(ex.to));
-    const cls = 'ws-exit-icon' + (ex.source === 'added' ? ' is-added' : '') + (ex.sealed || !opened ? ' is-sealed' : '');
+    const cls = 'ws-exit-icon' + (ex.source === 'added' ? ' is-added' : '') + (exitSealed(ex) ? ' is-sealed' : '');
     const icon = svgEl('rect', cls, g);
     icon.setAttribute('x', p.x - 8); icon.setAttribute('y', p.y - 8); icon.setAttribute('width', 16); icon.setAttribute('height', 16);
     icon.dataset.key = String(ex.key);
     icon.addEventListener('pointerdown', onExitPointerDown);
     const label = svgEl('text', 'ws-exit-label', g);
     label.setAttribute('x', p.x); label.setAttribute('y', p.y + 22);
-    label.textContent = (EXIT_KIND_ZH[ex.kind] || ex.kind) + ' → ' + levelZh(ex.to) + (opened ? '' : '（未开放）');
+    label.textContent = exitLabelText(ex);
     if (hit) addHitCircle(g, p.x, p.y, 'key', String(ex.key), onExitPointerDown);
   }
 }
@@ -763,6 +834,7 @@ function drawSpawn() {
 
 function drawHoverEdge(edge) {
   const g = S.els.gEdge; g.innerHTML = '';
+  S.hoverEdge = edge || null;
   if (!edge) return;
   const a = worldToScreen(edge.x0, edge.z0), b = worldToScreen(edge.x1, edge.z1);
   const line = svgEl('line', 'ws-edge-hi' + (edge.on ? '' : ' is-off'), g);
@@ -791,6 +863,8 @@ function toolHint(key) { return (isTouch() && TOOL_HINTS_TOUCH[key]) || TOOL_HIN
 function setTool(key) {
   S.tool = key;
   S.exitAddArm = false;
+  // 离开墙工具时收起墙边高亮：否则 redrawOverlay 会把上一次悬停的那条边一直重画在别的工具下
+  if (key !== 'wall') drawHoverEdge(null);
   Object.keys(S.els.toolBtns).forEach(k => S.els.toolBtns[k].classList.toggle('is-active', k === key));
   S.els.stage.classList.toggle('is-tool-wall', key === 'wall');
   S.els.hint.textContent = toolHint(key);
@@ -844,9 +918,8 @@ function reloadScene() {
   try { BR.world.start(S.map.baseLevel, S.map.seed); }
   catch (err) { console.error('[workshop-ui] 重建场景失败', err); }
   extendFog();
-  if (S.fp) return;   // 预览中重建完只补雾，不把相机摆回俯视（退出预览时 applyCamera 会补上）
-  applyCamera();
-  redrawOverlay();
+  if (S.fp) { refreshFpTags(); return; }   // 预览中重建完只补雾、换一份 3D 标签，不把相机摆回俯视（退出预览时 applyCamera 会补上）
+  applyCamera({ force: true });   // 出口可能挪过、增删过：投影没变也要重画
 }
 
 // ---------- 舞台指针交互：平移/缩放/各工具的点击与拖拽 ----------
@@ -867,10 +940,17 @@ function bindStagePointer() {
   }, { passive: false });
 }
 
+// 缩放后叠加层由 applyCamera 当场重画（以前这里漏了，滚一下地图变了、标签和圆点还钉在原处）。
+// deltaMode 1/2（Firefox 鼠标滚轮按"行"、少数设备按"页"）先折成像素，否则一格只动 0.5%，看着像没反应
 function onStageWheel(e) {
   e.preventDefault();
-  const factor = Math.exp(e.deltaY * 0.0016);
-  zoomBy(factor, e.clientX, e.clientY);
+  if (S.fp) return;
+  const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? viewH() : 1;
+  const dy = clamp(e.deltaY * unit, -600, 600);
+  if (!dy) return;
+  zoomBy(Math.exp(dy * 0.0016), e.clientX, e.clientY);
+  // 删/加墙的悬停高亮：缩放后光标底下已经是另一条格子边了，按光标重新取一次（applyCamera 只会把旧那条按新投影重画）
+  if (S.tool === 'wall' && !S.drag && !S.pinch) drawHoverEdge(edgeAtClient(e.clientX, e.clientY));
 }
 
 function edgeAtClient(clientX, clientY) {
@@ -879,10 +959,8 @@ function edgeAtClient(clientX, clientY) {
 }
 // 每次按下都按当前相机重新校准一次：转屏、键盘弹出收起后宽高比可能已经变了，换算要跟上
 function recalibrate() {
-  const old = S.proj;
   calibrateProjection();
-  const p = S.proj;
-  if (!old || Math.abs(p.ox - old.ox) > 0.5 || Math.abs(p.oy - old.oy) > 0.5 || Math.abs(p.sx - old.sx) > 1e-3 || Math.abs(p.sy - old.sy) > 1e-3) redrawOverlay();
+  syncOverlay(false);
 }
 
 function onStagePointerDown(e) {
@@ -896,10 +974,13 @@ function onStagePointerDown(e) {
     S.pinch = { d0: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y), alt0: S.cam.altitude, mx, my, w0: clientToWorld(mx, my) };
     S.drag = null;
     drawHoverEdge(null);
+    S.els.gCursor.innerHTML = '';   // 单指拖自由墙时第二根手指落下转成捏合：这条虚线作废，不能留在屏幕上不跟地图走
     return;
   }
   S.els.stage.setPointerCapture && S.els.stage.setPointerCapture(e.pointerId);
   S.drag = { startX: e.clientX, startY: e.clientY, lastX: e.clientX, lastY: e.clientY, moved: false, touch: e.pointerType !== 'mouse' };
+  // 自由墙起点按下时就换成世界坐标：拖到一半滚轮缩放了，起点跟着地图走，提交的也是按下那一点
+  if (S.tool === 'freewall') S.drag.w0 = clientToWorld(e.clientX, e.clientY);
   // 触屏没有悬停：按下就高亮将要切换的边，抬起才提交
   if (S.tool === 'wall' && S.drag.touch) drawHoverEdge(edgeAtClient(e.clientX, e.clientY));
 }
@@ -911,11 +992,11 @@ function onStagePointerMove(e) {
     const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
     if (d > 1 && S.pinch.d0 > 1) {
       S.cam.altitude = clamp(S.pinch.alt0 * (S.pinch.d0 / d), Math.max(ALT_MIN, S.cam.section + 0.5), ALT_MAX);
-      applyCamera();
+      applyCamera({ defer: true });
       // 以两指中点为锚：缩放后把 w0 平移回当前两指中点下，顺带支持双指平移
       const w = clientToWorld((pts[0].x + pts[1].x) / 2, (pts[0].y + pts[1].y) / 2);
       S.cam.cx -= w.x - S.pinch.w0.x; S.cam.cz -= w.z - S.pinch.w0.z;
-      applyCamera(); redrawOverlay();
+      applyCamera();
     }
     return;
   }
@@ -930,8 +1011,8 @@ function onStagePointerMove(e) {
     if (S.tool === 'wall' && S.drag.touch) drawHoverEdge(null);   // 触屏滑开了就取消切换，按平移处理
   }
   if (S.drag.moved) {
-    if (S.tool === 'freewall') { drawFreewallGhost(S.drag.startX, S.drag.startY, e.clientX, e.clientY); }
-    else { S.els.stage.classList.add('is-panning'); panBy(dx, dy); redrawOverlay(); }
+    if (S.tool === 'freewall') { drawFreewallGhost(); }
+    else { S.els.stage.classList.add('is-panning'); panBy(dx, dy); }
   } else if (S.tool === 'wall' && S.drag.touch) {
     drawHoverEdge(edgeAtClient(e.clientX, e.clientY));
   }
@@ -952,7 +1033,7 @@ function onStagePointerUp(e) {
     if (e.pointerType === 'touch' && !S.els.exitDlg.hidden) S.swallowClick = true;
   } else if (S.tool === 'freewall') {
     S.els.gCursor.innerHTML = '';
-    commitFreewall(drag.startX, drag.startY, e.clientX, e.clientY);
+    commitFreewall(drag.w0 || clientToWorld(drag.startX, drag.startY), e.clientX, e.clientY);
   }
 }
 
@@ -981,15 +1062,21 @@ function onStageClick(clientX, clientY) {
   }
 }
 
-function drawFreewallGhost(x0, y0, x1, y1) {
+// 自由墙拖拽中的虚线：起点是按下时记的世界坐标（S.drag.w0），终点是手指/光标当前位置。
+// 镜头中途变了（滚轮缩放、窗口尺寸变化）由 redrawOverlay 再调一次，起点跟着地图走，不钉在屏幕上
+function drawFreewallGhost() {
   const g = S.els.gCursor; g.innerHTML = '';
+  const d = S.drag;
+  if (!d || !d.moved || !d.w0 || S.tool !== 'freewall') return;
   const rect = stageRect();
+  const a = worldToScreen(d.w0.x, d.w0.z);
   const line = svgEl('line', 'ws-freewall-drag', g);
-  line.setAttribute('x1', x0 - rect.left); line.setAttribute('y1', y0 - rect.top);
-  line.setAttribute('x2', x1 - rect.left); line.setAttribute('y2', y1 - rect.top);
+  line.setAttribute('x1', a.x); line.setAttribute('y1', a.y);
+  line.setAttribute('x2', d.lastX - rect.left); line.setAttribute('y2', d.lastY - rect.top);
 }
-function commitFreewall(cx0, cy0, cx1, cy1) {
-  const a = clientToWorld(cx0, cy0), b = clientToWorld(cx1, cy1);
+// a：起点世界坐标；终点按抬起时的屏幕位置换算
+function commitFreewall(a, cx1, cy1) {
+  const b = clientToWorld(cx1, cy1);
   const len = Math.hypot(b.x - a.x, b.z - a.z);
   if (len < 0.3) return;
   const rot = Math.atan2(b.x - a.x, b.z - a.z) - Math.PI / 2; // 约定：rot=0 沿世界 +X 延伸（见 js/game/workshop.js buildFreeWalls 注释）
@@ -1344,8 +1431,14 @@ function enterPreview() {
   // 俯视时近裁剪面约等于相机高度（上百米），第一人称必须改回游玩时的 0.05，否则整屏什么都画不出来；
   // 退出预览时 applyCamera 会按剖切高度重设
   gfx.camera.fov = FOV_FP; gfx.camera.near = 0.05; gfx.camera.up.set(0, 1, 0); gfx.camera.updateProjectionMatrix();
-  // 预览期间收起俯视标记和编辑控件（css：.ws-editor.is-preview），只留「返回俯视」、保存、退出
+  // 立刻摆到第一人称姿态：下一帧主循环就按它画，不会先用俯视位置 + 第一人称视场角闪一帧
+  stepFp(0);
+  gfx.camera.updateMatrixWorld(true);
+  // 预览期间收起俯视标记和编辑控件（css：.ws-editor.is-preview），只留「返回俯视」、保存、退出；
+  // 俯视的 SVG 标签不能钉在屏幕上，换成按 3D 位置投影的标签层
   S.els.editor.classList.add('is-preview');
+  refreshFpTags();
+  S.fp.frame0 = renderFrame();
   S.els.previewBtn.textContent = '返回俯视';
   // 底栏提示换成预览的操作说明：toast 几秒就消失，留着编辑工具的提示会跟预览手势对不上
   S.els.hint.textContent = touch ? '左半屏拖动走动，右半屏拖动转视角' : 'WASD 走动，鼠标看方向，Esc 返回俯视';
@@ -1373,11 +1466,13 @@ function exitPreview() {
   gfx.camera.fov = S.fp.savedFov; gfx.camera.up.copy(S.fp.savedUp); gfx.camera.updateProjectionMatrix();
   S.els.stage.style.cursor = '';
   S.els.editor.classList.remove('is-preview');
+  S.els.fpTags.innerHTML = '';
   S.els.previewBtn.textContent = '3D 预览';
   S.els.hint.textContent = toolHint(S.tool);
   S.fp = null;
   fpLastT = 0;
-  if (S.editorSceneOpen) { applyCamera(); redrawOverlay(); }
+  // 预览期间叠加层没画（也可能重建过场景、窗口变过尺寸）：回俯视一律按当前相机重画
+  if (S.editorSceneOpen) applyCamera({ force: true });
 }
 // 触屏预览手势（舞台的 pointerdown/move/up/cancel 在预览中都转到这里）
 function onFpPointer(e) {
@@ -1422,12 +1517,121 @@ function onFpMouseMove(e) {
   S.fp.pitch = clamp(S.fp.pitch - (e.movementY || 0) * sens, -1.3, 1.3);
 }
 let fpLastT = 0;
+// 标签要按"这一帧画面实际用的相机"摆：主循环（main.js）和本循环各有一个 rAF，谁先跑决定这一帧画的是走这一步之前还是之后的姿态。
+// 从按钮点进预览时主循环的 rAF 已排在前面（顺序此后一直不变）：先摆标签（相机矩阵此刻正是刚画出去的那一帧），再推进下一步。
+// 万一反过来（本循环先跑），就推进完再按新姿态摆。用渲染计数判断：进预览后第一次跑时主循环已经画过一帧 = 主循环在前
+function renderFrame() {
+  const r = BR.gfx && BR.gfx.renderer;
+  return r && r.info && r.info.render ? r.info.render.frame : 0;
+}
 function fpLoop(t) {
-  if (!S.fp) return;
+  const fp = S.fp;
+  if (!fp) return;
   const dt = fpLastT ? Math.min(0.05, (t - fpLastT) / 1000) : 0;
   fpLastT = t;
+  if (fp.mainFirst == null) fp.mainFirst = renderFrame() !== fp.frame0;
+  if (fp.mainFirst) updateFpTags();
   stepFp(dt);
-  S.fp.raf = requestAnimationFrame(fpLoop);
+  if (!fp.mainFirst) { BR.gfx.camera.updateMatrixWorld(); updateFpTags(); }
+  fp.raf = requestAnimationFrame(fpLoop);
+}
+
+// ---------- 3D 预览里的标签：跟着视角走，不钉在屏幕上 ----------
+// 编辑态不刷实体，预览里走过去看不到自己放的东西：在实体/出口的 3D 位置上方挂名字，每帧按相机投影；
+// 身后的、太远的、被墙挡住的不画
+const FP_TAG_RANGE = 30;             // 米：再远不画，免得满屏是字
+const FP_TAG_FADE = 12;              // 米：从这里开始逐渐变淡
+const FP_TAG_ENT_Y = 1.35;           // 实体标签挂在离地 1.35 米（大约胸口高）
+const FP_TAG_EXIT_Y = 2.1;           // 出口标签挂在门框上沿附近
+function exitLabelText(ex) {
+  const opened = !!(BR.levels && BR.levels.has(ex.to));
+  return (EXIT_KIND_ZH[ex.kind] || ex.kind) + ' → ' + levelZh(ex.to) + (opened ? '' : '（未开放）');
+}
+function exitSealed(ex) { return !!ex.sealed || !(BR.levels && BR.levels.has(ex.to)); }
+function refreshFpTags() {
+  const fp = S.fp;
+  if (!fp) return;
+  const layer = S.els.fpTags;
+  layer.innerHTML = '';
+  const tags = [];
+  const gy = has(BR.phys, 'groundY') ? (x, z) => num(BR.phys.groundY(x, z), 0) : () => 0;
+  const add = (x, y, z, text, color, cls, pull) => {
+    const el = mk('div', 'ws-fp-tag' + (cls ? ' ' + cls : ''), layer);
+    const dot = mk('span', 'ws-fp-tag-dot', el);
+    if (color) dot.style.background = color;
+    mk('span', 'ws-fp-tag-text', el, text);
+    el.style.display = 'none';
+    // 锚点世界坐标挂在 DOM 上：测试可以拿它和画面投影对比标签有没有跟上视角
+    el.dataset.wx = x.toFixed(3); el.dataset.wy = y.toFixed(3); el.dataset.wz = z.toFixed(3);
+    tags.push({ el, x, y, z, pull, shown: false, seen: null, px: NaN, py: NaN, op: -1 });
+  };
+  for (const e of (S.map && S.map.entities || [])) {
+    if (!e) continue;
+    const def = BR.entityTypes && BR.entityTypes.get(e.type);
+    add(e.x, gy(e.x, e.z) + FP_TAG_ENT_Y, e.z, entityZh(e.type), factionColor(def && def.faction), 'is-entity', 0.25);
+  }
+  if (S.boundary && has(BR.workshop, 'exitsNear')) {
+    const cx = (S.boundary.minX + S.boundary.maxX) / 2, cz = (S.boundary.minZ + S.boundary.maxZ) / 2;
+    const R = Math.hypot(S.boundary.maxX - S.boundary.minX, S.boundary.maxZ - S.boundary.minZ) / 2 + 4;
+    for (const ex of BR.workshop.exitsNear(cx, cz, R)) {
+      add(ex.x, gy(ex.x, ex.z) + FP_TAG_EXIT_Y, ex.z, exitLabelText(ex), null,
+        'is-exit' + (ex.source === 'added' ? ' is-added' : '') + (exitSealed(ex) ? ' is-sealed' : ''), 0.6);
+    }
+  }
+  fp.tags = tags;
+  fp.tagTick = 0;
+  updateFpTags();
+}
+const _tagV = new THREE.Vector4();
+const _tagVP = new THREE.Matrix4();
+function updateFpTags() {
+  const fp = S.fp;
+  if (!fp || !fp.tags || !fp.tags.length) return;
+  const cam = BR.gfx.camera;
+  // 不在这里 updateMatrixWorld：matrixWorld / matrixWorldInverse 是 renderer.render 时刷新的，就是画面上那一帧的姿态
+  _tagVP.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+  const me = cam.matrixWorld.elements;
+  const ex = me[12], ey = me[13], ez = me[14];
+  const st = stageRect(), cv = canvasRect();
+  const ox = cv.left - st.left, oy = cv.top - st.top;
+  const canLos = has(BR.phys, 'los');
+  fp.tagTick = (fp.tagTick + 1) | 0;
+  for (let i = 0; i < fp.tags.length; i++) {
+    const t = fp.tags[i];
+    const dx = t.x - ex, dy = t.y - ey, dz = t.z - ez;
+    const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    let show = d < FP_TAG_RANGE, px = 0, py = 0;
+    if (show) {
+      _tagV.set(t.x, t.y, t.z, 1).applyMatrix4(_tagVP);
+      show = _tagV.w > 0.3;                                      // 在镜头后面（或贴脸）的不画
+      if (show) {
+        const nx = _tagV.x / _tagV.w, ny = _tagV.y / _tagV.w;
+        show = nx > -1.2 && nx < 1.2 && ny > -1.2 && ny < 1.4;
+        px = ox + (nx * 0.5 + 0.5) * cv.width;
+        py = oy + (1 - (ny * 0.5 + 0.5)) * cv.height;
+      }
+    }
+    if (show && canLos) {
+      // 视线检查隔几帧错开做一次；终点往镜头这边收一点（出口 0.6 米、实体 0.25 米）：
+      // 门和出口常嵌在墙里，终点正好落在墙体里会被当成挡住；实体收得少，墙后半米的就藏起来
+      if (t.seen == null || (fp.tagTick + i) % 4 === 0) {
+        const k = d > t.pull + 0.3 ? t.pull / d : 0;
+        t.seen = !!BR.phys.los(ex, ey, ez, t.x - dx * k, t.y - dy * k, t.z - dz * k);
+      }
+      show = t.seen;
+    }
+    if (!show) {
+      if (t.shown) { t.el.style.display = 'none'; t.shown = false; }
+      continue;
+    }
+    if (!t.shown) { t.el.style.display = ''; t.shown = true; t.px = NaN; }
+    if (!(Math.abs(px - t.px) < 0.2 && Math.abs(py - t.py) < 0.2)) {
+      t.px = px; t.py = py;
+      t.el.style.transform = 'translate3d(' + px.toFixed(1) + 'px,' + py.toFixed(1) + 'px,0) translate(-50%,-100%)';
+    }
+    const op = d <= FP_TAG_FADE ? 1 : Math.max(0.35, 1 - 0.65 * (d - FP_TAG_FADE) / (FP_TAG_RANGE - FP_TAG_FADE));
+    if (Math.abs(op - t.op) > 0.02) { t.op = op; t.el.style.opacity = op.toFixed(2); }
+  }
 }
 function stepFp(dt) {
   const fp = S.fp, PC = BR.config.player;

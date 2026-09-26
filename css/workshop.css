@@ -114,6 +114,28 @@
 .ws-editor.is-preview .ws-tool-sep,
 .ws-editor.is-preview .ws-edit-only { display: none !important; }
 
+/* 3D 预览的标签层：俯视 SVG 标签收起后，由 js 每帧把实体/出口名字摆到它们 3D 位置的投影点（updateFpTags）。
+   transform 先平移到投影点，再 translate(-50%,-100%) 让底部小三角的尖正好对着锚点；margin-top 让出小三角的 6px */
+.ws-fp-tags { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: hidden; pointer-events: none; display: none; }
+.ws-editor.is-preview .ws-fp-tags { display: block; }
+.ws-fp-tag {
+  position: absolute; left: 0; top: 0; margin-top: -6px;
+  display: flex; align-items: center; gap: 5px;
+  padding: 3px 8px 3px 6px; border-radius: 9px;
+  background: rgba(12, 10, 4, .74); border: 1px solid rgba(232, 197, 71, .45);
+  color: #fff6d8; font-size: 12px; font-weight: 700; line-height: 1.25; white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
+  will-change: transform, opacity; pointer-events: none;
+}
+.ws-fp-tag::after {
+  content: ''; position: absolute; left: 50%; bottom: -6px; margin-left: -5px;
+  border: 5px solid transparent; border-bottom: 0; border-top: 6px solid rgba(232, 197, 71, .7);
+}
+.ws-fp-tag-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: #79c7ff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .5); }
+.ws-fp-tag.is-exit .ws-fp-tag-dot { border-radius: 2px; }
+.ws-fp-tag.is-exit.is-added .ws-fp-tag-dot { background: #7fe7a0; }
+.ws-fp-tag.is-exit.is-sealed .ws-fp-tag-dot { background: #7a7a7a; }
+
 /* 工具栏：桌面顶部横排，手机底部横排可滚动 */
 .ws-toolbar {
   position: absolute; left: 0; right: 0; top: 0;

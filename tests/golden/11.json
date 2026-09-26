@@ -6,17 +6,17 @@
   "spawnFactor": 1,
   "radius": 2,
   "chunkSize": 44,
-  "hash": "ef565650a995df360975598053b8628362a2d0ac864e843c8c19497ded04abc8",
+  "hash": "3223effa3cd4d96952a2a7eef4dc48083f8f24379d7b93efe050d4a21fe7337d",
   "chunks": [
     {
       "cx": -2,
       "cz": -2,
-      "hash": "9b946a1b6ddea3aa",
-      "verts": 828,
+      "hash": "369e5477ac405ef9",
+      "verts": 1392,
       "mats": ["kit|L11:concrete","kit|L11:pavement","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",768],
+        ["kit|kit:prop",1332],
         ["kit|kit:glow",8],
         ["kit|L11:concrete",20]
       ],
@@ -95,12 +95,12 @@
     {
       "cx": -1,
       "cz": -2,
-      "hash": "084e92e0e50ed9d9",
-      "verts": 448,
+      "hash": "a459a7476601f5c0",
+      "verts": 856,
       "mats": ["kit|L11:blackglass","kit|L11:pavement","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",384],
+        ["kit|kit:prop",792],
         ["kit|kit:glow",12],
         ["kit|L11:blackglass",20]
       ],
@@ -147,12 +147,12 @@
     {
       "cx": 0,
       "cz": -2,
-      "hash": "c0b373752e7349ee",
-      "verts": 600,
+      "hash": "122eb705e870a43d",
+      "verts": 1232,
       "mats": ["kit|L11:brick_dark","kit|L11:pavement","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",528],
+        ["kit|kit:prop",1160],
         ["kit|kit:glow",20],
         ["kit|L11:brick_dark",20]
       ],
@@ -222,12 +222,12 @@
     {
       "cx": 1,
       "cz": -2,
-      "hash": "9f243ec0dbfb263f",
-      "verts": 424,
+      "hash": "8ab2f9d3c3142050",
+      "verts": 832,
       "mats": ["kit|L11:blackglass","kit|L11:pavement","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",360],
+        ["kit|kit:prop",768],
         ["kit|kit:glow",12],
         ["kit|L11:blackglass",20]
       ],
@@ -273,12 +273,12 @@
     {
       "cx": 2,
       "cz": -2,
-      "hash": "92d8fe70723e2574",
-      "verts": 548,
+      "hash": "b4e15a51211d1fe5",
+      "verts": 1092,
       "mats": ["kit|L11:blackglass","kit|L11:pavement","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",480],
+        ["kit|kit:prop",1024],
         ["kit|kit:glow",16],
         ["kit|L11:blackglass",20]
       ],
@@ -325,12 +325,12 @@
     {
       "cx": -2,
       "cz": -1,
-      "hash": "516076ad121890d8",
-      "verts": 466,
+      "hash": "5d47f6dc1fe336aa",
+      "verts": 971,
       "mats": ["kit|L11:blackglass","kit|L11:pavement","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",381],
+        ["kit|kit:prop",886],
         ["kit|kit:glow",33],
         ["kit|L11:blackglass",20]
       ],
@@ -377,12 +377,12 @@
     {
       "cx": -1,
       "cz": -1,
-      "hash": "2125fc85b276456e",
-      "verts": 960,
+      "hash": "b1bba4ad5e5f269c",
+      "verts": 1796,
       "mats": ["kit|L11:facade","kit|L11:pavement","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",788],
+        ["kit|kit:prop",1624],
         ["kit|kit:glow",20],
         ["kit|L11:facade",120]
       ],
@@ -472,12 +472,12 @@
     {
       "cx": 0,
       "cz": -1,
-      "hash": "6fe845bc2e029c7f",
-      "verts": 1496,
+      "hash": "9af727d148b52d36",
+      "verts": 2612,
       "mats": ["kit|L11:concrete","kit|L11:pavement","kit|kit:glass","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",1272],
+        ["kit|kit:prop",2388],
         ["kit|kit:glow",40],
         ["kit|L11:concrete",104],
         ["kit|kit:glass",48]
@@ -577,12 +577,12 @@
     {
       "cx": 1,
       "cz": -1,
-      "hash": "524e4b32072f798f",
-      "verts": 466,
+      "hash": "3ce2ce1702820cd5",
+      "verts": 971,
       "mats": ["kit|L11:blackglass","kit|L11:pavement","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",381],
+        ["kit|kit:prop",886],
         ["kit|kit:glow",33],
         ["kit|L11:blackglass",20]
       ],
@@ -630,12 +630,12 @@
     {
       "cx": 2,
       "cz": -1,
-      "hash": "196f96fde1c0b37e",
-      "verts": 972,
+      "hash": "63ada70a156cab5c",
+      "verts": 1832,
       "mats": ["kit|L11:concrete","kit|L11:pavement","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",792],
+        ["kit|kit:prop",1652],
         ["kit|kit:glow",44],
         ["kit|L11:concrete",104]
       ],
@@ -729,12 +729,12 @@
     {
       "cx": -2,
       "cz": 0,
-      "hash": "d836f77fb63a462c",
-      "verts": 2292,
+      "hash": "3c068a6873baeed1",
+      "verts": 3804,
       "mats": ["kit|L11:pavement","kit|kit:glass","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",2152],
+        ["kit|kit:prop",3664],
         ["kit|kit:glow",12],
         ["kit|kit:glass",96]
       ],
@@ -824,12 +824,12 @@
     {
       "cx": -1,
       "cz": 0,
-      "hash": "5979c71539023980",
-      "verts": 728,
+      "hash": "8f3cecc0e39ccea7",
+      "verts": 1232,
       "mats": ["kit|L11:concrete","kit|L11:pavement","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",528],
+        ["kit|kit:prop",1032],
         ["kit|kit:glow",20],
         ["kit|L11:concrete",124],
         ["kit|L11:concrete",24]
@@ -923,12 +923,12 @@
     {
       "cx": 0,
       "cz": 0,
-      "hash": "5702270d84d4c56d",
-      "verts": 900,
+      "hash": "8895e2cd8029671e",
+      "verts": 1444,
       "mats": ["kit|L11:pavement","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",852],
+        ["kit|kit:prop",1396],
         ["kit|kit:glow",16]
       ],
       "solids": [
@@ -1020,12 +1020,12 @@
     {
       "cx": 1,
       "cz": 0,
-      "hash": "aeab95802268afcb",
-      "verts": 876,
+      "hash": "eb2136d39c51c470",
+      "verts": 1688,
       "mats": ["kit|L11:concrete","kit|L11:pavement","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",696],
+        ["kit|kit:prop",1508],
         ["kit|kit:glow",44],
         ["kit|L11:concrete",104]
       ],
@@ -1120,12 +1120,12 @@
     {
       "cx": 2,
       "cz": 0,
-      "hash": "f0d6ae1f56aec408",
-      "verts": 2444,
+      "hash": "88a8b260639f9749",
+      "verts": 5540,
       "mats": ["kit|L11:pavement","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",2400],
+        ["kit|kit:prop",5496],
         ["kit|kit:glow",12]
       ],
       "solids": [
@@ -1215,12 +1215,12 @@
     {
       "cx": -2,
       "cz": 1,
-      "hash": "9fc63b0c0079fe0d",
-      "verts": 572,
+      "hash": "b9a6c8c7e258a200",
+      "verts": 1116,
       "mats": ["kit|L11:blackglass","kit|L11:pavement","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",504],
+        ["kit|kit:prop",1048],
         ["kit|kit:glow",16],
         ["kit|L11:blackglass",20]
       ],
@@ -1270,12 +1270,12 @@
     {
       "cx": -1,
       "cz": 1,
-      "hash": "5345f5d24a4a92ad",
-      "verts": 836,
+      "hash": "42647e3ffa7488f9",
+      "verts": 1536,
       "mats": ["kit|L11:facade","kit|L11:pavement","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",668],
+        ["kit|kit:prop",1368],
         ["kit|kit:glow",16],
         ["kit|L11:facade",120]
       ],
@@ -1363,12 +1363,12 @@
     {
       "cx": 0,
       "cz": 1,
-      "hash": "36e16be1958f194f",
-      "verts": 1468,
+      "hash": "0857870f3b89a5f8",
+      "verts": 2584,
       "mats": ["kit|L11:facade","kit|L11:pavement","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",1300],
+        ["kit|kit:prop",2416],
         ["kit|kit:glow",16],
         ["kit|L11:facade",120]
       ],
@@ -1462,12 +1462,12 @@
     {
       "cx": 1,
       "cz": 1,
-      "hash": "d5e21ab5e7d95607",
-      "verts": 836,
+      "hash": "d3dc24a5b83ed6ce",
+      "verts": 1536,
       "mats": ["kit|L11:facade","kit|L11:pavement","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",668],
+        ["kit|kit:prop",1368],
         ["kit|kit:glow",16],
         ["kit|L11:facade",120]
       ],
@@ -1554,12 +1554,12 @@
     {
       "cx": 2,
       "cz": 1,
-      "hash": "49efda75ed95284f",
-      "verts": 836,
+      "hash": "57c6fb48c3d349dd",
+      "verts": 1536,
       "mats": ["kit|L11:facade","kit|L11:pavement","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",668],
+        ["kit|kit:prop",1368],
         ["kit|kit:glow",16],
         ["kit|L11:facade",120]
       ],
@@ -1649,12 +1649,12 @@
     {
       "cx": -2,
       "cz": 2,
-      "hash": "91d62961630e66f3",
-      "verts": 448,
+      "hash": "62c4d1179c230bae",
+      "verts": 720,
       "mats": ["kit|L11:concrete","kit|L11:pavement","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",360],
+        ["kit|kit:prop",632],
         ["kit|kit:glow",24],
         ["kit|L11:concrete",32]
       ],
@@ -1700,12 +1700,12 @@
     {
       "cx": -1,
       "cz": 2,
-      "hash": "19c8ae76cf51ecda",
-      "verts": 572,
+      "hash": "c594ad4db3b2c80e",
+      "verts": 1116,
       "mats": ["kit|L11:blackglass","kit|L11:pavement","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",504],
+        ["kit|kit:prop",1048],
         ["kit|kit:glow",16],
         ["kit|L11:blackglass",20]
       ],
@@ -1762,12 +1762,12 @@
     {
       "cx": 0,
       "cz": 2,
-      "hash": "d97a5f8a2864f527",
-      "verts": 632,
+      "hash": "ab79ac09693f85a3",
+      "verts": 1276,
       "mats": ["kit|L11:facade","kit|L11:pavement","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",568],
+        ["kit|kit:prop",1212],
         ["kit|kit:glow",12],
         ["kit|L11:facade",20]
       ],
@@ -1840,12 +1840,12 @@
     {
       "cx": 1,
       "cz": 2,
-      "hash": "d5fe5f9ecca4a004",
-      "verts": 1444,
+      "hash": "fed4280f452bacb8",
+      "verts": 2560,
       "mats": ["kit|L11:facade","kit|L11:pavement","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",1276],
+        ["kit|kit:prop",2392],
         ["kit|kit:glow",16],
         ["kit|L11:facade",120]
       ],
@@ -1939,12 +1939,12 @@
     {
       "cx": 2,
       "cz": 2,
-      "hash": "b2a6e3a964b3e27d",
-      "verts": 572,
+      "hash": "f1f748fb0c2ac067",
+      "verts": 1116,
       "mats": ["kit|L11:blackglass","kit|L11:pavement","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L11:pavement",32],
-        ["kit|kit:prop",504],
+        ["kit|kit:prop",1048],
         ["kit|kit:glow",16],
         ["kit|L11:blackglass",20]
       ],

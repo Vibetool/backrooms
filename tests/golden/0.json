@@ -6,13 +6,13 @@
   "spawnFactor": 1,
   "radius": 2,
   "chunkSize": 24,
-  "hash": "f4d957f1197d8f52939e7f2d07e223af6eea94383c6fcbd0abe548a380e54eee",
+  "hash": "059770a207f41a7801c76dffad3aafa09d65d8d4d9b64374c73b7d7e3906e284",
   "chunks": [
     {
       "cx": -2,
       "cz": -2,
-      "hash": "b09669911793213a",
-      "verts": 2880,
+      "hash": "d1b2ad95a0bd3318",
+      "verts": 3776,
       "mats": ["kit|L0:ceil","kit|L0:floor","kit|L0:wall","kit|kit:glow","kit|kit:prop","kit|kit:trim_wood_yellow"],
       "meshes": [
         ["kit|L0:wall",372],
@@ -20,7 +20,7 @@
         ["kit|L0:floor",4],
         ["kit|L0:ceil",4],
         ["kit|kit:glow",64],
-        ["kit|kit:prop",1536]
+        ["kit|kit:prop",2432]
       ],
       "solids": [
         [-45.133,0,-39.133,-44.867,2.8,-32.867],
@@ -120,8 +120,8 @@
     {
       "cx": -1,
       "cz": -2,
-      "hash": "fcf62724de0f6b24",
-      "verts": 2624,
+      "hash": "ad2a683ef6d25b1a",
+      "verts": 3520,
       "mats": ["kit|L0:ceil","kit|L0:floor","kit|L0:wall","kit|kit:glow","kit|kit:prop","kit|kit:trim_wood_yellow"],
       "meshes": [
         ["kit|L0:wall",296],
@@ -129,7 +129,7 @@
         ["kit|L0:floor",4],
         ["kit|L0:ceil",4],
         ["kit|kit:glow",64],
-        ["kit|kit:prop",1536]
+        ["kit|kit:prop",2432]
       ],
       "solids": [
         [-24,0,-42.133,-23.867,2.8,-38.867],
@@ -224,8 +224,8 @@
     {
       "cx": 0,
       "cz": -2,
-      "hash": "bcb144b57e1584be",
-      "verts": 2692,
+      "hash": "e90713f51b390b4f",
+      "verts": 3588,
       "mats": ["kit|L0:ceil","kit|L0:floor","kit|L0:wall","kit|kit:glow","kit|kit:prop","kit|kit:trim_wood_yellow"],
       "meshes": [
         ["kit|L0:wall",324],
@@ -233,7 +233,7 @@
         ["kit|L0:floor",4],
         ["kit|L0:ceil",4],
         ["kit|kit:glow",64],
-        ["kit|kit:prop",1536]
+        ["kit|kit:prop",2432]
       ],
       "solids": [
         [2.867,0,-45.133,3.133,2.8,-38.867],
@@ -330,8 +330,8 @@
     {
       "cx": 1,
       "cz": -2,
-      "hash": "c73c8f3affa3c211",
-      "verts": 2452,
+      "hash": "f1602da10842edd2",
+      "verts": 3348,
       "mats": ["kit|L0:ceil","kit|L0:floor","kit|L0:wall","kit|kit:glow","kit|kit:prop","kit|kit:trim_wood_yellow"],
       "meshes": [
         ["kit|L0:wall",364],
@@ -339,7 +339,7 @@
         ["kit|L0:floor",4],
         ["kit|L0:ceil",4],
         ["kit|kit:glow",64],
-        ["kit|kit:prop",1536]
+        ["kit|kit:prop",2432]
       ],
       "solids": [
         [24,0,-48.133,24.133,2.8,-35.867],
@@ -439,8 +439,8 @@
     {
       "cx": 2,
       "cz": -2,
-      "hash": "18934b64964620ba",
-      "verts": 2896,
+      "hash": "c8a14419a6f11a92",
+      "verts": 3792,
       "mats": ["kit|L0:ceil","kit|L0:floor","kit|L0:wall","kit|kit:glow","kit|kit:prop","kit|kit:trim_wood_yellow"],
       "meshes": [
         ["kit|L0:wall",388],
@@ -448,7 +448,7 @@
         ["kit|L0:floor",4],
         ["kit|L0:ceil",4],
         ["kit|kit:glow",64],
-        ["kit|kit:prop",1536]
+        ["kit|kit:prop",2432]
       ],
       "solids": [
         [48,0,-48.133,48.133,2.8,-35.867],
@@ -550,8 +550,8 @@
     {
       "cx": -2,
       "cz": -1,
-      "hash": "24ebbaeeee7a4b42",
-      "verts": 3608,
+      "hash": "1bbcd3ed8d00f4dd",
+      "verts": 4504,
       "mats": ["kit|L0:ceil","kit|L0:floor_red","kit|L0:wall_red","kit|kit:glow","kit|kit:prop","kit|kit:trim_wood_yellow"],
       "meshes": [
         ["kit|L0:wall_red",580],
@@ -559,7 +559,7 @@
         ["kit|L0:floor_red",4],
         ["kit|L0:ceil",4],
         ["kit|kit:glow",64],
-        ["kit|kit:prop",1536]
+        ["kit|kit:prop",2432]
       ],
       "solids": [
         [-48,0,-24.133,-47.867,2.8,-8.867],
@@ -672,8 +672,8 @@
     {
       "cx": -1,
       "cz": -1,
-      "hash": "77aaac37f6713185",
-      "verts": 2824,
+      "hash": "3de4d98a5f852440",
+      "verts": 3720,
       "mats": ["kit|L0:ceil","kit|L0:floor","kit|L0:wall","kit|kit:glow","kit|kit:prop","kit|kit:trim_wood_yellow"],
       "meshes": [
         ["kit|L0:wall",352],
@@ -681,7 +681,7 @@
         ["kit|L0:floor",4],
         ["kit|L0:ceil",4],
         ["kit|kit:glow",64],
-        ["kit|kit:prop",1536],
+        ["kit|kit:prop",2432],
         ["kit|L0:wall",24]
       ],
       "solids": [
@@ -782,15 +782,15 @@
     {
       "cx": 0,
       "cz": -1,
-      "hash": "b6693197b5e3368b",
-      "verts": 1156,
+      "hash": "c324655bb2598924",
+      "verts": 1333,
       "mats": ["kit|L0:ceil","kit|L0:floor","kit|L0:wall","kit|kit:trim_wood_yellow","kit|kit:water"],
       "meshes": [
         ["kit|L0:wall",328],
         ["kit|kit:trim_wood_yellow",760],
         ["kit|L0:floor",4],
         ["kit|L0:ceil",4],
-        ["kit|kit:water",60]
+        ["kit|kit:water",237]
       ],
       "solids": [
         [0,0,-24.133,0.133,2.8,-17.867],
@@ -888,8 +888,8 @@
     {
       "cx": 1,
       "cz": -1,
-      "hash": "3136f7e67469f19d",
-      "verts": 2819,
+      "hash": "fecfdd588239daa4",
+      "verts": 3924,
       "mats": ["kit|L0:ceil","kit|L0:floor","kit|L0:wall","kit|kit:glow","kit|kit:prop","kit|kit:trim_wood_yellow","kit|kit:water"],
       "meshes": [
         ["kit|L0:wall",372],
@@ -897,8 +897,8 @@
         ["kit|L0:floor",4],
         ["kit|L0:ceil",4],
         ["kit|kit:glow",64],
-        ["kit|kit:prop",1536],
-        ["kit|kit:water",75],
+        ["kit|kit:prop",2432],
+        ["kit|kit:water",284],
         ["kit|L0:wall",24]
       ],
       "solids": [
@@ -998,8 +998,8 @@
     {
       "cx": 2,
       "cz": -1,
-      "hash": "0e65ef8bf8883688",
-      "verts": 2347,
+      "hash": "1ae9903a4827b579",
+      "verts": 3466,
       "mats": ["kit|L0:ceil","kit|L0:floor","kit|L0:wall","kit|kit:glow","kit|kit:prop","kit|kit:trim_wood_yellow","kit|kit:water"],
       "meshes": [
         ["kit|L0:wall",244],
@@ -1007,8 +1007,8 @@
         ["kit|L0:floor",4],
         ["kit|L0:ceil",4],
         ["kit|kit:glow",64],
-        ["kit|kit:prop",1536],
-        ["kit|kit:water",75]
+        ["kit|kit:prop",2432],
+        ["kit|kit:water",298]
       ],
       "solids": [
         [48,0,-24.133,48.133,2.8,-20.867],
@@ -1098,11 +1098,11 @@
     {
       "cx": -2,
       "cz": 0,
-      "hash": "f957cc90e40f49f3",
-      "verts": 3010,
+      "hash": "908e235763530e50",
+      "verts": 4779,
       "mats": ["kit|L0:ceil","kit|L0:floor","kit|L0:wall","kit|kit:glow","kit|kit:prop","kit|kit:trim_wood_yellow"],
       "meshes": [
-        ["kit|kit:prop",1725],
+        ["kit|kit:prop",3494],
         ["kit|kit:glow",253],
         ["kit|L0:wall",304],
         ["kit|kit:trim_wood_yellow",720],
@@ -1194,8 +1194,8 @@
     {
       "cx": -1,
       "cz": 0,
-      "hash": "2051556f9931f64e",
-      "verts": 2664,
+      "hash": "0e9becdd4d7f26df",
+      "verts": 3560,
       "mats": ["kit|L0:ceil","kit|L0:floor","kit|L0:wall","kit|kit:glow","kit|kit:prop","kit|kit:trim_wood_yellow"],
       "meshes": [
         ["kit|L0:wall",456],
@@ -1203,7 +1203,7 @@
         ["kit|L0:floor",4],
         ["kit|L0:ceil",4],
         ["kit|kit:glow",64],
-        ["kit|kit:prop",1536]
+        ["kit|kit:prop",2432]
       ],
       "solids": [
         [-24,0,-0.133,-23.867,2.8,6.133],
@@ -1309,8 +1309,8 @@
     {
       "cx": 0,
       "cz": 0,
-      "hash": "64a5f25181be60c7",
-      "verts": 2608,
+      "hash": "a3ec5e900f68c78e",
+      "verts": 3504,
       "mats": ["kit|L0:ceil","kit|L0:floor","kit|L0:wall","kit|kit:glow","kit|kit:prop","kit|kit:trim_wood_yellow"],
       "meshes": [
         ["kit|L0:wall",300],
@@ -1318,7 +1318,7 @@
         ["kit|L0:floor",4],
         ["kit|L0:ceil",4],
         ["kit|kit:glow",64],
-        ["kit|kit:prop",1536]
+        ["kit|kit:prop",2432]
       ],
       "solids": [
         [0,0,-0.133,0.133,2.8,18.133],
@@ -1413,8 +1413,8 @@
     {
       "cx": 1,
       "cz": 0,
-      "hash": "9b620c1ea898618a",
-      "verts": 2864,
+      "hash": "ef6cf1c17ac12326",
+      "verts": 3760,
       "mats": ["kit|L0:ceil","kit|L0:floor","kit|L0:wall","kit|kit:glow","kit|kit:prop","kit|kit:trim_wood_yellow"],
       "meshes": [
         ["kit|L0:wall",376],
@@ -1422,7 +1422,7 @@
         ["kit|L0:floor",4],
         ["kit|L0:ceil",4],
         ["kit|kit:glow",64],
-        ["kit|kit:prop",1536]
+        ["kit|kit:prop",2432]
       ],
       "solids": [
         [24,0,14.867,24.133,2.8,24.133],
@@ -1523,11 +1523,11 @@
     {
       "cx": 2,
       "cz": 0,
-      "hash": "faf6c484ecfb2500",
-      "verts": 3306,
+      "hash": "b0228875188d2b8e",
+      "verts": 5463,
       "mats": ["kit|L0:ceil","kit|L0:floor","kit|L0:wall","kit|kit:glow","kit|kit:prop","kit|kit:trim_wood_yellow"],
       "meshes": [
-        ["kit|kit:prop",1809],
+        ["kit|kit:prop",3966],
         ["kit|kit:glow",337],
         ["kit|L0:wall",352],
         ["kit|kit:trim_wood_yellow",800],
@@ -1618,11 +1618,11 @@
     {
       "cx": -2,
       "cz": 1,
-      "hash": "8c5ce68be842f920",
-      "verts": 2954,
+      "hash": "6ba10b2a1b0c71ec",
+      "verts": 4335,
       "mats": ["kit|L0:ceil","kit|L0:floor","kit|L0:wall","kit|kit:glow","kit|kit:prop","kit|kit:trim_wood_yellow"],
       "meshes": [
-        ["kit|kit:prop",1641],
+        ["kit|kit:prop",3022],
         ["kit|kit:glow",169],
         ["kit|L0:wall",336],
         ["kit|kit:trim_wood_yellow",800],
@@ -1720,8 +1720,8 @@
     {
       "cx": -1,
       "cz": 1,
-      "hash": "888da4f682b048e9",
-      "verts": 2864,
+      "hash": "663efa60d3531d5f",
+      "verts": 3760,
       "mats": ["kit|L0:ceil","kit|L0:floor","kit|L0:wall","kit|kit:glow","kit|kit:prop","kit|kit:trim_wood_yellow"],
       "meshes": [
         ["kit|L0:wall",376],
@@ -1729,7 +1729,7 @@
         ["kit|L0:floor",4],
         ["kit|L0:ceil",4],
         ["kit|kit:glow",64],
-        ["kit|kit:prop",1536]
+        ["kit|kit:prop",2432]
       ],
       "solids": [
         [-24,0,32.867,-23.867,2.8,48.133],
@@ -1830,8 +1830,8 @@
     {
       "cx": 0,
       "cz": 1,
-      "hash": "92b2ccdaee974b9a",
-      "verts": 2595,
+      "hash": "1faf074b7d7392e0",
+      "verts": 3714,
       "mats": ["kit|L0:ceil","kit|L0:floor","kit|L0:wall","kit|kit:glow","kit|kit:prop","kit|kit:trim_wood_yellow","kit|kit:water"],
       "meshes": [
         ["kit|L0:wall",312],
@@ -1839,8 +1839,8 @@
         ["kit|L0:floor",4],
         ["kit|L0:ceil",4],
         ["kit|kit:glow",64],
-        ["kit|kit:prop",1536],
-        ["kit|kit:water",75]
+        ["kit|kit:prop",2432],
+        ["kit|kit:water",298]
       ],
       "solids": [
         [0,0,29.867,0.133,2.8,36.133],
@@ -1934,8 +1934,8 @@
     {
       "cx": 1,
       "cz": 1,
-      "hash": "c1b7408be292c49e",
-      "verts": 2924,
+      "hash": "3149cdc3651356fb",
+      "verts": 3820,
       "mats": ["kit|L0:ceil","kit|L0:floor","kit|L0:wall","kit|kit:glow","kit|kit:prop","kit|kit:trim_wood_yellow"],
       "meshes": [
         ["kit|L0:wall",396],
@@ -1943,7 +1943,7 @@
         ["kit|L0:floor",4],
         ["kit|L0:ceil",4],
         ["kit|kit:glow",64],
-        ["kit|kit:prop",1536]
+        ["kit|kit:prop",2432]
       ],
       "solids": [
         [24,0,41.867,24.133,2.8,45.133],
@@ -2045,8 +2045,8 @@
     {
       "cx": 2,
       "cz": 1,
-      "hash": "014f72fdcf4c9410",
-      "verts": 2776,
+      "hash": "07497954d8e89448",
+      "verts": 3672,
       "mats": ["kit|L0:ceil","kit|L0:floor","kit|L0:wall","kit|kit:glow","kit|kit:prop","kit|kit:trim_wood_yellow"],
       "meshes": [
         ["kit|L0:wall",348],
@@ -2054,7 +2054,7 @@
         ["kit|L0:floor",4],
         ["kit|L0:ceil",4],
         ["kit|kit:glow",64],
-        ["kit|kit:prop",1536]
+        ["kit|kit:prop",2432]
       ],
       "solids": [
         [53.867,0,41.867,54.133,2.8,48.133],
@@ -2153,8 +2153,8 @@
     {
       "cx": -2,
       "cz": 2,
-      "hash": "f9a626d99907c3fc",
-      "verts": 2580,
+      "hash": "640da1d301244349",
+      "verts": 3476,
       "mats": ["kit|L0:ceil","kit|L0:floor","kit|L0:wall","kit|kit:glow","kit|kit:prop","kit|kit:trim_wood_yellow"],
       "meshes": [
         ["kit|L0:wall",292],
@@ -2162,7 +2162,7 @@
         ["kit|L0:floor",4],
         ["kit|L0:ceil",4],
         ["kit|kit:glow",64],
-        ["kit|kit:prop",1536]
+        ["kit|kit:prop",2432]
       ],
       "solids": [
         [-48,0,56.867,-47.867,2.8,63.133],
@@ -2257,8 +2257,8 @@
     {
       "cx": -1,
       "cz": 2,
-      "hash": "05cf0f33328d96f3",
-      "verts": 2664,
+      "hash": "55ae2c08b682e63c",
+      "verts": 3560,
       "mats": ["kit|L0:ceil","kit|L0:floor","kit|L0:wall","kit|kit:glow","kit|kit:prop","kit|kit:trim_wood_yellow"],
       "meshes": [
         ["kit|L0:wall",316],
@@ -2266,7 +2266,7 @@
         ["kit|L0:floor",4],
         ["kit|L0:ceil",4],
         ["kit|kit:glow",64],
-        ["kit|kit:prop",1536]
+        ["kit|kit:prop",2432]
       ],
       "solids": [
         [-24,0,50.867,-23.867,2.8,54.133],
@@ -2363,15 +2363,15 @@
     {
       "cx": 0,
       "cz": 2,
-      "hash": "a6cd28011c5fa728",
-      "verts": 1580,
+      "hash": "44a90bdbb45532ec",
+      "verts": 1771,
       "mats": ["kit|L0:ceil","kit|L0:floor","kit|L0:wall","kit|kit:trim_wood_yellow","kit|kit:water"],
       "meshes": [
         ["kit|L0:wall",452],
         ["kit|kit:trim_wood_yellow",1060],
         ["kit|L0:floor",4],
         ["kit|L0:ceil",4],
-        ["kit|kit:water",60]
+        ["kit|kit:water",251]
       ],
       "solids": [
         [0,0,53.867,0.133,2.8,60.133],
@@ -2477,8 +2477,8 @@
     {
       "cx": 1,
       "cz": 2,
-      "hash": "91a58c3ccd2dfa82",
-      "verts": 2968,
+      "hash": "81a65a2472583bbf",
+      "verts": 3864,
       "mats": ["kit|L0:ceil","kit|L0:floor","kit|L0:wall","kit|kit:glow","kit|kit:prop","kit|kit:trim_wood_yellow"],
       "meshes": [
         ["kit|L0:wall",400],
@@ -2486,7 +2486,7 @@
         ["kit|L0:floor",4],
         ["kit|L0:ceil",4],
         ["kit|kit:glow",64],
-        ["kit|kit:prop",1536]
+        ["kit|kit:prop",2432]
       ],
       "solids": [
         [24,0,56.867,24.133,2.8,60.133],
@@ -2588,11 +2588,11 @@
     {
       "cx": 2,
       "cz": 2,
-      "hash": "f18052ce227f5695",
-      "verts": 3248,
+      "hash": "2eefa986e7537772",
+      "verts": 4920,
       "mats": ["kit|L0:ceil","kit|L0:floor","kit|L0:wall","kit|kit:glow","kit|kit:prop","kit|kit:trim_wood_yellow"],
       "meshes": [
-        ["kit|kit:prop",1704],
+        ["kit|kit:prop",3376],
         ["kit|kit:glow",232],
         ["kit|L0:wall",380],
         ["kit|kit:trim_wood_yellow",900],

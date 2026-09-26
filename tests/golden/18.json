@@ -6,16 +6,16 @@
   "spawnFactor": 1,
   "radius": 2,
   "chunkSize": 20,
-  "hash": "16e417ce48c7e5e1d0c149d57f5f7dc374065bfe6f479e955a721cdfd780d69a",
+  "hash": "9dcd6fc443bfb65f00215108c592973844829abedadc867e18974e209207a47e",
   "chunks": [
     {
       "cx": -2,
       "cz": -2,
-      "hash": "659c1a0cdf97bc95",
-      "verts": 3460,
+      "hash": "11a9665c9e887acc",
+      "verts": 5332,
       "mats": ["kit|kit:glow","kit|kit:prop"],
       "meshes": [
-        ["kit|kit:prop",3444],
+        ["kit|kit:prop",5316],
         ["kit|kit:glow",16]
       ],
       "solids": [
@@ -93,12 +93,12 @@
     {
       "cx": -1,
       "cz": -2,
-      "hash": "3b2a8952a4c19463",
-      "verts": 3548,
+      "hash": "d53a70140a81ddf2",
+      "verts": 5472,
       "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",160],
-        ["kit|kit:prop",3368],
+        ["kit|kit:prop",5292],
         ["kit|L18:floorFoam",4],
         ["kit|kit:glow",16]
       ],
@@ -175,11 +175,11 @@
     {
       "cx": 0,
       "cz": -2,
-      "hash": "311cef40a3a5ca85",
-      "verts": 3492,
+      "hash": "83bdfa06a337e4d6",
+      "verts": 5364,
       "mats": ["kit|kit:glow","kit|kit:prop"],
       "meshes": [
-        ["kit|kit:prop",3476],
+        ["kit|kit:prop",5348],
         ["kit|kit:glow",16]
       ],
       "solids": [
@@ -258,11 +258,11 @@
     {
       "cx": 1,
       "cz": -2,
-      "hash": "62f678b624a82076",
-      "verts": 3428,
+      "hash": "8b19594e8c22e739",
+      "verts": 5300,
       "mats": ["kit|kit:glow","kit|kit:prop"],
       "meshes": [
-        ["kit|kit:prop",3412],
+        ["kit|kit:prop",5284],
         ["kit|kit:glow",16]
       ],
       "solids": [
@@ -339,11 +339,11 @@
     {
       "cx": 2,
       "cz": -2,
-      "hash": "ebb366d0bb94590d",
-      "verts": 388,
+      "hash": "510a1f22a7392d96",
+      "verts": 576,
       "mats": ["kit|kit:prop"],
       "meshes": [
-        ["kit|kit:prop",388]
+        ["kit|kit:prop",576]
       ],
       "solids": [
         [40,0,-40.133,40.133,2.8,-36.533],
@@ -407,12 +407,12 @@
     {
       "cx": -2,
       "cz": -1,
-      "hash": "e341216be8ffcd91",
-      "verts": 3548,
+      "hash": "00d55dae917a5ee3",
+      "verts": 5472,
       "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",160],
-        ["kit|kit:prop",3368],
+        ["kit|kit:prop",5292],
         ["kit|L18:floorFoam",4],
         ["kit|kit:glow",16]
       ],
@@ -489,12 +489,12 @@
     {
       "cx": -1,
       "cz": -1,
-      "hash": "abd8d7e64906e965",
-      "verts": 3516,
+      "hash": "a5681d6cccbbef2c",
+      "verts": 5440,
       "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",148],
-        ["kit|kit:prop",3348],
+        ["kit|kit:prop",5272],
         ["kit|L18:floorFoam",4],
         ["kit|kit:glow",16]
       ],
@@ -570,11 +570,11 @@
     {
       "cx": 0,
       "cz": -1,
-      "hash": "c389ad6f369ceb61",
-      "verts": 3460,
+      "hash": "fc3967c1d0200f73",
+      "verts": 5332,
       "mats": ["kit|kit:glow","kit|kit:prop"],
       "meshes": [
-        ["kit|kit:prop",3444],
+        ["kit|kit:prop",5316],
         ["kit|kit:glow",16]
       ],
       "solids": [
@@ -652,12 +652,12 @@
     {
       "cx": 1,
       "cz": -1,
-      "hash": "39ce0d93b439270f",
-      "verts": 3516,
+      "hash": "a53cbdab149f6aa8",
+      "verts": 5440,
       "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",148],
-        ["kit|kit:prop",3348],
+        ["kit|kit:prop",5272],
         ["kit|L18:floorFoam",4],
         ["kit|kit:glow",16]
       ],
@@ -733,12 +733,12 @@
     {
       "cx": 2,
       "cz": -1,
-      "hash": "dd07014770382d47",
-      "verts": 3516,
+      "hash": "a45ea33ce2ff8544",
+      "verts": 5440,
       "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",148],
-        ["kit|kit:prop",3348],
+        ["kit|kit:prop",5272],
         ["kit|L18:floorFoam",4],
         ["kit|kit:glow",16]
       ],
@@ -814,12 +814,12 @@
     {
       "cx": -2,
       "cz": 0,
-      "hash": "c488016cb2a67b29",
-      "verts": 3516,
+      "hash": "71aa8250ea5756ce",
+      "verts": 5440,
       "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",148],
-        ["kit|kit:prop",3348],
+        ["kit|kit:prop",5272],
         ["kit|L18:floorFoam",4],
         ["kit|kit:glow",16]
       ],
@@ -895,11 +895,11 @@
     {
       "cx": -1,
       "cz": 0,
-      "hash": "8abcaccb5fd10479",
-      "verts": 1440,
+      "hash": "5fce046d31f8c938",
+      "verts": 1852,
       "mats": ["kit|kit:glow","kit|kit:prop"],
       "meshes": [
-        ["kit|kit:prop",1424],
+        ["kit|kit:prop",1836],
         ["kit|kit:glow",16]
       ],
       "solids": [
@@ -965,12 +965,12 @@
     {
       "cx": 0,
       "cz": 0,
-      "hash": "7ca2d96072538355",
-      "verts": 3548,
+      "hash": "5b974b4a7022ed22",
+      "verts": 5472,
       "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",160],
-        ["kit|kit:prop",3368],
+        ["kit|kit:prop",5292],
         ["kit|L18:floorFoam",4],
         ["kit|kit:glow",16]
       ],
@@ -1047,12 +1047,12 @@
     {
       "cx": 1,
       "cz": 0,
-      "hash": "c558e1f9fddd4f3a",
-      "verts": 3548,
+      "hash": "4b51c9298cacf0e9",
+      "verts": 5472,
       "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",160],
-        ["kit|kit:prop",3368],
+        ["kit|kit:prop",5292],
         ["kit|L18:floorFoam",4],
         ["kit|kit:glow",16]
       ],
@@ -1129,12 +1129,12 @@
     {
       "cx": 2,
       "cz": 0,
-      "hash": "529e687934f21ba8",
-      "verts": 3548,
+      "hash": "c5b6a76c6b053f79",
+      "verts": 5472,
       "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",160],
-        ["kit|kit:prop",3368],
+        ["kit|kit:prop",5292],
         ["kit|L18:floorFoam",4],
         ["kit|kit:glow",16]
       ],
@@ -1211,12 +1211,12 @@
     {
       "cx": -2,
       "cz": 1,
-      "hash": "ac2a64c194a8d6eb",
-      "verts": 3484,
+      "hash": "b68df82d72c0513e",
+      "verts": 5408,
       "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",136],
-        ["kit|kit:prop",3328],
+        ["kit|kit:prop",5252],
         ["kit|L18:floorFoam",4],
         ["kit|kit:glow",16]
       ],
@@ -1291,12 +1291,12 @@
     {
       "cx": -1,
       "cz": 1,
-      "hash": "5f5611a7dbdca1aa",
-      "verts": 3516,
+      "hash": "34e0c3bd9dfd4be6",
+      "verts": 5440,
       "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",148],
-        ["kit|kit:prop",3348],
+        ["kit|kit:prop",5272],
         ["kit|L18:floorFoam",4],
         ["kit|kit:glow",16]
       ],
@@ -1372,11 +1372,11 @@
     {
       "cx": 0,
       "cz": 1,
-      "hash": "b1c3d7e077efb493",
-      "verts": 1440,
+      "hash": "4e164ae103550a34",
+      "verts": 1852,
       "mats": ["kit|kit:glow","kit|kit:prop"],
       "meshes": [
-        ["kit|kit:prop",1424],
+        ["kit|kit:prop",1836],
         ["kit|kit:glow",16]
       ],
       "solids": [
@@ -1442,11 +1442,11 @@
     {
       "cx": 1,
       "cz": 1,
-      "hash": "e336aae48c5bb64f",
-      "verts": 1452,
+      "hash": "07cffdb27177a05d",
+      "verts": 1864,
       "mats": ["kit|kit:glow","kit|kit:prop"],
       "meshes": [
-        ["kit|kit:prop",1436],
+        ["kit|kit:prop",1848],
         ["kit|kit:glow",16]
       ],
       "solids": [
@@ -1513,12 +1513,12 @@
     {
       "cx": 2,
       "cz": 1,
-      "hash": "de5e8cba3c93c26d",
-      "verts": 3516,
+      "hash": "ac580adf60f76f5a",
+      "verts": 5440,
       "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",148],
-        ["kit|kit:prop",3348],
+        ["kit|kit:prop",5272],
         ["kit|L18:floorFoam",4],
         ["kit|kit:glow",16]
       ],
@@ -1594,11 +1594,11 @@
     {
       "cx": -2,
       "cz": 2,
-      "hash": "08ba5cd2f93f639e",
-      "verts": 400,
+      "hash": "e7ea2efb0ca543e4",
+      "verts": 588,
       "mats": ["kit|kit:prop"],
       "meshes": [
-        ["kit|kit:prop",400]
+        ["kit|kit:prop",588]
       ],
       "solids": [
         [-40,0,39.867,-39.867,2.8,43.467],
@@ -1663,12 +1663,12 @@
     {
       "cx": -1,
       "cz": 2,
-      "hash": "7c6799143c7a2546",
-      "verts": 3580,
+      "hash": "cef2c01d510ce12b",
+      "verts": 5504,
       "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",172],
-        ["kit|kit:prop",3388],
+        ["kit|kit:prop",5312],
         ["kit|L18:floorFoam",4],
         ["kit|kit:glow",16]
       ],
@@ -1746,11 +1746,11 @@
     {
       "cx": 0,
       "cz": 2,
-      "hash": "8864c48ea36d27d0",
-      "verts": 1744,
+      "hash": "c148554c54abeab0",
+      "verts": 2580,
       "mats": ["kit|kit:glow","kit|kit:prop"],
       "meshes": [
-        ["kit|kit:prop",1728],
+        ["kit|kit:prop",2564],
         ["kit|kit:glow",16]
       ],
       "solids": [
@@ -1818,11 +1818,11 @@
     {
       "cx": 1,
       "cz": 2,
-      "hash": "335f910d9cfe5035",
-      "verts": 1428,
+      "hash": "1e85eaa9cba7c494",
+      "verts": 1840,
       "mats": ["kit|kit:glow","kit|kit:prop"],
       "meshes": [
-        ["kit|kit:prop",1412],
+        ["kit|kit:prop",1824],
         ["kit|kit:glow",16]
       ],
       "solids": [
@@ -1887,12 +1887,12 @@
     {
       "cx": 2,
       "cz": 2,
-      "hash": "10e3b3758faaa776",
-      "verts": 3516,
+      "hash": "bd1be24d98fd3701",
+      "verts": 5440,
       "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",148],
-        ["kit|kit:prop",3348],
+        ["kit|kit:prop",5272],
         ["kit|L18:floorFoam",4],
         ["kit|kit:glow",16]
       ],

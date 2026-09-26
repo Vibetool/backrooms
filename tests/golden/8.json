@@ -6,7 +6,7 @@
   "spawnFactor": 1,
   "radius": 2,
   "chunkSize": 44,
-  "hash": "22625951eeaa7a9fda281fe1bed2a791c5bf5bd9e8af58107e9cae25c55668f5",
+  "hash": "9ac739415e9ec7f2889017cec543c46acd79854103b4b98289e046fa6a4e006d",
   "chunks": [
     {
       "cx": -2,
@@ -1196,13 +1196,13 @@
     {
       "cx": -2,
       "cz": 0,
-      "hash": "389619f34701795d",
-      "verts": 824,
+      "hash": "7ddf0cf597a831ba",
+      "verts": 1268,
       "mats": ["kit|L8:floor","kit|L8:wall","kit|kit:glass","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L8:wall",72],
         ["kit|L8:floor",4],
-        ["kit|kit:prop",720],
+        ["kit|kit:prop",1164],
         ["kit|kit:glass",24],
         ["kit|kit:glow",4]
       ],
@@ -1299,14 +1299,14 @@
     {
       "cx": -1,
       "cz": 0,
-      "hash": "89b93b2652ac8181",
-      "verts": 192,
+      "hash": "d2757da500b85a87",
+      "verts": 280,
       "mats": ["kit|L8:ceil","kit|L8:floor","kit|L8:wall","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L8:wall",156],
         ["kit|L8:floor",4],
         ["kit|L8:ceil",4],
-        ["kit|kit:prop",24],
+        ["kit|kit:prop",112],
         ["kit|kit:glow",4]
       ],
       "solids": [
@@ -1406,14 +1406,14 @@
     {
       "cx": 0,
       "cz": 0,
-      "hash": "bff2e3dccae45825",
-      "verts": 415,
+      "hash": "6c49a8c3c3bf9b08",
+      "verts": 644,
       "mats": ["kit|L8:floor","kit|L8:wall","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L8:wall",340],
         ["kit|L8:floor",4],
-        ["kit|kit:water",15],
-        ["kit|kit:prop",48],
+        ["kit|kit:water",68],
+        ["kit|kit:prop",224],
         ["kit|kit:glow",8]
       ],
       "solids": [
@@ -1520,14 +1520,14 @@
     {
       "cx": 1,
       "cz": 0,
-      "hash": "5decf2f9fdf7b5f6",
-      "verts": 368,
+      "hash": "43096a1776a5b302",
+      "verts": 456,
       "mats": ["kit|L8:ceil","kit|L8:floor","kit|L8:wall","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L8:wall",332],
         ["kit|L8:floor",4],
         ["kit|L8:ceil",4],
-        ["kit|kit:prop",24],
+        ["kit|kit:prop",112],
         ["kit|kit:glow",4]
       ],
       "solids": [
@@ -1635,14 +1635,14 @@
     {
       "cx": 2,
       "cz": 0,
-      "hash": "aea9f2ef0442bb9a",
-      "verts": 244,
+      "hash": "6b89ac7ec88f12bd",
+      "verts": 332,
       "mats": ["kit|L8:ceil","kit|L8:floor","kit|L8:wall","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L8:wall",208],
         ["kit|L8:floor",4],
         ["kit|L8:ceil",4],
-        ["kit|kit:prop",24],
+        ["kit|kit:prop",112],
         ["kit|kit:glow",4]
       ],
       "solids": [
@@ -2323,15 +2323,15 @@
     {
       "cx": -2,
       "cz": 2,
-      "hash": "f2f8a32408d74cc4",
-      "verts": 391,
+      "hash": "a153f02c5a0c4118",
+      "verts": 423,
       "mats": ["kit|L8:floor","kit|L8:wall","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L8:wall",328],
         ["kit|L8:floor",4],
         ["kit|kit:glow",40],
         ["kit|kit:prop",4],
-        ["kit|kit:water",15]
+        ["kit|kit:water",47]
       ],
       "solids": [
         [-88,0,98.867,-87.867,6.5,121.133],

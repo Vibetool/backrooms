@@ -6,17 +6,17 @@
   "spawnFactor": 1,
   "radius": 2,
   "chunkSize": 32,
-  "hash": "b2d0bae7846b1ff1902d64e6486f04dd9188fbd938dedf47b1e4e728c8d4307a",
+  "hash": "255f5a55197d14f27686ae197288d0bda662bd3ca5dc87ab5099f3ff08151c1e",
   "chunks": [
     {
       "cx": -2,
       "cz": -2,
-      "hash": "2aaaf187ea24fd72",
-      "verts": 588,
+      "hash": "97888e6e846c5ca0",
+      "verts": 776,
       "mats": ["kit|L12:white","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",4],
-        ["kit|kit:prop",584]
+        ["kit|kit:prop",772]
       ],
       "solids": [
         [-34.695,0,-56.873,-34.628,0.413,-56.805]
@@ -54,12 +54,12 @@
     {
       "cx": -1,
       "cz": -2,
-      "hash": "3a6514155aff1abd",
-      "verts": 492,
+      "hash": "4d719a399c870335",
+      "verts": 680,
       "mats": ["kit|L12:white","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",4],
-        ["kit|kit:prop",488]
+        ["kit|kit:prop",676]
       ],
       "solids": [
         [-17.315,-0.22,-49.376,-17.231,0.83,-49.292]
@@ -97,12 +97,12 @@
     {
       "cx": 0,
       "cz": -2,
-      "hash": "f841bd469e38eca3",
-      "verts": 484,
+      "hash": "24be86659d1a5da3",
+      "verts": 672,
       "mats": ["kit|L12:white","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",4],
-        ["kit|kit:prop",480]
+        ["kit|kit:prop",668]
       ],
       "solids": [
         [26.74,0,-39.94,26.829,1.05,-39.85]
@@ -139,12 +139,12 @@
     {
       "cx": 1,
       "cz": -2,
-      "hash": "f91b018f9f0fa36c",
-      "verts": 516,
+      "hash": "526a5bcb72eb7a20",
+      "verts": 704,
       "mats": ["kit|L12:white","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",4],
-        ["kit|kit:prop",512]
+        ["kit|kit:prop",700]
       ],
       "solids": [
         [57.82,0,-61.904,57.905,1.05,-61.819],
@@ -183,12 +183,12 @@
     {
       "cx": 2,
       "cz": -2,
-      "hash": "79a4a5c65f46ef1b",
-      "verts": 356,
+      "hash": "c3a3e4a7e56a47b0",
+      "verts": 544,
       "mats": ["kit|L12:white","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",4],
-        ["kit|kit:prop",352]
+        ["kit|kit:prop",540]
       ],
       "solids": [
         [90.885,0,-32.541,90.956,0.413,-32.47]
@@ -226,12 +226,12 @@
     {
       "cx": -2,
       "cz": -1,
-      "hash": "5e8184aa503c6169",
-      "verts": 616,
+      "hash": "7c80fb943189d912",
+      "verts": 804,
       "mats": ["kit|L12:white","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",4],
-        ["kit|kit:prop",612]
+        ["kit|kit:prop",800]
       ],
       "solids": [
         [-42.522,-0.22,-5.261,-42.452,0.193,-5.19],
@@ -272,12 +272,12 @@
     {
       "cx": -1,
       "cz": -1,
-      "hash": "0e8aec83d7157862",
-      "verts": 668,
+      "hash": "16038b57d55536d7",
+      "verts": 856,
       "mats": ["kit|L12:white","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",4],
-        ["kit|kit:prop",664]
+        ["kit|kit:prop",852]
       ],
       "solids": [
         [-3.58,0,-13.265,-3.491,1.05,-13.176],
@@ -316,12 +316,12 @@
     {
       "cx": 0,
       "cz": -1,
-      "hash": "f7d7fe05eecd6eb3",
-      "verts": 640,
+      "hash": "d2685b2622255ad3",
+      "verts": 828,
       "mats": ["kit|L12:white","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",4],
-        ["kit|kit:prop",636]
+        ["kit|kit:prop",824]
       ],
       "solids": [
         [22.647,0,-28.594,22.732,1.05,-28.509]
@@ -359,12 +359,12 @@
     {
       "cx": 1,
       "cz": -1,
-      "hash": "ed64ce17b604e81f",
-      "verts": 460,
+      "hash": "b2e9a322e349ca78",
+      "verts": 648,
       "mats": ["kit|L12:white","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",4],
-        ["kit|kit:prop",456]
+        ["kit|kit:prop",644]
       ],
       "solids": [
         [54.75,0,-10.011,54.838,1.05,-9.924],
@@ -403,12 +403,12 @@
     {
       "cx": 2,
       "cz": -1,
-      "hash": "afa8d3120fdff98c",
-      "verts": 516,
+      "hash": "32484353a00cc149",
+      "verts": 704,
       "mats": ["kit|L12:white","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",4],
-        ["kit|kit:prop",512]
+        ["kit|kit:prop",700]
       ],
       "solids": [
         [69.164,0,-15.673,69.252,1.05,-15.584],
@@ -447,12 +447,12 @@
     {
       "cx": -2,
       "cz": 0,
-      "hash": "42220d1b78ad7237",
-      "verts": 560,
+      "hash": "3561c6afdb6591e8",
+      "verts": 748,
       "mats": ["kit|L12:white","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",4],
-        ["kit|kit:prop",556]
+        ["kit|kit:prop",744]
       ],
       "solids": [
         [-39.659,-0.22,24.476,-39.597,0.193,24.538],
@@ -493,12 +493,12 @@
     {
       "cx": -1,
       "cz": 0,
-      "hash": "3a618c5b38c013c5",
-      "verts": 452,
+      "hash": "529bd3ec1269ac1a",
+      "verts": 640,
       "mats": ["kit|L12:white","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",4],
-        ["kit|kit:prop",448]
+        ["kit|kit:prop",636]
       ],
       "solids": [],
       "spawnPoints": [
@@ -534,12 +534,12 @@
     {
       "cx": 0,
       "cz": 0,
-      "hash": "25039b413b5d04cf",
-      "verts": 1054,
+      "hash": "cc2062c384eca688",
+      "verts": 1667,
       "mats": ["kit|L12:white","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",104],
-        ["kit|kit:prop",929],
+        ["kit|kit:prop",1542],
         ["kit|kit:glow",21]
       ],
       "solids": [
@@ -598,12 +598,12 @@
     {
       "cx": 1,
       "cz": 0,
-      "hash": "61a5b919d145cecd",
-      "verts": 560,
+      "hash": "3dd1c08d1da6445e",
+      "verts": 748,
       "mats": ["kit|L12:white","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",4],
-        ["kit|kit:prop",556]
+        ["kit|kit:prop",744]
       ],
       "solids": [
         [40.737,-0.22,9.485,40.807,0.193,9.555],
@@ -644,12 +644,12 @@
     {
       "cx": 2,
       "cz": 0,
-      "hash": "b957bf737b524d0a",
-      "verts": 508,
+      "hash": "814635be4ff5e7c3",
+      "verts": 696,
       "mats": ["kit|L12:white","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",4],
-        ["kit|kit:prop",504]
+        ["kit|kit:prop",692]
       ],
       "solids": [
         [66.154,0,5.725,66.22,0.413,5.792]
@@ -687,12 +687,12 @@
     {
       "cx": -2,
       "cz": 1,
-      "hash": "121c9382f775c606",
-      "verts": 520,
+      "hash": "59d97680b2d0811f",
+      "verts": 708,
       "mats": ["kit|L12:white","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",4],
-        ["kit|kit:prop",516]
+        ["kit|kit:prop",704]
       ],
       "solids": [
         [-33.359,0,35.078,-33.271,1.05,35.167],
@@ -731,12 +731,12 @@
     {
       "cx": -1,
       "cz": 1,
-      "hash": "029ec81a60bdd850",
-      "verts": 464,
+      "hash": "7e2541e521674b54",
+      "verts": 652,
       "mats": ["kit|L12:white","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",4],
-        ["kit|kit:prop",460]
+        ["kit|kit:prop",648]
       ],
       "solids": [],
       "spawnPoints": [
@@ -772,12 +772,12 @@
     {
       "cx": 0,
       "cz": 1,
-      "hash": "49fa3f28a1125a73",
-      "verts": 488,
+      "hash": "d5539cefe64cb496",
+      "verts": 676,
       "mats": ["kit|L12:white","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",4],
-        ["kit|kit:prop",484]
+        ["kit|kit:prop",672]
       ],
       "solids": [
         [18.118,-0.22,56.012,18.207,0.83,56.101]
@@ -815,12 +815,12 @@
     {
       "cx": 1,
       "cz": 1,
-      "hash": "99e55ac12ab790dc",
-      "verts": 404,
+      "hash": "d336d88cc2d5d5c5",
+      "verts": 592,
       "mats": ["kit|L12:white","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",4],
-        ["kit|kit:prop",400]
+        ["kit|kit:prop",588]
       ],
       "solids": [
         [40.423,-0.22,43.667,40.476,0.193,43.719],
@@ -859,12 +859,12 @@
     {
       "cx": 2,
       "cz": 1,
-      "hash": "0be48ea69434de9d",
-      "verts": 432,
+      "hash": "bcd1715ce2d3b6ee",
+      "verts": 620,
       "mats": ["kit|L12:white","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",4],
-        ["kit|kit:prop",428]
+        ["kit|kit:prop",616]
       ],
       "solids": [
         [81.103,0,41.574,81.162,0.413,41.632]
@@ -902,12 +902,12 @@
     {
       "cx": -2,
       "cz": 2,
-      "hash": "9d4385911ed7389d",
-      "verts": 412,
+      "hash": "0a2f094b50c6ab0b",
+      "verts": 600,
       "mats": ["kit|L12:white","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",4],
-        ["kit|kit:prop",408]
+        ["kit|kit:prop",596]
       ],
       "solids": [
         [-42.321,0,89.479,-42.232,1.05,89.569]
@@ -945,12 +945,12 @@
     {
       "cx": -1,
       "cz": 2,
-      "hash": "bf15d3c43376017e",
-      "verts": 528,
+      "hash": "8130226c92699d1d",
+      "verts": 716,
       "mats": ["kit|L12:white","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",4],
-        ["kit|kit:prop",524]
+        ["kit|kit:prop",712]
       ],
       "solids": [
         [-9.989,0,76.516,-9.927,0.413,76.578],
@@ -990,12 +990,12 @@
     {
       "cx": 0,
       "cz": 2,
-      "hash": "03141da2a6da51af",
-      "verts": 460,
+      "hash": "a99bace0d4f79d8d",
+      "verts": 648,
       "mats": ["kit|L12:white","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",4],
-        ["kit|kit:prop",456]
+        ["kit|kit:prop",644]
       ],
       "solids": [
         [1.055,0,70.093,1.12,0.413,70.158],
@@ -1034,12 +1034,12 @@
     {
       "cx": 1,
       "cz": 2,
-      "hash": "fcea072d8a0f14c9",
-      "verts": 588,
+      "hash": "a3f62b89461f2fde",
+      "verts": 776,
       "mats": ["kit|L12:white","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",4],
-        ["kit|kit:prop",584]
+        ["kit|kit:prop",772]
       ],
       "solids": [
         [34.967,0,87.786,35.05,1.05,87.87],
@@ -1079,12 +1079,12 @@
     {
       "cx": 2,
       "cz": 2,
-      "hash": "8bb91cc847db7a0d",
-      "verts": 384,
+      "hash": "57c55295d4b50d1a",
+      "verts": 572,
       "mats": ["kit|L12:white","kit|kit:prop"],
       "meshes": [
         ["kit|L12:white",4],
-        ["kit|kit:prop",380]
+        ["kit|kit:prop",568]
       ],
       "solids": [],
       "spawnPoints": [

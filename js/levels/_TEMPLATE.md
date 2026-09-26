@@ -377,6 +377,8 @@ kit.gridSpawns(b, g);
 约定：(x, z) 是构件在地面上的中心（当前坐标系），`rot = 0` 正面朝 +Z；零件进 `'kit:prop' / 'kit:glow' / 'kit:glass' / 'kit:water'`，一块里摆多少种构件都只多这几个 draw call；碰撞体按整体外形给一两个 AABB。
 所有 `opts` 都可省略；`solid: false` 关碰撞体；`color` 系列字段是 hex。
 
+**细节档（2026-09-23 起）**：构件在高画质下会自动加细节零件（把手、缝线、铰链、格栅……）。以下三种情况自动退回简版：① 低画质；② 调用时传 `detail: false` 或 `detail: 'low'`（成片摆的小件想省面时用）；③ 本块已累积到 7200 个三角面（`_kit.js` 的 `DETAIL_TRI_CAP`）——所以**层级自己的重几何要先建、构件后摆**，否则细节会被提前截断。细节零件不新增材质槽位，叠放的零件彼此错开 ≥2 mm，不许共面。
+
 | 构件 | opts（缺省值） | 返回 |
 |---|---|---|
 | `lightPanel` 日光灯格栅 | `y = b.height`, `w = 1.2`, `d = 0.6`, `state = 'on'\|'flicker'\|'broken'\|'off'`, `flicker = 0.6`, `flickerLater`, `glow = 1.8`, `panelColor`, `frame = true`, `frameColor`, `light = true`, `color = 0xfff1d0`, `intensity = 1.1`, `range = 9` | `{ piece, src }`。broken 灰面板无灯；off 有灯描述但 intensity 0，点亮：`src.intensity = src.onIntensity` |

@@ -72,7 +72,8 @@
       "url": "https://backrooms-wiki-cn.wikidot.com/level-1",
       "title": "Level 1 - “宜居地带”",
       "method": "random-on-conflict",
-      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-1.json"
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-1.json",
+      "userOverride": "外观与布局按用户（贝塔）2026-09-23 指定：很多灰色柱子的储物空间（仓库），不是迷宫。"
     },
     "10": {
       "candidates": [
@@ -455,7 +456,11 @@
       "url": "https://web.archive.org/web/20251117020519/https://backrooms.fandom.com/wiki/Level_2",
       "title": "Level 2: \"Pipe Dreams\"",
       "method": "random-on-conflict",
-      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-2.json"
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-2.json",
+      "userOverride": "外观与布局按用户（贝塔）2026-09-23 指定：淡黄色墙壁，一条笔直的走廊，右边一侧是各种各样的管道，黄色工业灯。参照参考图。",
+      "userRefs": [
+        "/Users/xuanjiang/Downloads/project/backrooms-research/refs/2026-09-23/L2-走廊.jpg"
+      ]
     },
     "3": {
       "candidates": [
@@ -495,7 +500,12 @@
       "url": "https://backrooms-wiki-cn.wikidot.com/level-3",
       "title": "Level 3 - “发电站”",
       "method": "random-on-conflict",
-      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-3.json"
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-3.json",
+      "userOverride": "外观与布局按用户（贝塔）2026-09-23 指定：一条条通道（参考图的铁栅门、瓷砖墙走廊），隔一段距离有一个交叉路口，通道里隔一段距离有一台发电机（参考图：绿色机柜、铜排、粗电缆、保险丝），跟图片一样。",
+      "userRefs": [
+        "/Users/xuanjiang/Downloads/project/backrooms-research/refs/2026-09-23/L3-发电机.jpg",
+        "/Users/xuanjiang/Downloads/project/backrooms-research/refs/2026-09-23/L3-通道.jpg"
+      ]
     },
     "4": {
       "candidates": [
@@ -527,7 +537,12 @@
       "url": "https://backrooms-wiki-cn.wikidot.com/level-4",
       "title": "Level 4 - \"废弃办公室\"",
       "method": "random-on-conflict",
-      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-4.json"
+      "file": "/Users/xuanjiang/Downloads/project/backrooms-research/levels/level-4.json",
+      "userOverride": "外观与布局按用户（贝塔）2026-09-23 指定：像参考图的废弃办公室——白墙、深蓝灰地毯、带通风口的矿棉吊顶、橙木色门、窗户；地形是比较绕的楼道（算不上迷宫），连接着一个个房间。",
+      "userRefs": [
+        "/Users/xuanjiang/Downloads/project/backrooms-research/refs/2026-09-23/L4-房间1.jpg",
+        "/Users/xuanjiang/Downloads/project/backrooms-research/refs/2026-09-23/L4-房间2.jpg"
+      ]
     },
     "5": {
       "candidates": [

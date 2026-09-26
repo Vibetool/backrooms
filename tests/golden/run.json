@@ -6,7 +6,7 @@
   "spawnFactor": 1,
   "radius": 2,
   "chunkSize": 16,
-  "hash": "39b5bb049d39bd9944b75d4e12e5ec045fd9b7596303446d36a1ac9683e70727",
+  "hash": "9abd4b1d7b8c53d983cc1c2a9120673800e02e7e101da903c58cb75df139d62a",
   "chunks": [
     {
       "cx": -2,
@@ -203,12 +203,12 @@
     {
       "cx": 0,
       "cz": 0,
-      "hash": "732e4577c0561918",
-      "verts": 560,
+      "hash": "394326343411ff2f",
+      "verts": 1032,
       "mats": ["kit|Lrun:metal","kit|kit:prop"],
       "meshes": [
         ["kit|Lrun:metal",144],
-        ["kit|kit:prop",416]
+        ["kit|kit:prop",888]
       ],
       "solids": [
         [0,0,5.667,16,2.8,5.933],
@@ -253,14 +253,14 @@
     {
       "cx": 1,
       "cz": 0,
-      "hash": "6ed490c274cf9120",
-      "verts": 3262,
+      "hash": "039c0651663e06c5",
+      "verts": 3498,
       "mats": ["kit|Lrun:ceiling","kit|Lrun:floor","kit|Lrun:wall","kit|kit:prop"],
       "meshes": [
         ["kit|Lrun:wall",84],
         ["kit|Lrun:floor",4],
         ["kit|Lrun:ceiling",4],
-        ["kit|kit:prop",3170]
+        ["kit|kit:prop",3406]
       ],
       "solids": [
         [16,0,5.667,32,2.8,5.933],
@@ -301,14 +301,14 @@
     {
       "cx": 2,
       "cz": 0,
-      "hash": "2203a7388ec7ca08",
-      "verts": 5822,
+      "hash": "923ed3c823ee94a0",
+      "verts": 6016,
       "mats": ["kit|Lrun:ceiling","kit|Lrun:floor","kit|Lrun:wall","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|Lrun:wall",32],
         ["kit|Lrun:floor",4],
         ["kit|Lrun:ceiling",4],
-        ["kit|kit:prop",5740],
+        ["kit|kit:prop",5934],
         ["kit|kit:glow",42]
       ],
       "solids": [

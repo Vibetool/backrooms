@@ -6,7 +6,7 @@
   "spawnFactor": 1,
   "radius": 2,
   "chunkSize": 44,
-  "hash": "f8d53fbdf9468b3fd6145a5706ceaf1e50a01ab5999909ecd1c483accfefff44",
+  "hash": "995ec096e882c4bb679dd15166fb845929d98a7094f558d18928abd54f200d02",
   "chunks": [
     {
       "cx": -2,
@@ -161,11 +161,11 @@
     {
       "cx": -1,
       "cz": -2,
-      "hash": "bdfef647a02c9179",
-      "verts": 9539,
+      "hash": "6726a21133ad22b6",
+      "verts": 9571,
       "mats": ["kit|L10:crop","kit|L10:field","kit|kit:water"],
       "meshes": [
-        ["kit|kit:water",15],
+        ["kit|kit:water",47],
         ["kit|L10:field",4],
         ["kit|L10:crop",9520]
       ],
@@ -1255,11 +1255,11 @@
     {
       "cx": 2,
       "cz": -1,
-      "hash": "3bd306e35a7ff5ee",
-      "verts": 13254,
+      "hash": "59fca138fda0eff2",
+      "verts": 13351,
       "mats": ["kit|L10:crop","kit|L10:field","kit|kit:glow","kit|kit:prop"],
       "meshes": [
-        ["kit|kit:prop",2181],
+        ["kit|kit:prop",2278],
         ["kit|kit:glow",21],
         ["kit|L10:field",4],
         ["kit|L10:crop",11048]
@@ -1598,11 +1598,11 @@
     {
       "cx": -2,
       "cz": 1,
-      "hash": "0d9c9e2a37cc6c66",
-      "verts": 9115,
+      "hash": "20af31b31c29cd00",
+      "verts": 9168,
       "mats": ["kit|L10:crop","kit|L10:field","kit|kit:water"],
       "meshes": [
-        ["kit|kit:water",15],
+        ["kit|kit:water",68],
         ["kit|L10:field",4],
         ["kit|L10:crop",9096]
       ],
@@ -2394,12 +2394,12 @@
     {
       "cx": -1,
       "cz": 2,
-      "hash": "e7a3dea59a98e0db",
-      "verts": 10988,
+      "hash": "f31346d597b1a401",
+      "verts": 11272,
       "mats": ["kit|L10:crop","kit|L10:field","kit|L10:wood","kit|kit:prop"],
       "meshes": [
         ["kit|L10:wood",124],
-        ["kit|kit:prop",644],
+        ["kit|kit:prop",928],
         ["kit|L10:field",4],
         ["kit|L10:crop",10216]
       ],
@@ -2606,11 +2606,11 @@
     {
       "cx": 1,
       "cz": 2,
-      "hash": "bba3db2f33cd4ab4",
-      "verts": 9035,
+      "hash": "5c22ae980a752145",
+      "verts": 9088,
       "mats": ["kit|L10:crop","kit|L10:field","kit|kit:water"],
       "meshes": [
-        ["kit|kit:water",15],
+        ["kit|kit:water",68],
         ["kit|L10:field",4],
         ["kit|L10:crop",9016]
       ],
