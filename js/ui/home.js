@@ -54,7 +54,7 @@ const S = {
   coopBtn: null, coopStatus: null, micBtn: null, modalView: null,
   hintW: 0, hintH: 0, hintX: -1, hintY: -1, hintPortrait: null,
   secEl: null, secRect: null,   // 「创意工坊 / 设置」按钮组和它的矩形缓存（resize 时清空）
-  // 弹层栈：'menu' | 'casual' | 'nightmare' | 'test' | 'credits' | 'skin'
+  // 弹层栈：'menu' | 'casual' | 'nightmare' | 'test' | 'skin'
   layers: [], hist: 0, expectDepth: null,
   // 3D
   group: null, holder: null, body: null, hit: null,
@@ -685,11 +685,10 @@ function renderLayers() {
 // ===================================================================
 // 弹窗内容
 // ===================================================================
-const ATTRIBUTION = '本游戏的层级与实体设定改编自 Backrooms Wiki（英文 Wikidot、中文 Wikidot、Fandom）的社区创作，依照 CC BY-SA 3.0 协议使用。';
 const LEVEL_NAMES = { fun: 'Level Fun =)', run: 'Level ! · Run For Your Life' };
 
 function buildDialog(view) {
-  const titles = { menu: '选择模式', casual: '游玩', nightmare: '噩梦生存', test: '测试模式', credits: '设定来源与授权' };
+  const titles = { menu: '选择模式', casual: '游玩', nightmare: '噩梦生存', test: '测试模式' };
   const dlg = mk('div', 'home-dialog home-dialog-' + view, S.modal);
   dlg.setAttribute('role', 'dialog');
   dlg.setAttribute('aria-modal', 'true');
@@ -708,7 +707,6 @@ function buildDialog(view) {
   else if (view === 'casual') buildCasual(body);
   else if (view === 'nightmare') buildNightmare(body);
   else if (view === 'test') buildTest(body);
-  else if (view === 'credits') buildCredits(body);
 
   // 键盘用户直接落到第一个控件；触屏不抢焦点，免得弹出焦点框或滚动
   if (!(BR.input && BR.input.isTouch)) {
@@ -884,79 +882,6 @@ function buildTest(body) {
   start.addEventListener('click', () => startGame('test', null));
 }
 
-// ---------- 署名 ----------
-let creditsPromise = null;
-function loadCredits() {
-  if (!creditsPromise) {
-    // file:// 下 fetch 一定失败，失败也缓存，只显示署名
-    creditsPromise = typeof fetch === 'function'
-      ? fetch(BASE + 'data/credits.json', { cache: 'no-cache' }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-      : Promise.reject(new Error('fetch 不可用'));
-  }
-  return creditsPromise;
-}
-
-function buildCredits(body) {
-  mk('p', 'home-note', body, ATTRIBUTION);
-  const list = mk('ul', 'home-credits-list', body);
-  loadCredits().then(data => renderCredits(body, list, data)).catch(() => { /* 没有 credits.json 就只显示署名 */ });
-}
-
-function linkOrText(parent, text, url) {
-  if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
-    const a = mk('a', null, parent, text || url);
-    a.href = url;
-    a.target = '_blank';
-    a.rel = 'noopener noreferrer';
-  } else {
-    mk('span', null, parent, text);
-  }
-}
-
-function short(v) {
-  if (v == null) return '';
-  if (Array.isArray(v)) return v.map(short).join('、');
-  if (typeof v === 'object') return v.name || v.title || JSON.stringify(v).slice(0, 200);
-  return String(v);
-}
-
-// credits.json 的结构由调研模块决定，这里宽松渲染：数组 / 带数组字段的对象 / 普通键值
-function renderCredits(body, list, data) {
-  if (!attached(list)) return;
-  if (data && typeof data === 'object' && !Array.isArray(data)) {
-    for (const k of ['attribution', 'note', 'license']) {
-      if (typeof data[k] === 'string') list.parentNode.insertBefore(mk('p', 'home-note', null, data[k]), list);
-    }
-  }
-  let items = Array.isArray(data) ? data : null;
-  if (!items && data && typeof data === 'object') {
-    for (const k of ['entries', 'sources', 'items', 'credits', 'pages', 'works']) if (Array.isArray(data[k])) { items = data[k]; break; }
-    if (!items) {
-      items = Object.keys(data).filter(k => !['attribution', 'note', 'license'].includes(k)).map(k => ({ _key: k, _val: data[k] }));
-    }
-  }
-  if (!items) return;
-  for (const it of items.slice(0, 800)) {
-    const li = mk('li', null, list);
-    if (typeof it !== 'object' || it === null) { li.textContent = String(it); continue; }
-    if ('_key' in it) {
-      mk('span', 'home-credits-key', li, it._key + '：');
-      if (Array.isArray(it._val)) it._val.forEach((x, i) => { if (i) li.appendChild(document.createTextNode('；')); linkOrText(li, short(x), x && (x.url || x.link)); });
-      else linkOrText(li, short(it._val), typeof it._val === 'string' ? it._val : it._val && it._val.url);
-      continue;
-    }
-    const title = it.title || it.name || it.page || it.id || '';
-    const url = it.url || it.link || it.href || it.source;
-    linkOrText(li, short(title) || (typeof url === 'string' ? url : ''), url);
-    const meta = [];
-    const by = it.authors || it.author || it.by;
-    if (by) meta.push('作者：' + short(by));
-    if (it.site || it.wiki || it.origin) meta.push(short(it.site || it.wiki || it.origin));
-    if (it.license) meta.push(short(it.license));
-    if (meta.length) mk('div', 'home-credits-key', li, meta.join(' · '));
-  }
-}
-
 // ===================================================================
 // 开始游戏
 // ===================================================================
@@ -1012,9 +937,6 @@ function buildDom() {
     if (BR.settingsUI && typeof BR.settingsUI.open === 'function') BR.settingsUI.open();
     else if (BR.hud && typeof BR.hud.toast === 'function') BR.hud.toast('设置制作中', 1600);
   });
-
-  const credit = button('home-credit', root, '设定来自 Backrooms Wiki（CC BY-SA 3.0）');
-  credit.addEventListener('click', () => openLayer('credits'));
 
   const modal = S.modal = mk('div', 'home-modal', root);
   modal.hidden = true;

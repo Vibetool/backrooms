@@ -727,18 +727,6 @@ async function secSettingsAndroidP(D) {
   if (qh !== 'high') throw new Error('「立即刷新」检查后画质没恢复成高：' + qh);
 }
 
-async function secCredits(D) {
-  await press(D, '.home-credit');
-  const ok = await waitFor(D, () => document.querySelectorAll('.home-credits-list li').length > 5, 10000);
-  await sleep(300);
-  const c = await D.ev(() => {
-    const hs = __m.qa('.home-credits-list li > a:first-child').map(a => a.getBoundingClientRect().height);
-    return { n: hs.length, minH: hs.length ? +Math.min(...hs).toFixed(1) : null, maxH: hs.length ? +Math.max(...hs).toFixed(1) : null };
-  });
-  D.check('C9 署名列表链接最矮 ≥40px', ok && c.n > 0 && c.minH >= 40, c);
-  await closeModals(D);
-}
-
 // C10 用的 BR.coop 整体替身（主页只读 active / mic / micBusy / setMic）
 function installCoopStub() {
   window.__realCoop = BR.coop;
@@ -2478,7 +2466,6 @@ const PLANS = {
     ['home', async D => { await secHint(D); await openDialog(D, 'casual'); await c1(D, true); await c7Home(D); await closeModals(D); }],   // C4 C1 C7
     ['lobby', secLobbyBack],                                                                         // B3
     ['settings', secSettingsAndroidP],                                                               // C6 C7 C8
-    ['credits', secCredits],                                                                         // C9
     ['history', secGameBack],                                                                        // E1 E2
     ['guest', secGuestBack],                                                                         // 大厅客机开局 → 回主页的返回键
     ['game', secGame],                                                                               // E3 E4 A1 A3 A2 A12
