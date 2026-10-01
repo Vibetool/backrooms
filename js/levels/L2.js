@@ -21,10 +21,112 @@ const mod = (a, n) => ((a % n) + n) % n;
 // =====================================================================
 // 程序化贴图（仓库里没有 jpg，noFile：不去探测文件）
 // =====================================================================
+// 用户 2026-10-01："材质也得跟随着细化……刮痕两边就需要细一点的过渡"：贴图里的痕迹（刮痕、污渍、水渍、锈迹、裂缝）
+// 一律从中间往两边慢慢淡出、两头收尖。软边只用渐变 / 多层半透明叠画 / 两头收尖的路径（kit.paint 画笔 + 下面几个小工具），
+// 不用 ctx.filter（老 iOS Safari 不支持，会悄悄失效变回一刀切的硬边），也不用 fillRect 画实心条
+const WHITE = [255, 255, 255];
+const rgbaC = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${Math.max(0, Math.min(1, a)).toFixed(4)})`;
+// 钟形横截面的分层 alpha：K 层由外到内一层比一层窄，叠起来离中心 d（0..1）处的浓度 ≈ A·(1 − d²)^p（和 kit.paint 同一手感）
+function bellA(K, A, p) {
+  const out = [];
+  let prev = 0;
+  for (let k = 0; k < K; k++) {
+    const d = 1 - (k + 0.5) / K, F = Math.min(0.995, A) * Math.pow(Math.max(0, 1 - d * d), p);
+    out.push(Math.max(0, Math.min(1, 1 - (1 - F) / (1 - prev))));
+    prev = Math.max(prev, F);
+  }
+  return out;
+}
+// 软边痕迹先在一张透明的小画布上用白色画出形状（只攒 alpha：白色预乘后三个通道和 alpha 一样，叠多少层都不偏色），
+// 染成 col 后再以 globalAlpha = alpha 一次合成到贴图上。box = [x0, y0, x1, y1]（贴图像素，可以伸出画布），wrap = s / [s, 0]（无缝补画）。
+// 为什么不直接画在贴图上：很淡的多层叠画直接画在不透明底色上，8 位画布每层都取整，颜色会漂（实测 alpha 0.045 的暗色刮痕
+// 叠在淡黄底上：R 一点没降、G/B 掉了 8 → 一道粉色细线）；这样做每个像素只取整一次
+let MASK = null;
+function viaMask(g, s, wrap, box, col, alpha, draw) {
+  const x0 = Math.floor(box[0]), y0 = Math.floor(box[1]), w = Math.ceil(box[2]) - x0 + 1, h = Math.ceil(box[3]) - y0 + 1;
+  if (!(w > 0 && h > 0) || !(alpha > 0)) return;
+  if (!MASK) MASK = document.createElement('canvas');
+  if (MASK.width < w || MASK.height < h) { MASK.width = Math.max(MASK.width, w); MASK.height = Math.max(MASK.height, h); }
+  const t = MASK.getContext('2d');
+  t.setTransform(1, 0, 0, 1, 0, 0); t.globalAlpha = 1; t.globalCompositeOperation = 'source-over';
+  t.clearRect(0, 0, w, h);
+  t.translate(-x0, -y0); draw(t); t.setTransform(1, 0, 0, 1, 0, 0);
+  t.globalCompositeOperation = 'source-in'; t.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`; t.fillRect(0, 0, w, h);
+  t.globalCompositeOperation = 'source-over';
+  const wx = Array.isArray(wrap) ? wrap[0] : wrap || 0, wy = Array.isArray(wrap) ? wrap[1] : wrap || 0;
+  g.save(); g.globalAlpha = Math.min(1, alpha);
+  for (const dy of wy ? [-wy, 0, wy] : [0]) for (const dx of wx ? [-wx, 0, wx] : [0]) {
+    if (x0 + dx + w < 0 || x0 + dx > s || y0 + dy + h < 0 || y0 + dy > s) continue;
+    g.drawImage(MASK, 0, 0, w, h, x0 + dx, y0 + dy, w, h);
+  }
+  g.restore();
+}
+// kit.paint 画笔走 viaMask 的包装（形状用白色、alpha 1 画，最浓处的浓度交给合成时的 globalAlpha）：
+// 刮痕 / 擦痕：ang 方向长 len，width 全宽（含两侧淡出）
+function mScratch(g, s, wrap, x, y, len, ang, o, col, alpha) {
+  const ca = Math.abs(Math.cos(ang)), sa = Math.abs(Math.sin(ang)), side = len * 0.06 + (o.spread || 0) + (o.width || 2) * 2 + 6;
+  const ex = ca * len * 0.62 + sa * side + 4, ey = sa * len * 0.62 + ca * side + 4;
+  viaMask(g, s, wrap, [x - ex, y - ey, x + ex, y + ey], col, alpha, t => (o.scuff ? kit.paint.scuff : kit.paint.scratch)(t, x, y, len, ang, Object.assign({}, o, { color: WHITE, alpha: 1, wrap: 0 })));
+}
+// 污渍斑（stain）：中间几团叠出来的浓淡要保留，所以形状按 0.6 画、合成时乘回去
+function mStain(g, s, wrap, x, y, rad, o, col, alpha) {
+  const sq = o.squash || 1;
+  viaMask(g, s, wrap, [x - rad * 1.5 - 3, y - rad * 1.5 * sq - 3, x + rad * 1.5 + 3, y + rad * 1.5 * sq + 3], col, alpha / 0.6,
+    t => kit.paint.stain(t, x, y, rad, Object.assign({}, o, { color: WHITE, alpha: 0.6, wrap: 0 })));
+}
+// 滴流水痕（drip）：从 (x, y) 往下流 len 像素
+function mDrip(g, s, wrap, x, y, len, o, col, alpha) {
+  const w = o.width || len * 0.07;
+  viaMask(g, s, wrap, [x - w * 2.6 - 4, y - w * 2.6 - 4, x + w * 2.6 + 4, y + len + 6], col, alpha,
+    t => kit.paint.drip(t, x, y, len, Object.assign({}, o, { color: WHITE, alpha: 1, wrap: 0 })));
+}
+// 很淡的长条软斑（滚筒刷纹）：一个拉长的椭圆，径向渐变从中心淡到边缘，一次填充、四周都是软边
+function softDash(g, s, x, y, len, hgt, col, a) {
+  for (const dx of [-s, 0, s]) {
+    const X = x + dx;
+    if (X + len / 2 < 0 || X - len / 2 > s) continue;
+    g.save(); g.translate(X, y); g.scale(len / 2, hgt / 2);
+    const gr = g.createRadialGradient(0, 0, 0, 0, 0, 1);
+    gr.addColorStop(0, rgbaC(col, a)); gr.addColorStop(0.4, rgbaC(col, a * 0.7)); gr.addColorStop(1, rgbaC(col, 0));
+    g.fillStyle = gr; g.beginPath(); g.arc(0, 0, 1, 0, TAU); g.fill();
+    g.restore();
+  }
+}
+// 两头收尖的软边折线（混凝土细裂缝）：pts 像素折线，每段再细分 3 份；wid = 最宽处全宽（含两侧淡出），K 层叠出钟形横截面（在 viaMask 里画）
+function softPolyline(t, pts, wid) {
+  const P = [];
+  for (let i = 0; i + 1 < pts.length; i++) for (let k = 0; k < 3; k++) { const f = k / 3; P.push([pts[i][0] + (pts[i + 1][0] - pts[i][0]) * f, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * f]); }
+  P.push(pts[pts.length - 1]);
+  const n = P.length, cum = [0];
+  for (let i = 1; i < n; i++) cum.push(cum[i - 1] + Math.hypot(P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1]));
+  const L = cum[n - 1] || 1, nx = [], ny = [], hw = [];
+  for (let i = 0; i < n; i++) {
+    const a = P[Math.max(0, i - 1)], c = P[Math.min(n - 1, i + 1)], dx = c[0] - a[0], dy = c[1] - a[1], l = Math.hypot(dx, dy) || 1;
+    nx.push(-dy / l); ny.push(dx / l);
+    hw.push(wid / 2 * Math.pow(Math.sin(Math.PI * cum[i] / L), 0.6));   // 两头收尖
+  }
+  const K = Math.max(3, Math.min(8, Math.round(wid * 1.5 + 2))), al = bellA(K, 1, 1.6);
+  for (let k = 0; k < K; k++) {
+    const sc = 1 - k / K;
+    t.beginPath();
+    for (let i = 0; i < n; i++) { const X = P[i][0] + nx[i] * hw[i] * sc, Y = P[i][1] + ny[i] * hw[i] * sc; if (i) t.lineTo(X, Y); else t.moveTo(X, Y); }
+    for (let i = n - 1; i >= 0; i--) t.lineTo(P[i][0] - nx[i] * hw[i] * sc, P[i][1] - ny[i] * hw[i] * sc);
+    t.closePath();
+    t.fillStyle = rgbaC(WHITE, al[k]); t.fill();
+  }
+}
+// 软边描边（干掉的水渍线、墙根的潮线）：同一条路径从宽到窄描 K 遍 —— 横截面中间深、两侧淡出（在 viaMask 里画）
+function softStroke(t, path, lw, K) {
+  const al = bellA(K, 1, 1.5);
+  t.lineJoin = 'round'; t.lineCap = 'round';
+  for (let k = 0; k < K; k++) { path(); t.lineWidth = Math.max(0.4, lw * (1 - k / K)); t.strokeStyle = rgbaC(WHITE, al[k]); t.stroke(); }
+}
+
 // 墙：淡黄色涂料抹灰墙。贴图竖向正好铺满一层楼高（repeatMeters[1] = H），所以画布最上面一行 = 天花板、最下面一行 = 墙根：
-// 墙根的脏污带、顶上的熏黄、约 1 m 高的擦痕都能画在对的高度上。所有痕迹都模糊处理，别画成硬边的条和点
+// 墙根的脏污带、顶上的熏黄、约 1 m 高的擦痕都能画在对的高度上。横向无缝（wrap [s, 0]），竖向不用接
 BR.assets.registerProcedural('l2_wall_paint', 512, (g, s) => {
   const r = U.rng('l2_wall_paint');
+  const WR = [s, 0];
   g.fillStyle = '#e9e1c0'; g.fillRect(0, 0, s, s);
   const blotX = (x, y, rad, col, a) => {
     for (const dx of [-s, 0, s]) {
@@ -37,51 +139,57 @@ BR.assets.registerProcedural('l2_wall_paint', 512, (g, s) => {
   };
   // 涂层厚薄不匀：大片半透明深浅斑
   for (let k = 0; k < 90; k++) { const x = r() * s, y = r() * s, rad = 25 + r() * 90, dk = r() < 0.55, a = 0.04 + r() * 0.07; blotX(x, y, rad, dk ? '160,136,86' : '255,248,220', a); }
-  g.filter = 'blur(2px)';
-  // 滚筒刷留下的横向淡纹
+  // 滚筒刷留下的横向淡纹：拉长的软边椭圆（中间浓、上下左右一路淡出），原来是 fillRect 实心条 + blur
   for (let k = 0; k < 70; k++) {
     const y = r() * s, x = r() * s, w = 40 + r() * 140, h = 2 + r() * 3, lt = r() < 0.5;
-    g.fillStyle = lt ? 'rgba(255,250,228,0.05)' : 'rgba(130,108,66,0.035)';
-    for (const dx of [-s, 0, s]) g.fillRect(x + dx, y, w, h);
+    softDash(g, s, x + w / 2, y, w * 1.1, h * 2.6, lt ? [255, 250, 228] : [130, 108, 66], lt ? 0.07 : 0.05);
   }
-  // 从上往下的水渍流痕：上宽下尖、越往下越淡
-  for (let k = 0; k < 11; k++) {
-    const x = r() * s, y0 = r() * s * 0.55, len = 70 + r() * (s - y0) * 0.7, w = 3 + r() * 7, a = 0.07 + r() * 0.08, sway = (r() - 0.5) * 8;
-    for (const dx of [-s, 0, s]) {
-      const gr = g.createLinearGradient(0, y0, 0, y0 + len);
-      gr.addColorStop(0, `rgba(135,104,58,${a})`); gr.addColorStop(1, 'rgba(135,104,58,0)');
-      g.fillStyle = gr; g.beginPath();
-      g.moveTo(x + dx - w / 2, y0); g.lineTo(x + dx + w / 2, y0); g.lineTo(x + dx + sway + 0.5, y0 + len); g.lineTo(x + dx + sway - 0.5, y0 + len);
-      g.closePath(); g.fill();
+  // 顶板渗水沿墙往下流的水渍：源头在墙顶一团晕开的潮印，往下越流越细越淡、两侧淡出、末端收尖；
+  // 另有几道从墙中间（线管卡子）开始的短水痕。原来是硬边梯形 + blur。只出现在某一处的长水痕交给贴花（decorate），贴图里的淡一些，免得 3 m 一重复
+  for (let k = 0; k < 12; k++) {
+    const top = k < 8, x = r() * s, y0 = top ? r() * s * 0.05 : s * (0.15 + r() * 0.35);
+    const len = top ? s * (0.2 + r() * 0.4) : 60 + r() * 120, w = 6 + r() * 9, a = 0.08 + r() * 0.08;
+    mDrip(g, s, WR, x, y0, len, { width: w, seed: 'l2w-drip' + k }, [135, 104, 58], a);
+    if (top) mStain(g, s, WR, x, y0 + 3, w * 2 + 8 + r() * 14, { squash: 0.55, ring: 0.5, lobes: 4, seed: 'l2w-leak' + k }, [128, 100, 56], a * 0.7);
+  }
+  // 约 1 m 高的横向擦痕（推车、肩膀蹭的）：一束细刮痕 / 刮痕 + 一侧很淡的浅色翻边，都是中间深两侧淡出、两头收尖；再加几片压扁的软斑
+  for (let k = 0; k < 9; k++) {
+    const y = s * (1 - (0.8 + r() * 0.6) / 2.8), x = r() * s, w = 30 + r() * 100, a = 0.1 + r() * 0.12, kd = r(), ang = (r() - 0.5) * 0.07;
+    if (kd < 0.45) mScratch(g, s, WR, x, y, w, ang, { scuff: true, spread: 4 + kd * 10, count: 5, width: 1.8, seed: 'l2w-scuff' + k }, [100, 84, 58], a * 1.2);
+    else {
+      const wd = 3 + kd * 3;
+      mScratch(g, s, WR, x, y, w, ang, { width: wd, soft: 2, seed: 'l2w-scr' + k }, [100, 84, 58], a);
+      mScratch(g, s, WR, x, y + wd * 0.75, w * 0.9, ang, { width: wd * 0.6, soft: 1.5, seed: 'l2w-lip' + k }, [255, 250, 232], a * 0.5);
     }
   }
-  // 约 1 m 高的横向擦痕（推车、肩膀蹭的）
-  for (let k = 0; k < 9; k++) {
-    const y = s * (1 - (0.8 + r() * 0.6) / 2.8), x = r() * s, w = 30 + r() * 100, a = 0.06 + r() * 0.08, h = 2 + r() * 3;
-    g.fillStyle = `rgba(100,84,58,${a})`;
-    for (const dx of [-s, 0, s]) g.fillRect(x + dx, y, w, h);
-  }
-  g.filter = 'none';
-  // 细颗粒
+  for (let k = 0; k < 5; k++) mStain(g, s, WR, r() * s, s * (1 - (0.9 + r() * 0.5) / 2.8), 30 + r() * 40, { squash: 0.25, lobes: 4, seed: 'l2w-rub' + k }, [110, 92, 62], 0.06 + r() * 0.04);
+  // 细颗粒（单像素的明暗噪点，是抹灰的质感，不是痕迹）
   for (let k = 0; k < 5000; k++) {
     const lt = r() < 0.5, a = 0.04 + r() * 0.08, x = r() * s, y = r() * s;
     g.fillStyle = lt ? `rgba(255,252,235,${a})` : `rgba(120,100,60,${a})`;
     g.fillRect(x, y, 1, 1);
   }
-  // 抹灰里零星的小气孔
+  // 抹灰里零星的小气孔：径向渐变的小点，中间深、边上淡出
   for (let k = 0; k < 110; k++) {
-    const x = r() * s, y = r() * s, d = 0.5 + r() * 1.0, a = 0.12 + r() * 0.16;
-    g.fillStyle = `rgba(110,90,55,${a})`; g.beginPath(); g.arc(x, y, d, 0, TAU); g.fill();
+    const x = r() * s, y = r() * s, d = 1 + r() * 1.6, a = 0.14 + r() * 0.18;
+    const gr = g.createRadialGradient(x, y, 0, x, y, d);
+    gr.addColorStop(0, `rgba(110,90,55,${a})`); gr.addColorStop(0.5, `rgba(110,90,55,${a * 0.55})`); gr.addColorStop(1, 'rgba(110,90,55,0)');
+    g.fillStyle = gr; g.fillRect(x - d, y - d, d * 2, d * 2);
   }
-  // 墙根脏污：底部渐深，上沿参差（周期正弦 + 抖动，横向无缝）
-  g.filter = 'blur(3px)';
-  for (let x = -4; x < s + 4; x += 2) {
-    const top = s * (0.82 + 0.03 * Math.sin(x / s * TAU * 3) + 0.02 * Math.sin(x / s * TAU * 7 + 1)) + r() * 5;
+  // 墙根脏污：底部渐深，上沿是一条平滑起伏的软边（周期正弦 + 平滑插值的周期噪声，横向无缝）。
+  // 逐列 1 px 的竖向渐变、从 0 淡入：相邻两列几乎一样，没有台阶，也不靠 blur
+  const NN = 32, nz = [];
+  for (let i = 0; i < NN; i++) nz.push(r());
+  const noise = x => { const f = x / s * NN, i = Math.floor(f), t = f - i, u = t * t * (3 - 2 * t); return nz[mod(i, NN)] * (1 - u) + nz[mod(i + 1, NN)] * u; };
+  const topAt = x => s * (0.82 + 0.03 * Math.sin(x / s * TAU * 3) + 0.02 * Math.sin(x / s * TAU * 7 + 1)) + (noise(x) - 0.5) * 12;
+  for (let x = 0; x < s; x++) {
+    const top = topAt(x) - 8;
     const gr = g.createLinearGradient(0, top, 0, s);
-    gr.addColorStop(0, 'rgba(105,84,48,0)'); gr.addColorStop(0.6, 'rgba(105,84,48,0.22)'); gr.addColorStop(1, 'rgba(82,64,36,0.5)');
-    g.fillStyle = gr; g.fillRect(x, top, 2, s - top + 8);
+    gr.addColorStop(0, 'rgba(105,84,48,0)'); gr.addColorStop(0.3, 'rgba(105,84,48,0.09)'); gr.addColorStop(0.65, 'rgba(105,84,48,0.24)'); gr.addColorStop(1, 'rgba(82,64,36,0.5)');
+    g.fillStyle = gr; g.fillRect(x, top, 1, s - top);
   }
-  g.filter = 'none';
+  // 墙根返潮：几片压扁的潮斑（中间浓、往外淡出）
+  for (let k = 0; k < 6; k++) mStain(g, s, WR, r() * s, s * (0.87 + r() * 0.05), 26 + r() * 40, { squash: 0.35, lobes: 4, seed: 'l2w-damp' + k }, [112, 88, 50], 0.08 + r() * 0.05);
   // 顶上一圈熏黄
   { const gr = g.createLinearGradient(0, 0, 0, s * 0.08); gr.addColorStop(0, 'rgba(95,76,42,0.22)'); gr.addColorStop(1, 'rgba(95,76,42,0)'); g.fillStyle = gr; g.fillRect(0, 0, s, s * 0.08); }
 }, { noFile: true });
@@ -106,67 +214,76 @@ BR.assets.registerProcedural('l2_slab', 512, (g, s) => {
     g.fillStyle = lt ? `rgba(232,224,206,${a})` : `rgba(72,66,56,${a})`;
     g.fillRect(x, y, w, w);
   }
+  // 小坑：径向渐变的小点（中间深、边上淡出），原来是实心圆点
   for (let k = 0; k < 320; k++) {
-    const x = r() * s, y = r() * s, d = 0.5 + r() * 1.3, a = 0.15 + r() * 0.2;
-    g.fillStyle = `rgba(62,57,50,${a})`; g.beginPath(); g.arc(x, y, d, 0, TAU); g.fill();
+    const x = r() * s, y = r() * s, d = 1 + r() * 1.9, a = 0.18 + r() * 0.22;
+    const gr = g.createRadialGradient(x, y, 0, x, y, d);
+    gr.addColorStop(0, `rgba(62,57,50,${a})`); gr.addColorStop(0.45, `rgba(62,57,50,${a * 0.6})`); gr.addColorStop(1, 'rgba(62,57,50,0)');
+    g.fillStyle = gr; g.fillRect(x - d, y - d, d * 2, d * 2);
   }
-  // 水渍：不规则的闭合水线（极坐标上叠两层正弦），轻微模糊
-  g.filter = 'blur(1.5px)';
+  // 水渍：不规则的闭合水线（极坐标上叠两层正弦）。水线用同一条路径从宽到窄描几遍叠出钟形横截面（中间深、两侧淡出），
+  // 圈里一层很淡的潮印；外面再晕开一圈更宽更淡的旧水线。原来是 2–4 px 的实心描边 + blur
   for (let k = 0; k < 5; k++) {
     const x = r() * s, y = r() * s, R = 30 + r() * 55, sq = 0.55 + r() * 0.4, rot = r() * TAU, p1 = r() * TAU, p2 = r() * TAU, lw = 2 + r() * 2;
-    const path = () => {
-      g.beginPath();
+    const path = (t, sc) => () => {
+      t.beginPath();
       for (let i = 0; i <= 48; i++) {
-        const a = i / 48 * TAU, rr = R * (1 + 0.16 * Math.sin(3 * a + p1) + 0.09 * Math.sin(5 * a + p2));
+        const a = i / 48 * TAU, rr = R * sc * (1 + 0.16 * Math.sin(3 * a + p1) + 0.09 * Math.sin(5 * a + p2));
         const px = Math.cos(a) * rr, py = Math.sin(a) * rr * sq;
         const qx = px * Math.cos(rot) - py * Math.sin(rot), qy = px * Math.sin(rot) + py * Math.cos(rot);
-        if (i) g.lineTo(qx, qy); else g.moveTo(qx, qy);
+        if (i) t.lineTo(x + qx, y + qy); else t.moveTo(x + qx, y + qy);
       }
-      g.closePath();
+      t.closePath();
     };
-    wrap9((dx, dy) => {
-      if (x + dx + R * 1.4 < 0 || x + dx - R * 1.4 > s || y + dy + R * 1.4 < 0 || y + dy - R * 1.4 > s) return;
-      g.save(); g.translate(x + dx, y + dy);
-      path(); g.fillStyle = 'rgba(96,82,60,0.07)'; g.fill();
-      g.strokeStyle = 'rgba(92,74,50,0.2)'; g.lineWidth = lw; g.stroke();
-      g.restore();
+    const box = [x - R * 1.6, y - R * 1.6, x + R * 1.6, y + R * 1.6];
+    viaMask(g, s, s, box, [96, 82, 60], 0.06, t => {     // 圈里的潮印：中间淡、靠水线略深
+      path(t, 1)();
+      const gr = t.createRadialGradient(x, y, 0, x, y, R * 1.25);
+      gr.addColorStop(0, rgbaC(WHITE, 0.5)); gr.addColorStop(0.75, rgbaC(WHITE, 0.9)); gr.addColorStop(1, rgbaC(WHITE, 0.6));
+      t.fillStyle = gr; t.fill();
     });
+    viaMask(g, s, s, box, [92, 74, 50], 0.05, t => softStroke(t, path(t, 1.1), lw * 3.6, 4));   // 外圈更早干掉的一道淡水线
+    viaMask(g, s, s, box, [92, 74, 50], 0.17, t => softStroke(t, path(t, 1), lw * 2.2, 5));
   }
-  g.filter = 'none';
-  // 细裂缝
+  // 细裂缝：两头收尖、横截面钟形的软边折线（原来是 1 px 实心线）
   for (let k = 0; k < 6; k++) {
     const pts = [[r() * s, r() * s]];
     let a = r() * TAU;
     for (let i = 0; i < 12; i++) { a += (r() - 0.5) * 1.1; const l = 10 + r() * 16, p = pts[pts.length - 1]; pts.push([p[0] + Math.cos(a) * l, p[1] + Math.sin(a) * l]); }
-    wrap9((dx, dy) => {
-      g.strokeStyle = 'rgba(58,52,44,0.35)'; g.lineWidth = 1; g.beginPath();
-      pts.forEach((p, i) => (i ? g.lineTo(p[0] + dx, p[1] + dy) : g.moveTo(p[0] + dx, p[1] + dy)));
-      g.stroke();
-    });
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of pts) { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); }
+    viaMask(g, s, s, [x0 - 4, y0 - 4, x1 + 4, y1 + 4], [58, 52, 44], 0.42, t => softPolyline(t, pts, 3.2));
   }
 }, { noFile: true });
 
 // 保温管的铝皮：竖向一张 = 1.5 m 一节铝皮。画布横纹贴到管子上 v 沿管长 → 一圈圈的环向波纹（30 道，5 cm 一道）；
-// 每节开头一道不锈钢箍带和搭接处的阴影也画在贴图里（原来用几何箍带，一块要多一千多个三角面）；再加纵向搭接缝、污迹、划痕
+// 每节开头一道不锈钢箍带和搭接处的阴影也画在贴图里（原来用几何箍带，一块要多一千多个三角面）；再加纵向搭接缝、污迹、划痕。
+// 箍带两边的暗线、搭接缝都按 smoothstep / 横向渐变过渡 2–4 px，划痕两侧淡出、两头收尖
 BR.assets.registerProcedural('l2_jacket', 512, (g, s) => {
   const r = U.rng('l2_jacket');
   const RIBS = 30, band = Math.round(s * 0.03), lap = Math.round(s * 0.014);
+  const ss = (a, c, x) => { const t = Math.max(0, Math.min(1, (x - a) / (c - a))); return t * t * (3 - 2 * t); };
   for (let y = 0; y < s; y++) {
     const t = y / s * RIBS * TAU;
     let v = 196 + 20 * Math.sin(t) + 7 * Math.sin(2 * t + 0.6);
     let rr = v, gg = v - 6, bb = v - 18;
     const yb = s - 1 - y;                           // 画布最底下一行 = 贴图 v 的起点（flipY）
-    if (yb < band) {                                // 箍带：亮钢，上下两条暗边
-      const e = yb < 3 || yb >= band - 3;
-      rr = gg = bb = e ? 88 : 226 + ((yb * 37) % 9);
-    } else if (yb < band + lap) {                   // 下一节铝皮压在箍带下面的那一小段：暗一点
-      const k = 0.72 + 0.28 * (yb - band) / lap; rr *= k; gg *= k; bb *= k;
+    if (yb < band) {                                // 箍带：亮钢，上下两条暗边往里 3 px 慢慢亮起来（卷边的圆角，不是一刀切）
+      const e = ss(0, 3.5, Math.min(yb, band - 1 - yb) + 0.5);
+      rr = gg = bb = 88 + (226 + ((yb * 37) % 9) - 88) * e;
+    } else if (yb < band + lap) {                   // 下一节铝皮压在箍带下面的那一小段：暗一点，往外平滑亮回来
+      const k = 0.72 + 0.28 * ss(0, 1, (yb - band) / lap); rr *= k; gg *= k; bb *= k;
     }
     g.fillStyle = `rgb(${rr | 0},${gg | 0},${bb | 0})`;
     g.fillRect(0, y, s, 1);
   }
-  g.fillStyle = 'rgba(70,64,52,0.5)'; g.fillRect(s * 0.5, 0, 3, s - band);          // 纵向搭接缝（在管顶）
-  g.fillStyle = 'rgba(255,252,240,0.35)'; g.fillRect(s * 0.5 + 3, 0, 2, s - band);
+  // 纵向搭接缝（在管顶）：一侧是压下去的阴影、一侧是翻起来的亮边，两边都横向渐变淡出
+  {
+    const x0 = s * 0.5, gr = g.createLinearGradient(x0 - 7, 0, x0 + 10, 0);
+    gr.addColorStop(0, 'rgba(70,64,52,0)'); gr.addColorStop(0.3, 'rgba(70,64,52,0.22)'); gr.addColorStop(0.47, 'rgba(70,64,52,0.5)');
+    gr.addColorStop(0.58, 'rgba(255,252,240,0.12)'); gr.addColorStop(0.7, 'rgba(255,252,240,0.35)'); gr.addColorStop(1, 'rgba(255,252,240,0)');
+    g.fillStyle = gr; g.fillRect(x0 - 7, 0, 17, s - band);
+  }
   for (let k = 0; k < 60; k++) {
     const x = r() * s, y = r() * s, rad = 10 + r() * 60, a = 0.05 + r() * 0.12;
     for (const dx of [-s, 0, s]) for (const dy of [-s, 0, s]) {
@@ -175,10 +292,11 @@ BR.assets.registerProcedural('l2_jacket', 512, (g, s) => {
       g.fillStyle = gr; g.fillRect(x + dx - rad, y + dy - rad, rad * 2, rad * 2);
     }
   }
+  // 划痕：亮的是刮掉氧化层露出的新铝，暗的是蹭上的脏印；都是中间深、两侧淡出、两头收尖（原来是 1 px 实心线）
   for (let k = 0; k < 60; k++) {
     const x = r() * s, y = r() * s, l = 10 + r() * 40, a = r() * TAU, lt = r() < 0.6;
-    g.strokeStyle = lt ? 'rgba(255,255,245,0.35)' : 'rgba(60,55,45,0.3)'; g.lineWidth = 1;
-    g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l); g.stroke();
+    mScratch(g, s, s, x + Math.cos(a) * l / 2, y + Math.sin(a) * l / 2, l, a, { width: lt ? 3 : 3.6, soft: 2, seed: 'l2j-scr' + k },
+      lt ? [255, 255, 245] : [60, 55, 45], lt ? 0.42 : 0.34);
   }
 }, { noFile: true });
 
@@ -253,6 +371,8 @@ const BULB = [2.5, 1.9, 0.95];         // 暖黄灯罩（>1，色调映射后是
 const BULB_OFF = [0.14, 0.12, 0.09];
 const LAMP_COLOR = 0xffc070, LAMP_HOT = 0xff9a4a;
 const JK = { p1: [0.98, 0.96, 0.9], p2: [1.0, 0.98, 0.93], p3: [0.9, 0.88, 0.84], cold: [1.06, 1.1, 1.2], hot: [1.0, 0.86, 0.74] };
+// 贴花颜色（屏幕色 hex，kit.decal 按 sRGB 解码：写的就是灯下看到的颜色）
+const DC = { leak: 0x806a44, water: 0x6e5f44, rust: 0x7e4520, grime: 0x41382b, dust: 0x958058, soot: 0x1d1b18, scuff: 0x5c4e36 };
 
 const WALL = 'L2:wall', SLAB = 'L2:slab', JACKET = 'L2:jacket', PROP = 'kit:prop', GLOW = 'kit:glow';
 
@@ -324,6 +444,15 @@ function bx(b, x0, y0, z0, x1, y1, z1, color, faces, key) {
 // 盒子（不带碰撞体）：底面中心给法，可绕 y 转
 function part(b, x, y, z, w, h, d, color, faces, rotY) {
   return b.box(x, y, z, w, h, d, PROP, { color, solid: false, faces: faces || 'all', uv: 'stretch', rotY });
+}
+// 倒角版（用户 2026-10-01："一些方块的角不能太尖锐"）：bevel = 切角半径（米），edges = bevelEdges（缺省 'all'）。
+// 只给玩家走近看得到的大件用（支架立柱/横担、配电箱、接线盒、木框、混凝土梁……），细杆、贴面薄片、成片的小碎块不倒。
+// 低画质 / 本块到了 9000 面细节上限时 kit 自动退回普通盒：三角面和以前一模一样，碰撞体本来就不在这些件上
+function bxv(b, x0, y0, z0, x1, y1, z1, color, faces, bevel, edges, key) {
+  return b.aabb(x0, y0, z0, x1, y1, z1, key || PROP, { color, solid: false, faces: faces || 'all', uv: key && key !== PROP ? 'world' : 'stretch', bevel, bevelEdges: edges });
+}
+function partv(b, x, y, z, w, h, d, color, faces, bevel, edges) {
+  return b.box(x, y, z, w, h, d, PROP, { color, solid: false, faces: faces || 'all', uv: 'stretch', bevel, bevelEdges: edges });
 }
 // 任意两点之间的细杆（垂下来的电缆、软管）：朝向每次都不同，没法缓存，只给少量件用
 const _dir = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0), _q = new THREE.Quaternion();
@@ -536,33 +665,35 @@ function support(b, z, st) {
   const wood = st.kind === 'wood';
   const pc = wood ? C.wood : C.strut, pw = wood ? 0.085 : 0.042;
   const x0 = XPOST - pw / 2, x1 = XPOST + pw / 2;
-  bx(b, x0, 0, z - pw / 2, x1, TRAY.y - 0.045, z + pw / 2, pc, 'sides');
+  // 立柱四条竖棱倒角（冷弯槽钢本来就是圆角；木立柱倒得更大）
+  bxv(b, x0, 0, z - pw / 2, x1, TRAY.y - 0.045, z + pw / 2, pc, 'sides', wood ? 0.014 : 0.007, 'vertical');
   if (!wood) {
     // 立柱上一串长圆孔（槽钢的特征），底座钢板 + 两颗膨胀螺栓
     for (let y = 0.25; y < 2.2; y += 0.5) bx(b, x0 - 0.002, y, z - 0.007, x0, y + 0.05, z + 0.007, C.strutDark, ['nx']);
     bx(b, XPOST - 0.07, 0, z - 0.06, XPOST + 0.07, 0.008, z + 0.06, C.strutDark, ['py', 'nx', 'pz', 'nz']);
   }
+  // 三道横担：四条长棱倒角（两头插进立柱和墙里，端面本来就不画）
   for (const ya of [P1.y - P1.r - 0.043, P2.y - P2.r - 0.043, 2.028]) {
-    bx(b, x1, ya, z - pw / 2 + 0.002, XE, ya + 0.041, z + pw / 2 - 0.002, pc, ['py', 'ny', 'pz', 'nz']);
+    bxv(b, x1, ya, z - pw / 2 + 0.002, XE, ya + 0.041, z + pw / 2 - 0.002, pc, ['py', 'ny', 'pz', 'nz'], wood ? 0.01 : 0.006);
   }
   // 管卡：抱箍 + 朝走廊那边的螺栓耳
   for (const P of [P1, P2]) {
     cyl(b, P.x, P.y, z, P.r + 0.012, 0.04, 'z', PROP, C.clamp, 14, true);
     bx(b, P.x - P.r - 0.05, P.y - 0.012, z - 0.018, P.x - P.r - 0.008, P.y + 0.012, z + 0.018, C.clamp, ['nx', 'py', 'ny', 'pz', 'nz']);
   }
-  // 托架横担：从桥架外侧一直到东墙
-  bx(b, 12.50, TRAY.y - 0.045, z - 0.021, XE, TRAY.y - 0.005, z + 0.021, pc, ['ny', 'pz', 'nz', 'nx']);
+  // 托架横担：从桥架外侧一直到东墙（底下两条长棱 + 外端倒角）
+  bxv(b, 12.50, TRAY.y - 0.045, z - 0.021, XE, TRAY.y - 0.005, z + 0.021, pc, ['ny', 'pz', 'nz', 'nx'], 0.006);
   bx(b, 12.514, TRAY.y - 0.005, z - 0.006, 12.526, H, z + 0.006, C.rod, 'sides');
   bx(b, 12.505, TRAY.y - 0.06, z - 0.012, 12.535, TRAY.y - 0.045, z + 0.012, C.rod, ['ny', 'px', 'nx', 'pz', 'nz']);   // 螺母
   cyl(b, P3.x, P3.y, z, P3.r + 0.01, 0.035, 'z', PROP, C.clamp, 8, true);
 }
 // 两个支架之间的桥架吊架：短横担 + 两根吊杆
 function midHanger(b, z, cross) {
-  bx(b, 12.50, TRAY.y - 0.045, z - 0.021, 13.24, TRAY.y - 0.005, z + 0.021, C.strut, ['ny', 'pz', 'nz', 'nx', 'px']);
+  bxv(b, 12.50, TRAY.y - 0.045, z - 0.021, 13.24, TRAY.y - 0.005, z + 0.021, C.strut, ['ny', 'pz', 'nz', 'nx', 'px'], 0.006);
   for (const x of [12.52, 13.22]) bx(b, x - 0.006, TRAY.y - 0.005, z - 0.006, x + 0.006, H, z + 0.006, C.rod, 'sides');
   if (cross) {
     // 横通道路口没有立柱：小管挂在单独的吊杆横担上跨过去
-    bx(b, 13.12, 2.028, z - 0.02, 13.7, 2.068, z + 0.02, C.strut);
+    bxv(b, 13.12, 2.028, z - 0.02, 13.7, 2.068, z + 0.02, C.strut, 'all', 0.006, 'horizontal');
     bx(b, 13.294, 2.068, z - 0.006, 13.306, H, z + 0.006, C.rod, 'sides');
     cyl(b, P3.x, P3.y, z, P3.r + 0.01, 0.035, 'z', PROP, C.clamp, 8, true);
   }
@@ -599,7 +730,7 @@ function smallPipes(b, cross) {
     cyl(b, DR.x, -0.02, 8.72, DR.r, 0.1, 'y', PROP, C.pvc, 8, true);
     cyl(b, DR.x, -0.02, 15.28, DR.r, 0.1, 'y', PROP, C.pvc, 8, true);
   }
-  for (let z = 1.2; z < SIZE; z += 4) if (!cross || z < 8.4 || z > 15.6) bx(b, DR.x - 0.04, 0, z - 0.05, DR.x + 0.04, DR.y - DR.r - 0.002, z + 0.05, 0x6d6a62, 'noBottom');   // 垫块
+  for (let z = 1.2; z < SIZE; z += 4) if (!cross || z < 8.4 || z > 15.6) bxv(b, DR.x - 0.04, 0, z - 0.05, DR.x + 0.04, DR.y - DR.r - 0.002, z + 0.05, 0x6d6a62, 'noBottom', 0.01, 'vertical');   // 垫块（竖棱倒角）
 }
 
 // 主管（P1/P2/P3）：有横通道时 P1/P2 在路口前弯下去钻进地面、过了路口再从地里弯上来（给东侧的岔口让出路）
@@ -620,7 +751,7 @@ function bigPipes(b, st) {
       elbow(b, P.x, P.y - R, z0, R, P.r, '+z', '+y', JACKET, tint, 14, 4);
       cyl(b, P.x, -0.02, z0 + R, P.r, P.y - R + 0.02, 'y', JACKET, tint, 14, true);
       cyl(b, P.x, 0, z0 + R, P.r + 0.035, 0.07, 'y', PROP, C.band, 12, true);   // 穿地面的套管
-      bx(b, P.x - P.r - 0.1, 0, z0 + R - P.r - 0.1, P.x + P.r + 0.06, 0.03, z0 + R + P.r + 0.1, 0x8a8478, 'noBottom');   // 水泥护墩
+      bxv(b, P.x - P.r - 0.1, 0, z0 + R - P.r - 0.1, P.x + P.r + 0.06, 0.03, z0 + R + P.r + 0.1, 0x8a8478, 'noBottom', 0.012, 'top');   // 水泥护墩（上棱倒角）
     }
     // 南半：镜像
     const rise = [[P2, 14.2, tint2, 2], [P1, 14.9, tint1, 1]];
@@ -629,7 +760,7 @@ function bigPipes(b, st) {
       elbow(b, P.x, P.y - R, z1, R, P.r, '-z', '+y', JACKET, tint, 14, 4);
       cyl(b, P.x, -0.02, z1 - R, P.r, P.y - R + 0.02, 'y', JACKET, tint, 14, true);
       cyl(b, P.x, 0, z1 - R, P.r + 0.035, 0.07, 'y', PROP, C.band, 12, true);
-      bx(b, P.x - P.r - 0.1, 0, z1 - R - P.r - 0.1, P.x + P.r + 0.06, 0.03, z1 - R + P.r + 0.1, 0x8a8478, 'noBottom');
+      bxv(b, P.x - P.r - 0.1, 0, z1 - R - P.r - 0.1, P.x + P.r + 0.06, 0.03, z1 - R + P.r + 0.1, 0x8a8478, 'noBottom', 0.012, 'top');
     }
   }
   for (const t of st.tears) tearAt(b, t.p === 1 ? P1 : P2, t.z - TEAR_HALF, t.z + TEAR_HALF, t.p === 1 ? tint1 : tint2, t.h);
@@ -649,8 +780,8 @@ function bigPipes(b, st) {
 
 // 接线盒：挂在立柱正面，电线管从侧面穿进去，顶上一根竖管接到上面那根电线管
 function junctionBox(b, z, up) {
-  bx(b, 12.975, 1.02, z - 0.065, 13.038, 1.18, z + 0.065, C.box, ['nx', 'py', 'ny', 'pz', 'nz']);
-  bx(b, 12.969, 1.014, z - 0.07, 12.975, 1.186, z + 0.07, 0xb4b7b0, ['nx', 'py', 'ny', 'pz', 'nz']);
+  bxv(b, 12.975, 1.02, z - 0.065, 13.038, 1.18, z + 0.065, C.box, ['nx', 'py', 'ny', 'pz', 'nz'], 0.008);       // 盒体：朝外的棱都倒角
+  bxv(b, 12.969, 1.014, z - 0.07, 12.975, 1.186, z + 0.07, 0xb4b7b0, ['nx', 'py', 'ny', 'pz', 'nz'], 0.003);    // 盖板：薄板只倒 3 mm
   for (const dy of [0.02, 0.152]) for (const dz of [-0.05, 0.05]) bx(b, 12.966, 1.014 + dy, z + dz - 0.006, 12.969, 1.014 + dy + 0.012, z + dz + 0.006, C.boxDark, ['nx']);
   if (up) {
     cyl(b, C1.x, 1.186, z, 0.011, C2.y - 1.186, 'y', PROP, C.conduit, 6, true);
@@ -662,9 +793,9 @@ function junctionBox(b, z, up) {
 function rackPanel(b, z) {
   const xb = 13.035, D = 0.16, W = 0.46, y0 = 0.72, Hh = 0.62, xf = xb - D, y1 = y0 + Hh;
   const zl = z - W / 2, zr = z + W / 2, xd = xf - 0.004;
-  bx(b, xf, y0, zl, xb, y1, zr, 0x3d403b, ['nx', 'py', 'ny', 'pz', 'nz']);                                // 箱体
-  bx(b, xd, y0 + 0.02, zl + 0.02, xf, y1 - 0.02, zr - 0.02, 0x4a4e47, ['nx', 'py', 'ny', 'pz', 'nz']);     // 门
-  bx(b, xd - 0.028, y0 + 0.24, zr - 0.075, xd, y0 + 0.4, zr - 0.05, 0x1f201e);                              // 竖把手
+  bxv(b, xf, y0, zl, xb, y1, zr, 0x3d403b, ['nx', 'py', 'ny', 'pz', 'nz'], 0.014);                                // 箱体（棱角倒圆）
+  bxv(b, xd, y0 + 0.02, zl + 0.02, xf, y1 - 0.02, zr - 0.02, 0x4a4e47, ['nx', 'py', 'ny', 'pz', 'nz'], 0.002);     // 门（4 mm 钢板，倒 2 mm）
+  bxv(b, xd - 0.028, y0 + 0.24, zr - 0.075, xd, y0 + 0.4, zr - 0.05, 0x1f201e, ['nx', 'py', 'ny', 'pz', 'nz'], 0.007);   // 竖把手
   bx(b, xd - 0.012, y0 + 0.44, zr - 0.072, xd, y0 + 0.47, zr - 0.052, 0xa9aaa3, ['nx', 'py', 'ny', 'pz', 'nz']);   // 锁芯
   for (const y of [y0 + 0.08, y1 - 0.14]) bx(b, xd - 0.01, y, zl + 0.004, xf, y + 0.06, zl + 0.024, 0x2c2e2b, ['nx', 'py', 'ny', 'nz']);   // 合页
   const xs = xd - 0.001;
@@ -683,11 +814,11 @@ function rackPanel(b, z) {
 function valveStation(b, z) {
   const x = 13.1;
   cyl(b, x, 0, z, 0.032, S1.y, 'y', PROP, C.steel, 8, true);
-  bx(b, x - 0.04, S1.y - 0.04, z - 0.04, x + 0.04, S1.y + 0.04, z + 0.04, C.steel);            // 三通
+  bxv(b, x - 0.04, S1.y - 0.04, z - 0.04, x + 0.04, S1.y + 0.04, z + 0.04, C.steel, 'all', 0.01);            // 三通
   cyl(b, (x + S1.x - S1.r) / 2 + 0.02, S1.y, z, 0.03, S1.x - S1.r - x + 0.02, 'x', PROP, C.steel, 8, true);
-  bx(b, x - 0.05, 0, z - 0.05, x + 0.05, 0.02, z + 0.05, C.strutDark, 'noBottom');
-  // 闸阀
-  bx(b, x - 0.045, 1.2, z - 0.05, x + 0.045, 1.31, z + 0.05, 0x6b2a22);
+  bxv(b, x - 0.05, 0, z - 0.05, x + 0.05, 0.02, z + 0.05, C.strutDark, 'noBottom', 0.006, 'top');
+  // 闸阀（铸铁阀体，棱角倒圆）
+  bxv(b, x - 0.045, 1.2, z - 0.05, x + 0.045, 1.31, z + 0.05, 0x6b2a22, 'all', 0.012);
   cyl(b, x - 0.075, 1.255, z, 0.028, 0.06, 'x', PROP, 0x6b2a22, 8, false);
   cyl(b, x - 0.13, 1.255, z, 0.008, 0.06, 'x', PROP, 0xb8b6ae, 5, true);
   b.mesh(gTor(0.08, 0.009, 4, 10, TAU, '+z', '+y'), PROP, { x: x - 0.16, y: 1.255, z, color: 0xa3261c });
@@ -705,10 +836,11 @@ function valveStation(b, z) {
 // 木框护箱（参考图右下角那种橙红色木框）：罩在两根保温管前面，里面塞满了发黄的保温棉
 function woodFrame(b, zc) {
   const z0 = zc - 0.55, z1 = zc + 0.55, w = C.wood, wd = C.woodDark;
-  for (const z of [z0, z1]) bx(b, 12.93, 0.25, z - 0.045, 12.97, 2.02, z + 0.045, w);              // 前面两根竖框
-  bx(b, 12.93, 1.94, z0 + 0.045, 12.97, 2.02, z1 - 0.045, w);                                       // 上横框
-  bx(b, 12.93, 0.25, z0 + 0.045, 12.97, 0.33, z1 - 0.045, w);                                       // 下横框
-  bx(b, 12.932, 1.1, z0 + 0.045, 12.968, 1.16, z1 - 0.045, wd);                                     // 中横框
+  // 木框的方料都倒角：竖框倒四条竖棱，横框倒上下八条长棱（两头顶在竖框上，端面看不见）
+  for (const z of [z0, z1]) bxv(b, 12.93, 0.25, z - 0.045, 12.97, 2.02, z + 0.045, w, 'all', 0.009, 'vertical');   // 前面两根竖框
+  bxv(b, 12.93, 1.94, z0 + 0.045, 12.97, 2.02, z1 - 0.045, w, ['px', 'nx', 'py', 'ny'], 0.008);                    // 上横框
+  bxv(b, 12.93, 0.25, z0 + 0.045, 12.97, 0.33, z1 - 0.045, w, ['px', 'nx', 'py', 'ny'], 0.008);                    // 下横框
+  bxv(b, 12.932, 1.1, z0 + 0.045, 12.968, 1.16, z1 - 0.045, wd, ['px', 'nx', 'py', 'ny'], 0.007);                  // 中横框
   // 两侧夹板：保温管从木框里穿过去，所以夹板在两根管子的位置各开一个方口（整块夹板会把管子"截断"，从走廊纵向看像管子到这儿就断了）
   const xh = P1.x - P1.r - 0.03;
   const sideY = [[0.25, P1.y - P1.r - 0.03], [P1.y + P1.r + 0.03, P2.y - P2.r - 0.03], [P2.y + P2.r + 0.03, 2.02]];
@@ -716,7 +848,7 @@ function woodFrame(b, zc) {
     bx(b, 12.97, 0.25, z - 0.009, xh, 2.02, z + 0.009, wd, ['px', 'nx', 'pz', 'nz', 'py']);
     for (const [ya, yb] of sideY) bx(b, xh, ya, z - 0.009, XE - 0.02, yb, z + 0.009, wd, ['pz', 'nz', 'py', 'ny']);
   }
-  bx(b, 12.97, 2.02, z0, XE - 0.02, 2.035, z1, w, ['py', 'ny', 'nx']);                                // 顶板
+  bxv(b, 12.97, 2.02, z0, XE - 0.02, 2.035, z1, w, ['py', 'ny', 'nx'], 0.006, 'top');                     // 顶板（朝走廊那条上棱倒角）
   // 框里塞满的保温棉：上下两块表面起伏的棉毡（中横框上下分开，颜色一深一浅）+ 几团从框里鼓出来的棉絮
   const zi = z1 - z0 - 0.09;
   b.mesh(gBatt(q3(zi), 0.77, 0), PROP, { x: 13.03, y: 0.715, z: zc, color: C.fiber3 });
@@ -750,13 +882,13 @@ function flexLoop(b, z) {
 function elecPanel(b, zc) {
   b.push(XW, zc, Math.PI / 2);
   const W = 0.6, Hh = 0.8, D = 0.2, y0 = 1.05;
-  part(b, 0, y0, D / 2, W, Hh, D, C.panel, ['px', 'nx', 'py', 'ny', 'pz']);
+  partv(b, 0, y0, D / 2, W, Hh, D, C.panel, ['px', 'nx', 'py', 'ny', 'pz'], 0.016);          // 柜体：朝外的棱都倒圆（贴墙的背面不画、不倒）
   const zf = D + 0.0015;
   part(b, 0, y0 + 0.02, zf, W - 0.04, 0.004, 0.003, C.seam);
   part(b, 0, y0 + Hh - 0.024, zf, W - 0.04, 0.004, 0.003, C.seam);
   part(b, -W / 2 + 0.022, y0 + 0.02, zf, 0.004, Hh - 0.04, 0.003, C.seam);
   part(b, W / 2 - 0.022, y0 + 0.02, zf, 0.004, Hh - 0.04, 0.003, C.seam);
-  part(b, W / 2 - 0.07, y0 + 0.34, D + 0.012, 0.03, 0.13, 0.02, 0x2a2a28);                   // 把手
+  partv(b, W / 2 - 0.07, y0 + 0.34, D + 0.012, 0.03, 0.13, 0.02, 0x2a2a28, 'all', 0.006);    // 把手
   for (const y of [y0 + 0.12, y0 + Hh - 0.2]) part(b, -W / 2 - 0.006, y, D - 0.03, 0.014, 0.08, 0.03, 0x5c5f59);   // 合页
   // 警示三角（黄底 + 黑色闪电）
   const ty = y0 + 0.52, tz = D + 0.003;
@@ -817,7 +949,7 @@ function doorRecess(b, zc, to, label, doorOpts, style) {
   // 门洞包边（钢板护角）+ 门槛
   for (const s of [-1, 1]) bx(b, XW - 0.06, 0, zc + s * W / 2 - 0.004 - (s > 0 ? 0.03 : 0), XW + 0.012, HR, zc + s * W / 2 + (s > 0 ? 0.004 : 0.034), 0x7c7a70, ['px', s > 0 ? 'nz' : 'pz']);
   bx(b, XW - 0.06, HR - 0.012, zc - W / 2, XW + 0.012, HR + 0.03, zc + W / 2, 0x7c7a70, ['px', 'ny']);
-  bx(b, x0 + 0.12, 0, zc - 0.55, x0 + 0.26, 0.018, zc + 0.55, 0x5d5b55, 'noBottom');
+  bxv(b, x0 + 0.12, 0, zc - 0.55, x0 + 0.26, 0.018, zc + 0.55, 0x5d5b55, 'noBottom', 0.006, 'top');
   kit.exit(b, { to, kind: 'door', x: x0 + 0.035, z: zc, rot: Math.PI / 2, style: style || 'fire', label, radius: 0.5, door: doorOpts });
   return { z0: zc - W / 2, z1: zc + W / 2, y0: 0, y1: HR };
 }
@@ -886,7 +1018,10 @@ function sewerBranch(b, zc, st) {
   for (let k = -1; k <= 1; k++) bx(b, x0 + 3.4 - 0.26, 0.035, zc - 0.55 + k * 0.1 - 0.012, x0 + 3.4 + 0.26, 0.045, zc - 0.55 + k * 0.1 + 0.012, 0x2e2d2a, 'noBottom');
   // 侧墙上一截滴水的铸铁管口 + 下面一道绿色水痕
   cyl(b, x0 + 2.6, 1.8, br.z1 - 0.1, 0.045, 0.2, 'z', PROP, 0x4a3a2c, 8, false);
-  b.plane(x0 + 2.6, 0.02, br.z1 - 0.004, 0.09, 1.72, 'kit:water', { facing: '-z', color: [0.18, 0.26, 0.14] });
+  // 下面一道发绿的水痕：软边贴花（上浓下淡、两侧淡出、末端收尖）；低画质不画贴花时退回原来那条硬边水痕面片
+  if (!kit.decal(b, { kind: 'drip', x: x0 + 2.6, y: 0.93, z: br.z1, facing: '-z', w: 0.2, h: 1.76, color: 0x3d4f2c, opacity: 0.8 })) {
+    b.plane(x0 + 2.6, 0.02, br.z1 - 0.004, 0.09, 1.72, 'kit:water', { facing: '-z', color: [0.18, 0.26, 0.14] });
+  }
   st.lights.push(wallLamp(b, x0 + 3.6, br.z0, 0, 2.3, 'flicker', 0.55));
   branchSpawns(b, br, zc, 1);
   return br.hole;
@@ -948,8 +1083,8 @@ function shelterBranch(b, zc, st, rng) {
   }
   kit.prop.crate(b, br.x0 + 0.6, br.z0 + 0.55, 0.2, { size: 0.7, color: 0x6e5838 });
   kit.prop.box(b, br.x0 + 0.55, br.z1 - 0.45, 0.4, { stack: 2, color: 0x9a7e56 });
-  bx(b, br.x0 + 1.4, 0, zc - 0.35, br.x0 + 3.2, 0.06, zc + 0.35, 0x3b4a36, 'noBottom');             // 铺盖
-  bx(b, br.x0 + 1.4, 0.06, zc - 0.3, br.x0 + 1.75, 0.14, zc + 0.3, 0x55604e, 'noBottom');           // 枕头卷
+  bxv(b, br.x0 + 1.4, 0, zc - 0.35, br.x0 + 3.2, 0.06, zc + 0.35, 0x3b4a36, 'noBottom', 0.025, 'top');   // 铺盖（软的，上棱倒大）
+  bxv(b, br.x0 + 1.4, 0.06, zc - 0.3, br.x0 + 1.75, 0.14, zc + 0.3, 0x55604e, 'noBottom', 0.03);          // 枕头卷
   // 小油桶：桶身 + 上下两道加强箍 + 桶盖和注油口
   cyl(b, br.x0 + 0.4, 0, zc, 0.13, 0.32, 'y', PROP, 0x9c2a1e, 10, false);
   for (const y of [0.06, 0.24]) cyl(b, br.x0 + 0.4, y, zc, 0.134, 0.018, 'y', PROP, 0x7e2016, 10, true);
@@ -1029,9 +1164,9 @@ function hazardWindow(b, zc) {
   stick(b, [XW - 0.34, y0 + 0.8, zc + 0.12], [XW - 0.12, y0 + 0.55, zc + 0.38], 0.03, 0x05070a, 5);
   // 窗框 + 窗台 + 玻璃上两道反光
   const fc = 0xcfc8b4;
-  bx(b, XW - 0.05, y0 - 0.06, zc - W / 2 - 0.06, XW + 0.035, y0, zc + W / 2 + 0.06, fc, ['px', 'py', 'pz', 'nz']);
-  bx(b, XW - 0.05, y1, zc - W / 2 - 0.06, XW + 0.03, y1 + 0.06, zc + W / 2 + 0.06, fc, ['px', 'ny', 'pz', 'nz']);
-  for (const s of [-1, 1]) bx(b, XW - 0.05, y0, zc + s * (W / 2 + 0.03) - 0.03, XW + 0.03, y1, zc + s * (W / 2 + 0.03) + 0.03, fc, ['px', s > 0 ? 'nz' : 'pz']);
+  bxv(b, XW - 0.05, y0 - 0.06, zc - W / 2 - 0.06, XW + 0.035, y0, zc + W / 2 + 0.06, fc, ['px', 'py', 'pz', 'nz'], 0.008);   // 窗台（外棱倒角）
+  bxv(b, XW - 0.05, y1, zc - W / 2 - 0.06, XW + 0.03, y1 + 0.06, zc + W / 2 + 0.06, fc, ['px', 'ny', 'pz', 'nz'], 0.008);
+  for (const s of [-1, 1]) bxv(b, XW - 0.05, y0, zc + s * (W / 2 + 0.03) - 0.03, XW + 0.03, y1, zc + s * (W / 2 + 0.03) + 0.03, fc, ['px', s > 0 ? 'nz' : 'pz'], 0.008);
   const xg = XW - 0.02;
   b.quad([xg, y0 + 0.5, zc + 0.3], [xg, y0 + 0.9, zc + 0.05], [xg, y0 + 0.93, zc + 0.08], [xg, y0 + 0.53, zc + 0.33], PROP, { color: 0x7e8a8c, uv: 'stretch' });
   b.quad([xg, y0 + 0.4, zc + 0.36], [xg, y0 + 0.62, zc + 0.22], [xg, y0 + 0.64, zc + 0.24], [xg, y0 + 0.42, zc + 0.38], PROP, { color: 0x5e686a, uv: 'stretch' });
@@ -1047,7 +1182,10 @@ function liveWires(b, z) {
     ends.push([ex, ey - 0.06, ez]);
   }
   const spark = b.box(ends[0][0], ends[0][1] - 0.03, ends[0][2], 0.05, 0.05, 0.05, GLOW, { color: [2.2, 1.6, 0.6], solid: false, uv: 'solid' });
-  kit.prop.puddle(b, 12.45, z, 0, { rx: 0.35, rz: 0.3, color: [0.04, 0.035, 0.03] });
+  // 地上一片烧焦的黑印：软边的焦黑飞溅 + 一团焦斑（贴花）；低画质不画贴花时退回原来那滩深色的硬边"水坑"
+  if (kit.decal(b, { kind: 'splash', x: 12.45, y: 0, z, facing: 'up', w: 0.85, h: 0.75, color: DC.soot, opacity: 0.85 })) {
+    kit.decal(b, { kind: 'stain', x: 12.42, y: 0, z: z + 0.02, facing: 'up', w: 0.55, h: 0.45, color: DC.soot, opacity: 0.7 });
+  } else kit.prop.puddle(b, 12.45, z, 0, { rx: 0.35, rz: 0.3, color: [0.04, 0.035, 0.03] });
   // 桥架断口：挂下来半截的横档
   part(b, 12.86, TRAY.y - 0.2, z - 0.5, 0.56, 0.012, 0.024, C.strutDark, 'all', 0.4);
   return { spark, x: ends[0][0], z: ends[0][2] };
@@ -1090,6 +1228,137 @@ function buildCross(b, st, rng) {
 }
 
 // =====================================================================
+// 贴花：软边的水渍、锈水、潮印、擦痕、积灰带（用户 2026-10-01："材质也得跟随着细化……一些方块还需要过渡"）
+// =====================================================================
+// 全部走 kit.decal：一块里所有贴花合成 1 个 mesh、每片 2 个三角面；低画质、本块到了 9000 面细节上限时 kit 自动不画。
+// 位置只用派生流 U.rng(b.seed, 'L2-decal', cx, cz)（不吃区块 rng，加减贴花不会让后面的灯和地标挪位）；先把随机数取完再判断画不画。
+// 只贴在平面或沿管长拉长的窄条上（圆柱上环向最多 16 cm），贴花不会悬空。颜色是屏幕色（和贴图同一套）
+function decorate(b, st, westHoles, cross) {
+  const r = U.rng(b.seed, 'L2-decal', b.cx, b.cz);
+  const D = o => kit.decal(b, o);
+  const near = (z, list, pad) => list.some(h => z > h.z0 - pad && z < h.z1 + pad);
+  // 西墙上没开洞的整段（贴花离端头、洞口留 ≥ 0.3 m）
+  const west = [];
+  { let z = 0;
+    for (const h of westHoles.slice().sort((a, c) => a.z0 - c.z0)) { if (h.z0 - z > 0.8) west.push([z, h.z0]); z = Math.max(z, h.z1); }
+    if (SIZE - z > 0.8) west.push([z, SIZE]); }
+  const onWest = (z, pad) => west.some(w => z > w[0] + pad && z < w[1] - pad);
+  // 保温管表面上 θ 处（截面上的点 (x + r·sinθ, y − r·cosθ)，法线同向）：w 沿管长、h 沿环向。
+  // 管顶 / 管底（法线接近竖直）kit 换用 x 当贴花的横向，这时转 90°，w 才仍然沿管长
+  const jk = (P, th, z, w, h, kind, color, opacity) => D({ kind, x: P.x + P.r * Math.sin(th), y: P.y - P.r * Math.cos(th), z,
+    normal: [Math.sin(th), -Math.cos(th), 0], rot: Math.abs(Math.cos(th)) > 0.95 ? Math.PI / 2 : 0, w, h, color, opacity });
+
+  // ① 西墙（正对玩家的一整面淡黄墙）
+  //   顶板渗水：墙顶一团潮印往下流成一道水痕（上浓下淡、两侧淡出、末端收尖），顶板上同一处晕开一团水渍
+  const nLeak = 2 + Math.floor(r() * 3);
+  for (let k = 0; k < nLeak; k++) {
+    const z = 0.8 + (k + 0.15 + r() * 0.7) / nLeak * 22.4, len = 0.7 + r() * 1.0, wd = 0.15 + r() * 0.14, op = 0.35 + r() * 0.25, c = r();
+    if (!onWest(z, 0.3)) continue;
+    D({ kind: 'drip', x: XW, y: H - 0.02 - len / 2, z, facing: '+x', w: wd, h: len, color: DC.leak, opacity: op });
+    D({ kind: 'stain', x: XW + 0.22 + c * 0.15, y: H, z: z + (c - 0.5) * 0.25, facing: 'down', w: 0.45 + c * 0.35, h: 0.32 + c * 0.2, rot: c * 3, color: DC.water, opacity: op * 0.85 });
+  }
+  //   墙根返潮：几片压扁的潮斑（下半截埋在地面以下）
+  for (let k = 0; k < 3; k++) {
+    const z = 1 + r() * 22, sc = 0.7 + r() * 0.6, op = 0.25 + r() * 0.15;
+    if (onWest(z, 0.3 + sc * 0.6)) D({ kind: 'stain', x: XW, y: sc * 0.08, z, facing: '+x', w: sc * 1.2, h: sc * 0.38, color: DC.water, opacity: op, variant: k % 2 });
+  }
+  //   1 m 上下的擦痕、蹭脏的污斑
+  kit.scatterDecals(b, west.map(w => ({ x: XW, y: H / 2, z: (w[0] + w[1]) / 2, facing: '+x', w: w[1] - w[0], h: H })), {
+    salt: 'L2-wall', kinds: [['scuff', 3], ['scratch', 2], ['stain', 2]], per: 0.2, max: 4, y: [0.55, 1.7], margin: 0.3, color: DC.scuff, opacity: [0.3, 0.55] });
+
+  // ② 地面
+  //   墙根、管架脚下一条积灰发暗的软边带：墙和地面、管架和地面交接的地方有一道过渡，不是一刀切
+  //   （一段 5–6 m 长，两头软边互相搭一点；横通道区块绕开路口）
+  //   墙根那条：中线压在墙脚（离墙 3 cm），最深处贴着墙、往走道里 ~20 cm 慢慢淡出；另一半在墙后面（墙后只有实心，看不见，
+  //   带子整段都避开了墙上的洞口）。中线若离墙 13 cm，墙脚和最深处之间会夹一道亮缝，看着像地上画了一条深色带子
+  //   管架那条：中线在立柱线上（没人走的管子底下积灰最多），往走道这边宽宽地淡出；中线若落在走道里，看着像立柱投下的一道影子
+  const bandZ = cross ? [2.6, 7.4, 16.6, 21.4] : [3, 9, 15, 21], bandW = cross ? 5.0 : 6.3;
+  bandZ.forEach((zc, k) => {
+    const a = r(), c = r();
+    if (!near(zc, westHoles, bandW / 2 + 0.1)) D({ kind: 'stain', x: XW + 0.03, y: 0, z: zc, facing: 'up', w: bandW, h: 0.46, rot: Math.PI / 2, color: DC.grime, opacity: 0.3 + a * 0.12, variant: k % 2 });
+    D({ kind: 'stain', x: XPOST + 0.04, y: 0, z: zc, facing: 'up', w: bandW, h: 0.7, rot: Math.PI / 2, color: DC.grime, opacity: 0.24 + c * 0.1, variant: (k + 1) % 2 });
+  });
+  //   支架钢板底座、阀门底座泡过水：一圈锈斑（底座盖住中间，只露出往外淡出的那一圈）
+  for (const z of st.sup) {
+    const a = r();
+    if (st.kind !== 'wood' && a < 0.55) D({ kind: 'stain', x: XPOST - 0.04, y: 0, z: z + (a - 0.3) * 0.1, facing: 'up', w: 0.36 + a * 0.2, h: 0.3 + a * 0.16, rot: a * 6, color: DC.rust, opacity: 0.5 + a * 0.3 });
+  }
+  if (st.valveZ != null) D({ kind: 'stain', x: 13.08, y: 0, z: st.valveZ, facing: 'up', w: 0.36, h: 0.3, color: DC.rust, opacity: 0.45 });
+  //   （水坑外面那圈软边水渍圈由 kit.prop.puddle 自己贴，这里不重复）
+  //   管子底下滴水的水印；走道上零星的污渍 / 水渍 / 油渍 / 拖痕
+  for (let k = 0; k < 2; k++) {
+    const z = 0.6 + r() * 22.8, x = 12.95 + r() * 0.5, sc = 0.5 + r() * 0.5;
+    if (!cross || z < ZC0 - 1 || z > ZC1 + 1) D({ kind: 'water', x, y: 0, z, facing: 'up', w: sc * 0.6, h: sc * 0.6, rot: sc * 7, color: DC.water, opacity: 0.4 });
+  }
+  kit.scatterDecals(b, [{ x: (XW + XF) / 2, y: 0, z: SIZE / 2, facing: 'up', w: XF - XW, h: SIZE }], {
+    salt: 'L2-floor', kinds: [['stain', 3], ['water', 2], ['oil', 1], ['drag', 1]], per: 0.1, max: 4, margin: 0.3, opacity: [0.22, 0.42] });
+
+  // ③ 保温管铝皮正面：顺着管子方向的几条灰印（只沿管长拉长、环向很窄，贴得住圆柱面）
+  const skipZ = z => (cross && z > 8.4 && z < 15.6) || st.tears.some(t => Math.abs(z - t.z) < TEAR_HALF + 0.5) || (st.frameZ != null && Math.abs(z - st.frameZ) < 1.1);
+  for (let k = 0; k < 3; k++) {
+    const P = k % 2 ? P1 : P2, z = 0.8 + r() * 22.4, th = 1.5 * Math.PI + (r() - 0.5) * 0.6, len = 0.4 + r() * 0.6, op = 0.18 + r() * 0.2;
+    if (!skipZ(z)) jk(P, th, z, len, 0.07, k % 3 ? 'drag' : 'stain', DC.grime, op);
+  }
+
+  // ④ 保温层破口：撕口外沿的铝皮上一圈发黄的棉絮灰 + 暗色脏印，从撕口往外慢慢淡出 ——
+  //   铝皮和露出来的棉絮之间有一道过渡，不再是亮铝皮一刀切到黄棉絮
+  for (const t of st.tears) {
+    const P = t.p === 1 ? P1 : P2, za = t.z - TEAR_HALF, zb = t.z + TEAR_HALF;
+    // 两条纵向撕口（下沿正对走廊、上沿在管顶靠墙）：贴着口子一条窄的棉絮灰，往外一条宽而淡的脏印
+    jk(P, TEAR_T0 + 0.1, t.z, 1.04, 0.055, 'stain', DC.dust, 0.85);
+    jk(P, TEAR_T0 + 0.27, t.z, 1.12, 0.1, 'drag', DC.grime, 0.5);
+    jk(P, TEAR_T0 + TEAR_TL - 0.1, t.z, 1.04, 0.055, 'stain', DC.dust, 0.75);
+    // 两头环向的撕口：沿断口一圈小块（环向 15 cm，贴得住 30 cm 半径的管面）
+    //   一端 8 块互相搭着（环向 15 cm、沿管长 20 cm，块距 11 cm、相邻两块搭 4 cm），叠出一条贴着断口、往外淡出的棉絮灰带。
+    //   原来 5 块、块距 18 cm：每块污斑的软边各自淡没了，连不成带，看着是一个个橙色圆点
+    for (const [ze, s] of [[za, -1], [zb, 1]]) for (let k = 0; k < 8; k++) {
+      const th = TEAR_T0 + TEAR_TL + (k + 0.5) / 8 * (2 * Math.PI - TEAR_TL);
+      jk(P, th, ze + s * 0.06, 0.2, 0.15, 'stain', DC.dust, 0.36);
+    }
+  }
+
+  // ⑤ 道具表面
+  //   支架立柱：几个长圆孔底下淌出一道细锈水（只贴在立柱正面没倒角的那一截宽度里）
+  if (st.kind !== 'wood') for (const z of st.sup) {
+    const a = r(), yh = 0.25 + Math.floor(r() * 4) * 0.5;
+    if (a < 0.45) D({ kind: 'rust', x: XPOST - 0.021, y: yh + 0.03 - 0.13, z, facing: '-x', w: 0.026, h: 0.26, opacity: 0.5 + a * 0.4 });
+  }
+  //   西墙配电箱：合页那一侧往下淌的锈水、把手周围手摸出来的脏印；箱子底下墙上也淌下来两道锈水（固定螺栓生锈）
+  if (st.elecZ != null) {
+    const zc = st.elecZ, xf = XW + 0.2;
+    D({ kind: 'rust', x: xf, y: 1.13, z: zc + 0.25, facing: '+x', w: 0.05, h: 0.16, opacity: 0.55 });
+    D({ kind: 'stain', x: xf, y: 1.455, z: zc - 0.23, facing: '+x', w: 0.11, h: 0.17, color: DC.grime, opacity: 0.4 });
+    D({ kind: 'rust', x: XW, y: 1.05 - 0.28, z: zc - 0.12, facing: '+x', w: 0.14, h: 0.6, opacity: 0.5 });
+    D({ kind: 'rust', x: XW, y: 1.05 - 0.2, z: zc + 0.17, facing: '+x', w: 0.1, h: 0.42, opacity: 0.4 });
+  }
+  //   管架配电箱：门上合页那一侧淌下来的锈水、把手周围的脏印
+  if (st.rackZ != null) {
+    const z = st.rackZ, xd = 13.035 - 0.16 - 0.004, y0 = 0.72;
+    D({ kind: 'rust', x: xd, y: y0 + 0.62 - 0.12 - 0.15, z: z - 0.23 + 0.05, facing: '-x', w: 0.06, h: 0.3, opacity: 0.55 });
+    D({ kind: 'stain', x: xd, y: y0 + 0.32, z: z + 0.23 - 0.0625, facing: '-x', w: 0.1, h: 0.2, color: DC.grime, opacity: 0.4 });
+  }
+
+  // ⑥ 横通道：墙上 L 形托架、钢管穿墙套管底下往下淌的锈水；两面墙上的水痕和擦痕；墙根积灰带
+  if (cross) {
+    for (let x = 1; x < SIZE; x += 3) {
+      const a = r(), len = 0.35 + a * 0.45;
+      if ((x < 9.8 || x > 14.6) && a < 0.75) D({ kind: 'rust', x: x + (a - 0.4) * 0.03, y: 2.13 - len / 2, z: ZC0, facing: '+z', w: len * 0.24, h: len, opacity: 0.45 + a * 0.3 });
+    }
+    for (const [xs, yb] of [[10.35, 2.35], [10.2, 2.145], [14.25, 2.35], [14.4, 2.145]]) {
+      const a = r(), len = 0.4 + a * 0.5;
+      D({ kind: 'rust', x: xs, y: yb + 0.03 - len / 2, z: ZC0, facing: '+z', w: len * 0.26, h: len, opacity: 0.5 + a * 0.3 });
+    }
+    const cw = [];
+    for (const [z, f] of [[ZC0, '+z'], [ZC1, '-z']]) for (const [x0, x1] of [[0, XW], [XE, SIZE]]) cw.push({ x: (x0 + x1) / 2, y: H / 2, z, facing: f, w: x1 - x0, h: H });
+    kit.scatterDecals(b, cw, { salt: 'L2-crosswall', kinds: [['drip', 3], ['scuff', 2], ['stain', 2]], per: 0.06, max: 5, y: [0.5, 2.75], margin: 0.3, color: DC.leak, opacity: [0.3, 0.55] });
+    for (const [z, sgn] of [[ZC0, 1], [ZC1, -1]]) for (const [x0, x1] of [[0, XW], [XE, SIZE]]) {
+      const n = Math.round((x1 - x0) / 5);
+      for (let k = 0; k < n; k++) { const a = r(); D({ kind: 'stain', x: x0 + (k + 0.5) * (x1 - x0) / n, y: 0, z: z + sgn * 0.03, facing: 'up', w: (x1 - x0) / n + 0.3, h: 0.46, color: DC.grime, opacity: 0.3 + a * 0.12, variant: k % 2 }); }
+    }
+  }
+}
+
+// =====================================================================
 // 区块
 // =====================================================================
 function buildChunk(ctx, cx, cz, rng) {
@@ -1127,6 +1396,7 @@ function buildChunk(ctx, cx, cz, rng) {
     kind, cross, lights: [], safe: kind === 'hot', lampColor,
     lampState() { const r = crossLampR[(lampIdx++) % 2]; return r < 0.06 ? 'broken' : r < 0.16 ? 'flicker' : 'on'; },
     tears: [],
+    sup: [], valveZ: null, frameZ: null, rackZ: null, elecZ: null,   // 贴花用（decorate 读）
   };
 
   // ---- 2. 西墙上的出口、岔口、窗户、配电箱 ----
@@ -1164,6 +1434,7 @@ function buildChunk(ctx, cx, cz, rng) {
   if (isSpawn || rPanel < 0.3) {
     const site = isSpawn ? M1 : (winSite === M1 ? M2 : winSite === M2 ? M1 : (rPanelSite < 0.5 ? M1 : M2));
     elecPanel(b, site);
+    st.elecZ = site;
   }
   if (kind === 'hot') heatSign(b, winSite === M2 ? M1 : M2);
   if (kind === 'cold') for (const z of [3, 9.3, 16.2, 21.5]) if (!westHoles.some(h => z > h.z0 - 0.5 && z < h.z1 + 0.5)) wallVent(b, z);
@@ -1173,8 +1444,9 @@ function buildChunk(ctx, cx, cz, rng) {
   wallZ(b, XW, '+x', 0, SIZE, westHoles);
   wallZ(b, XE, '-x', 0, SIZE, cross ? [{ z0: ZC0, z1: ZC1, y0: 0, y1: H }] : []);
   for (const zb of BEAMS) {
-    if (kind === 'wood') bx(b, XW, H - 0.2, zb - 0.09, XE, H, zb + 0.09, C.woodDark, 'noTop');
-    else b.aabb(XW, H - 0.24, zb - 0.15, XE, H, zb + 0.15, SLAB, { color: C.ceil, solid: false, faces: cross && zb === 12 ? 'noTop' : ['ny', 'pz', 'nz'] });
+    // 梁的下棱倒角（现浇混凝土梁拆模后的棱本来就是钝的；木梁倒小一点）
+    if (kind === 'wood') bxv(b, XW, H - 0.2, zb - 0.09, XE, H, zb + 0.09, C.woodDark, 'noTop', 0.015);
+    else b.aabb(XW, H - 0.24, zb - 0.15, XE, H, zb + 0.15, SLAB, { color: C.ceil, solid: false, faces: cross && zb === 12 ? 'noTop' : ['ny', 'pz', 'nz'], bevel: 0.03 });
   }
   // 管架碰撞体（整排管子当一堵矮墙）
   if (!cross) b.solid(XF, 0, 0, XE, H, SIZE);
@@ -1182,6 +1454,7 @@ function buildChunk(ctx, cx, cz, rng) {
 
   // ---- 4. 管架 ----
   const sup = SUP.filter(z => !cross || z < 9 || z > 15);
+  st.sup = sup;
   // 破口：1–2 处，落在两个支架正中间（z = 3k），和木框、阀门错开
   const cand = [3, 6, 9, 12, 15, 18, 21].filter(z => !cross || z < 8 || z > 16);
   const pickCand = r => { if (!cand.length) return null; const i = Math.floor(r * cand.length); return cand.splice(i, 1)[0]; };
@@ -1196,15 +1469,16 @@ function buildChunk(ctx, cx, cz, rng) {
   if (zFrame != null) woodFrame(b, zFrame);
   b.data.tears = st.tears.map(t => [t.p, t.z]);   // 自测脚本按它找保温层破口、木框（level.update 不读）
   b.data.frame = zFrame;
+  st.frameZ = zFrame;
   // 管架上的配电箱：非横通道区块 30% 挂一只（挂在它的那根立柱上就不再放接线盒）
   const rackAt = !cross && rRack < 0.3 ? Math.floor(rRackK * sup.length) : -1;
-  if (rackAt >= 0) { rackPanel(b, sup[rackAt]); b.data.rackZ = sup[rackAt]; }
+  if (rackAt >= 0) { rackPanel(b, sup[rackAt]); b.data.rackZ = sup[rackAt]; st.rackZ = sup[rackAt]; }
   sup.forEach((z, i) => {
     const forced = cross && (z === 7.5 || z === 16.5);     // 路口两边电线管断开的地方必须接进接线盒
     if (i !== rackAt && (forced || jboxR[i] < 0.35)) junctionBox(b, z, !forced && jboxR[i] < 0.15);
   });
   // 横通道区块的东西已经够多（多出路口的弯管、两盏壁灯），不再放阀门组，免得顶到每块 8000 面
-  if (!cross && rValve < 0.55) valveStation(b, sup[Math.floor(rValveK * sup.length)] + 0.35);
+  if (!cross && rValve < 0.55) { st.valveZ = sup[Math.floor(rValveK * sup.length)] + 0.35; valveStation(b, st.valveZ); }
   if (rFlex < 0.5) flexLoop(b, sup[Math.floor(rFlexK * sup.length)] + 0.3);
 
   // 高温区：接缝处烧得发红，一股股蒸汽从铝皮缝里往外喷（半透明锥体轮流显隐）
@@ -1281,6 +1555,9 @@ function buildChunk(ctx, cx, cz, rng) {
 
   // ---- 8. 横通道 ----
   if (cross) buildCross(b, st, rng);
+
+  // ---- 8.5 贴花：水渍、锈水、潮印、擦痕、积灰带（最后贴：本块到了细节上限时先被截掉的是它；不吃区块 rng）----
+  decorate(b, st, westHoles, cross);
 
   // ---- 9. 刷新点：沿走廊两条线，每 1.2 m 一个（规则网格 + 抖动，第 7 节）----
   for (let z = 0.6; z < SIZE; z += 1.2) {

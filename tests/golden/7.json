@@ -6,7 +6,7 @@
   "spawnFactor": 1,
   "radius": 2,
   "chunkSize": 40,
-  "hash": "d33a80fd9a406f3463b3cc64f4b292a1a75f63d9734da489cd1052ce753a7c9e",
+  "hash": "a173c4dbd9f48fbaf821b8f0ee405b7b394d46c7c3c0a38bb634f05efc34239f",
   "chunks": [
     {
       "cx": -2,
@@ -503,15 +503,16 @@
     {
       "cx": 0,
       "cz": 0,
-      "hash": "8f8d2129eb4b0c7b",
-      "verts": 1384,
-      "mats": ["kit|L7:carpet","kit|L7:concrete","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "bf35c8549334d20b",
+      "verts": 1706,
+      "mats": ["kit|L7:carpet","kit|L7:concrete","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
-        ["kit|kit:water",208],
+        ["kit|kit:water",334],
         ["kit|L7:concrete",88],
         ["kit|L7:carpet",4],
-        ["kit|kit:prop",1076],
-        ["kit|kit:glow",8]
+        ["kit|kit:prop",1260],
+        ["kit|kit:glow",8],
+        ["kit|kit:decal",12]
       ],
       "solids": [
         [16.875,4.5,13.875,23.125,7.1,14.125],

@@ -43,38 +43,96 @@
 }
 .home-hint.is-hover { background: rgba(255, 236, 150, .95); }
 
-/* ---------- 右下角「游玩」 ---------- */
-.home-play {
+/* ---------- 右下角「游玩」：挂着的牌子 ----------
+   照孩子的手稿（tests/output/sign/1.jpg → 整理稿 sign-tidy.html）：一根横棍，两根吊绳，下面挂一块扁长牌子。
+     .home-sign       外框，只管定位，不吃事件
+     .home-sign-rod   横棍：比牌子左右各长 10%，粗 ≈ 牌子宽 9%，两头圆（装饰，aria-hidden）
+     .home-sign-rope  两根吊绳：离牌子左右边各 21%，从棍子里一直伸到牌子背后（装饰，aria-hidden）
+     .home-play       牌子本身，也是唯一能点的部分（测试和代码都点它）
+   棍子、吊绳 pointer-events:none，点上去穿透到画布，照样能点人物换制服。
+   牌子按下时下沉 4px：吊绳下端本来就压在牌子背后 10px，牌子往下一走露出来的就是变长的那截，不会断开露缝；棍子不动。
+   几何都放在下面这几个变量里，「创意工坊 / 设置」按钮组的 bottom 也用它们算，各断点只改变量，两边一起变 */
+.home-root {
+  --home-edge: 24px;      /* 牌子离屏幕下边 */
+  --home-edge-r: 30px;    /* 牌子离屏幕右边：横棍比牌子右边再伸出 10%（14–18px），棍头离屏幕边还剩 12–16px */
+  /* 牌子宽随「游玩」字号（clamp(22px, 3.6vmin, 32px)）变，高、吊绳、棍子跟着按同一个 vmin 变，比例 ≈ 整理稿：
+     宽:高 ≈ 300:114（2.63），吊绳 ≈ 0.32 倍宽，棍子 ≈ 9% 宽。桌面高 ≥720 时牌子宽 162–179：720 高 162×62 / 52 / 14，
+     900 高 179×68 / 57 / 15.6；高约 650–720 时宽 156–162（1366×700 实测 160.5×62）；再矮就被 min-width 156 托底，约 156×62（≈ 2.5:1） */
+  --home-play-h: clamp(62px, calc(3.72vmin + 35px), 68px);
+  --home-rope: clamp(52px, calc(3.13vmin + 29.4px), 57px);
+  --home-rod: clamp(14px, calc(.85vmin + 8px), 16px);
+  /* 棍子上沿到次要按钮组。留 18px：触屏手指粗，Chrome 会把离按钮十几 px 内的点按吸到按钮上，
+     间距太小时点棍子上沿会误开「设置」（默认档、平板竖屏、矮横屏都用 18，只有高 ≤260 的兜底档收到 10） */
+  --home-sec-gap: 18px;
+}
+.home-sign {
   position: absolute;
-  right: calc(24px + env(safe-area-inset-right));
-  bottom: calc(24px + env(safe-area-inset-bottom));
+  right: calc(var(--home-edge-r) + env(safe-area-inset-right));
+  bottom: calc(var(--home-edge) + env(safe-area-inset-bottom));
+  /* 自成层叠上下文：里面三层的 z-index 只在挂牌内部比，盖不到后面的弹窗 */
+  z-index: 0;
+  padding-top: calc(var(--home-rod) + var(--home-rope));
+  pointer-events: none;
+}
+.home-sign-rod, .home-sign-rope { position: absolute; box-sizing: border-box; pointer-events: none; }
+.home-sign-rod {
+  z-index: 1;
+  top: 0; left: -10%; right: -10%;
+  height: var(--home-rod);
+  /* 和牌子一样的淡黄，略深一点点 */
+  background: linear-gradient(#f8ebb0, #e3cd7e);
+  border: 2px solid #2c2208;
+  border-radius: 999px;
+}
+.home-sign-rope {
+  /* 上端藏在棍子背后（棍子 z-index 更高），下端压在牌子背后 10px */
+  z-index: 0;
+  top: calc(var(--home-rod) / 2);
+  height: calc(var(--home-rod) / 2 + var(--home-rope) + 10px);
+  width: 3px;
+  background: #2c2208;
+}
+.home-sign-rope.is-left { left: calc(21% - 1.5px); }
+.home-sign-rope.is-right { right: calc(21% - 1.5px); }
+
+.home-play {
+  position: relative; z-index: 2;
+  display: block;
+  box-sizing: border-box;
   pointer-events: auto;
-  min-width: 156px; min-height: 62px;
-  padding: 0 46px;
+  min-width: 156px; min-height: var(--home-play-h);
+  padding: 0 44px;
   font-size: clamp(22px, 3.6vmin, 32px); font-weight: 800;
   letter-spacing: .24em; text-indent: .24em;
   color: #1d1705;
-  background: linear-gradient(#f5d964, #dcb434);
+  /* 牌子是淡黄的（孩子指定），字和描边仍是深色 */
+  background: linear-gradient(#fbf0b8, #ecd88a);
   border: 2px solid #2c2208;
   border-radius: 12px;
+  /* 底下那条厚边 + 投影：改成挂牌前就有，原样保留 */
   box-shadow: 0 6px 0 #6b5816, 0 12px 26px rgba(20, 14, 0, .35);
   cursor: pointer;
   transition: transform .08s ease, box-shadow .08s ease, filter .15s ease;
 }
 .home-play:hover { filter: brightness(1.06); }
 .home-play:active { transform: translateY(4px); box-shadow: 0 2px 0 #6b5816, 0 6px 14px rgba(20, 14, 0, .3); }
-.home-play:focus-visible { outline: 3px solid #fff4c4; outline-offset: 3px; }
+/* 焦点描边只围牌子（outline 画在按钮自己身上，棍子、吊绳不在里面）。
+   牌子改成淡黄后，原来的浅色描边 #fff4c4 和牌子、墙纸、地毯都分不开，还会在吊绳上切出一道浅色缺口；
+   改成和描边、吊绳同色的深色圈：吊绳穿过它看着还是连着的，对浅黄背景对比度约 10:1 */
+.home-play:focus-visible { outline: 3px solid #2c2208; outline-offset: 3px; }
 
-/* ---------- 「游玩」正上方：创意工坊 / 设置（次要按钮，WORKSHOP.md 第 9 节） ---------- */
+/* ---------- 挂牌正上方：创意工坊 / 设置（次要按钮，WORKSHOP.md 第 9 节；竖屏手机放挂牌左边，见文件末尾） ---------- */
 .home-secondary-actions {
   position: absolute;
-  right: calc(24px + env(safe-area-inset-right));
-  /* 24 + 62（.home-play 默认高）+ 10 间距，随下面几个断点里 .home-play 的高度一起变 */
-  bottom: calc(96px + env(safe-area-inset-bottom));
-  pointer-events: auto;
+  right: calc(var(--home-edge-r) + env(safe-area-inset-right));   /* 和牌子右边对齐 */
+  /* 底边 24 + 牌子高 + 吊绳 + 棍子 + 间距 18（720 高的桌面：24 + 62 + 52 + 14 + 18 = 170），跟着上面的变量走，断点里只改变量 */
+  bottom: calc(var(--home-edge) + var(--home-play-h) + var(--home-rope) + var(--home-rod) + var(--home-sec-gap) + env(safe-area-inset-bottom));
+  /* 容器本身不吃事件，只有两个按钮吃：按钮之间那 10px 空隙点下去照样穿到画布 */
+  pointer-events: none;
   display: flex; flex-direction: column; align-items: stretch; gap: 10px;
 }
 .home-secondary-btn {
+  pointer-events: auto;
   min-width: 130px; min-height: 44px;
   padding: 0 20px;
   font-size: 14px; font-weight: 700;
@@ -94,10 +152,11 @@
 }
 .home-secondary-btn:active { background: rgba(72, 60, 22, .9); }
 .home-secondary-btn:focus-visible { outline: 2px solid #e8c547; outline-offset: 2px; }
-/* 和 .home-play 一样：主页自己的弹层开着时收起，别跟弹窗叠在一起 */
+/* 和挂牌一样：主页自己的弹层开着时收起，别跟弹窗叠在一起 */
 .home-root.is-open .home-secondary-actions { opacity: 0; visibility: hidden; }
 
-/* 有弹层时把主页上的常驻元素收起，免得和弹窗叠在一起 */
+/* 有弹层时把主页上的常驻元素收起，免得和弹窗叠在一起；挂牌整块（棍子、吊绳、牌子）一起收 */
+.home-root.is-open .home-sign,
 .home-root.is-open .home-play,
 .home-root.is-open .home-hint { opacity: 0; visibility: hidden; }
 
@@ -296,7 +355,9 @@
     padding: 10px 16px 16px;
     padding: 10px calc(16px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
   }
-  .home-play { min-width: 140px; min-height: 58px; padding: 0 36px; }
+  /* 牌子 150×58（≈ 2.6:1）：吊绳 48 ≈ 0.32 倍宽，棍子 13 ≈ 9%。--home-play-w 给下面竖屏手机那档算按钮组位置用 */
+  .home-root { --home-play-w: 150px; --home-play-h: 58px; --home-rope: 48px; --home-rod: 13px; --home-sec-gap: 18px; }
+  .home-play { min-width: var(--home-play-w); padding: 0 36px; }
   .home-skin-panel {
     left: 0; right: 0; bottom: 0; top: auto;
     transform: none;
@@ -305,8 +366,22 @@
     border-radius: 16px 16px 0 0; border-bottom: 0;
     padding: 12px calc(16px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
   }
-  /* .home-play 这个断点里矮到 58px，次要按钮组跟着往下挪，别悬空留大缝 */
-  .home-secondary-actions { bottom: calc(92px + env(safe-area-inset-bottom)); }
+  /* 次要按钮组的 bottom 由上面的变量算出：24 + 58 + 48 + 13 + 18 = 161（平板竖屏；手机见下一档） */
+}
+
+/* 竖屏手机（宽 ≤559）：人物站在屏幕正中，靴底在约 0.7 倍屏高处，触屏还有一圈放大的碰撞体（宽约 0.22 倍屏高，镜头还会左右漂移）。
+   按钮组叠在挂牌正上方时顶边离屏幕底约 255–260px，会压住右靴：看着挡脚，点靴子还会开「创意工坊」而不是换制服。
+   所以这一档把两个按钮挪到挂牌左边，仍然竖排，底边和牌子底边对齐（离屏幕底 24 + 安全区）：
+   右边 = 牌子右边距 + 牌子宽 × 1.1（横棍往左再伸出 10%）+ 12px，跟横棍左端留 12px；
+   宽最多 130，屏幕太窄（320）时按剩下的地方缩，左边至少留 16px，最窄 96 也放得下「创意工坊」四个字 */
+@media (max-aspect-ratio: 17/20) and (max-width: 559px) {
+  .home-root { --home-side-gap: 12px; }
+  .home-secondary-actions {
+    right: calc(var(--home-edge-r) + var(--home-play-w) * 1.1 + var(--home-side-gap) + env(safe-area-inset-right));
+    bottom: calc(var(--home-edge) + env(safe-area-inset-bottom));
+    width: clamp(96px, calc(100vw - var(--home-edge-r) - var(--home-play-w) * 1.1 - var(--home-side-gap) - 16px - env(safe-area-inset-left) - env(safe-area-inset-right)), 130px);
+  }
+  .home-secondary-btn { min-width: 0; padding: 0 10px; }
 }
 
 /* 矮横屏手机：卡片挤一点，标题缩小 */
@@ -314,10 +389,21 @@
   .home-title-zh { font-size: 32px; }
   .home-menu-btn { min-height: 58px; }
   .home-card { min-height: 70px; }
-  .home-play { min-height: 54px; }
-  .home-secondary-actions { bottom: calc(88px + env(safe-area-inset-bottom)); gap: 8px; }
+  /* 牌子 142×54（≈ 2.63:1），吊绳 45（≈ 0.32 倍宽）、棍子 12。次要按钮组 bottom = 24 + 54 + 45 + 12 + 18 = 153，
+     两个按钮 44 + 8 + 44 叠上去顶边离屏幕底 249：640×360 时在 y≈111，标题底只到 y≈69（标题在左、按钮在右，横向不重叠）。
+     间距沿用默认的 18：横屏手机也是触屏，间距小了点棍子上沿会被吸去开「设置」 */
+  .home-root { --home-play-h: 54px; --home-rope: 45px; --home-rod: 12px; }
+  .home-play { min-width: 142px; padding: 0 36px; }
+  .home-secondary-actions { gap: 8px; }
   .home-note { margin: 2px 0 6px; }
   .home-field { margin-bottom: 6px; }
+}
+
+/* 极矮的横屏兜底（高 ≤260）：上面那档按钮组顶边离屏幕底 249，640×304、568×320、667×331 都还放得下（标题在左、按钮在右，横向不重叠），
+   比例照整理稿不动；只有再矮到 260 以下才把吊绳、棍子收一档（吊绳 ≈ 0.21 倍宽），还是一根棍两根绳挂一块牌。
+   bottom = 24 + 54 + 30 + 10 + 10 = 128，按钮组顶边离屏幕底 224 */
+@media (max-height: 260px) and (min-aspect-ratio: 17/20) {
+  .home-root { --home-rope: 30px; --home-rod: 10px; --home-sec-gap: 10px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

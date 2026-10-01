@@ -6,21 +6,22 @@
   "spawnFactor": 1,
   "radius": 2,
   "chunkSize": 44,
-  "hash": "608b0770676b9a4a3f6805a47e521b3f92bce8fbb6d40f57aa4c7ed8279d80a8",
+  "hash": "b66d4de123da8f199252187493d45e14c346e5db1fcc143c4e5c24404d1e0607",
   "chunks": [
     {
       "cx": -2,
       "cz": -2,
-      "hash": "7bf8213fbfd835a1",
-      "verts": 8723,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "89884a3ebe3a7620",
+      "verts": 10255,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",16],
-        ["kit|kit:prop",8412],
+        ["kit|kit:prop",9684],
         ["kit|kit:glow",24],
-        ["kit|kit:water",251]
+        ["kit|kit:water",419],
+        ["kit|kit:decal",92]
       ],
       "solids": [
         [-78.841,0,-81.75,-73.159,3.296,-76.25],
@@ -157,16 +158,17 @@
     {
       "cx": -1,
       "cz": -2,
-      "hash": "4d8e2f8cad12b1d1",
-      "verts": 7984,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "886b6b88200ad35f",
+      "verts": 9382,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",16],
-        ["kit|kit:prop",7856],
+        ["kit|kit:prop",9128],
         ["kit|kit:glow",24],
-        ["kit|kit:water",68]
+        ["kit|kit:water",110],
+        ["kit|kit:decal",84]
       ],
       "solids": [
         [-34.76,0,-81.75,-29.24,3.243,-76.25],
@@ -279,16 +281,17 @@
     {
       "cx": 0,
       "cz": -2,
-      "hash": "d482df3456c2e9ff",
-      "verts": 8243,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "8bc5e24261e587ba",
+      "verts": 9767,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",16],
-        ["kit|kit:prop",7932],
+        ["kit|kit:prop",9204],
         ["kit|kit:glow",24],
-        ["kit|kit:water",251]
+        ["kit|kit:water",419],
+        ["kit|kit:decal",84]
       ],
       "solids": [
         [8.806,0,-81.75,15.194,2.647,-76.25],
@@ -399,16 +402,17 @@
     {
       "cx": 1,
       "cz": -2,
-      "hash": "b083d8dcb689e8b9",
-      "verts": 7962,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "cfdc4e23fd7b0896",
+      "verts": 9336,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",16],
-        ["kit|kit:prop",7834],
+        ["kit|kit:prop",9106],
         ["kit|kit:glow",45],
-        ["kit|kit:water",47]
+        ["kit|kit:water",89],
+        ["kit|kit:decal",60]
       ],
       "solids": [
         [53.579,0,-81.75,58.421,3.313,-76.25],
@@ -516,16 +520,17 @@
     {
       "cx": 2,
       "cz": -2,
-      "hash": "170a681f43739b49",
-      "verts": 8271,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "3ae6be05f72d84ac",
+      "verts": 9749,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",16],
-        ["kit|kit:prop",8028],
+        ["kit|kit:prop",9300],
         ["kit|kit:glow",24],
-        ["kit|kit:water",183]
+        ["kit|kit:water",309],
+        ["kit|kit:decal",80]
       ],
       "solids": [
         [96.914,0,-81.75,103.086,3.391,-76.25],
@@ -636,16 +641,17 @@
     {
       "cx": -2,
       "cz": -1,
-      "hash": "782e4b6166482967",
-      "verts": 8498,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "2e6a55f05f1d7139",
+      "verts": 9972,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",16],
-        ["kit|kit:prop",8248],
+        ["kit|kit:prop",9520],
         ["kit|kit:glow",24],
-        ["kit|kit:water",190]
+        ["kit|kit:water",316],
+        ["kit|kit:decal",76]
       ],
       "solids": [
         [-78.575,0,-37.75,-73.425,3.251,-32.25],
@@ -764,16 +770,17 @@
     {
       "cx": -1,
       "cz": -1,
-      "hash": "7169076f94c7e0d8",
-      "verts": 8777,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "e7e028589b42b7c4",
+      "verts": 10231,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",16],
-        ["kit|kit:prop",8534],
+        ["kit|kit:prop",9806],
         ["kit|kit:glow",45],
-        ["kit|kit:water",162]
+        ["kit|kit:water",288],
+        ["kit|kit:decal",56]
       ],
       "solids": [
         [-34.565,0,-37.75,-29.435,3.468,-32.25],
@@ -900,16 +907,17 @@
     {
       "cx": 0,
       "cz": -1,
-      "hash": "6ee6bc68ad220f88",
-      "verts": 8540,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "55b80e5da0a5f357",
+      "verts": 9968,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",16],
-        ["kit|kit:prop",8344],
+        ["kit|kit:prop",9616],
         ["kit|kit:glow",24],
-        ["kit|kit:water",136]
+        ["kit|kit:water",220],
+        ["kit|kit:decal",72]
       ],
       "solids": [
         [9.598,0,-37.75,14.402,3.329,-32.25],
@@ -1032,16 +1040,17 @@
     {
       "cx": 1,
       "cz": -1,
-      "hash": "c1489d4f6d0f2db7",
-      "verts": 8902,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "1d2d5b7a16b07e55",
+      "verts": 10422,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",16],
-        ["kit|kit:prop",8612],
+        ["kit|kit:prop",9884],
         ["kit|kit:glow",24],
-        ["kit|kit:water",230]
+        ["kit|kit:water",398],
+        ["kit|kit:decal",80]
       ],
       "solids": [
         [52.754,0,-37.75,59.246,2.866,-32.25],
@@ -1162,16 +1171,17 @@
     {
       "cx": 2,
       "cz": -1,
-      "hash": "5a96e38dc0433b24",
-      "verts": 8271,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "9e0b8c916a75dac1",
+      "verts": 9687,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",16],
-        ["kit|kit:prop",8096],
+        ["kit|kit:prop",9368],
         ["kit|kit:glow",24],
-        ["kit|kit:water",115]
+        ["kit|kit:water",199],
+        ["kit|kit:decal",60]
       ],
       "solids": [
         [96.717,0,-37.75,103.283,2.873,-32.25],
@@ -1299,16 +1309,17 @@
     {
       "cx": -2,
       "cz": 0,
-      "hash": "510780fde22e5807",
-      "verts": 8519,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "53e3c6bd81b38be4",
+      "verts": 9993,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",16],
-        ["kit|kit:prop",8276],
+        ["kit|kit:prop",9548],
         ["kit|kit:glow",24],
-        ["kit|kit:water",183]
+        ["kit|kit:water",309],
+        ["kit|kit:decal",76]
       ],
       "solids": [
         [-78.619,0,6.25,-73.381,3.043,11.75],
@@ -1419,16 +1430,17 @@
     {
       "cx": -1,
       "cz": 0,
-      "hash": "3db93ce10847982c",
-      "verts": 9070,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "cc85661489f40f40",
+      "verts": 10582,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",16],
-        ["kit|kit:prop",8780],
+        ["kit|kit:prop",10052],
         ["kit|kit:glow",24],
-        ["kit|kit:water",230]
+        ["kit|kit:water",398],
+        ["kit|kit:decal",72]
       ],
       "solids": [
         [-35.137,0,6.25,-28.863,3.137,11.75],
@@ -1559,16 +1571,17 @@
     {
       "cx": 0,
       "cz": 0,
-      "hash": "cd5efaf0054bd843",
-      "verts": 8590,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "7513bbf42e21a8e2",
+      "verts": 10068,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",16],
-        ["kit|kit:prop",8368],
+        ["kit|kit:prop",9640],
         ["kit|kit:glow",24],
-        ["kit|kit:water",162]
+        ["kit|kit:water",288],
+        ["kit|kit:decal",80]
       ],
       "solids": [
         [9.514,0,6.25,14.486,3.48,11.75],
@@ -1687,16 +1700,17 @@
     {
       "cx": 1,
       "cz": 0,
-      "hash": "f8e9eb39273386c7",
-      "verts": 8826,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "c9a0f5996837b7fa",
+      "verts": 10334,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",16],
-        ["kit|kit:prop",8490],
+        ["kit|kit:prop",9762],
         ["kit|kit:glow",49],
-        ["kit|kit:water",251]
+        ["kit|kit:water",419],
+        ["kit|kit:decal",68]
       ],
       "solids": [
         [53.623,0,6.25,58.377,3.145,11.75],
@@ -1819,15 +1833,16 @@
     {
       "cx": 2,
       "cz": 0,
-      "hash": "f89498bc9a85ab2f",
-      "verts": 2880,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop"],
+      "hash": "2f9a45cb9825bab1",
+      "verts": 3684,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",20],
-        ["kit|kit:prop",2812],
-        ["kit|kit:glow",28]
+        ["kit|kit:prop",3604],
+        ["kit|kit:glow",28],
+        ["kit|kit:decal",12]
       ],
       "solids": [
         [106,1.8,24.78,114,5.4,29.78],
@@ -1896,16 +1911,17 @@
     {
       "cx": -2,
       "cz": 1,
-      "hash": "e78ced889ada0bdd",
-      "verts": 3626,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "720f0b28baaae7a8",
+      "verts": 4410,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",16],
-        ["kit|kit:prop",3414],
+        ["kit|kit:prop",4110],
         ["kit|kit:glow",61],
-        ["kit|kit:water",115]
+        ["kit|kit:water",199],
+        ["kit|kit:decal",4]
       ],
       "solids": [
         [-63.35,0,65.65,-62.65,1.6,66.35],
@@ -1978,16 +1994,17 @@
     {
       "cx": -1,
       "cz": 1,
-      "hash": "865391e3dcc3dcbe",
-      "verts": 8847,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "46c8c7e772e5349f",
+      "verts": 10283,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",16],
-        ["kit|kit:prop",8630],
+        ["kit|kit:prop",9902],
         ["kit|kit:glow",45],
-        ["kit|kit:water",136]
+        ["kit|kit:water",220],
+        ["kit|kit:decal",80]
       ],
       "solids": [
         [-35.25,0,50.25,-28.75,3.492,55.75],
@@ -2114,16 +2131,17 @@
     {
       "cx": 0,
       "cz": 1,
-      "hash": "a68366865126629b",
-      "verts": 8080,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "a3e34a7b365e36fc",
+      "verts": 9512,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",16],
-        ["kit|kit:prop",7884],
+        ["kit|kit:prop",9156],
         ["kit|kit:glow",24],
-        ["kit|kit:water",136]
+        ["kit|kit:water",220],
+        ["kit|kit:decal",76]
       ],
       "solids": [
         [9.175,0,50.25,14.825,3.395,55.75],
@@ -2235,16 +2253,17 @@
     {
       "cx": 1,
       "cz": 1,
-      "hash": "b7914e02a24e3f95",
-      "verts": 8463,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "c76a7cb12f1d693d",
+      "verts": 9929,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",16],
-        ["kit|kit:prop",8220],
+        ["kit|kit:prop",9492],
         ["kit|kit:glow",24],
-        ["kit|kit:water",183]
+        ["kit|kit:water",309],
+        ["kit|kit:decal",68]
       ],
       "solids": [
         [52.887,0,50.25,59.113,3.222,55.75],
@@ -2368,16 +2387,17 @@
     {
       "cx": 2,
       "cz": 1,
-      "hash": "cca2937c2bcc41c9",
-      "verts": 8147,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "576dc4cdf038eda8",
+      "verts": 9617,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",16],
-        ["kit|kit:prop",7904],
+        ["kit|kit:prop",9176],
         ["kit|kit:glow",24],
-        ["kit|kit:water",183]
+        ["kit|kit:water",309],
+        ["kit|kit:decal",72]
       ],
       "solids": [
         [96.987,0,50.25,103.013,2.852,55.75],
@@ -2495,16 +2515,17 @@
     {
       "cx": -2,
       "cz": 2,
-      "hash": "5d916c72b222404f",
-      "verts": 8348,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "6f1fc2a306da59f9",
+      "verts": 9750,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",16],
-        ["kit|kit:prop",8220],
+        ["kit|kit:prop",9492],
         ["kit|kit:glow",24],
-        ["kit|kit:water",68]
+        ["kit|kit:water",110],
+        ["kit|kit:decal",88]
       ],
       "solids": [
         [-78.736,0,94.25,-73.264,3.543,99.75],
@@ -2629,16 +2650,17 @@
     {
       "cx": -1,
       "cz": 2,
-      "hash": "f927fe80bcdf318c",
-      "verts": 8396,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "efe04bf9e93adfc7",
+      "verts": 9832,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",16],
-        ["kit|kit:prop",8200],
+        ["kit|kit:prop",9472],
         ["kit|kit:glow",24],
-        ["kit|kit:water",136]
+        ["kit|kit:water",220],
+        ["kit|kit:decal",80]
       ],
       "solids": [
         [-34.968,0,94.25,-29.032,2.708,99.75],
@@ -2756,16 +2778,17 @@
     {
       "cx": 0,
       "cz": 2,
-      "hash": "a05ce66d7d9cf043",
-      "verts": 8692,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "89f30896c9544239",
+      "verts": 10054,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",16],
-        ["kit|kit:prop",8564],
+        ["kit|kit:prop",9836],
         ["kit|kit:glow",24],
-        ["kit|kit:water",68]
+        ["kit|kit:water",110],
+        ["kit|kit:decal",48]
       ],
       "solids": [
         [9.426,0,94.25,14.574,3.531,99.75],
@@ -2890,16 +2913,17 @@
     {
       "cx": 1,
       "cz": 2,
-      "hash": "2fb9f06f4aead834",
-      "verts": 8498,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "591799957eb54b41",
+      "verts": 9980,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",16],
-        ["kit|kit:prop",8276],
+        ["kit|kit:prop",9548],
         ["kit|kit:glow",24],
-        ["kit|kit:water",162]
+        ["kit|kit:water",288],
+        ["kit|kit:decal",84]
       ],
       "solids": [
         [53.627,0,94.25,58.373,2.888,99.75],
@@ -3011,16 +3035,17 @@
     {
       "cx": 2,
       "cz": 2,
-      "hash": "c4402f4132c22f24",
-      "verts": 8392,
-      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "cd6a70a936eb6ade",
+      "verts": 9828,
+      "mats": ["kit|L9:grass","kit|L9:sidewalk","kit|L9:street","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L9:grass",4],
         ["kit|L9:street",16],
         ["kit|L9:sidewalk",16],
-        ["kit|kit:prop",8224],
+        ["kit|kit:prop",9496],
         ["kit|kit:glow",24],
-        ["kit|kit:water",108]
+        ["kit|kit:water",192],
+        ["kit|kit:decal",80]
       ],
       "solids": [
         [97.61,0,94.25,102.39,3.387,99.75],

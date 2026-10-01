@@ -224,7 +224,7 @@ function portalNear(seed, cx, cz) {
 // =====================================================================
 // 通用几何小工具：全部合进已有材质（kit:prop / kit:glow / L1:wall），不新建材质、不建独立 mesh
 // =====================================================================
-// ---------- 三角面预算（第 16 节：每块 ≤ 8000）----------
+// ---------- 三角面预算（第 16 节：低画质每块 ≤ 8000、高画质 ≤ 10000；这里的账面按低画质算，高画质多出来的细节档见下面 bev/soft）----------
 // 结构（地面/楼板/梁/柱/灯/管线）和出口是必摆的，先建；货架上的货、堆垛、屋内陈设、墙面挂件这类"可多可少"的内容后建，
 // 每一件动手前看一眼这块已经用了多少面，按剩下的额度分配（额度只取决于本块已建的几何 → 同种子两端逐字节一致）。
 // 超额时从最不显眼的东西开始省：高层货位先空、墙面挂件先省，地面一层和柱子永远是满细节。
@@ -237,7 +237,7 @@ function rawTri(b) {
 // 画质无关的记账：kit 构件（门、电梯、桌椅柜床、水坑）高画质比低画质多 50–120 面（_kit.js hiDetail），
 // 要是直接拿实际面数分预算，两个画质设置不同的联机玩家会算出不一样的货架/堆垛 —— 碰撞体、刷新点都对不上。
 // 所以这些构件一律按"标称面数"入账（KIT_EST，取高画质实测值再留一点余量），账面面数只由种子决定；
-// 实际面数 ≤ 账面（低画质、或 kit 自己在 7200 面以上退回简版时更少），8000 的上限照样守得住
+// 实际面数 ≤ 账面（低画质、或 kit 自己在 DETAIL_TRI_CAP 以上退回简版时更少），低画质 8000 的上限照样守得住
 const KIT_EST = { door: 250, elevator: 165, puddle: 66, desk: 265, deskSmall: 190, chair: 240, cabinet: 135, bed: 125 };
 const kitAdj = new WeakMap();
 function triCount(b) { return rawTri(b) + (kitAdj.get(b) || 0); }
@@ -247,7 +247,126 @@ function kitCall(b, est, fn) {
   kitAdj.set(b, (kitAdj.get(b) || 0) + est - (rawTri(b) - t0));
   return out;
 }
+// 水坑：外面那圈干掉的软边水渍印由 kit.prop.puddle 自己画（高画质，rx·rz ≤ 0.7 的水坑都有），这里不再另贴一圈（叠两圈会发黑）
 function kitPuddle(b, x, z, opts) { return kitCall(b, KIT_EST.puddle, () => kit.prop.puddle(b, x, z, 0, opts)); }
+
+// ---------- 细节档（用户 2026-10-01：「材质也得跟随着细化，一些方块的角不能太尖锐，一些方块还需要过渡」）----------
+// 倒角（b.box 的 bevel）和软边贴花（kit.decal）只在高画质出现：低画质时 kit 退回普通盒、贴花不画（这里画回原来的硬边几何）。
+// 记账：一律按"改之前、低画质的面数"入账（倒角盒 = 普通盒、替换掉的硬边几何 = 它原来的面数、新加的贴花 = 0）——
+// 账面面数只由种子决定：两种画质摆出来的货架/堆垛/碰撞体逐字节一样（联机），也和改之前一样（账面最多约 7700）。
+// 高画质实际面数 = 账面 + D（D = 倒角多出来的 + 贴花 + kit 构件细节档超出 KIT_EST 的部分）。倒角只在 D < EXTRA_CAP 时做，
+// 于是高画质 ≤ 7700 + 1350 + 少量余波 < 10000。EXTRA_CAP 取 1350 而不是更大：整块要停在 kit 的 DETAIL_TRI_CAP（9000）以下 ——
+// 过了 9000，后建的贴花（地上的油渍、泥土）和 kit 构件 finish 时贴的磨损（水坑外的水渍圈、门边擦痕）都会被截掉（账面 ≥ 7600 的少数块仍会略过）
+const EXTRA_CAP = 1350;
+const DECAL_MAX = 100;           // 每块自己贴的贴花上限（kit 硬上限 120；kit 构件 finish 时还会贴磨损，实测每块 ≤ 15 片，留余量不触发 warn）
+// 贴花分两档：A = 原来就有、换成软边的痕迹（剥漆、水渍、油渍、裂纹、刮痕、泥土……），一片都不许丢，额度用到 DECAL_MAX；
+// B = 这次新加的点缀（轮胎印、擦痕、滴痕、拖痕；墙根脏污改用不占额度的渐变带 grimeBand），只在给后面阶段的 A 档留够份额时才画（e.keep[阶段] = 要留几片）。
+// 柱子（每块 16 根 × 平均 4 片 ≈ 64 片）是 A 档大头、最先建，B 档都排在柱子后面；后面阶段 A 档要几片按本块柱间种类估（keepFor）
+const A_CORE = { wall: 2, passage: 10 }, A_FILL = { grove: 11, open: 1, hut: 1 };   // 每种柱间 A 档贴花片数（墙面水渍 / 裂纹 / 泥土苔藓 / 油渍 / 床垫）
+// 核心/填货阶段里还没建的柱间各自的 A 档也要留（keepCore / keepFill 在逐个柱间建的时候更新）
+function keepFor(bays) {
+  let core = 4, fill = 2;                                // 4：墙上出口门（刮痕 3）、地面出口（泥土 / 碎灰 1）
+  for (const bb of bays) { core += A_CORE[bb.type] || 0; fill += A_FILL[bb.type] || 0; }
+  return { shell: 99, pillar: 99, misc: core + fill, core: core + fill, fill, deco: 0 };
+}
+function keepCore(e, bb) { e.keep.core -= A_CORE[bb.type] || 0; }    // 这个柱间建完：它的 A 档不用再留
+function keepFill(e, bb) { e.keep.fill -= A_FILL[bb.type] || 0; }
+const FLOOR_DECAL = 0.0065;      // 地面贴花离地 6.5 mm：在主通道标线（4）、货位角标（5）、碎灰（6）之上，脚垫（7）、水坑（8–12）之下
+// 贴图平均色（解码到线性）：L1:wall 的 concrete.jpg、L1:floor 的 concrete_wet.jpg；kit:prop 的有效底色 = 顶点色 × 0.8。
+// 贴花用 srgb: false + 这里算出来的线性色 → 和"顶点色 × 贴图"的墙面、地面是同一套颜色
+const CONC_LIN = [0.2326, 0.2231, 0.2097];
+const PROP_LIN = 0.8;
+const extra = new WeakMap();
+// lim：填货阶段每个柱间分到的 D 上限（按柱间胃口摊，免得前几个货架把倒角份额吃光、后面的堆垛一个都倒不了）
+// hi：本块已经成功画出过贴花 = 高画质（低画质贴花一片都画不出来）。第一根柱子的第一块剥漆（哥特段八角柱没有剥漆，就是随后的轮胎印）
+// 是全块第一片贴花，那时块里 0 片、离 DETAIL_TRI_CAP 很远，高画质一定画得出来 → 从这以后 hi 都判得准
+function ext(b) { let e = extra.get(b); if (!e) { e = { tris: 0, decals: 0, hi: false, lim: Infinity, cat: '-', by: {}, lost: {}, keep: {} }; extra.set(b, e); } return e; }
+function addExtra(e, n) { e.tris += n; e.by[e.cat] = (e.by[e.cat] || 0) + n; }
+function overD(b) { return rawTri(b) - triCount(b); }
+function mul3(a, c) { return [a[0] * c[0], a[1] * c[1], a[2] * c[2]]; }
+function charge(b, n) { kitAdj.set(b, (kitAdj.get(b) || 0) + n); }
+const FACE_N = { all: 6, sides: 4, noBottom: 5, noTop: 5 };
+function nFaces(f) { return Array.isArray(f) ? f.length : FACE_N[f || 'all'] || 6; }
+// 倒角盒（opts 同 b.box，带 bevel / bevelEdges）。返回 true = 真的倒了角（高画质、D 没到上限、没到 DETAIL_TRI_CAP）
+function bev(b, x, y, z, w, h, d, key, opts) {
+  const e = ext(b);
+  const D = opts.bevel > 0 ? overD(b) : 0;
+  const o = D >= Math.min(EXTRA_CAP, e.lim) ? Object.assign({}, opts, { detail: false }) : opts;
+  const t0 = rawTri(b);
+  b.box(x, y, z, w, h, d, key, o);
+  const plain = nFaces(o.faces) * 2, got = rawTri(b) - t0;
+  addExtra(e, got - plain);
+  charge(b, plain - got);
+  return got > plain;
+}
+// dbox 的倒角版（不出碰撞体）：edges = bevelEdges
+function bbox(b, x, y, z, w, h, d, color, faces, bevel, edges, key, rotY) {
+  const k = key || 'kit:prop';
+  return bev(b, x, y, z, w, h, d, k, { color, solid: false, faces: faces || 'all', rotY, uv: k === 'kit:prop' ? 'stretch' : 'world', bevel, bevelEdges: edges });
+}
+// 软边贴花。画不了时：低画质画 fallback（原来的硬边几何）；高画质（配额用完、到了 DETAIL_TRI_CAP）这一片干脆不画，
+// 免得高画质里软硬两种混着出现。nominal = fallback 的面数（入账用，两种画质一样）；bonus = B 档点缀（见 BONUS_KEEP）
+function soft(b, o, nominal, fallback, bonus) {
+  const e = ext(b);
+  let got = 0, p = null;
+  if (e.decals < DECAL_MAX - (bonus ? e.keep[e.cat] || 0 : 0)) {
+    const t0 = rawTri(b);
+    p = kit.decal(b, o);
+    if (p) { e.decals++; e.hi = true; }
+    else if (fallback && !e.hi) fallback();
+    else if (e.hi) { const k = e.cat + (bonus ? ':B' : ':A') + ':cap'; e.lost[k] = (e.lost[k] || 0) + 1; }
+    got = rawTri(b) - t0;
+  } else { const k = e.cat + (bonus ? ':B' : ':A') + ':q'; e.lost[k] = (e.lost[k] || 0) + 1; }
+  addExtra(e, got - nominal);
+  charge(b, nominal - got);
+  return p;
+}
+// 预先取 n 个随机数（和原来硬边几何的取数顺序一致），seq 再按顺序吐出来喂给 fallback
+function take(r, n) { const a = []; for (let k = 0; k < n; k++) a.push(r()); return a; }
+function seq(a) { let i = 0; return () => a[i++ % a.length]; }
+function clampAbs(v, m) { return m <= 0 ? 0 : Math.max(-m, Math.min(m, v)); }
+// 从 yTop 往下流到 yBot 的一道软边水痕（朝 +z、贴在 z 处的立面上；顶宽 w、中心 u；flat = 立面平的部分半宽，看得见的部分不出这个范围）。
+// 窄（w < 0.13）用 'drip' 格子：主流痕在格子横向 0.55 处、半高宽约 0.23 格宽，竖向 2%–95%；
+// 宽的用 'rust' 格子：几道流痕铺在横向 0.16–0.75、源头一团在竖向 2%–17%、流痕到 85%。源头顶到 yTop 上面 2 cm（被上面的托/梁挡住）
+function streak(w, yTop, yBot, u, z, flat, color, opacity, maxW) {
+  const L = yTop - yBot, narrow = w < 0.13;
+  const dw = narrow ? Math.min(0.6, Math.max(0.22, w * 4.3)) : Math.min(maxW || 0.45, Math.max(0.24, w / 0.55));
+  const dh = L / (narrow ? 0.93 : 0.85), flip = frac(u * 7.3 + L * 3.1) < 0.5;
+  const x = u + (narrow ? -0.05 : 0.045) * dw * (flip ? -1 : 1);   // 流痕不在格子正中：挪回 u
+  return { kind: narrow ? 'drip' : 'rust', x: clampAbs(x, flat - 0.32 * dw), y: yTop + 0.02 + 0.02 * dh - dh / 2, z, facing: '+z', w: dw, h: dh,
+    color, srgb: false, opacity, flip };
+}
+// 墙根脏污（"渐变污迹"）：沿当前坐标系 x ∈ [x0, x1]、朝 +z、贴在 z 处的墙面（或墙裙）外面的一条顶点色渐变带。
+// 和底下的墙面同一个材质、同一套世界 UV → 纹理逐像素对齐；顶边颜色 = 底下墙面的颜色（base），所以顶边看不出接缝，
+// 往下越来越暗（y0 处 × (1 − dark)）：三行顶点 0 / 0.4 / 1，暗度 1 / 0.4 / 0 —— 贴地一段暗得快、往上慢慢淡掉。
+// 顶边高度沿墙起伏（每 ~2.4 m 一个控制点，28–50 cm），等暗线跟着起伏，不是一刀切的水平线。
+// 原来这里是一排 'stain' 软边贴花，但每块的贴花额度先给柱子的剥漆/水渍（A 档），承重墙一多就轮不到（实测 40 个有承重墙的块里 15 个一片都没画上）；
+// 渐变带不占贴花额度、每段只有 4n 个三角面。只在高画质画（低画质照旧没有，和贴花一样）；面数记在细节档 D 上（账面 0，不影响布局）。
+// gr：派生流（两种画质取数一样）
+function lowQ() { return !!(BR.game && BR.game.settings && BR.game.settings.quality === 'low'); }
+const GRIME_ROWS = [0, 0.4, 1], GRIME_DARK = [1, 0.4, 0];
+function grimeBand(b, x0, x1, z, y0, base, dark, gr, key) {
+  const n = Math.max(1, Math.round((x1 - x0) / 2.4)), hs = [];
+  for (let i = 0; i <= n; i++) hs.push(0.28 + 0.22 * gr());
+  if (lowQ() || rawTri(b) >= kit.budget.detailCap) return;
+  const t0 = rawTri(b);
+  const pc = b._piece(key, 0, 0, 0, 0, (v, t) => {
+    for (let i = 0; i <= n; i++) {
+      const x = x0 + (x1 - x0) * i / n;
+      for (let j = 0; j < 3; j++) v(x, y0 + hs[i] * GRIME_ROWS[j], z, 0, 0, 1, 0, 0);
+    }
+    for (let i = 0; i < n; i++) for (let j = 0; j < 2; j++) { const a = i * 3 + j, c = a + 3; t(a, c, c + 1); t(a, c + 1, a + 1); }
+  }, { color: base, uv: 'world', solid: false });
+  // 逐顶点压暗（finish 之前 Piece 的顶点色还在 acc.col 里，Piece.setColor 也是这么改的）
+  const col = pc.acc.col;
+  for (let i = 0; i <= n; i++) for (let j = 0; j < 3; j++) {
+    const k = (pc.start + i * 3 + j) * 3, m = 1 - dark * GRIME_DARK[j];
+    col[k] *= m; col[k + 1] *= m; col[k + 2] *= m;
+  }
+  const got = rawTri(b) - t0;
+  addExtra(ext(b), got);
+  charge(b, -got);
+}
 function sub3(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
 function cross3(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
 function norm3(a) { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; }
@@ -327,9 +446,10 @@ function drum(b, x, y, z, r, h, color, seg) {
 //   顶面高过眼睛（1.62 m）永远看不见、背面也看不见 —— 这两种不画看不见的面，省下来的面数给地面一层做细节
 const VIS_FACES = ['noBottom', ['py', 'pz', 'px', 'nx'], ['pz', 'px', 'nx']];
 // 托盘：底座一块 + 正面（和可选背面）的叉车口。宽托盘（货架上 3 m 那种）等于两块托盘并排
+// 倒角：地面上的、货架地面一层的托盘倒上棱（1 cm：叠起来的一摞托盘之间出一道 V 形浅槽）；高层货位上的不倒（省面）
 function pallet(b, x, y, z, w, d, rot, back, vis) {
   b.push(x, z, rot || 0, y || 0);
-  dbox(b, 0, 0, 0, w, 0.13, d, C.pallet, vis ? ['py', 'pz'] : 'noBottom');
+  bbox(b, 0, 0, 0, w, 0.13, d, C.pallet, vis ? ['py', 'pz'] : 'noBottom', (vis || 0) < 2 ? 0.01 : 0, 'top');
   const m = Math.max(2, Math.round(w / 0.75)), ow = w / m * 0.6;
   for (let k = 0; k < m; k++) {
     const px = -w / 2 + (k + 0.5) * w / m;
@@ -339,28 +459,31 @@ function pallet(b, x, y, z, w, d, rot, back, vis) {
   b.pop();
 }
 // 一垛纸箱：一个大盒子 + 正面的竖缝/横缝 + 顶上的封箱胶带 + 一张标签 —— 看着是 cols×rows 个箱子，只花一个盒子的面数
+// 倒角：纸箱棱 1.2 cm（高层货位上的不倒）；倒了角时缝线、胶带缩回到平面部分，不伸到斜面外面悬空
 function cartonBlock(b, x, y, z, w, h, d, cols, rows, rot, hs, sides, vis) {
   b.push(x, z, rot || 0, y);
   const col = mulc(C.card, 0.86 + 0.26 * hs());
-  dbox(b, 0, 0, 0, w, h, d, col, VIS_FACES[vis || 0]);
+  const bv = (vis || 0) < 2 && bbox(b, 0, 0, 0, w, h, d, col, VIS_FACES[vis || 0], 0.012) ? 0.012 : 0;
+  if (!bv && (vis || 0) >= 2) dbox(b, 0, 0, 0, w, h, d, col, VIS_FACES[vis || 0]);
   const zf = d / 2 + 0.003;
-  for (let c = 1; c < cols; c++) sheet(b, -w / 2 + c * w / cols, 0, zf, 0.012, h, '+z', C.seam);
+  for (let c = 1; c < cols; c++) sheet(b, -w / 2 + c * w / cols, 0, zf, 0.012, h - bv, '+z', C.seam);
   for (let r = 1; r < rows; r++) {
-    sheet(b, 0, r * h / rows - 0.006, zf, w, 0.012, '+z', C.seam);
+    sheet(b, 0, r * h / rows - 0.006, zf, w - 2 * bv, 0.012, '+z', C.seam);
     if (sides) {
-      sheet(b, w / 2 + 0.003, r * h / rows - 0.006, 0, d, 0.012, '+x', C.seam);
-      sheet(b, -w / 2 - 0.003, r * h / rows - 0.006, 0, d, 0.012, '-x', C.seam);
+      sheet(b, w / 2 + 0.003, r * h / rows - 0.006, 0, d - 2 * bv, 0.012, '+x', C.seam);
+      sheet(b, -w / 2 - 0.003, r * h / rows - 0.006, 0, d - 2 * bv, 0.012, '-x', C.seam);
     }
   }
-  if ((vis || 0) < 2) for (let c = 0; c < cols; c++) sheet(b, -w / 2 + (c + 0.5) * w / cols, h + 0.003, 0, 0.06, d, 'up', C.tape);
+  if ((vis || 0) < 2) for (let c = 0; c < cols; c++) sheet(b, -w / 2 + (c + 0.5) * w / cols, h + 0.003, 0, 0.06, d - 2 * bv, 'up', C.tape);
   const lc = Math.floor(hs() * cols), lr = Math.floor(hs() * rows);
   sheet(b, -w / 2 + (lc + 0.5) * w / cols, (lr + 0.35) * h / rows, zf + 0.002, 0.15, 0.1, '+z', C.label);
   b.pop();
 }
 // 缠膜托盘货：浅蓝灰的一块 + 两道打包带 + 一道反光
+// 倒角：缠膜货四条竖棱 4 cm（缠绕膜包出来的本来就是圆角，打包带在面中间，不碰竖棱）
 function wrapLoad(b, x, y, z, w, h, d, rot, vis) {
   b.push(x, z, rot || 0, y);
-  dbox(b, 0, 0, 0, w, h, d, C.wrap, VIS_FACES[vis || 0]);
+  bbox(b, 0, 0, 0, w, h, d, C.wrap, VIS_FACES[vis || 0], (vis || 0) < 2 ? 0.04 : 0, 'vertical');
   for (const s of [-0.28, 0.28]) dbox(b, s * w, 0, 0, 0.035, h + 0.004, d + 0.008, C.strap, vis === 2 ? ['pz'] : vis === 1 ? ['py', 'pz'] : ['py', 'pz', 'nz']);
   facets(b, 'kit:prop', [[[-w * 0.42, h * 0.15, d / 2 + 0.003], [-w * 0.3, h * 0.15, d / 2 + 0.003], [w * 0.05, h * 0.9, d / 2 + 0.003], [-w * 0.07, h * 0.9, d / 2 + 0.003]]], C.sheen);
   b.pop();
@@ -378,10 +501,11 @@ function sack(b, x, y, z, w, h, d, rot, color) {
   b.pop();
 }
 // 木箱：箱体 + 上下两圈箍条 + 正面一道斜撑 + 一块模板喷字
+// 倒角：箱体 12 条棱 2 cm（箍条是钉在外面的木条，方角凸出来，照旧）
 function crate(b, x, y, z, w, h, d, rot, color, vis) {
   b.push(x, z, rot || 0, y);
   const c = color || C.crate;
-  dbox(b, 0, 0, 0, w, h, d, c, VIS_FACES[vis || 0]);
+  bbox(b, 0, 0, 0, w, h, d, c, VIS_FACES[vis || 0], 0.02);
   const band = vis ? ['pz', 'px', 'nx'] : 'sides';
   dbox(b, 0, 0.05, 0, w + 0.02, 0.07, d + 0.02, C.crateBand, band);
   dbox(b, 0, h - 0.12, 0, w + 0.02, 0.07, d + 0.02, C.crateBand, band);
@@ -391,9 +515,10 @@ function crate(b, x, y, z, w, h, d, rot, color, vis) {
   b.pop();
 }
 // 周转箱：侧面 + 顶上一块深色（箱口里的阴影）+ 正面一个把手孔
+// 倒角：塑料周转箱四条竖棱 1.8 cm（高层货位上的不倒）
 function tote(b, x, y, z, w, h, d, color, rot, vis) {
   b.push(x, z, rot || 0, y);
-  dbox(b, 0, 0, 0, w, h, d, color, vis ? ['pz', 'px', 'nx'] : 'sides');
+  bbox(b, 0, 0, 0, w, h, d, color, vis ? ['pz', 'px', 'nx'] : 'sides', (vis || 0) < 2 ? 0.018 : 0, 'vertical');
   if ((vis || 0) < 2) sheet(b, 0, h - 0.02, 0, w - 0.04, d - 0.04, 'up', mulc(color, 0.35));
   sheet(b, 0, h - 0.09, d / 2 + 0.003, Math.min(0.12, w * 0.4), 0.035, '+z', mulc(color, 0.3));
   b.pop();
@@ -453,10 +578,11 @@ function buildShell(b, env) {
   kit.prop.floor(b, null, null, 0, { matKey: 'L1:floor', color: st.floor });
   kit.prop.ceiling(b, null, null, 0, { matKey: 'L1:wall', y: H, color: CEIL_COLOR });
   // 主梁：沿每条柱线满跨，梁底 3.55。梁两端贴着邻块那一段、不画端面；十字交叉处的梁底被柱身包住
+  // 梁底两条长棱倒 3.5 cm（梁两头不画端面，所以只有这两条）：斜面朝下斜着接灯光，梁的轮廓不再是刀切的
   const bc = mulc(st.concrete, 0.92);
   for (const L of LINES) {
-    dbox(b, SIZE / 2, H - BEAM_D, L, SIZE, BEAM_D, BEAM_W, bc, ['ny', 'pz', 'nz'], 'L1:wall');
-    dbox(b, L, H - BEAM_D, SIZE / 2, BEAM_W, BEAM_D, SIZE, bc, ['ny', 'px', 'nx'], 'L1:wall');
+    bbox(b, SIZE / 2, H - BEAM_D, L, SIZE, BEAM_D, BEAM_W, bc, ['ny', 'pz', 'nz'], 0.035, 'all', 'L1:wall');
+    bbox(b, L, H - BEAM_D, SIZE / 2, BEAM_W, BEAM_D, SIZE, bc, ['ny', 'px', 'nx'], 0.035, 'all', 'L1:wall');
   }
   // 主通道两侧的黄色标线（旧漆、断续）：区块边界两边各 4 m 是主通道，标线离柱线 0.8 m；十字路口处断开
   const lineCol = [0.8, 0.64, 0.16];
@@ -466,6 +592,31 @@ function buildShell(b, env) {
       const len = Math.min(2.8 - 0.3 - hs() * 0.4, 27.2 - x);
       sheet(b, x + len / 2, 0.004, zz, len, 0.12, 'up', lineCol);
       sheet(b, zz, 0.004, x + len / 2, 0.12, len, 'up', lineCol);
+    }
+  }
+}
+// 主通道地上的叉车轮胎印（软边贴花，B 档，只在高画质）：两道平行的淡黑拖痕（轮距 0.95 m），每 2.6 m 一段、段与段之间微微拐弯。
+// 派生流 'L1-tire'，不吃区块 rng；低画质照样把随机数取完（贴花不画）。柱子之后再画（柱子的 A 档贴花优先）
+function tireTracks(b) {
+  const r = U.rng(b.seed, b.cx, b.cz, 'L1-tire');
+  const n = r() < 0.35 ? 1 : 2;
+  for (let t = 0; t < n; t++) {
+    const strip = Math.floor(r() * 4);                 // 0/1：沿 x 的两条主通道（z≈2 / z≈30）；2/3：沿 z 的两条（x≈2 / x≈30）
+    const c = (strip % 2 ? 29.2 : 1.1) + r() * 1.7;    // 车道中线离区块边 1.1–2.8 m（柱子 3.47 m 起，不压柱脚）
+    let a = 1 + r() * 12, ang = (r() - 0.5) * 0.08;
+    const segs = 2 + Math.floor(r() * 3), op = 0.5 + r() * 0.2, wid = 0.17 + r() * 0.06;
+    for (let k = 0; k < segs; k++) {
+      const len = 2.6, turn = (r() - 0.5) * 0.07;
+      const a1 = a + Math.cos(ang) * len, dc = Math.sin(ang) * len;
+      for (const side of [-0.475, 0.475]) {
+        const mid = (a + a1) / 2, cc = c + dc / 2 + side;
+        const x = strip < 2 ? mid : cc, z = strip < 2 ? cc : mid;
+        // 地面贴花 w 沿本地 x；沿 z 走的车道转 90°。末段淡一点（轮胎上的灰蹭完了）
+        soft(b, { kind: 'drag', x, y: 0, z, facing: 'up', w: len + 0.25, h: wid, rot: strip < 2 ? -ang : HALF_PI + ang,
+          color: [0.02, 0.019, 0.018], srgb: false, opacity: op * (k === segs - 1 ? 0.6 : 1), offset: FLOOR_DECAL, flip: k % 2 === 1 }, 0, null, true);
+      }
+      a = a1; ang += turn;
+      if (a > 30) break;
     }
   }
 }
@@ -493,34 +644,49 @@ function buildPillar(b, x, z, env) {
     b.cylinder(0, 0.26, 0, R + 0.012, bandTop - 0.26, K, { segments: RSEG, caps: false, color: paint, solid: false });
     b.cylinder(0, bandTop, 0, R + 0.018, 0.05, K, { segments: RSEG, caps: false, color: st.stripe, solid: false });
     b.cylinder(0, H - 0.95, 0, R, 0.35, K, { rTop: R + 0.3, segments: RSEG, caps: false, color: conc, solid: false });
-    dbox(b, 0, H - 0.6, 0, 2 * R + 0.7, 0.14, 2 * R + 0.7, conc, 'noTop', K);
+    bbox(b, 0, H - 0.6, 0, 2 * R + 0.7, 0.14, 2 * R + 0.7, conc, 'noTop', 0.03, 'all', K);
     b.pop();
     return;
   }
-  const h2 = S / 2;
-  dbox(b, 0, 0, 0, S + 0.16, 0.22, S + 0.16, mulc(conc, 0.8), 'noBottom', K);
-  b.box(0, 0, 0, S, H, S, K, { faces: 'sides', color: conc, solid: true });
+  // 倒角（用户 2026-10-01「一些方块的角不能太尖锐」）：柱身四条竖棱 4–5 cm；漆面、漆边线是包在柱身外面的薄层，
+  // 倒角跟着放大（漆面 +1 cm、漆边线 +1.5 cm），斜面上也比柱身斜面凸出 7 mm 以上，不共面；柱脚倒上面一圈棱
+  // （柱脚只有 22 cm 高，竖棱看不太出来；只倒上棱 +8 面，全倒 +20 面 × 16 根，省下来给货物倒角）
+  const h2 = S / 2, rp = S >= 0.8 ? 0.05 : 0.04;
+  bbox(b, 0, 0, 0, S + 0.16, 0.22, S + 0.16, mulc(conc, 0.8), 'noBottom', 0.035, 'top', K);
+  const round = bev(b, 0, 0, 0, S, H, S, K, { faces: 'sides', color: conc, solid: true, bevel: rp, bevelEdges: 'vertical' });
   // 下段刷漆 + 漆边一道深色线
-  dbox(b, 0, 0.22, 0, S + 0.02, bandTop - 0.22, S + 0.02, paint, 'sides', K);
-  dbox(b, 0, bandTop, 0, S + 0.03, 0.05, S + 0.03, st.stripe, 'sides', K);
-  // 剥落：漆面上露出底下的混凝土（不规则小块，贴在漆面外 3 mm）
+  bbox(b, 0, 0.22, 0, S + 0.02, bandTop - 0.22, S + 0.02, paint, 'sides', round ? rp + 0.01 : 0, 'vertical', K);
+  bbox(b, 0, bandTop, 0, S + 0.03, 0.05, S + 0.03, st.stripe, 'sides', round ? rp + 0.015 : 0, 'vertical', K);
+  // 剥落：漆面上露出底下的混凝土。高画质是软边贴花（中间露底、四周渐渐过渡回漆面），低画质照旧是贴在漆面外 3 mm 的不规则小块。
+  // 取数顺序和原来一样（同一根柱子的剥落、水渍位置、块数都不变，1–3 块一块不少）。'stain' 格子里的斑只占格子约 60% × 43%、
+  // 浓的核心约 1/3，所以贴花边长取原来六边形半径的 4.2 倍：核心 ≈ 原来那块的大小，外面一圈软边淡回漆面
   const nPeel = 1 + Math.floor(r() * 3);
+  const flat = h2 - rp;                                  // 漆面上没倒角的平面部分半宽（漆面半宽 h2+0.01、倒角 rp+0.01）
   for (let k = 0; k < nPeel; k++) {
     const f = Math.floor(r() * 4), u = (r() - 0.5) * (S - 0.2), v = 0.35 + r() * (bandTop - 0.55);
     const rx = 0.05 + r() * 0.1, ry = 0.04 + r() * 0.09, zf = h2 + 0.013;
-    const pts = [];
-    for (let q = 0; q < 6; q++) { const a = q / 6 * TAU; const rr = 0.65 + r() * 0.5; pts.push([u + Math.cos(a) * rx * rr, v + Math.sin(a) * ry * rr, zf]); }
+    const rr6 = take(r, 6).map(q => 0.65 + q * 0.5);   // 原来六边形每个角的半径倍率
+    const pw = rx * 4.2, ph = ry * 4.2;
     b.push(0, 0, f * HALF_PI);
-    facets(b, K, [pts], conc, [u, v, 0]);
+    soft(b, { kind: 'stain', x: clampAbs(u, flat - pw * 0.3), y: v, z: h2 + 0.01, facing: '+z', w: pw, h: ph, rot: (rr6[0] - 0.9) * 0.8,
+      color: mul3(CONC_LIN, conc), srgb: false, opacity: 0.95, variant: rr6[1] < 0.9 ? 0 : 1 }, 4, () => {
+      const pts = [];
+      for (let q = 0; q < 6; q++) { const a = q / 6 * TAU; pts.push([u + Math.cos(a) * rx * rr6[q], v + Math.sin(a) * ry * rr6[q], zf]); }
+      facets(b, K, [pts], conc, [u, v, 0]);
+    });
     b.pop();
   }
-  // 水渍：从柱帽往下挂的深色竖条，上宽下窄
+  // 水渍：从柱帽往下挂的上宽下窄的竖条。高画质每道换成一片软边流痕贴花（1–3 道一道不少）：窄的用 'drip'（一道上浓下淡、末端收尖的水痕），
+  // 宽的用 'rust' 格子染成潮混凝土色（源头一团 + 几道往下流的水痕）。源头顶在喇叭口托下沿、上面一截伸进托里被挡住 →
+  // 贴着柱帽最深、往下渐渐淡掉，两侧也是一路淡回混凝土。低画质照旧是深色梯形
   const nStain = 1 + Math.floor(r() * 3);
   for (let k = 0; k < nStain; k++) {
     const f = Math.floor(r() * 4), u = (r() - 0.5) * (S - 0.2), w = 0.06 + r() * 0.16;
     const yTop = H - 0.96, yBot = Math.max(bandTop + 0.15, yTop - 0.6 - r() * 1.5), zf = h2 + 0.004;
     b.push(0, 0, f * HALF_PI);
-    facets(b, K, [[[u - w / 2, yTop, zf], [u - w * 0.15, yBot, zf], [u + w * 0.15, yBot, zf], [u + w / 2, yTop, zf]]], mulc(conc, 0.62), [u, 2, 0]);
+    soft(b, streak(w, yTop, yBot, u, h2, flat, mul3(CONC_LIN, mulc(conc, 0.4)), 0.8), 2, () => {
+      facets(b, K, [[[u - w / 2, yTop, zf], [u - w * 0.15, yBot, zf], [u + w * 0.15, yBot, zf], [u + w / 2, yTop, zf]]], mulc(conc, 0.62), [u, 2, 0]);
+    });
     b.pop();
   }
   // 主通道边上的柱子：黄色护角 + 柱号牌（白底两道黑杠）。护角是包住柱角的角钢，只画朝外的两面（里面两面埋在柱身里）
@@ -533,15 +699,25 @@ function buildPillar(b, x, z, env) {
     sheet(b, 0.06, 2.09, h2 + 0.01, 0.07, 0.16, '+z', C.black);
     b.pop();
   }
-  // 喇叭口托：四个斜面（平面法线，棱角分明）+ 柱帽板
+  // 喇叭口托：柱身倒了角时是八个斜面（四个大面 + 四条接着柱身竖棱斜面往上张开的窄面，底口和柱身切角对齐，不留缝），
+  // 没倒角（低画质）时照旧四个斜面；入账一律按四个面（8 个三角形）。上面压柱帽板（底面一圈棱倒 2 cm，底面平的部分盖得住喇叭口顶边）
   const a0 = h2, a1 = h2 + 0.25, y0 = H - 0.95, y1 = H - 0.6;
-  facets(b, K, [
-    [[-a0, y0, a0], [a0, y0, a0], [a1, y1, a1], [-a1, y1, a1]],
-    [[a0, y0, -a0], [-a0, y0, -a0], [-a1, y1, -a1], [a1, y1, -a1]],
-    [[a0, y0, a0], [a0, y0, -a0], [a1, y1, -a1], [a1, y1, a1]],
-    [[-a0, y0, -a0], [-a0, y0, a0], [-a1, y1, a1], [-a1, y1, -a1]],
-  ], conc, [0, (y0 + y1) / 2, 0]);
-  dbox(b, 0, H - 0.6, 0, S + 0.55, 0.14, S + 0.55, conc, 'noTop', K);
+  if (round) {
+    const ring = (a, c, y) => [[a - c, y, a], [-(a - c), y, a], [-a, y, a - c], [-a, y, -(a - c)], [-(a - c), y, -a], [a - c, y, -a], [a, y, -(a - c)], [a, y, a - c]];
+    const R0 = ring(a0, rp, y0), R1 = ring(a1, rp + 0.1, y1), faces = [];
+    for (let k = 0; k < 8; k++) faces.push([R0[k], R0[(k + 1) % 8], R1[(k + 1) % 8], R1[k]]);
+    facets(b, K, faces, conc, [0, (y0 + y1) / 2, 0]);
+    addExtra(ext(b), 8);
+    charge(b, -8);
+  } else {
+    facets(b, K, [
+      [[-a0, y0, a0], [a0, y0, a0], [a1, y1, a1], [-a1, y1, a1]],
+      [[a0, y0, -a0], [-a0, y0, -a0], [-a1, y1, -a1], [a1, y1, -a1]],
+      [[a0, y0, a0], [a0, y0, -a0], [a1, y1, -a1], [a1, y1, a1]],
+      [[-a0, y0, -a0], [-a0, y0, a0], [-a1, y1, a1], [-a1, y1, -a1]],
+    ], conc, [0, (y0 + y1) / 2, 0]);
+  }
+  bbox(b, 0, H - 0.6, 0, S + 0.55, 0.14, S + 0.55, conc, 'noTop', round ? 0.02 : 0, 'horizontal', K);
   b.pop();
 }
 
@@ -778,8 +954,12 @@ function fillBays(b, bays, env) {
   const list = bays.filter(bb => FILL_WEIGHT[bb.type]).sort((a, c) => FILL_ORDER[a.type] - FILL_ORDER[c.type] || a.k - c.k);
   let wLeft = 0, minLeft = 0;
   for (const bb of list) { wLeft += FILL_WEIGHT[bb.type]; minLeft += FILL_MIN[bb.type] || 0; }
+  const e = ext(b);
   for (const bay of list) {
     const w = FILL_WEIGHT[bay.type], mn = FILL_MIN[bay.type] || 0;
+    // 倒角份额（只影响高画质的可见几何，不影响账面）：剩下的 D 额度按胃口摊给这个柱间
+    const D = overD(b);
+    e.lim = D + Math.max(0, EXTRA_CAP - D) * w / wLeft;
     wLeft -= w; minLeft -= mn;
     const used = triCount(b);
     // 先给后面的柱间留足保底，剩下的按胃口比例分；最后 300 面留给墙面挂件和区段点缀
@@ -788,7 +968,9 @@ function fillBays(b, bays, env) {
     // 绝对上限：再怎么分也不越过 TRI_BUDGET − 200（单件货最多再冒 ~190 面，最后仍在 8000 以内）
     const cap = Math.min(TRI_BUDGET - 200, used + Math.max(Math.min(mn, Math.max(0, TRI_BUDGET - used - minLeft)), share));
     buildBayFill(b, bay, env, cap);
+    keepFill(e, bay);
   }
+  e.lim = Infinity;
 }
 
 // ---------- 货架排 ----------
@@ -804,8 +986,9 @@ function rackBay(b, bay, r, env, cap) {
   for (let f = 0; f <= n; f++) {
     const x = X0 + f * L;
     for (const s of [-1, 1]) {
-      dbox(b, x, 0, s * 1.06, 0.08, RACK_H, 0.07, up, 'sides');
-      dbox(b, x, 0, s * 0.14, 0.08, RACK_H, 0.07, up, ['px', 'nx', s > 0 ? 'pz' : 'nz']);   // 背立柱：朝另一半货架那面（21 cm 缝里）看不见
+      // 立柱竖棱倒 1.2 cm（8×7 cm 的钢立柱，斜面接光后是一道细亮边）
+      bbox(b, x, 0, s * 1.06, 0.08, RACK_H, 0.07, up, 'sides', 0.012, 'vertical');
+      dbox(b, x, 0, s * 0.14, 0.08, RACK_H, 0.07, up, ['px', 'nx', s > 0 ? 'pz' : 'nz']);   // 背立柱：朝另一半货架那面（21 cm 缝里）看不见；藏在货后面，不倒角
       dbox(b, x, 0, s * 1.08, 0.15, 0.012, 0.13, C.steel, ['py']);   // 地脚板（1 cm 厚，侧面看不出来）
       // 立柱正面一列冲孔（深色细条，挂横梁用的孔位）
       sheet(b, x, 0.25, s * (1.06 + 0.035) + s * 0.002, 0.025, RACK_H - 0.4, s > 0 ? '+z' : '-z', mulc(up, 0.45));
@@ -816,8 +999,8 @@ function rackBay(b, bay, r, env, cap) {
     const xc = X0 + (k + 0.5) * L;
     for (const s of [-1, 1]) {
       RACK_LEVELS.forEach((lv, li) => {
-        // 横梁：朝通道的正面 + 底面，低的那根顶面也看得见；梁头两端的挂片
-        dbox(b, xc, lv - 0.1, s * 1.06, L - 0.08, 0.1, 0.05, beam, li === 0 ? ['py', 'ny', s > 0 ? 'pz' : 'nz'] : ['ny', s > 0 ? 'pz' : 'nz']);
+        // 横梁：朝通道的正面 + 底面，低的那根顶面也看得见；正面上下两条长棱倒 1 cm
+        bbox(b, xc, lv - 0.1, s * 1.06, L - 0.08, 0.1, 0.05, beam, li === 0 ? ['py', 'ny', s > 0 ? 'pz' : 'nz'] : ['ny', s > 0 ? 'pz' : 'nz'], 0.01);
         dbox(b, xc, lv, s * 0.6, L - 0.08, 0.02, 0.9, C.deck, ['py']);
         if (li === 0) sheet(b, xc, lv + 0.023, s * 0.6, 0.02, 0.88, 'up', mulc(C.deck, 0.6));   // 钢丝网层板的纵筋（高层看不见）
       });
@@ -825,9 +1008,9 @@ function rackBay(b, bay, r, env, cap) {
       sheet(b, xc - L * 0.3, RACK_LEVELS[0] - 0.08, s * 1.088, 0.12, 0.06, s > 0 ? '+z' : '-z', C.label);
     }
   }
-  // 排头护栏（黄色钢板 + 黑色压顶）：顶面被压顶盖住、朝货架那面贴着端框，都不画
+  // 排头护栏（黄色钢板 + 黑色压顶）：顶面被压顶盖住、朝货架那面贴着端框，都不画；护栏两条外竖棱倒 2 cm
   for (const e of [-1, 1]) {
-    dbox(b, e * (len / 2 + 0.17), 0, 0, 0.1, 0.42, 2.3, C.yellow, [e > 0 ? 'px' : 'nx', 'pz', 'nz']);
+    bbox(b, e * (len / 2 + 0.17), 0, 0, 0.1, 0.42, 2.3, C.yellow, [e > 0 ? 'px' : 'nx', 'pz', 'nz'], 0.02, 'vertical');
     dbox(b, e * (len / 2 + 0.17), 0.42, 0, 0.11, 0.06, 2.31, C.black, ['py', e > 0 ? 'px' : 'nx', 'pz', 'nz']);
   }
   b.solid(-len / 2 - 0.25, 0, -1.16, len / 2 + 0.25, RACK_H, 1.16);
@@ -991,13 +1174,21 @@ function openBay(b, bay, r, env, cap) {
     const px = (r() - 0.5) * 5, pz = (r() - 0.5) * 5;
     if (!bay.exits.length || Math.hypot(px, pz) > 2.2) { kitPuddle(b, px, pz, { rx: 0.9, rz: 0.55, y: 0.009 }); markPuddle(b, px, pz); }
   }
-  // 油渍：外圈一层淡的渗开的油印（6 mm）+ 里面一块更黑的油心（7 mm），比地面暗才像湿的；水坑湿边在 8 mm，互相都错开。
-  // 有出口的空柱间不画（出口自带地面细节：门前脚垫 7 mm、碎灰、泥土圈，免得和油心收在同一高度）
+  // 油渍：高画质是软边油渍贴花（实心油斑 + 外圈一层淡淡渗开的油晕，边缘一路淡到地面，不是一刀切的多边形）；
+  // 低画质照旧：外圈淡油印（6 mm）+ 里面更黑的油心（7 mm）。取数顺序和原来一样（外圈 9 个、油心偏移 2 个 + 8 个），入账按两块多边形 7 + 6 面。
+  // 有出口的空柱间不画（出口自带地面细节：门前脚垫 7 mm、碎灰、泥土圈）
   {
     const ox = (r() - 0.5) * 5, oz = (r() - 0.5) * 5, orx = 0.5 + r() * 0.6, orz = 0.4 + r() * 0.4;
     if (!bay.exits.length) {
-      blot(b, ox, oz, orx, orz, 9, [0.13, 0.128, 0.12], r);
-      blot(b, ox + (r() - 0.5) * 0.2, oz + (r() - 0.5) * 0.2, orx * 0.55, orz * 0.55, 8, [0.07, 0.069, 0.066], r, 0.007);
+      const h0 = take(r, 9), dx = (r() - 0.5) * 0.2, dz = (r() - 0.5) * 0.2, h1 = take(r, 8);
+      (b.data.oil || (b.data.oil = [])).push(b.world(ox, oz));   // 自测找机位用
+      soft(b, { kind: 'oil', x: ox, y: 0, z: oz, facing: 'up', w: orx * 2.3, h: orz * 2.3, rot: h0[0] * TAU, opacity: 0.6 + h0[1] * 0.25, offset: FLOOR_DECAL }, 13, () => {
+        blot(b, ox, oz, orx, orz, 9, [0.13, 0.128, 0.12], seq(h0));
+        blot(b, ox + dx, oz + dz, orx * 0.55, orz * 0.55, 8, [0.07, 0.069, 0.066], seq(h1), 0.007);
+      });
+      // 油渍边上一两道拖出去的油脚印/轮印（只在高画质，新加的不入账）
+      soft(b, { kind: 'drag', x: ox + Math.cos(h0[2] * TAU) * orx * 1.3, y: 0, z: oz + Math.sin(h0[2] * TAU) * orz * 1.3, facing: 'up', w: 1.0 + h0[3], h: 0.14,
+        rot: -h0[2] * TAU, color: 0x161412, opacity: 0.3, offset: FLOOR_DECAL }, 0, null, true);
     }
   }
   if (triCount(b) < cap) scatterDebris(b, r, 4, 3.4);
@@ -1009,7 +1200,7 @@ function parkingLines(b, r) {
   for (let q = 0; q <= 3; q++) sheet(b, -3.75 + q * W, 0.004, -0.5, 0.1, 5, 'up', [0.82, 0.82, 0.78]);
   for (let q = 0; q < 3; q++) {
     const x = -2.5 + q * W;
-    if (r() < 0.8) { dbox(b, x, 0, -2.6, 1.6, 0.12, 0.18, [0.62, 0.6, 0.56], 'noBottom', 'L1:wall'); b.solid(x - 0.8, 0, -2.69, x + 0.8, 0.12, -2.51); }
+    if (r() < 0.8) { bbox(b, x, 0, -2.6, 1.6, 0.12, 0.18, [0.62, 0.6, 0.56], 'noBottom', 0.03, 'all', 'L1:wall'); b.solid(x - 0.8, 0, -2.69, x + 0.8, 0.12, -2.51); }   // 车轮挡棱倒 3 cm
   }
 }
 // 手动液压搬运车（地牛）
@@ -1028,12 +1219,13 @@ function palletJack(b, x, z, rot) {
 function forklift(b, x, z, rot) {
   b.push(x, z, rot);
   const Y = [0.86, 0.66, 0.12];
-  dbox(b, 0, 0.18, 0, 1.1, 0.75, 1.9, Y, 'noBottom');                  // 车身
-  dbox(b, 0, 0.93, 0.62, 1.08, 0.28, 0.62, C.dark, 'noBottom');         // 配重
-  dbox(b, 0, 0.93, -0.15, 0.5, 0.12, 0.5, C.dark, 'noBottom');          // 座椅
-  dbox(b, 0, 1.05, 0.08, 0.5, 0.45, 0.08, C.dark, 'noBottom');          // 靠背
+  // 车身、配重、座椅、靠背倒角（钣金件和坐垫都是圆边）
+  bbox(b, 0, 0.18, 0, 1.1, 0.75, 1.9, Y, 'noBottom', 0.02);              // 车身（2 cm：配重压在车身顶后沿上，倒大了底下露缝）
+  bbox(b, 0, 0.93, 0.62, 1.08, 0.28, 0.62, C.dark, 'noBottom', 0.04);    // 配重
+  bbox(b, 0, 0.93, -0.15, 0.5, 0.12, 0.5, C.dark, 'noBottom', 0.03);     // 座椅
+  bbox(b, 0, 1.05, 0.08, 0.5, 0.45, 0.08, C.dark, 'noBottom', 0.025);    // 靠背
   for (const sx of [-0.48, 0.48]) for (const sz of [-0.75, 0.55]) stick(b, [sx, 0.93, sz], [sx, 2.1, sz * 0.9], 0.025, C.dark);   // 护顶架立柱
-  dbox(b, 0, 2.1, -0.1, 1.0, 0.04, 1.3, C.dark, 'all');                  // 护顶
+  bbox(b, 0, 2.1, -0.1, 1.0, 0.04, 1.3, C.dark, 'all', 0.015, 'top');    // 护顶
   for (const sx of [-0.3, 0.3]) dbox(b, sx, 0.05, -1.05, 0.08, 2.5, 0.08, C.dark, 'sides');   // 门架
   dbox(b, 0, 0.05, -1.05, 0.7, 0.1, 0.1, C.dark, 'noBottom');
   for (const sx of [-0.25, 0.25]) dbox(b, sx, 0.02, -1.6, 0.1, 0.04, 1.0, C.steel, 'noBottom');   // 货叉
@@ -1060,17 +1252,33 @@ function hutShell(b, bay, env, doorX, r) {
   b.aabb(-R - T / 2, 0, R - T / 2, doorX - DW / 2, HH, R + T / 2, K, { faces: 'sides', color: W });
   b.aabb(doorX + DW / 2, 0, R - T / 2, R + T / 2, HH, R + T / 2, K, { faces: 'sides', color: W });
   b.aabb(doorX - DW / 2, DH, R - T / 2, doorX + DW / 2, HH, R + T / 2, K, { faces: ['ny', 'pz', 'nz'], color: W, solid: true });
-  // 屋顶板（挑出 6 cm）+ 一圈压顶
-  dbox(b, 0, HH, 0, 2 * R + T + 0.12, 0.16, 2 * R + T + 0.12, C.roof, 'all', K);
-  // 外墙根一道灰色勒脚（贴在墙外 3 mm）
+  // 屋顶板（挑出 6 cm）+ 一圈压顶：12 条棱倒 3.5 cm（远处看屋顶的轮廓不再是一块刀切的板）
+  bbox(b, 0, HH, 0, 2 * R + T + 0.12, 0.16, 2 * R + T + 0.12, C.roof, 'all', 0.035, 'all', K);
+  // 外墙根一道灰色勒脚（贴在墙外 3 mm）+ 勒脚上面往上渐渐淡掉的一层脏污（grimeBand 渐变带，只在高画质；派生流，不吃柱间 rng）：
+  // 贴着勒脚最深、往上 30–50 cm 一路淡回白墙
+  const gr = U.rng(b.seed, b.cx, b.cz, 'L1-hutgrime', bay.k);
+  const zw = R + T / 2;
   for (const f of [0, 1, 2, 3]) {
     b.push(0, 0, f * HALF_PI);
-    if (f !== 0) sheet(b, 0, 0, R + T / 2 + 0.003, 2 * R + T, 0.15, '+z', [0.62, 0.62, 0.6], K);
+    const segs = [];
+    if (f !== 0) { sheet(b, 0, 0, zw + 0.003, 2 * R + T, 0.15, '+z', [0.62, 0.62, 0.6], K); segs.push([-zw, zw]); }
     else {
       const lw = doorX - DW / 2 + R + T / 2, rw = R + T / 2 - doorX - DW / 2;
-      sheet(b, -R - T / 2 + lw / 2, 0, R + T / 2 + 0.003, lw, 0.15, '+z', [0.62, 0.62, 0.6], K);
-      sheet(b, R + T / 2 - rw / 2, 0, R + T / 2 + 0.003, rw, 0.15, '+z', [0.62, 0.62, 0.6], K);
+      sheet(b, -R - T / 2 + lw / 2, 0, zw + 0.003, lw, 0.15, '+z', [0.62, 0.62, 0.6], K);
+      sheet(b, R + T / 2 - rw / 2, 0, zw + 0.003, rw, 0.15, '+z', [0.62, 0.62, 0.6], K);
+      segs.push([-zw, doorX - DW / 2], [doorX + DW / 2, zw]);
     }
+    // 渐变脏污带从勒脚顶（15 cm）往上，和勒脚同在墙外 3 mm（上下相接、不重叠）；转角处两头各多伸 3 mm，和隔壁那面墙的带子对上
+    for (const [s0, s1] of segs) grimeBand(b, s0 - (s0 <= -zw ? 0.003 : 0), s1 + (s1 >= zw ? 0.003 : 0), zw + 0.003, 0.15, W, 0.4, gr, K);
+
+    b.pop();
+  }
+  // 门边一道推车蹭的擦痕（门洞两侧随机一边）
+  {
+    const side = gr() < 0.5 ? -1 : 1, k = gr();
+    b.push(0, 0, 0);
+    soft(b, { kind: 'scuff', x: doorX + side * (DW / 2 + 0.25 + k * 0.4), y: 0.35 + k * 0.5, z: zw, facing: '+z', w: 0.4 + k * 0.3, rot: (k - 0.5) * 0.3,
+      color: mul3(CONC_LIN, mulc(W, 0.3)), srgb: false, opacity: 0.55, offset: 0.005 }, 0, null, true);
     b.pop();
   }
   // 推杠防火门，半开着；门上亮绿色应急灯
@@ -1149,7 +1357,10 @@ function hutInterior(b, kind, r, env, cap) {
       b.pop();
     }
     sack(b, 1.3, 0, -1.8, 1.0, 0.16, 1.9, 0.1, [0.62, 0.6, 0.5]);   // 地上一张旧床垫
-    blot(b, 1.4, -1.6, 0.25, 0.2, 6, [0.4, 0.33, 0.2], r, 0.17);
+    // 床垫上一块发黄的旧污渍：高画质软边污渍贴花（边缘一路淡回床垫），低画质照旧是浮在床垫顶上的六边形。取数顺序同原来。
+    // 床垫顶是中间隆起 16 cm 的缓坡：贴花水平放在隆起顶点上方（和原来的六边形同一高度），四周淡出的部分离坡面 1–3 cm，看不出悬空
+    { const hs = take(r, 6); soft(b, { kind: 'stain', x: 1.4, y: 0.16, z: -1.6, facing: 'up', w: 0.75, h: 0.62, rot: hs[0] * TAU, color: mulc([0.4, 0.33, 0.2], PROP_LIN), srgb: false, opacity: 0.8, offset: 0.006 }, 4,
+      () => blot(b, 1.4, -1.6, 0.25, 0.2, 6, [0.4, 0.33, 0.2], seq(hs), 0.17)); }
     const chairRot = r() * TAU;
     if (fits(KIT_EST.chair)) kitCall(b, KIT_EST.chair, () => kit.prop.chair(b, -1.4, -1.0, chairRot, { color: 0x4a3d2e }));
   } else if (kind === 'infirmary') {
@@ -1173,7 +1384,7 @@ function hutInterior(b, kind, r, env, cap) {
       if (!fits(90)) break;
       b.push(0, 0, f * HALF_PI);
       for (let c = 0; c < 4; c++) for (let rr = 0; rr < 2; rr++) {
-        dbox(b, -2.25 + c * 1.5, 0.05 + rr * 1.35, R - 0.05, 1.46, 1.31, 0.09, [0.86, 0.84, 0.76], ['nz', 'py', 'ny', 'px', 'nx']);
+        bbox(b, -2.25 + c * 1.5, 0.05 + rr * 1.35, R - 0.05, 1.46, 1.31, 0.09, [0.86, 0.84, 0.76], ['nz', 'py', 'ny', 'px', 'nx'], 0.04);   // 软包垫四周倒 4 cm：鼓起来的样子
       }
       b.pop();
     }
@@ -1277,8 +1488,28 @@ function wallBay(b, bay, r, env) {
       if (nc && Math.abs(hx) < 1.0) continue;
       sheet(b, hx, 1.6 + rr * 1.1, zf + 0.004, 0.05, 0.05, '+z', [0.3, 0.3, 0.29], K);   // 比水渍（+1 mm）再高 3 mm，免得叠在一起闪
     }
+    // 水渍：从梁底渗下来、上宽（40 cm）下窄的一道。高画质是一片软边流痕贴花（'rust' 格子染成潮混凝土色：源头一团伸进梁里被挡住 →
+    // 贴着梁底最深，几道水痕往下流、末端收尖，两侧一路淡回墙面）+ 旁边一道更长的细滴痕（B 档点缀）；低画质照旧是一块深色梯形。取数顺序同原来
     const u = (r() - 0.5) * 5;
-    if (!nc || Math.abs(u) > 1.2) facets(b, K, [[[u - 0.2, WALL_H, zf + 0.001], [u - 0.05, 1.5 + r(), zf + 0.001], [u + 0.07, 1.5 + r(), zf + 0.001], [u + 0.2, WALL_H, zf + 0.001]]], mulc(col, 0.6), [u, 2, 0]);
+    if (!nc || Math.abs(u) > 1.2) {
+      const yb0 = 1.5 + r(), yb1 = 1.5 + r(), wet = mul3(CONC_LIN, mulc(col, 0.42));
+      const p = soft(b, Object.assign(streak(0.4, WALL_H, Math.min(yb0, yb1), u, T / 2, 9, wet, 0.8, 0.75), { offset: 0.005 }), 2,
+        () => facets(b, K, [[[u - 0.2, WALL_H, zf + 0.001], [u - 0.05, yb0, zf + 0.001], [u + 0.07, yb1, zf + 0.001], [u + 0.2, WALL_H, zf + 0.001]]], mulc(col, 0.6), [u, 2, 0]));
+      if (p) soft(b, Object.assign(streak(0.07, WALL_H, Math.max(1.25, Math.max(yb0, yb1) - 0.35), u + 0.13, T / 2, 9, wet, 0.5), { offset: 0.005 }), 0, null, true);
+    }
+    // 墙根一层往上淡掉的脏污（渐变带，铺在墙裙上、范围和墙裙一样，墙裙外 2 mm）+ 几道叉车/托盘蹭出来的擦痕、刮痕
+    // （软边贴花，再外 2 mm）。都只在高画质；派生流，不吃柱间 rng
+    const gr = U.rng(b.seed, b.cx, b.cz, 'L1-wallgrime', bay.k, s);
+    const wain = mulc(col, 1.15);
+    if (nc) { grimeBand(b, -3.8, -0.9, zf + 0.002, 0, wain, 0.45, gr, K); grimeBand(b, 0.9, 3.8, zf + 0.002, 0, wain, 0.45, gr, K); }
+    else grimeBand(b, -3.6, 3.6, zf + 0.002, 0, wain, 0.45, gr, K);
+    for (let q = 0; q < 2; q++) {
+      const k1 = gr(), k2 = gr(), k3 = gr();
+      let x = (k1 - 0.5) * 6.2;
+      if (nc && Math.abs(x) < 1.2) x = (x < 0 ? -1 : 1) * (1.2 + Math.abs(x) * 1.5);   // 切出段两侧 1.2 m 内不贴
+      soft(b, { kind: k3 < 0.5 ? 'scuff' : 'scratch', x, y: 0.18 + k2 * 0.85, z: T / 2, facing: '+z', w: 0.35 + k3 * 0.4, rot: (k3 - 0.5) * 0.25,
+        color: mul3(CONC_LIN, mulc(col, 0.34)), srgb: false, opacity: 0.45 + k2 * 0.25, offset: 0.008 }, 0, null, true);
+    }
     b.pop();
   }
   // 挂门位：两面各两个（x = ±2.35，离切出段和柱子都够远）
@@ -1308,7 +1539,7 @@ function decorateFreeSlots(b, env) {
     b.push(s.x, s.z, s.rot);
     if (k < 0.2) {
       // 配电柜：柜体 + 门缝 + 黄色警示三角 + 两根线管上顶
-      dbox(b, 0, 0.9, 0.16, 0.8, 1.2, 0.3, [0.58, 0.6, 0.6], 'noBottom');
+      bbox(b, 0, 0.9, 0.16, 0.8, 1.2, 0.3, [0.58, 0.6, 0.6], 'noBottom', 0.02);   // 柜体棱倒 2 cm
       sheet(b, 0, 0.94, 0.313, 0.012, 1.12, '+z', [0.2, 0.2, 0.2]);
       facets(b, 'kit:prop', [[[-0.3, 1.75, 0.315], [-0.14, 1.75, 0.315], [-0.22, 1.9, 0.315]]], C.yellow, [-0.22, 1.8, 0]);
       dbox(b, 0.28, 1.35, 0.33, 0.03, 0.12, 0.03, C.dark, 'all');
@@ -1316,7 +1547,7 @@ function decorateFreeSlots(b, env) {
       b.solid(-0.4, 0, 0, 0.4, 2.1, 0.32);
     } else if (k < 0.33) {
       // 消火栓箱：红框 + 玻璃窗里的水带卷
-      dbox(b, 0, 0.8, 0.1, 0.7, 0.9, 0.2, C.red, 'noBottom');
+      bbox(b, 0, 0.8, 0.1, 0.7, 0.9, 0.2, C.red, 'noBottom', 0.015);
       sheet(b, 0, 0.88, 0.203, 0.56, 0.74, '+z', [0.14, 0.16, 0.17]);
       b.cylinder(0, 1.25, 0.12, 0.2, 0.06, 'kit:prop', { axis: 'z', segments: 10, color: [0.75, 0.7, 0.55], solid: false, uv: 'stretch' });
     } else {
@@ -1340,7 +1571,7 @@ function portalBay(b, bay, r, env) {
     // 里面刷淡黄色（贴在墙内 3 mm）
     sheet(b, s * (W / 2 - 0.003), 0, (Z0 + Z1) / 2, Z1 - Z0, HH, s > 0 ? '-x' : '+x', paleY, K);
   }
-  dbox(b, 0, HH, (Z0 + Z1) / 2, W + 2 * T + 0.1, 0.25, Z1 - Z0 + 0.1, outer, 'all', K);
+  bbox(b, 0, HH, (Z0 + Z1) / 2, W + 2 * T + 0.1, 0.25, Z1 - Z0 + 0.1, outer, 'all', 0.035, 'all', K);   // 顶板棱倒 3.5 cm
   sheet(b, 0, HH - 0.003, (Z0 + Z1) / 2, W, Z1 - Z0, 'down', mulc(paleY, 0.9), K);
   sheet(b, 0, 0.004, (Z0 + Z1) / 2 + 0.3, W, Z1 - Z0 - 0.6, 'up', [1.35, 1.3, 1.15], 'L1:floor');
   // 走廊深处一片漆黑（像还能一直走下去）
@@ -1385,12 +1616,15 @@ function passageBay(b, bay, r, env) {
   hutBulb(b, -1.55, 0.6, 0.5, 0.25);
   hutBulb(b, 0, -2.3, 0.45, 0.6);
   hutBulb(b, 1.55, 1.2, 0.4, 0.95);
-  // 墙上的裂纹（越往里越多）
+  // 墙上的裂纹（越往里越多）：高画质是软边细裂纹贴花（中间深、两侧淡出、两头收尖），低画质照旧是细长四边形。取数顺序同原来
   const cr = (x, z, rot, y, n) => {
     b.push(x, z, rot);
     for (let q = 0; q < n; q++) {
-      const u = (r() - 0.5) * 1.6, v = y + r() * 1.2;
-      facets(b, 'kit:prop', [[[u, v, 0.004], [u + 0.02, v, 0.004], [u + 0.25 * (r() - 0.3), v + 0.5, 0.004], [u + 0.25 * (r() - 0.3) - 0.015, v + 0.5, 0.004]]], [0.25, 0.25, 0.24], [u, v, -1]);
+      const u = (r() - 0.5) * 1.6, v = y + r() * 1.2, t0 = r(), t1 = r();
+      const ex = 0.25 * (t0 - 0.3), len = Math.hypot(ex, 0.5);
+      soft(b, { kind: q % 2 ? 'hairline' : 'scratch', x: u + ex / 2, y: v + 0.25, z: 0, facing: '+z', w: len + 0.06, h: 0.035, rot: Math.atan2(0.5, ex),
+        color: 0x2a2826, opacity: 0.85, variant: 2 }, 2,
+        () => facets(b, 'kit:prop', [[[u, v, 0.004], [u + 0.02, v, 0.004], [u + 0.25 * (t0 - 0.3), v + 0.5, 0.004], [u + 0.25 * (t1 - 0.3) - 0.015, v + 0.5, 0.004]]], [0.25, 0.25, 0.24], [u, v, -1]));
     }
     b.pop();
   };
@@ -1438,14 +1672,22 @@ function groveBay(b, bay, r, env) {
   b.push(bay.x, bay.z, 0);
   for (let q = 0; q < 5; q++) {
     const x = (r() - 0.5) * 5, z = (r() - 0.5) * 5, rr = 0.35 + r() * 0.45;
-    blot(b, x, z, rr * 1.5, rr * 1.3, 7, C.soil, r);
+    // 灌木根下的泥土：高画质软边污渍贴花（边缘渐渐淡回混凝土地面），低画质照旧是七边形。取数顺序同原来
+    const hs = take(r, 7);
+    soft(b, { kind: 'stain', x, y: 0, z, facing: 'up', w: rr * 4.6, h: rr * 4.0, rot: hs[0] * TAU, color: mulc(C.soil, PROP_LIN), srgb: false, opacity: 0.95, offset: FLOOR_DECAL }, 5,
+      () => blot(b, x, z, rr * 1.5, rr * 1.3, 7, C.soil, seq(hs)));
     const g = new THREE.IcosahedronGeometry(rr, 0);
     g.scale(1, 0.75 + r() * 0.4, 1);
     b.mesh(g, 'kit:prop', { x, y: rr * 0.55, z, color: mulc(C.leaf, 0.8 + r() * 0.5), uv: 'stretch' });
     g.dispose();
     b.solid(x - rr * 0.7, 0, z - rr * 0.7, x + rr * 0.7, rr * 1.2, z + rr * 0.7);
   }
-  for (let q = 0; q < 6; q++) blot(b, (r() - 0.5) * 6, (r() - 0.5) * 6, 0.4 + r() * 0.6, 0.3 + r() * 0.5, 6, [0.22, 0.34, 0.16], r, 0.0075);
+  // 地上的苔藓：同上，软边贴花 / 低画质六边形
+  for (let q = 0; q < 6; q++) {
+    const mx = (r() - 0.5) * 6, mz = (r() - 0.5) * 6, mrx = 0.4 + r() * 0.6, mrz = 0.3 + r() * 0.5, hs = take(r, 6);
+    soft(b, { kind: 'stain', x: mx, y: 0, z: mz, facing: 'up', w: mrx * 3.2, h: mrz * 3.2, rot: hs[0] * TAU, color: mulc([0.22, 0.34, 0.16], PROP_LIN), srgb: false, opacity: 0.8, offset: FLOOR_DECAL + 0.0005 }, 4,
+      () => blot(b, mx, mz, mrx, mrz, 6, [0.22, 0.34, 0.16], seq(hs), 0.0075));
+  }
   b.pop();
 }
 
@@ -1488,8 +1730,11 @@ function ceilingHole(b, x, z, rot, def, r) {
   for (const s of [-0.22, 0.22]) dbox(b, s, 0, lz, 0.05, H - 0.01, 0.05, [0.45, 0.47, 0.5], 'sides');
   for (let y = 0.3; y < H - 0.1; y += 0.3) dbox(b, 0, y, lz, 0.44, 0.03, 0.03, [0.52, 0.54, 0.56], ['py', 'ny', 'pz', 'nz']);
   b.solid(-0.25, 0, lz - 0.04, 0.25, H, lz + 0.04);
-  // 洞下一小堆掉下来的碎混凝土和灰
-  blot(b, 0.4, 0.3, 0.7, 0.5, 8, [0.55, 0.54, 0.5], r);
+  // 洞下一小堆掉下来的碎混凝土和灰：高画质是一块软边灰斑（'stain' 格子，和泥土同样按"格子边长 ≈ 原来半径 × 3.07"换算，
+  // 浓的核心 ≈ 原来那块多边形的大小，边缘一路淡回地面）；低画质照旧是八边形。取数顺序同原来。
+  // （之前用的 'splash' 格子只有中间一小团 + 零星水点，实拍几乎看不见，等于把这堆灰弄丢了 —— 改回实心的软斑）
+  { const hs = take(r, 8); soft(b, { kind: 'stain', x: 0.4, y: 0, z: 0.3, facing: 'up', w: 2.15, h: 1.54, rot: hs[0] * TAU, color: mulc([0.55, 0.54, 0.5], PROP_LIN), srgb: false, opacity: 0.92, offset: FLOOR_DECAL }, 6,
+    () => blot(b, 0.4, 0.3, 0.7, 0.5, 8, [0.55, 0.54, 0.5], seq(hs))); }
   for (let q = 0; q < 6; q++) dbox(b, 0.2 + r() * 0.6, 0, 0.1 + r() * 0.5, 0.08 + r() * 0.12, 0.05 + r() * 0.08, 0.08 + r() * 0.1, [0.62, 0.61, 0.58], 'noBottom', 'L1:wall', r() * 3);
   holeExit(b, def, 0, lz + 0.6, 0.85);
   b.pop();
@@ -1520,7 +1765,7 @@ function ductExit(b, x, z, rot, def, r) {
 function tvExit(b, x, z, rot, def, r) {
   b.push(x, z, rot);
   const wood = [0.42, 0.3, 0.19];
-  dbox(b, 0, 0, 0, 1.1, 0.5, 0.45, wood, 'noBottom');
+  bbox(b, 0, 0, 0, 1.1, 0.5, 0.45, wood, 'noBottom', 0.02);   // 电视柜：棱倒 2 cm
   sheet(b, 0, 0.04, 0.228, 0.012, 0.42, '+z', mulc(wood, 0.5));
   for (const s of [-0.1, 0.1]) dbox(b, s, 0.3, 0.23, 0.03, 0.03, 0.02, [0.7, 0.6, 0.35], 'all');
   // 录像机 + 绿色数码管
@@ -1529,7 +1774,7 @@ function tvExit(b, x, z, rot, def, r) {
   sheet(b, -0.1, 0.52, 0.183, 0.16, 0.03, '+z', [0.02, 0.02, 0.02], 'kit:glow');
   // CRT：机身 + 后面收窄的屁股 + 屏幕（雪花闪）+ 旋钮 + 天线
   const ty = 0.59;
-  dbox(b, 0, ty, 0.02, 0.64, 0.5, 0.42, [0.3, 0.29, 0.27], 'noBottom');
+  bbox(b, 0, ty, 0.02, 0.64, 0.5, 0.42, [0.3, 0.29, 0.27], 'noBottom', 0.02);   // CRT 机壳圆边（2 cm：后面收窄的屁股接在背面平的部分里）
   facets(b, 'kit:prop', [
     [[-0.3, ty + 0.03, -0.19], [0.3, ty + 0.03, -0.19], [0.18, ty + 0.1, -0.45], [-0.18, ty + 0.1, -0.45]],
     [[0.3, ty + 0.47, -0.19], [-0.3, ty + 0.47, -0.19], [-0.18, ty + 0.4, -0.45], [0.18, ty + 0.4, -0.45]],
@@ -1560,7 +1805,8 @@ function tvExit(b, x, z, rot, def, r) {
 function treeExit(b, x, z, rot, def, r) {
   b.push(x, z, rot);
   // 地面裂开一圈露出泥土，几块翘起的水泥板
-  blot(b, 0, 0, 1.0, 0.85, 9, C.soil, r);
+  { const hs = take(r, 9); soft(b, { kind: 'stain', x: 0, y: 0, z: 0, facing: 'up', w: 3.1, h: 2.7, rot: hs[0] * TAU, color: mulc(C.soil, PROP_LIN), srgb: false, opacity: 0.97, offset: FLOOR_DECAL }, 7,
+    () => blot(b, 0, 0, 1.0, 0.85, 9, C.soil, seq(hs))); }
   b.cylinder(0, 0, 0, 0.55, 0.12, 'kit:prop', { rTop: 0.22, segments: 8, caps: false, color: mulc(C.soil, 1.3), solid: false, uv: 'stretch' });
   for (let q = 0; q < 3; q++) { const a = q / 3 * TAU + r(); dbox(b, Math.cos(a) * 0.95, 0, Math.sin(a) * 0.95, 0.5, 0.06, 0.35, [0.6, 0.59, 0.56], 'noBottom', 'L1:wall', a); }
   b.cylinder(0, 0, 0, 0.17, 1.7, 'kit:prop', { rTop: 0.1, segments: 7, caps: false, color: C.bark, solid: true, uv: 'stretch' });
@@ -1747,7 +1993,7 @@ function doorExtras(b, look, x, z, rot) {
     sheet(b, 0, 0.02, zfr, 0.86, 0.55, '+z', [0.92, 0.96, 1.0]);
     facets(b, 'kit:prop', [[[-0.43, 0.57, zfr], [0.43, 0.57, zfr], [0.3, 0.75, zfr], [-0.1, 0.66, zfr], [-0.35, 0.8, zfr]]], [0.92, 0.96, 1.0], [0, 0.6, -1]);
     for (let q = 0; q < 6; q++) b.cylinder(-0.45 + q * 0.18, 2.13 - (0.12 + (q % 3) * 0.07), 0.07, 0.003, 0.12 + (q % 3) * 0.07, 'kit:prop', { rTop: 0.022, segments: 5, caps: false, color: [0.85, 0.93, 1.0], solid: false, uv: 'stretch' });
-    kitPuddle(b, 0, 0.55, { rx: 0.6, rz: 0.35, y: 0.009, color: [0.65, 0.78, 0.86] });
+    kitPuddle(b, 0, 0.55, { rx: 0.6, rz: 0.35, y: 0.009, color: [0.65, 0.78, 0.86] });   // kit.prop.puddle 没有 ring 开关：冰面外那圈淡水印照画（像化开的冰水）
   } else if (look === 'bunker') {
     // 依据：exits[4]「掩体门」——厚重的暗绿钢门，转盘把手、三个大合页、门框刷黄黑警示条
     b.cylinder(0, 1.1, 0.06, 0.2, 0.03, 'kit:prop', { axis: 'z', segments: 10, color: [0.3, 0.32, 0.28], solid: false, uv: 'stretch' });
@@ -1769,7 +2015,15 @@ function doorExtras(b, look, x, z, rot) {
     const FADED = [0.55, 0.53, 0.47];
     dbox(b, 0, 1.0, zf, 0.085, 0.54, 0.006, FADED, 'all');
     dbox(b, 0, 0.82, zf, 0.085, 0.085, 0.006, FADED, 'all');
-    for (let q = 0; q < 3; q++) facets(b, 'kit:prop', [[[-0.2 + q * 0.12, 1.25, zf + 0.004], [-0.18 + q * 0.12, 1.25, zf + 0.004], [-0.05 + q * 0.12, 0.7, zf + 0.004], [-0.07 + q * 0.12, 0.7, zf + 0.004]]], [0.4, 0.4, 0.38], [0, 1, -1]);
+    // 三道刮痕：高画质是软边刮痕贴花（中间一道实的、两侧淡出、两头收尖），低画质照旧是细长四边形。
+    // 颜色和原来的四边形同一套（kit:prop 顶点色 × 0.8，srgb: false）—— 之前写的 0x6a6862 按屏幕色解码后只有原来亮度的 4 成，
+    // 在深灰门板上几乎看不见；格子高 5 cm：实心核心约 1.9 cm（≈ 原来 2 cm 宽），两侧各约 0.8 cm 的软边
+    for (let q = 0; q < 3; q++) {
+      const x0 = -0.19 + q * 0.12, x1 = -0.06 + q * 0.12, len = Math.hypot(x1 - x0, 0.55);
+      soft(b, { kind: 'scratch', x: (x0 + x1) / 2, y: 0.975, z: zf, facing: '+z', w: len + 0.05, h: 0.05, rot: Math.atan2(-0.55, x1 - x0) + Math.PI,
+        color: mulc([0.4, 0.4, 0.38], PROP_LIN), srgb: false, opacity: 0.92, offset: 0.008, variant: q }, 2,
+        () => facets(b, 'kit:prop', [[[-0.2 + q * 0.12, 1.25, zf + 0.004], [-0.18 + q * 0.12, 1.25, zf + 0.004], [-0.05 + q * 0.12, 0.7, zf + 0.004], [-0.07 + q * 0.12, 0.7, zf + 0.004]]], [0.4, 0.4, 0.38], [0, 1, -1]));
+    }
   }
   b.pop();
 }
@@ -1939,8 +2193,14 @@ function buildChunk(ctx, cx, cz, rng) {
   finishLayout(env);
   env.lampOnBeam = (x, z) => LINES.indexOf(x) >= 0 || LINES.indexOf(z) >= 0;
 
+  const ex = ext(b);
+  ex.keep = keepFor(bays);
+  ex.cat = 'shell';
   buildShell(b, env);
+  ex.cat = 'pillar';
   for (const px of LINES) for (const pz of LINES) buildPillar(b, px, pz, env);
+  ex.cat = 'misc';
+  tireTracks(b);
   sectorInfra(b, env);
 
   // 吊灯：挂在柱线中点（梁下），刚好在货架排之间的通道正上方；撞上承重墙就往墙这一侧挪 1.4 m
@@ -1958,15 +2218,19 @@ function buildChunk(ctx, cx, cz, rng) {
   buildPipes(b, env);
 
   // 必摆：结构性柱间 + 出口
-  for (const bay of bays) buildBayCore(b, bay, env);
+  ex.cat = 'core';
+  for (const bay of bays) { buildBayCore(b, bay, env); keepCore(ex, bay); }
   placeWallExits(b, env, defs.filter(d => d.host === 'wall'));
   // 可选：剩余预算分给各柱间（货架优先）
+  ex.cat = 'fill';
   fillBays(b, bays, env);
+  ex.cat = 'deco';
   decorateFreeSlots(b, env);
   sectorExtras(b, env);
   addSpawns(b, env);
   b.data.sector = sector;
   b.data.bays = bays.map(bb => bb.type[0] + (bb.exits.length ? '*' : '')).join('');
+  b.data.tri = { nominal: Math.round(triCount(b)), extra: ex.tris, decals: ex.decals, by: ex.by, lost: ex.lost };   // 自测用：账面面数、细节档多出的面数
   return b.finish();
 }
 

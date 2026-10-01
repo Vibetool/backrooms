@@ -249,7 +249,7 @@ const b = kit.builder(ctx, cx, cz, rng, { height: 2.8 });   // height 缺省 kit
 
 | 方法 | 说明 |
 |---|---|
-| `b.box(x, y, z, w, h, d, matKey, { solid = true, uv, faces, color, glow, rotY })` | (x, z) 底面中心、y 底面高度；w 沿 x、h 沿 y、d 沿 z。`faces`：`'all'`（缺省）\| `'sides'`（顶天立地的墙，省顶底）\| `'noBottom'`（放地上的东西）\| `'noTop'` \| `['px','nx','py','ny','pz','nz']`。`solid` 时按变换后的顶点出世界 AABB |
+| `b.box(x, y, z, w, h, d, matKey, { solid = true, uv, faces, color, glow, rotY, bevel, bevelEdges })` | (x, z) 底面中心、y 底面高度；w 沿 x、h 沿 y、d 沿 z。`faces`：`'all'`（缺省）\| `'sides'`（顶天立地的墙，省顶底）\| `'noBottom'`（放地上的东西）\| `'noTop'` \| `['px','nx','py','ny','pz','nz']`。`solid` 时按变换后的顶点出世界 AABB。`bevel`/`bevelEdges` 倒角见 5.4 |
 | `b.aabb(minX, minY, minZ, maxX, maxY, maxZ, matKey, opts)` | 同 box，用角点给 |
 | `b.plane(x, y, z, w, h, matKey, { facing = 'up', solid = false, uv, uvRepeat, color, glow, rotY })` | `facing 'up'/'down'`：(x,y,z) 面中心、w 沿 x、h 沿 z（地板/天花板）；`'+z' '-z' '+x' '-x'`：(x,z) 底边中点、y 底边高度、w 水平、h 竖直 |
 | `b.quad(p0, p1, p2, p3, matKey, opts)` | 任意四边形，4 个 `[x,y,z]` 逆时针为正面（坡道、斜顶） |
@@ -258,7 +258,8 @@ const b = kit.builder(ctx, cx, cz, rng, { height: 2.8 });   // height 缺省 kit
 | `b.object(obj, { solid })` | **不合并**的独立 Object3D（会动的东西），每个多 1 个 draw call，每块 ≤ 2 个 |
 | `b.solid(minX, minY, minZ, maxX, maxY, maxZ)` | 纯碰撞体（有旋转时取外接 AABB） |
 
-`Piece`（合并后仍能单独改）：`piece.setColor(color, mul?)`（需要 vertexColors 材质）、`piece.setVisible(bool)`、`piece.visible`。
+`Piece`（合并后仍能单独改）：`piece.setColor(color, mul?)`（需要 vertexColors 材质）、`piece.setVisible(bool)`、`piece.visible`、
+`piece.setOpacity(0..1)`（只对贴花有效，见 5.5：慢慢显出来的血迹/水渍）。
 事件门出现/消失、发光件明灭都用它，不必单独建 mesh。碰撞体不随 `setVisible` 变，要"消失的墙"就别给 solid、改用出口或自己在 update 里判定。
 
 ### 5.3 灯、刷新点、出口、动画
@@ -272,6 +273,86 @@ const b = kit.builder(ctx, cx, cz, rng, { height: 2.8 });   // height 缺省 kit
 | `b.finish()` → `ChunkResult` | 同一个 builder 只能调一次 |
 
 `ChunkResult = { group, solids, lights, spawnPoints, exits, update?, data, kit: { exits: [ExitHandle], stats: { meshes, triangles, solids, lights, spawnPoints, spawnDropped } } }`
+
+### 5.4 倒角（用户 2026-10-01："一些方块的角不能太尖锐"）
+```js
+b.box(x, 0, z, 0.8, 0.9, 0.6, 'kit:prop', { color: 0xb89a6a, faces: 'noBottom', bevel: 0.03 });                  // 箱子：12 条棱全倒
+b.box(x, 0, z, 0.6, 1.8, 0.5, 'kit:prop', { color: 0x8f9499, faces: 'noBottom', bevel: 0.04, bevelEdges: 'vertical' });   // 柜体、柱子
+b.box(x, 0.72, z, 1.4, 0.03, 0.7, 'kit:prop', { color: 0xc9b99b, bevel: 0.012, bevelEdges: 'top' });         // 桌面：只倒上棱
+```
+- 切角盒：每条棱切一条 45° 斜面带、三条棱都倒的角补一个三角；法线分面，斜面朝上斜着接灯光，远看就是一道亮边，棱角显得圆润。
+- `bevel`：切角半径（米）。超过所涉边长的一半自动收小（4 cm 厚的板最多倒 2 cm）；< 1.5 mm 当没有。
+- `bevelEdges`：`'all'`（缺省，12 条）| `'vertical'`（只倒 4 条竖棱：柱子、柜体、门框）| `'top'`（只倒顶面 4 条：桌面、箱盖、台阶）| `'horizontal'`（顶面 + 底面 8 条：悬空的板）。
+  `faces` 里没画的面，旁边的棱自动不倒（贴地的底面、贴墙的背面本来看不见）。
+- **自动退回普通盒**：低画质、`detail: false`、本块已到 `DETAIL_TRI_CAP`（第 8 节）。碰撞体始终按没倒角的盒子算，两种画质、倒不倒角碰撞完全一样（联机两边画质不同也不影响）。
+- UV：`'world'` 贴图材质照常按米数平铺（斜面也是）；`'stretch'` 时斜面接着相邻面的贴图往外延。
+- 三角面（普通盒 12）：
+
+  | 写法 | 三角面 |
+  |---|---|
+  | `bevelEdges: 'all'`，6 面 | 44 |
+  | `'all'` + `faces: 'noBottom'` | 30 |
+  | `'vertical'`，6 面 / `faces: 'sides'` | 28 / 16 |
+  | `'top'`，6 面 / `'noBottom'` | 20 / 18 |
+  | `'horizontal'`，6 面 | 28 |
+
+- 何时用：玩家走近能看到的大件（桌面、柜体、箱子、柱子、台阶、门框、矮墙顶）。半径参考：家具 1–3 cm、箱子 2–4 cm、柱子/矮墙 3–6 cm、薄板（< 4 cm）只用 `'top'`。
+  **不要**给墙体、地板、吊顶、细杆（< 4 cm 的零件）、成片重复上百次的小件倒角（看不出来，白占三角面）。一块里倒角件控制在 40–60 个以内（约 1500 面）。
+
+### 5.5 贴花 `BR.kit.decal(b, opts)` → `Piece | null`（软边印记：刮痕、污渍、水渍、锈迹、鞋印……）
+```js
+// 墙面（朝 +z 的面在 z = 6.0 处）：一道软边刮痕
+kit.decal(b, { kind: 'scratch', x: 4.2, y: 1.1, z: 6.0, facing: '+z', w: 0.7, rot: -0.1, color: 0x4a463e, opacity: 0.7 });
+// 地面：一串鞋印（左右脚用 flip 镜像）
+for (let k = 0; k < 6; k++) kit.decal(b, { kind: 'footprint', x: 9 + (k % 2 ? 0.14 : -0.14), y: 0, z: 12 - k * 0.42, facing: 'up', flip: k % 2 === 0 });
+// 墙上整片撒（gridWalls 的返回值带每段墙的立面 faces）：派生随机流，不吃区块 rng
+const gw = kit.gridWalls(b, g, { matKey: 'L4:wall' });
+kit.scatterDecals(b, gw.faces, { salt: 'L4-scratch', kinds: [['scratch', 3], ['scuff', 2], ['hairline', 1]], per: 0.15, max: 24, y: [0.5, 1.6], color: 0x6b675e, opacity: [0.35, 0.7] });
+```
+- 材质 `'kit:decal'`（内置）：透明、不写深度、往前挤（polygonOffset），alpha 来自程序生成的贴花图集（软边、不用 ctx.filter），颜色来自顶点色，**受光**（法线和底下的面一样，灯下明暗跟墙面一致）。
+  一块里所有贴花合成 **1 个 mesh**、每片 2 个三角面。**这个 mesh 也算进"每块 ≤ 8 个 mesh"**：材质已经 8 种的块（例如 Ldev 构件展示间）不能再加贴花。
+- `kind`（`BR.kit.decalKinds`）：
+
+  | kind | 是什么 | 缺省尺寸 w×h（米） | 变体 |
+  |---|---|---|---|
+  | `scratch` | 刮痕：细长、中间深两侧淡出、两头收尖 | 0.6 × 0.026 | 3（微弯 / 一头粗 / 断成两截） |
+  | `hairline` | 发丝细划痕 | 0.5 × 0.02 | 1 |
+  | `scuff` | 擦痕：一束平行细刮痕（家具蹭墙、拖椅子） | 0.45 × 0.056 | 1 |
+  | `drag` | 拖痕：宽而淡的抹痕 + 顺向细划线 | 1.2 × 0.15 | 1 |
+  | `drip` | 滴流水痕：上浓下淡、末端收尖（源头在上） | 0.15 × 0.6 | 1 |
+  | `rust` | 锈迹流痕：源头锈斑 + 几道往下流的锈水 | 0.18 × 0.72 | 1 |
+  | `footprint` | 鞋印（鞋尖朝 up 方向）：运动鞋横纹 / 靴子人字纹 | 0.12 × 0.24 | 2 |
+  | `splash` | 飞溅：中间一团 + 四周点和甩尾 | 0.5 × 0.5 | 1 |
+  | `stain` | 污渍斑：不规则、径向淡出 | 0.5 × 0.5 | 2 |
+  | `water` | 水渍圈：环线浓、环内淡，环线有起伏和断口（不是正圆） | 0.6 × 0.6 | 2 |
+  | `oil` | 油渍：实心软斑 + 外圈淡晕 | 0.5 × 0.5 | 1 |
+
+- `opts`：
+  - `x, y, z`：贴花**中心**，就在表面上（当前坐标系）；kit 自己往外挪 `offset`（缺省 4 mm）+ polygonOffset，不和墙面共面闪烁。
+  - `facing`：表面朝向 `'+z' '-z' '+x' '-x' 'up' 'down'`；斜面用 `normal: [nx, ny, nz]`。立面上 w 沿水平（面对墙时的右手方向）、h 沿竖直；地面上 h 沿 −z。
+  - `w, h`：米。只给一个就按缺省比例算另一个；`scale` 乘缺省尺寸。`rot`：面内旋转（弧度，从正面看逆时针为正）。`flip` / `flipV`：镜像。
+  - `color`：**屏幕色 hex**（按 sRGB 解码，和贴图同一套：写的颜色就是灯下看到的颜色）；`srgb: false` 时和 `kit:prop` 顶点色一样不解码（会偏亮）。缺省见 `kit.decalInfo(kind)`。
+  - `opacity`：0..1，乘在图集的软边 alpha 上。`variant`：变体序号（缺省按位置哈希挑，不吃 rng）。
+  - `essential: true`：低画质也画（每块最多 8 片）——只给"玩法提示"用（血迹指向出口之类），装饰别用。
+- 低画质：`kit.decal` 直接返回 `null`、什么都不画；高画质每块最多 120 片，本块到 `DETAIL_TRI_CAP` 后也不再画。**贴花不消耗任何随机数**；
+  位置用 rng 算的话照常算完再调 `kit.decal`（不要写成"返回 null 就不取随机数"），两种画质的 rng 消耗一样。
+- `kit.scatterDecals(b, surfaces, opts)` → 实际画的片数：在一组矩形面上按密度撒。`surfaces = [{ x, y, z, facing, w, h }]`（面中心 + 宽高），
+  `kit.gridWalls(...).faces` 直接能用（第 7.4 节），地面就自己给 `{ x, z, y: 0, facing: 'up', w, h }`。
+  `opts`：`salt`（**必填**，带层级前缀）、`kinds`（`['stain']` 或 `[['scratch', 3], ['stain', 1]]` 权重）、`per` = 0.2（每平方米几片）、`max` = 40、
+  `y: [y0, y1]`（立面上贴花中心的高度范围）、`margin` = 0.2、`size: [0.7, 1.3]`（尺寸倍率）、`rot`（立面缺省 ±0.3 弧度、`drip/rust` 保持竖直；地面任意角）、
+  `color`、`opacity`（数字或 `[lo, hi]`）、`essential`。随机数只用派生流 `U.rng(b.seed, salt, b.cx, b.cz)`，不吃区块 rng。
+- 何时用：贴图里画不了"只出现在这一处"的痕迹（这面墙上一道刮痕、这块地上一串鞋印、管卡下面一道锈水）、或者要贴在道具表面上的痕迹（桌面杯印）。
+  **整层到处都有的磨损**（墙纸普遍的发旧、地毯的潮斑）画进本层贴图里（第 15 节 `kit.paint`），不要靠撒几百片贴花。
+- 代价：1 个 mesh / draw call（透明，排在玻璃、水面之前画）+ 每片 2 面；图集 512² 全游戏共享一张。建议每块 10–60 片，大片贴花（> 1 m²）少用（透明 overdraw）。
+
+### 5.6 道具表面纹理（`'kit:prop'` 自带，不用写任何代码）
+- `'kit:prop'` 叠了一张很淡的灰度纹理（`kit_prop_grain`：明暗起伏、细划痕、磨损斑、麻点），只调亮度不调色相；均值已补偿，**顶点色的整体颜色和以前一样**。
+- UV 一律按世界米数平铺（0.9 m 一张），不再按"整面拉伸"：大柜子和 4 mm 压条上的纹理颗粒一样大。平面件按法线投影；圆柱按周长 × 高度、端盖按半径；
+  `b.mesh` 进来的光滑几何（球、环、自带 UV 的圆管）保留自带 UV、按量出来的"每单位 UV 多少米"放大。所以给 `'kit:prop'` 传 `uv: 'stretch'` 也照样按米数铺（写不写都一样）。
+- `opts.grain`（`box / aabb / plane / quad / cylinder / mesh` 都认，只对 `'kit:prop'` 有意义，两档画质一样）：`false` 或 `0` = 这件不铺纹理、平涂顶点色（白板、白漆面、镜面般的大件）；`true` = 一定铺；缺省按这件的本地包围盒自动判断——最大一面 ≥ 3 m² 或细长大件自动退回纯色（整面看得出 0.9 m 一格的云斑重复）；另外**浅色件**（这件顶点色的平均相对亮度 > 0.75——顶点色是线性值，Y = 0.2126R + 0.7152G + 0.0722B；白、米白、奶油、浅黄、浅灰蓝被褥这类）缺省也退回纯色（纹理在浅色低饱和的面上读出来是发灰发花，像脏了），深色木头、金属、石头照常铺。浅色件真要纹理就显式传 `grain: true`。
+  好几块拼成的一件东西（汽车：车身 + 引擎盖 + 车顶……）要么全铺要么全不铺：车身大盒被自动退回纯色、小板件还铺着，近看就是"一车两种表面"——这种情况所有板件都显式传同一个 `grain`（L22 `car()` 全传 `false`）。
+- 结构面缺省不铺：`kit.gridWalls` 的墙段和柱子、`kit.prop.floor / ceiling` 铺的整片地板吊顶，都默认 `grain: false`（L18 那种用 `'kit:prop'` 搭墙地顶的层级就不会一格格发花）；要纹理就显式传 `grain: true`。
+- 层级自己的贴图材质不受影响。想要完全平涂的发光件用 `'kit:glow'`。
 
 ---
 
@@ -306,7 +387,8 @@ b.box(12, 0, 12, 0.6, 2.8, 0.6, 'L6:concrete', { faces: 'sides' });
 | `flatShading` `fog` | |
 
 内置（构件用，也可以直接拿来用）：
-- `'kit:prop'`：无贴图、顶点色 Phong。一块里所有桌椅柜子合成一个 mesh。
+- `'kit:prop'`：顶点色 Phong + 一张很淡的道具表面纹理（5.6 节，UV 一律按米数平铺）。一块里所有桌椅柜子合成一个 mesh。
+- `'kit:decal'`：软边贴花（5.5 节），用 `kit.decal` 往上贴，不要拿它当普通材质给 `b.box`。
 - `'kit:glow'`：Basic、light_panel 贴图、顶点色。`uv:'stretch'` 显示灯盘格栅；`uv:'solid'` 是纯色发光（指示灯、黑洞、窗外亮光），颜色可 >1。
 - `'kit:glass'`：半透明玻璃；`'kit:water'`：半透明高光水面。
 
@@ -363,7 +445,9 @@ kit.gridSpawns(b, g);
 | `g.reconnect(rng?)` | 手动打通孤岛；不传 rng 用派生流（绝不用 Math.random）。故意围死的房间别用 setWall 围，会 warn —— 用 `b.box` 自己砌 |
 
 ### 7.4 gridWalls / gridSpawns
-- `kit.gridWalls(b, g, { matKey, height = b.height, thickness = 0.2, color, top, trim, trimMatKey, pillarSize = 0.5, pillarMatKey })` → `{ walls, pillars }`
+- `kit.gridWalls(b, g, { matKey, height = b.height, thickness = 0.2, color, top, trim, trimMatKey, pillarSize = 0.5, pillarMatKey })` → `{ walls, pillars, faces }`
+  - `faces`：每段墙朝外的立面 `[{ x, y, z, facing, w, h, axis, line, a, e }]`（x/y/z = 立面中心，就在墙面上；w = 沿墙长度，含端头多出的半个墙厚；h = 墙高）。
+    直接喂给 `kit.scatterDecals`（5.5 节），或者自己挑一面挂东西（`facing` 换成 rot：`'+z'` 0、`'-z'` π、`'+x'` π/2、`'-x'` −π/2）。贴花离端头留 ≥ 0.2 m，免得伸进拐角另一面墙里。
   - 连续墙段合成一个盒子，端头多出半个墙厚，L 形拐角不留缝；矮于层高的隔断自动带顶面（`top` 可强制）。
   - `trim`：踢脚线，缺省开 `{ h: 0.1, t: 0.015, color: 0x5a4a32, matKey: 'kit:prop' }`；`trim: false` 关。
 - `kit.gridSpawns(b, g, { every = 1, tag = 'floor', roomTag = 'room', safe })` → 数量。每个未 reserve 的格子中心一个点；`every: 2` 隔格取。
@@ -377,7 +461,14 @@ kit.gridSpawns(b, g);
 约定：(x, z) 是构件在地面上的中心（当前坐标系），`rot = 0` 正面朝 +Z；零件进 `'kit:prop' / 'kit:glow' / 'kit:glass' / 'kit:water'`，一块里摆多少种构件都只多这几个 draw call；碰撞体按整体外形给一两个 AABB。
 所有 `opts` 都可省略；`solid: false` 关碰撞体；`color` 系列字段是 hex。
 
-**细节档（2026-09-23 起）**：构件在高画质下会自动加细节零件（把手、缝线、铰链、格栅……）。以下三种情况自动退回简版：① 低画质；② 调用时传 `detail: false` 或 `detail: 'low'`（成片摆的小件想省面时用）；③ 本块已累积到 7200 个三角面（`_kit.js` 的 `DETAIL_TRI_CAP`）——所以**层级自己的重几何要先建、构件后摆**，否则细节会被提前截断。细节零件不新增材质槽位，叠放的零件彼此错开 ≥2 mm，不许共面。
+**细节档（2026-09-23 起）**：构件在高画质下会自动加细节零件（把手、缝线、铰链、格栅……）。以下三种情况自动退回简版：① 低画质；② 调用时传 `detail: false` 或 `detail: 'low'`（成片摆的小件想省面时用）；③ 本块已累积到 9000 个三角面（`_kit.js` 的 `DETAIL_TRI_CAP`，2026-10-01 随高画质预算放宽到 10000 从 7200 调上来）——所以**层级自己的重几何要先建、构件后摆**，否则细节会被提前截断。细节零件不新增材质槽位，叠放的零件彼此错开 ≥2 mm，不许共面。
+同一套开关也管**倒角**（5.4 节）和**贴花**（5.5 节）：低画质、`detail: false`、到了 9000 面，三样一起关。顺序建议：墙/地/顶 → 层级自己的大件（倒角）→ kit 构件 → 贴花（最后贴，预算紧时先被截掉的是它）。
+
+**材质细化（2026-10-01 起，用户："材质也得跟随着细化"）**：
+- 所有 `'kit:prop'` 构件自动带一层很淡的表面纹理（5.6 节），颜色照旧按 hex 写，不用改。
+- 在自己文件里用 `b.box` 拼家具/设备时：玩家能走近看的大件加 `bevel`（5.4 节）；小零件、细杆、贴面薄片不要倒角。
+- 道具表面的痕迹（桌面杯印、柜门上的擦痕、机器上的锈水）用 `kit.decal` 贴在零件表面上（`y` 取表面高度、`facing` 取那一面朝向），不要再叠一块深色薄片盒子当"污渍"——那是硬边。
+- 构件自己（`kit.prop.*`）这一轮没有加倒角和贴花；层级想让桌面、柜子更圆润，在自己文件里用 `b.box(..., { bevel })` 拼。
 
 | 构件 | opts（缺省值） | 返回 |
 |---|---|---|
@@ -389,7 +480,7 @@ kit.gridSpawns(b, g);
 | `elevator` 电梯门 | `w = 1.1`, `h = 2.1`, `open = 0..1`, `frameColor`, `doorColor`, `indicator`（楼层灯颜色）, `interior`（轿厢颜色，缺省黑）, `wall`, `solid` | `{ left, right }` |
 | `vent` 通风口 | `w = 0.6`, `h = 0.35`, `color`, `y = 2.3`（墙上，中心高度）；`ceiling: true` 贴天花板朝下（`y = b.height`） | `{}` |
 | `pipe` 管道 | `length = 3`, `r = 0.06`, `axis = 'x'\|'z'\|'y'`, `y`（横管轴线高 2.5；竖管底部 0）, `color`, `solid`（竖管缺省有） | `{}` |
-| `puddle` 水坑 | `rx = 0.8`, `rz = 0.5`, `y`, `color`（形状按位置哈希，不吃 rng，不挡路） | `{ piece }` |
+| `puddle` 水坑 | `rx = 0.8`, `rz = 0.5`, `y`, `color`（形状按位置哈希，不吃 rng，不挡路）；`ringColor`（屏幕色）/ `ringOpacity = 0.42` / `ring: false`：高画质外面那圈干水渍印（缺省 = 水色深一号，水色近黑时那圈也近黑，像描了一道线，传浅一点的 `ringColor`） | `{ piece }` |
 | `box` 纸箱 | `w = 0.5`, `h = 0.38`, `d = 0.4`, `stack = 1`, `color` | `{}` |
 | `crate` 木箱 | `size = 0.8`, `color` | `{}` |
 | `desk` 办公桌 | `w = 1.4`, `d = 0.7`, `h = 0.75`, `color`, `monitor`, `screen`（屏幕颜色，缺省黑） | `{}` |
@@ -589,20 +680,56 @@ PY
    ```
 不在 `assets.js` 预载清单里的贴图第一次用时才加载，头几帧显示占位色，可以接受；不要改 `assets.js`。
 
+### 15.1 程序贴图里的痕迹一律软边（用户 2026-10-01："刮痕两边就需要细一点的过渡"）
+- **禁止**用 `fillRect` / 1–2 px 的实心线画刮痕、划痕、裂纹、水痕、锈迹：放到墙上就是一刀切的硬边灰条（Level 4 墙的刮痕就是这么坏的）。
+- **禁止** `ctx.filter = 'blur(...)'`：老 iOS Safari 不支持，会悄悄失效变回硬边。软边只用 `createLinearGradient` / `createRadialGradient`、多层半透明叠画、两头收尖的路径。
+- 现成画笔 `BR.kit.paint`（贴花图集就是用它画的，同一套手感）。单位都是**像素**，`color` = `[r,g,b]`（0..255）或 `'#rrggbb'`，`alpha` = 最浓处的不透明度，
+  `wrap: s`（贴图边长，四向无缝）或 `wrap: [s, 0]`（只横向无缝），`seed`（缺省按位置派生；同参数永远画出同样的东西，不碰 Math.random）：
+
+  | 画笔 | 画什么 | 主要参数 |
+  |---|---|---|
+  | `paint.scratch(g, x, y, len, ang, o)` | 刮痕：横截面钟形（中间深、两侧一路淡到 0）、两头收尖、略弯 | `width`（含淡出的全宽，2–20 px）、`soft` = 2（1 硬 / 3 更软）、`taper` = 0.6、`bend`、`skew`、`lip: { color, alpha }`（一侧浅色翻边：刮开的漆皮边） |
+  | `paint.scuff(g, x, y, len, ang, o)` | 擦痕：一束平行细刮痕 | `spread`（束宽）、`count` = 7、`width` = 1.4 |
+  | `paint.stain(g, x, y, r, o)` | 污渍斑：几团径向渐变叠出不规则轮廓 | `lobes` = 5、`squash`（压扁）、`ring` = 0..1（边缘一圈更深：干掉的水渍） |
+  | `paint.ring(g, x, y, r, o)` | 水渍圈 | `rings` = 3、`width` = 0.14（环宽 / 半径） |
+  | `paint.drip(g, x, y, len, o)` | 滴流水痕（从 (x,y) 往下流）：上浓下淡、末端收尖 | `width`、`head` = true（源头一团） |
+  | `paint.rust(g, x, y, len, o)` | 锈迹流痕：源头锈斑 + 几道锈水 | `width`（源头宽）、`count` = 4 |
+  | `paint.drag(g, x, y, len, ang, o)` | 拖痕 | `width`、`streaks` = 8 |
+  | `paint.footprint(g, x, y, len, o)` | 鞋印（鞋尖朝 −y） | `width` = 0.38、`groove`（花纹缝颜色，传底色）、`tread: 'bars' \| 'chevron'` |
+  | `paint.splash(g, x, y, r, o)` | 飞溅 | `drops` = 14 |
+
+  ```js
+  // Level 4 墙：浅色漆面上的刮痕 —— 深色核心 + 两侧淡出 + 一侧一道很淡的亮翻边，横向无缝
+  BR.assets.registerProcedural('l4_wall', 512, (g, s) => {
+    /* …底色、斑驳… */
+    const r = U.rng('l4_wall-scratch');
+    for (let k = 0; k < 9; k++) {
+      kit.paint.scratch(g, r() * s, s * (0.62 + r() * 0.1), s * (0.05 + r() * 0.12), (r() - 0.5) * 0.25,
+        { width: 3 + r() * 4, alpha: 0.18 + r() * 0.2, color: [92, 90, 86], lip: { alpha: 0.12 }, wrap: [s, 0], seed: 'l4s' + k });
+    }
+  }, { noFile: true });
+  ```
+- 贴图分辨率不够画出两侧过渡时（刮痕全宽 < 3 px 就只剩一条硬线），把贴图从 256 提到 512（一张 512² 约 1.4 MB 显存，包体规则见上）。
+- 只出现在某一处的痕迹不要画进平铺贴图（会每隔几米重复一次），用贴花（5.5 节）。
+
 ---
 
 ## 16. 性能约束（中端安卓 30 fps）
 
 | 项 | 上限 | Level Dev 实测 |
 |---|---|---|
-| 每块 mesh（= 材质种类 + `b.object` + 切出墙） | ≤ 8 | 5–7 |
-| 每块三角形 | ≤ 8000 | 平均 1457，构件展示间 4310 |
+| 每块 mesh（= 材质种类 + `b.object` + 切出墙 + 用了贴花就 +1） | ≤ 8 | 5–8 |
+| 每块三角形（2026-10-01 起按画质分） | **高画质 ≤ 10000，低画质 ≤ 8000** | 平均约 2000，构件展示间约 7100 |
 | 出生点一帧 draw call（`BR.gfx.renderer.info.render.calls`） | ≤ 120 | 71 |
 | 每块刷新点 | ≥ 20 | 60+ |
 | `b.object` 独立物体 | 每块 ≤ 2 | — |
 | 每块灯描述 | ≤ 30，range ≤ 12 | 16 |
 | `buildChunk` 耗时 | 桌面 ≤ 8 ms（world 每帧最多建一块） | — |
 
+- 三角面预算：高画质 10000 = 层级自己的几何 + 构件 + 细节档（倒角、构件细节、贴花）；细节档到 9000（`DETAIL_TRI_CAP`）就停，给层级留 1000 余量。
+  低画质 8000，而且倒角、贴花、构件细节一律关闭 —— **低画质下层级自己的几何（不含细节档）也必须 ≤ 8000**，别指望细节档关掉后才省下来。
+  `BR.kit.budget` 里有这些数（`trisHigh` `trisLow` `detailCap` `meshes` `drawCalls`）。
+- 不许为了分颜色新增材质：同一种表面不同颜色用 `'kit:prop'` 顶点色 / 贴花的 `color`。
 - 层级自己的材质控制在 3–4 种（墙、地、顶 + 一种特殊），装饰件全部走 `'kit:prop'`。
 - 贴图 512² 以内；不开阴影；不用 `MeshStandardMaterial` 除非版本描述离不开金属反射；透明材质尽量少（排序和 overdraw 贵）。
 - `b.update` / `level.update` 里不分配对象、不建几何；`piece.setColor/setVisible` 每帧只改少量件（`linkGlow` 已经做了变化检测）。
@@ -622,7 +749,8 @@ await page.screenshot({ path: 'tests/output/L7-spawn-north.png' });
 ```
 - 开局头几秒屏幕中间有层级名大字（`.hud-title`），截图前注入 `.hud-title{display:none!important}` 样式（`tests/kit.mjs` 就这么做）。
 - 必须有的截图：出生点四个方向；每种地标/区块变体；每种出口实物站在跟前（sealed 的要能看到"尚未开放"提示）；5×5 块俯视图（碰撞体、刷新点、出口，见 `tests/kit.mjs` 末尾）；游玩模式满格时的实体；无光/昏暗层用默认能见度 0.7 截。
-- 逐项看：没有洋红色（漏定义材质）；区块边界没有看穿的半堵墙；出生点不在墙里；出口在俯视图上可达；draw call ≤ 120；每块三角形 ≤ 8000（`BR.world.chunks()[i].res.kit.stats`）；控制台零 error、零 `[kit]` warn。
+- 逐项看：没有洋红色（漏定义材质）；区块边界没有看穿的半堵墙；出生点不在墙里；出口在俯视图上可达；draw call ≤ 120；每块三角形高画质 ≤ 10000、低画质 ≤ 8000（`BR.world.chunks()[i].res.kit.stats`，两种画质各进一次看）；控制台零 error、零 `[kit]` warn。
+- 用了倒角/贴花/画笔的：近景（离表面 0.5–1 m）各截一张，看刮痕两侧是不是一路淡出、两头收尖，倒角斜面有没有接到光；低画质再截一张确认贴花消失、几何退回普通盒、画面没有破洞。
 
 改了 `_kit.js`（只有地基维护者）要跑 `node tests/kit.mjs`（40 项）和 `node tests/smoke.mjs`。
 

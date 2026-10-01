@@ -557,6 +557,34 @@ async function secHint(D) {
   }
   D.data.c4 = samples;
   D.check('C4 360×640 每 400ms 采样 3 次，.home-hint 与 .home-secondary-actions 都不相交', samples.every(s => s.hint && s.sec && !s.over), samples);
+
+  // 「游玩」是挂着的牌子（棍子、吊绳在牌子上方）：提示条也不能压到整块挂牌；
+  // 「创意工坊 / 设置」也不能盖住人物：按钮矩形里每 4px 打一条射线，打到人物的触屏碰撞体就说明点那里本该换制服却开了按钮
+  const more = [];
+  for (let i = 0; i < 3; i++) {
+    if (i) await sleep(400);
+    more.push(await D.ev(() => {
+      const a = __m.box('.home-hint');
+      const parts = ['.home-sign', '.home-sign-rod'].map(s => __m.box(s)).filter(Boolean);
+      const hang = parts.length ? { l: Math.min(...parts.map(p => p.l)), t: Math.min(...parts.map(p => p.t)), r: Math.max(...parts.map(p => p.r)), b: Math.max(...parts.map(p => p.b)) } : null;
+      const hit = BR.gfx.scene.getObjectByName('home-figure-hit');
+      const cam = BR.gfx.camera, ray = new THREE.Raycaster(), v = new THREE.Vector2();
+      cam.updateMatrixWorld();
+      let n = 0, first = null;
+      for (const b of document.querySelectorAll('.home-secondary-btn')) {
+        const r = b.getBoundingClientRect();
+        for (let y = r.top + 2; y < r.bottom; y += 4) for (let x = r.left + 2; x < r.right; x += 4) {
+          v.set(x / innerWidth * 2 - 1, -(y / innerHeight) * 2 + 1);
+          ray.setFromCamera(v, cam);
+          if (hit && ray.intersectObject(hit, false).length) { n++; first = first || [Math.round(x), Math.round(y)]; }
+        }
+      }
+      return { hint: a && [a.l, a.t, a.r, a.b], hang: hang && [hang.l, hang.t, hang.r, hang.b], hintOverHang: __m.inter(a, hang), hasHit: !!hit, figPts: n, first };
+    }));
+  }
+  D.data.c4b = more;
+  D.check('C4b 360×640 采样 3 次，.home-hint 与「游玩」挂牌（牌子 + 吊绳 + 横棍）都不相交', more.every(s => s.hint && s.hang && !s.hintOverHang), more);
+  D.check('C4c 360×640 采样 3 次，「创意工坊 / 设置」按钮里没有一点落在人物的触屏碰撞体上', more.every(s => s.hasHit && s.figPts === 0), more);
 }
 
 async function c1(D, full) {

@@ -53,7 +53,7 @@ const S = {
   root: null, modal: null, hint: null, skinRoot: null, swatches: [],
   coopBtn: null, coopStatus: null, micBtn: null, modalView: null,
   hintW: 0, hintH: 0, hintX: -1, hintY: -1, hintPortrait: null,
-  secEl: null, secRect: null,   // 「创意工坊 / 设置」按钮组和它的矩形缓存（resize 时清空）
+  secEl: null, signEl: null, secRect: null,   // 「创意工坊 / 设置」按钮组、「游玩」挂牌，和它俩的矩形缓存（数组，resize 时清空）
   // 弹层栈：'menu' | 'casual' | 'nightmare' | 'test' | 'skin'
   layers: [], hist: 0, expectDepth: null,
   // 3D
@@ -485,17 +485,25 @@ function updateHint() {
     _v.set(FIG_POS.x, -0.04, FIG_POS.z).project(cam);
     x = (_v.x + 1) / 2 * w - S.hintW / 2;
     y = (1 - _v.y) / 2 * h + 10;
-    // 360 宽这类窄屏上脚下会压到右下的「创意工坊」按钮：碰上就挪到按钮组上方 8px。
-    // 按钮组矩形只在 resize 后量一次，别每帧 getBoundingClientRect 强制重排
-    const r = secRect();
-    if (r && x < r.right + 8 && x + S.hintW + 8 > r.left && y < r.bottom && y + S.hintH + 8 > r.top) {
-      y = r.top - S.hintH - 8;
+    // 窄屏上脚下会压到右下的「创意工坊 / 设置」按钮组或「游玩」挂牌（挂牌带棍子、吊绳，比原来的按钮高）：
+    // 先在原来的高度往左让，停在按钮左边 8px（x 取 min，镜头漂移时不会跳）；左边放不下（< 8px）才挪到按钮组上方 8px。
+    // 矩形只在 resize 后量一次，别每帧 getBoundingClientRect 强制重排
+    const rs = avoidRects();
+    if (rs && hintHits(x, y, rs)) {
+      let lx = Infinity;
+      for (const r of rs) if (y < r.bottom && y + S.hintH + 8 > r.top) lx = Math.min(lx, r.left - 8 - S.hintW);
+      if (lx >= 8) x = Math.min(x, lx);
+      else y = Math.min.apply(null, rs.map(r => r.top)) - S.hintH - 8;
     }
   } else {
     // 横屏：放在人物右侧胸口高度，避开左下署名和右下按钮
     _v.set(FIG_POS.x + 0.36, 1.2, FIG_POS.z).project(cam);
     x = (_v.x + 1) / 2 * w + 14;
     y = (1 - _v.y) / 2 * h - S.hintH / 2;
+    // 568×320 这类矮横屏上，提示条右端会贴到同一高度的「设置」按钮（镜头漂移还能压上去）：
+    // 和竖屏同样的规则，同一高度有按钮组 / 挂牌就停在它左边 8px（x 取 min，镜头漂移时不会跳）
+    const rs = avoidRects();
+    if (rs) for (const r of rs) if (y < r.bottom && y + S.hintH + 8 > r.top) x = Math.min(x, r.left - 8 - S.hintW);
   }
   x = U.clamp(x, 8, w - S.hintW - 8);
   y = U.clamp(y, 8, h - S.hintH - 8);
@@ -504,11 +512,30 @@ function updateHint() {
   el.style.transform = 'translate3d(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px,0)';
 }
 
-function secRect() {
+function hintHits(x, y, rs) {
+  for (const r of rs) {
+    if (x < r.right + 8 && x + S.hintW + 8 > r.left && y < r.bottom && y + S.hintH + 8 > r.top) return true;
+  }
+  return false;
+}
+
+// 提示条要躲开的两块：「创意工坊 / 设置」按钮组；「游玩」挂牌（牌子 + 吊绳 + 伸出牌子两边的横棍）
+function avoidRects() {
   if (!S.secRect && S.secEl) {
     const r = S.secEl.getBoundingClientRect();
     // 根节点还没显示时量出来是 0，不缓存，下次再量
-    if (r.width && r.height) S.secRect = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+    if (r.width && r.height) {
+      const list = [{ left: r.left, top: r.top, right: r.right, bottom: r.bottom }];
+      const g = S.signEl && S.signEl.getBoundingClientRect();
+      if (g && g.width && g.height) {
+        const u = { left: g.left, top: g.top, right: g.right, bottom: g.bottom };
+        const rod = S.signEl.querySelector('.home-sign-rod');
+        const b = rod && rod.getBoundingClientRect();
+        if (b && b.width) { u.left = Math.min(u.left, b.left); u.right = Math.max(u.right, b.right); u.top = Math.min(u.top, b.top); }
+        list.push(u);
+      }
+      S.secRect = list;
+    }
   }
   return S.secRect;
 }
@@ -921,10 +948,17 @@ function buildDom() {
   S.hint = mk('div', 'home-hint', root, '点击人物更换制服颜色');
   S.hint.setAttribute('aria-hidden', 'true');
 
-  const play = button('home-play', root, '游玩');
+  // 「游玩」做成挂着的牌子（孩子的手稿，见 css/home.css「右下角『游玩』」一节）：
+  // 外框只管定位；横棍和两根吊绳是纯装饰（aria-hidden，CSS 里 pointer-events:none，点上去穿透到画布）；
+  // .home-play 仍是牌子本身那个按钮，可点区域只有牌子
+  const sign = S.signEl = mk('div', 'home-sign', root);
+  for (const cls of ['home-sign-rope is-left', 'home-sign-rope is-right', 'home-sign-rod']) {
+    mk('span', cls, sign).setAttribute('aria-hidden', 'true');
+  }
+  const play = button('home-play', sign, '游玩');
   play.addEventListener('click', () => { tryUnlockAudio(true); openLayer('menu'); });
 
-  // 「游玩」正上方竖排两个次要按钮：创意工坊、设置（WORKSHOP.md 第 9 节）。
+  // 挂牌正上方竖排两个次要按钮：创意工坊、设置（WORKSHOP.md 第 9 节）；竖屏手机上 CSS 把它们挪到挂牌左边，免得压住人物靴子。
   // 两个模块都是独立文件，可能还没接进 index.html，这里只做存在性判断，不存在就提示"制作中"而不是报错。
   const secondary = S.secEl = mk('div', 'home-secondary-actions', root);
   const workshopBtn = button('home-secondary-btn', secondary, '创意工坊');

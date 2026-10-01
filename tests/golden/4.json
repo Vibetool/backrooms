@@ -6,20 +6,21 @@
   "spawnFactor": 1,
   "radius": 2,
   "chunkSize": 24,
-  "hash": "cc48a726bb69fced6de211bb0dcedcc984e3c44a01259bd308bbb45f6a32828a",
+  "hash": "31fbac4e33bbf6c2d0942afcb3ba8c712489c434eae2a136ace2e32c8aedd562",
   "chunks": [
     {
       "cx": -2,
       "cz": -2,
-      "hash": "1a06f0652f7e33f3",
-      "verts": 15472,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop"],
+      "hash": "ef0b457bda82b102",
+      "verts": 18504,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L4:wall",1524],
-        ["kit|kit:prop",13436],
+        ["kit|kit:prop",16204],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
-        ["kit|kit:glow",504]
+        ["kit|kit:glow",504],
+        ["kit|kit:decal",264]
       ],
       "solids": [
         [-48,0,-48.133,-47.867,2.8,-33.867],
@@ -222,7 +223,7 @@
         [-24.853,0,-29.7,-24.153,0.74,-28.3],
         [-25.83,0,-29.502,-25.052,0.95,-28.724],
         [-24.628,0,-24.773,-24.158,1.32,-24.153],
-        [-47.842,0,-41.847,-47.372,1.32,-41.227]
+        [-29.933,0,-31.355,-29.301,0.38,-30.645]
       ],
       "spawnPoints": [
         [-47,0,-47,{"tag":"floor"}],
@@ -250,6 +251,7 @@
         [-33,0,-43,{"tag":"floor"}],
         [-29,0,-43,{"tag":"floor"}],
         [-27,0,-43,{"tag":"floor"}],
+        [-47,0,-41,{"tag":"floor"}],
         [-45,0,-41,{"tag":"floor"}],
         [-41,0,-41,{"tag":"floor"}],
         [-39,0,-41,{"tag":"floor"}],
@@ -308,7 +310,6 @@
         [-37,0,-31,{"tag":"floor"}],
         [-35,0,-31,{"tag":"floor"}],
         [-31,0,-31,{"tag":"floor"}],
-        [-29,0,-31,{"tag":"floor"}],
         [-27,0,-31,{"tag":"floor"}],
         [-25,0,-31,{"tag":"floor"}],
         [-47,0,-29,{"tag":"floor"}],
@@ -343,14 +344,15 @@
     {
       "cx": -1,
       "cz": -2,
-      "hash": "1627f91a9a65d382",
-      "verts": 15276,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop"],
+      "hash": "608a903ed9f4907e",
+      "verts": 17692,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L4:wall",1560],
-        ["kit|kit:prop",13184],
+        ["kit|kit:prop",15436],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
+        ["kit|kit:decal",164],
         ["kit|kit:glow",524]
       ],
       "solids": [
@@ -550,7 +552,8 @@
         [-17.553,0,-35.333,-16.937,0.95,-34.717],
         [-21.842,0,-37.847,-21.372,1.32,-37.227],
         [-21.817,0,-30.248,-20.867,0.64,-30.118],
-        [-17.67,0,-30.493,-17.33,0.36,-30.153]
+        [-17.67,0,-30.493,-17.33,0.36,-30.153],
+        [-21.842,0,-24.773,-21.372,1.32,-24.153]
       ],
       "spawnPoints": [
         [-23,0,-47,{"tag":"floor"}],
@@ -659,7 +662,6 @@
         [-3,0,-27,{"tag":"floor"}],
         [-1,0,-27,{"tag":"floor"}],
         [-23,0,-25,{"tag":"floor"}],
-        [-21,0,-25,{"tag":"floor"}],
         [-19,0,-25,{"tag":"floor"}],
         [-17,0,-25,{"tag":"floor"}],
         [-15,0,-25,{"tag":"floor"}],
@@ -676,15 +678,16 @@
     {
       "cx": 0,
       "cz": -2,
-      "hash": "198cd08a0f9128af",
-      "verts": 15022,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop"],
+      "hash": "fc174350a71ab90e",
+      "verts": 17682,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L4:wall",1300],
-        ["kit|kit:prop",13196],
+        ["kit|kit:prop",15608],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
-        ["kit|kit:glow",518]
+        ["kit|kit:glow",518],
+        ["kit|kit:decal",248]
       ],
       "solids": [
         [0,0,-48.133,0.133,2.8,-27.867],
@@ -982,14 +985,15 @@
     {
       "cx": 1,
       "cz": -2,
-      "hash": "b2833eacb003f8c3",
-      "verts": 15462,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop"],
+      "hash": "bb2b94f344434c4c",
+      "verts": 18538,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L4:wall",1604],
-        ["kit|kit:prop",13366],
+        ["kit|kit:prop",16226],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
+        ["kit|kit:decal",216],
         ["kit|kit:glow",484]
       ],
       "solids": [
@@ -1205,7 +1209,8 @@
         [37.752,0,-27.133,37.882,0.64,-26.183],
         [34.079,0,-29.346,34.688,0.76,-28.654],
         [47.227,0,-26.628,47.847,1.32,-26.158],
-        [42.118,0,-33.817,42.248,0.64,-32.867]
+        [42.118,0,-33.817,42.248,0.64,-32.867],
+        [42.088,0,-29.339,42.679,0.76,-28.661]
       ],
       "spawnPoints": [
         [25,0,-47,{"tag":"floor"}],
@@ -1302,7 +1307,6 @@
         [33,0,-29,{"tag":"floor"}],
         [39,0,-29,{"tag":"floor"}],
         [41,0,-29,{"tag":"floor"}],
-        [43,0,-29,{"tag":"floor"}],
         [47,0,-29,{"tag":"floor"}],
         [25,0,-27,{"tag":"floor"}],
         [31,0,-27,{"tag":"floor"}],
@@ -1328,14 +1332,15 @@
     {
       "cx": 2,
       "cz": -2,
-      "hash": "7d21e388b7cb28fd",
-      "verts": 15104,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "a46d52d287a6e05a",
+      "verts": 18176,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L4:wall",1496],
-        ["kit|kit:prop",12984],
+        ["kit|kit:prop",15784],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
+        ["kit|kit:decal",272],
         ["kit|kit:glow",464],
         ["kit|kit:water",152]
       ],
@@ -1667,15 +1672,16 @@
     {
       "cx": -2,
       "cz": -1,
-      "hash": "096477c72d41b9f0",
-      "verts": 15318,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop"],
+      "hash": "79ad9d3fdfed2ae7",
+      "verts": 18362,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L4:wall",1452],
-        ["kit|kit:prop",13406],
+        ["kit|kit:prop",16198],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
-        ["kit|kit:glow",452]
+        ["kit|kit:decal",248],
+        ["kit|kit:glow",456]
       ],
       "solids": [
         [-48,0,-24.133,-47.867,2.8,-15.867],
@@ -1868,7 +1874,8 @@
         [-47.847,0,-17.7,-47.147,0.74,-16.3],
         [-47.042,0,-17.138,-46.375,0.95,-16.471],
         [-42.773,0,-16.628,-42.153,1.32,-16.158],
-        [-30.628,0,-0.773,-30.158,1.32,-0.153]
+        [-30.628,0,-0.773,-30.158,1.32,-0.153],
+        [-31.321,0,-3.89,-30.679,0.38,-3.343]
       ],
       "spawnPoints": [
         [-47,0,-23,{"tag":"floor"}],
@@ -1977,7 +1984,6 @@
         [-39,0,-3,{"tag":"floor"}],
         [-35,0,-3,{"tag":"floor"}],
         [-33,0,-3,{"tag":"floor"}],
-        [-31,0,-3,{"tag":"floor"}],
         [-27,0,-3,{"tag":"floor"}],
         [-25,0,-3,{"tag":"floor"}],
         [-45,0,-1,{"tag":"floor"}],
@@ -1996,15 +2002,16 @@
     {
       "cx": -1,
       "cz": -1,
-      "hash": "4cc2f297a6af2291",
-      "verts": 14046,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop"],
+      "hash": "243f4941fdd0c9fe",
+      "verts": 16958,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L4:wall",1632],
-        ["kit|kit:prop",11882],
+        ["kit|kit:prop",14434],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
-        ["kit|kit:glow",524]
+        ["kit|kit:glow",524],
+        ["kit|kit:decal",360]
       ],
       "solids": [
         [-24,0,-24.133,-23.867,2.8,-19.867],
@@ -2314,15 +2321,16 @@
     {
       "cx": 0,
       "cz": -1,
-      "hash": "51a37d9abb360391",
-      "verts": 15230,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop"],
+      "hash": "a2a5f0bc92327e2b",
+      "verts": 18298,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L4:wall",1312],
-        ["kit|kit:prop",13382],
+        ["kit|kit:prop",16166],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
-        ["kit|kit:glow",528]
+        ["kit|kit:glow",556],
+        ["kit|kit:decal",256]
       ],
       "solids": [
         [0,0,-24.133,0.133,2.8,-15.867],
@@ -2505,6 +2513,7 @@
         [0.158,0,-11.847,0.628,1.32,-11.227],
         [1.855,0,-9.104,2.49,0.38,-8.392],
         [2.817,0,-6.248,3.767,0.64,-6.118],
+        [19.147,0,-5.7,19.847,0.74,-4.3],
         [14.153,0,-0.628,14.773,1.32,-0.158],
         [14.153,0,-3.67,14.493,0.36,-3.33],
         [22.183,0,-0.248,23.133,0.64,-0.118]
@@ -2605,7 +2614,6 @@
         [13,0,-5,{"tag":"floor"}],
         [15,0,-5,{"tag":"floor"}],
         [17,0,-5,{"tag":"floor"}],
-        [19,0,-5,{"tag":"floor"}],
         [21,0,-5,{"tag":"floor"}],
         [23,0,-5,{"tag":"floor"}],
         [1,0,-3,{"tag":"floor"}],
@@ -2633,15 +2641,16 @@
     {
       "cx": 1,
       "cz": -1,
-      "hash": "48b724f5dc56797c",
-      "verts": 15510,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop"],
+      "hash": "c5cfaa831c8d5e52",
+      "verts": 18158,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L4:wall",1592],
-        ["kit|kit:prop",13470],
+        ["kit|kit:prop",15934],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
-        ["kit|kit:glow",440]
+        ["kit|kit:glow",440],
+        ["kit|kit:decal",184]
       ],
       "solids": [
         [24,0,-22.133,24.133,2.8,-7.867],
@@ -2841,6 +2850,7 @@
         [36.3,0,-19.847,37.7,0.74,-19.147],
         [36.628,0,-19.068,37.3,0.95,-18.395],
         [28.158,0,-16.773,28.628,1.32,-16.153],
+        [34.667,0,-19.905,35.333,0.38,-19.328],
         [42.153,0,-15.842,42.773,1.32,-15.372]
       ],
       "spawnPoints": [
@@ -2871,7 +2881,6 @@
         [27,0,-19,{"tag":"floor"}],
         [29,0,-19,{"tag":"floor"}],
         [33,0,-19,{"tag":"floor"}],
-        [35,0,-19,{"tag":"floor"}],
         [39,0,-19,{"tag":"floor"}],
         [41,0,-19,{"tag":"floor"}],
         [43,0,-19,{"tag":"floor"}],
@@ -2963,15 +2972,16 @@
     {
       "cx": 2,
       "cz": -1,
-      "hash": "3750ba44c99d396f",
-      "verts": 15342,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop"],
+      "hash": "4f36efb162a6f15c",
+      "verts": 18200,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
-        ["kit|L4:wall",1768],
-        ["kit|kit:prop",13030],
+        ["kit|L4:wall",1808],
+        ["kit|kit:prop",15616],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
-        ["kit|kit:glow",536]
+        ["kit|kit:glow",536],
+        ["kit|kit:decal",232]
       ],
       "solids": [
         [48,0,-22.133,48.133,2.8,-17.867],
@@ -3174,7 +3184,8 @@
         [60.233,0,-19.882,61.183,0.64,-19.752],
         [68.118,0,-11.183,68.248,0.64,-10.233],
         [68.153,0,-15.67,68.493,0.36,-15.33],
-        [64.07,0,-5.353,64.697,0.38,-4.647]
+        [64.07,0,-5.353,64.697,0.38,-4.647],
+        [60.867,0,-1.882,61.817,0.64,-1.752]
       ],
       "spawnPoints": [
         [49,0,-23,{"tag":"floor"}],
@@ -3304,15 +3315,16 @@
     {
       "cx": -2,
       "cz": 0,
-      "hash": "9afe616eed8dfec1",
-      "verts": 15354,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop"],
+      "hash": "28689524fc5ecdc2",
+      "verts": 18450,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L4:wall",1480],
-        ["kit|kit:prop",13320],
+        ["kit|kit:prop",16108],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
-        ["kit|kit:glow",546]
+        ["kit|kit:decal",284],
+        ["kit|kit:glow",570]
       ],
       "solids": [
         [-48,0,-0.133,-47.867,2.8,6.133],
@@ -3638,15 +3650,16 @@
     {
       "cx": -1,
       "cz": 0,
-      "hash": "5834bee4211835dd",
-      "verts": 15398,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop"],
+      "hash": "c8fd04eea9f0cc60",
+      "verts": 18458,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L4:wall",1608],
-        ["kit|kit:prop",13234],
+        ["kit|kit:prop",16058],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
-        ["kit|kit:glow",548]
+        ["kit|kit:glow",528],
+        ["kit|kit:decal",256]
       ],
       "solids": [
         [-24,0,1.867,-23.867,2.8,24.133],
@@ -3974,14 +3987,15 @@
     {
       "cx": 0,
       "cz": 0,
-      "hash": "05afb9fb2568c078",
-      "verts": 15340,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop"],
+      "hash": "90abafef69d10074",
+      "verts": 18376,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L4:wall",1600],
-        ["kit|kit:prop",13220],
+        ["kit|kit:prop",16044],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
+        ["kit|kit:decal",212],
         ["kit|kit:glow",512]
       ],
       "solids": [
@@ -4180,7 +4194,8 @@
         [16.233,0,0.118,17.183,0.64,0.248],
         [17.447,0,20.54,17.847,1.85,21.46],
         [16.382,0,21.95,17.075,1.14,22.56],
-        [17.752,0,22.867,17.882,0.64,23.817]
+        [17.752,0,22.867,17.882,0.64,23.817],
+        [18.153,0,23.372,18.773,1.32,23.842]
       ],
       "spawnPoints": [
         [3,0,1,{"tag":"floor"}],
@@ -4298,7 +4313,6 @@
         [9,0,23,{"tag":"floor"}],
         [11,0,23,{"tag":"floor"}],
         [15,0,23,{"tag":"floor"}],
-        [19,0,23,{"tag":"floor"}],
         [21,0,23,{"tag":"floor"}],
         [23,0,23,{"tag":"floor"}]
       ],
@@ -4308,14 +4322,15 @@
     {
       "cx": 1,
       "cz": 0,
-      "hash": "e793449fc547f0ec",
-      "verts": 14770,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop"],
+      "hash": "9d3724551e967f4f",
+      "verts": 17530,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
-        ["kit|L4:wall",1412],
-        ["kit|kit:prop",12798],
+        ["kit|L4:wall",1452],
+        ["kit|kit:prop",15238],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
+        ["kit|kit:decal",280],
         ["kit|kit:glow",552]
       ],
       "solids": [
@@ -4628,14 +4643,15 @@
     {
       "cx": 2,
       "cz": 0,
-      "hash": "8ac3214594311e1d",
-      "verts": 14668,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop"],
+      "hash": "5358950de75b7980",
+      "verts": 17184,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
-        ["kit|L4:wall",1488],
-        ["kit|kit:prop",12660],
+        ["kit|L4:wall",1528],
+        ["kit|kit:prop",14808],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
+        ["kit|kit:decal",328],
         ["kit|kit:glow",512]
       ],
       "solids": [
@@ -4945,15 +4961,16 @@
     {
       "cx": -2,
       "cz": 1,
-      "hash": "a885e87b405994c8",
-      "verts": 15342,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop"],
+      "hash": "9739bd53679a2f48",
+      "verts": 18160,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L4:wall",1592],
-        ["kit|kit:prop",13278],
+        ["kit|kit:prop",15916],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
-        ["kit|kit:glow",464]
+        ["kit|kit:glow",464],
+        ["kit|kit:decal",180]
       ],
       "solids": [
         [-48,0,23.867,-47.867,2.8,26.133],
@@ -5287,15 +5304,16 @@
     {
       "cx": -1,
       "cz": 1,
-      "hash": "a4f7389e6d517b3b",
-      "verts": 15482,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop"],
+      "hash": "7082347d2a645fe4",
+      "verts": 18304,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L4:wall",1272],
-        ["kit|kit:prop",13726],
+        ["kit|kit:prop",16332],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
-        ["kit|kit:glow",476]
+        ["kit|kit:decal",220],
+        ["kit|kit:glow",472]
       ],
       "solids": [
         [-24,0,23.867,-23.867,2.8,30.133],
@@ -5480,7 +5498,7 @@
         [-22.632,0,42.918,-21.823,1.14,43.711],
         [-23.882,0,44.817,-23.752,0.64,45.767],
         [-7.842,0,35.227,-7.372,1.32,35.847],
-        [-5.346,0,25.313,-4.654,0.76,25.92]
+        [-3.133,0,24.118,-2.183,0.64,24.248]
       ],
       "spawnPoints": [
         [-23,0,25,{"tag":"floor"}],
@@ -5491,6 +5509,7 @@
         [-11,0,25,{"tag":"floor"}],
         [-9,0,25,{"tag":"floor"}],
         [-7,0,25,{"tag":"floor"}],
+        [-5,0,25,{"tag":"floor"}],
         [-1,0,25,{"tag":"floor"}],
         [-21,0,27,{"tag":"floor"}],
         [-19,0,27,{"tag":"floor"}],
@@ -5603,15 +5622,16 @@
     {
       "cx": 0,
       "cz": 1,
-      "hash": "368245bd53715f16",
-      "verts": 12910,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop"],
+      "hash": "e7e7ffcaf15f9bc1",
+      "verts": 15422,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L4:wall",1576],
-        ["kit|kit:prop",10766],
+        ["kit|kit:prop",13038],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
-        ["kit|kit:glow",560]
+        ["kit|kit:glow",560],
+        ["kit|kit:decal",240]
       ],
       "solids": [
         [0,0,23.867,0.133,2.8,44.133],
@@ -5925,14 +5945,15 @@
     {
       "cx": 1,
       "cz": 1,
-      "hash": "875c539723889899",
-      "verts": 15306,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop"],
+      "hash": "a45e1bb6d8f1771e",
+      "verts": 18170,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L4:wall",1408],
-        ["kit|kit:prop",13418],
+        ["kit|kit:prop",16118],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
+        ["kit|kit:decal",164],
         ["kit|kit:glow",472]
       ],
       "solids": [
@@ -6244,14 +6265,15 @@
     {
       "cx": 2,
       "cz": 1,
-      "hash": "66479829a6c72c73",
-      "verts": 13268,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop"],
+      "hash": "b155a16cd384d6ea",
+      "verts": 15972,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L4:wall",1656],
-        ["kit|kit:prop",11100],
+        ["kit|kit:prop",13424],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
+        ["kit|kit:decal",380],
         ["kit|kit:glow",504]
       ],
       "solids": [
@@ -6567,15 +6589,16 @@
     {
       "cx": -2,
       "cz": 2,
-      "hash": "974b4e26711d384c",
-      "verts": 15322,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop"],
+      "hash": "02adad794423dd8b",
+      "verts": 18230,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L4:wall",1316],
-        ["kit|kit:prop",13502],
+        ["kit|kit:prop",16094],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
-        ["kit|kit:glow",496]
+        ["kit|kit:decal",296],
+        ["kit|kit:glow",516]
       ],
       "solids": [
         [-48,0,47.867,-47.867,2.8,62.133],
@@ -6883,15 +6906,16 @@
     {
       "cx": -1,
       "cz": 2,
-      "hash": "ccf45aa982803fb3",
-      "verts": 15366,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop"],
+      "hash": "119c40e3d939f9ec",
+      "verts": 18232,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L4:wall",1404],
-        ["kit|kit:prop",13502],
+        ["kit|kit:prop",16008],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
-        ["kit|kit:glow",452]
+        ["kit|kit:decal",356],
+        ["kit|kit:glow",456]
       ],
       "solids": [
         [-24,0,47.867,-23.867,2.8,64.133],
@@ -7077,9 +7101,10 @@
         [-20.493,0,57.33,-20.153,0.36,57.67],
         [-17.882,0,56.817,-17.752,0.64,57.767],
         [-15.67,0,57.507,-15.33,0.36,57.847],
+        [-9.847,0,56.3,-9.147,0.74,57.7],
         [-6.628,0,61.227,-6.158,1.32,61.847],
         [-2.773,0,69.372,-2.153,1.32,69.842],
-        [-5.817,0,69.752,-4.867,0.64,69.882]
+        [-5.352,0,49.304,-4.648,0.38,49.929]
       ],
       "spawnPoints": [
         [-23,0,49,{"tag":"floor"}],
@@ -7090,7 +7115,6 @@
         [-13,0,49,{"tag":"floor"}],
         [-11,0,49,{"tag":"floor"}],
         [-9,0,49,{"tag":"floor"}],
-        [-5,0,49,{"tag":"floor"}],
         [-3,0,49,{"tag":"floor"}],
         [-1,0,49,{"tag":"floor"}],
         [-23,0,51,{"tag":"floor"}],
@@ -7130,7 +7154,6 @@
         [-15,0,57,{"tag":"floor"}],
         [-13,0,57,{"tag":"floor"}],
         [-11,0,57,{"tag":"floor"}],
-        [-9,0,57,{"tag":"floor"}],
         [-7,0,57,{"tag":"floor"}],
         [-3,0,57,{"tag":"floor"}],
         [-19,0,59,{"tag":"floor"}],
@@ -7200,15 +7223,16 @@
     {
       "cx": 0,
       "cz": 2,
-      "hash": "d79209b5e9b942e2",
-      "verts": 15450,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop"],
+      "hash": "f5588707e6523dcd",
+      "verts": 18342,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L4:wall",1304],
-        ["kit|kit:prop",13614],
+        ["kit|kit:prop",16266],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
-        ["kit|kit:glow",524]
+        ["kit|kit:decal",232],
+        ["kit|kit:glow",532]
       ],
       "solids": [
         [0,0,49.867,0.133,2.8,72.133],
@@ -7518,15 +7542,16 @@
     {
       "cx": 1,
       "cz": 2,
-      "hash": "2caeb02ce9f530cf",
-      "verts": 14604,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop"],
+      "hash": "213ef7d1f9188bff",
+      "verts": 17376,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L4:wall",1540],
-        ["kit|kit:prop",12492],
+        ["kit|kit:prop",15032],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
-        ["kit|kit:glow",564]
+        ["kit|kit:glow",564],
+        ["kit|kit:decal",232]
       ],
       "solids": [
         [24,0,47.867,24.133,2.8,70.133],
@@ -7846,14 +7871,15 @@
     {
       "cx": 2,
       "cz": 2,
-      "hash": "3b50c81ea326f0ee",
-      "verts": 15040,
-      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:glow","kit|kit:prop"],
+      "hash": "ee8b262aa7da316a",
+      "verts": 17980,
+      "mats": ["kit|L4:ceil","kit|L4:floor","kit|L4:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L4:wall",1416],
-        ["kit|kit:prop",13096],
+        ["kit|kit:prop",15740],
         ["kit|L4:floor",4],
         ["kit|L4:ceil",4],
+        ["kit|kit:decal",296],
         ["kit|kit:glow",520]
       ],
       "solids": [

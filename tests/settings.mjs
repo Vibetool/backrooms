@@ -111,18 +111,21 @@ async function desktop(browser, base) {
   // ---------- 主页两个新按钮：存在、顺序、位置在「游玩」正上方且不挡标题/人物 ----------
   const layout = await ev(page, () => {
     const play = document.querySelector('.home-play').getBoundingClientRect();
+    // 「游玩」是挂着的牌子：牌子上方还有吊绳和横棍，按钮组要在整块挂牌（棍子上沿）之上
+    const rod = document.querySelector('.home-sign-rod');
+    const hangTop = Math.min(play.y, rod ? rod.getBoundingClientRect().y : Infinity);
     const title = document.querySelector('.home-title').getBoundingClientRect();
     const btns = Array.from(document.querySelectorAll('.home-secondary-btn'));
     return {
       texts: btns.map(b => b.textContent.trim()),
       rects: btns.map(b => b.getBoundingClientRect()).map(r => ({ x: r.x, y: r.y, w: r.width, h: r.height, bottom: r.bottom, right: r.right })),
-      play: { x: play.x, y: play.y, w: play.width, h: play.height, bottom: play.bottom, right: play.right },
+      play: { x: play.x, y: play.y, w: play.width, h: play.height, bottom: play.bottom, right: play.right, hangTop },
       title: { bottom: title.bottom, right: title.right },
     };
   });
   check('主页：两个新按钮存在且顺序为 创意工坊/设置', JSON.stringify(layout.texts) === JSON.stringify(['创意工坊', '设置']), layout.texts);
-  const allAbovePlay = layout.rects.every(r => r.bottom <= layout.play.y + 1);
-  check('主页：两个按钮都在「游玩」正上方（不重叠）', allAbovePlay, { btns: layout.rects, play: layout.play });
+  const allAbovePlay = layout.rects.every(r => r.bottom <= layout.play.hangTop + 1);
+  check('主页：两个按钮都在「游玩」挂牌正上方（不压横棍、吊绳、牌子）', allAbovePlay, { btns: layout.rects, play: layout.play });
   check('主页：不挡标题', layout.rects.every(r => r.y >= layout.title.bottom), { btns: layout.rects, title: layout.title });
   check('主页：两个按钮点击目标 ≥ 44px', layout.rects.every(r => r.h >= 44 && r.w >= 44), layout.rects);
   await shot(page, 'desktop-home');
@@ -247,16 +250,26 @@ async function mobile(browser, base) {
   const page = await newPage(ctx, 'mobile');
   await boot(page, base);
 
+  // 竖屏手机上两个按钮放在「游玩」挂牌左边（放上方会压到人物靴子，见 css/home.css）：
+  // 要求和整块挂牌（牌子 + 吊绳 + 伸出牌子两边的横棍）的外框隔开 ≥ 8px，不挡标题，都在视口内
   const layout = await ev(page, () => {
-    const play = document.querySelector('.home-play').getBoundingClientRect();
+    const box = r => ({ x: r.x, y: r.y, w: r.width, h: r.height, bottom: r.bottom, right: r.right });
+    const play = box(document.querySelector('.home-play').getBoundingClientRect());
+    const parts = ['.home-sign', '.home-sign-rod', '.home-sign-rope'].flatMap(s => Array.from(document.querySelectorAll(s))).map(e => box(e.getBoundingClientRect())).concat([play]);
+    const hang = { x: Math.min(...parts.map(r => r.x)), y: Math.min(...parts.map(r => r.y)), right: Math.max(...parts.map(r => r.right)), bottom: Math.max(...parts.map(r => r.bottom)) };
     const title = document.querySelector('.home-title').getBoundingClientRect();
-    const btns = Array.from(document.querySelectorAll('.home-secondary-btn')).map(b => b.getBoundingClientRect())
-      .map(r => ({ x: r.x, y: r.y, w: r.width, h: r.height, bottom: r.bottom, right: r.right }));
-    return { play: { y: play.y, bottom: play.bottom, right: play.right }, title: { bottom: title.bottom }, btns, vw: innerWidth, vh: innerHeight };
+    const btns = Array.from(document.querySelectorAll('.home-secondary-btn')).map(b => box(b.getBoundingClientRect()));
+    // 按钮矩形和挂牌外框在某一个方向上分开的距离（负数 = 相交）
+    const sep = btns.map(r => Math.max(hang.x - r.right, r.x - hang.right, hang.y - r.bottom, r.y - hang.bottom));
+    const rodL = document.querySelector('.home-sign-rod').getBoundingClientRect().left;
+    return { play, hang, sep, rodL, title: { bottom: title.bottom }, btns, vw: innerWidth, vh: innerHeight };
   });
   check('手机竖屏：两个按钮点击目标 ≥ 44px', layout.btns.every(r => r.h >= 44 && r.w >= 44), layout.btns);
-  check('手机竖屏：两个按钮在「游玩」上方，不挡标题', layout.btns.every(r => r.bottom <= layout.play.y + 1 && r.y >= layout.title.bottom), layout);
-  check('手机竖屏：两个按钮都在视口内', layout.btns.every(r => r.right <= layout.vw && r.bottom <= layout.vh), layout);
+  check('手机竖屏：两个按钮不压「游玩」挂牌（横棍、吊绳、牌子外框隔开 ≥ 8px），不挡标题', layout.sep.every(d => d >= 8) && layout.btns.every(r => r.y >= layout.title.bottom), layout);
+  // 钉住位置：按钮在挂牌左边（右边 ≤ 横棍左端 − 8），下面那个按钮底边和牌子底边齐平（±2px），别悄悄漂回挂牌上方压靴子
+  const lowBtn = layout.btns[layout.btns.length - 1];
+  check('手机竖屏：两个按钮在挂牌左边，下面那个和牌子底边齐平', layout.btns.every(r => r.right <= layout.rodL - 8) && Math.abs(lowBtn.bottom - layout.play.bottom) <= 2, layout);
+  check('手机竖屏：两个按钮都在视口内', layout.btns.every(r => r.x >= 0 && r.y >= 0 && r.right <= layout.vw && r.bottom <= layout.vh), layout);
   await shot(page, 'mobile-home');
 
   await ctx.close();

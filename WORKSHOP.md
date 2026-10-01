@@ -133,7 +133,7 @@ inRadius(x, z) → bool
   - `BR.coop.setVoiceVolume(v)`：远端语音音量
   - `BR.input.sensitivity`
   - `BR.game.settings.quality` / `visibility`
-- 主页两个新按钮加在「游玩」上方，竖排，次要样式；「创意工坊」调 `BR.workshopUI.open()`，「设置」调 `BR.settingsUI.open()`（都做存在性判断）。
+- 主页两个新按钮加在「游玩」上方，竖排，次要样式（「游玩」后来改成挂着的牌子，按钮在横棍上方；竖屏手机上放上方会压住人物靴子，改放在挂牌左边、底边和牌子对齐，见 css/home.css）；「创意工坊」调 `BR.workshopUI.open()`，「设置」调 `BR.settingsUI.open()`（都做存在性判断）。
 
 ## 10. 验收（tests/workshop.mjs + 回归）
 

@@ -6,17 +6,18 @@
   "spawnFactor": 1,
   "radius": 2,
   "chunkSize": 20,
-  "hash": "9dcd6fc443bfb65f00215108c592973844829abedadc867e18974e209207a47e",
+  "hash": "56952a12ddc64fa1cc73a4464ee937bb2e5667205b90a273ba3bc9a39143abf6",
   "chunks": [
     {
       "cx": -2,
       "cz": -2,
-      "hash": "11a9665c9e887acc",
-      "verts": 5332,
-      "mats": ["kit|kit:glow","kit|kit:prop"],
+      "hash": "8baeb20090a7ad29",
+      "verts": 6224,
+      "mats": ["kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
-        ["kit|kit:prop",5316],
-        ["kit|kit:glow",16]
+        ["kit|kit:prop",6188],
+        ["kit|kit:glow",16],
+        ["kit|kit:decal",20]
       ],
       "solids": [
         [-40,0,-40.133,-39.867,2.8,-36.533],
@@ -93,14 +94,15 @@
     {
       "cx": -1,
       "cz": -2,
-      "hash": "d53a70140a81ddf2",
-      "verts": 5472,
-      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
+      "hash": "8a1e0e484f9d8132",
+      "verts": 6608,
+      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",160],
-        ["kit|kit:prop",5292],
+        ["kit|kit:prop",6396],
         ["kit|L18:floorFoam",4],
-        ["kit|kit:glow",16]
+        ["kit|kit:glow",16],
+        ["kit|kit:decal",32]
       ],
       "solids": [
         [-20,0,-40.133,-19.867,2.8,-36.533],
@@ -175,12 +177,13 @@
     {
       "cx": 0,
       "cz": -2,
-      "hash": "83bdfa06a337e4d6",
-      "verts": 5364,
-      "mats": ["kit|kit:glow","kit|kit:prop"],
+      "hash": "2142d065e4a86129",
+      "verts": 6268,
+      "mats": ["kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
-        ["kit|kit:prop",5348],
-        ["kit|kit:glow",16]
+        ["kit|kit:prop",6220],
+        ["kit|kit:glow",16],
+        ["kit|kit:decal",32]
       ],
       "solids": [
         [0,0,-40.133,0.133,2.8,-36.533],
@@ -258,12 +261,13 @@
     {
       "cx": 1,
       "cz": -2,
-      "hash": "8b19594e8c22e739",
-      "verts": 5300,
-      "mats": ["kit|kit:glow","kit|kit:prop"],
+      "hash": "a7cf6bd01da188eb",
+      "verts": 6208,
+      "mats": ["kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
-        ["kit|kit:prop",5284],
-        ["kit|kit:glow",16]
+        ["kit|kit:prop",6156],
+        ["kit|kit:glow",16],
+        ["kit|kit:decal",36]
       ],
       "solids": [
         [20,0,-33.467,20.133,2.8,-26.533],
@@ -339,11 +343,12 @@
     {
       "cx": 2,
       "cz": -2,
-      "hash": "510a1f22a7392d96",
-      "verts": 576,
-      "mats": ["kit|kit:prop"],
+      "hash": "862a59245e749cf3",
+      "verts": 648,
+      "mats": ["kit|kit:decal","kit|kit:prop"],
       "meshes": [
-        ["kit|kit:prop",576]
+        ["kit|kit:prop",640],
+        ["kit|kit:decal",8]
       ],
       "solids": [
         [40,0,-40.133,40.133,2.8,-36.533],
@@ -407,14 +412,15 @@
     {
       "cx": -2,
       "cz": -1,
-      "hash": "00d55dae917a5ee3",
-      "verts": 5472,
-      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
+      "hash": "a3c5cf882f0a012d",
+      "verts": 6608,
+      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",160],
-        ["kit|kit:prop",5292],
+        ["kit|kit:prop",6396],
         ["kit|L18:floorFoam",4],
-        ["kit|kit:glow",16]
+        ["kit|kit:glow",16],
+        ["kit|kit:decal",32]
       ],
       "solids": [
         [-40,0,-20.133,-39.867,2.8,-16.533],
@@ -489,14 +495,15 @@
     {
       "cx": -1,
       "cz": -1,
-      "hash": "a5681d6cccbbef2c",
-      "verts": 5440,
-      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
+      "hash": "f4d66e0ef775c52d",
+      "verts": 6592,
+      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",148],
-        ["kit|kit:prop",5272],
+        ["kit|kit:prop",6376],
         ["kit|L18:floorFoam",4],
-        ["kit|kit:glow",16]
+        ["kit|kit:glow",16],
+        ["kit|kit:decal",48]
       ],
       "solids": [
         [-20,0,-20.133,-19.867,2.8,-16.533],
@@ -570,12 +577,13 @@
     {
       "cx": 0,
       "cz": -1,
-      "hash": "fc3967c1d0200f73",
-      "verts": 5332,
-      "mats": ["kit|kit:glow","kit|kit:prop"],
+      "hash": "e7407941726f9599",
+      "verts": 6252,
+      "mats": ["kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
-        ["kit|kit:prop",5316],
-        ["kit|kit:glow",16]
+        ["kit|kit:prop",6188],
+        ["kit|kit:glow",16],
+        ["kit|kit:decal",48]
       ],
       "solids": [
         [0,0,-16.8,0.133,2.8,-13.2],
@@ -652,14 +660,15 @@
     {
       "cx": 1,
       "cz": -1,
-      "hash": "a53cbdab149f6aa8",
-      "verts": 5440,
-      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
+      "hash": "6ce2595e3cc85e26",
+      "verts": 6592,
+      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",148],
-        ["kit|kit:prop",5272],
+        ["kit|kit:prop",6376],
         ["kit|L18:floorFoam",4],
-        ["kit|kit:glow",16]
+        ["kit|kit:glow",16],
+        ["kit|kit:decal",48]
       ],
       "solids": [
         [20,0,-16.8,20.133,2.8,-13.2],
@@ -733,14 +742,15 @@
     {
       "cx": 2,
       "cz": -1,
-      "hash": "a45ea33ce2ff8544",
-      "verts": 5440,
-      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
+      "hash": "03462b6d3148d303",
+      "verts": 6588,
+      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",148],
-        ["kit|kit:prop",5272],
+        ["kit|kit:prop",6376],
         ["kit|L18:floorFoam",4],
-        ["kit|kit:glow",16]
+        ["kit|kit:glow",16],
+        ["kit|kit:decal",44]
       ],
       "solids": [
         [40,0,-16.8,40.133,2.8,-13.2],
@@ -814,14 +824,15 @@
     {
       "cx": -2,
       "cz": 0,
-      "hash": "71aa8250ea5756ce",
-      "verts": 5440,
-      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
+      "hash": "93efc72288febb31",
+      "verts": 6584,
+      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",148],
-        ["kit|kit:prop",5272],
+        ["kit|kit:prop",6376],
         ["kit|L18:floorFoam",4],
-        ["kit|kit:glow",16]
+        ["kit|kit:glow",16],
+        ["kit|kit:decal",40]
       ],
       "solids": [
         [-40,0,-0.133,-39.867,2.8,3.467],
@@ -895,12 +906,13 @@
     {
       "cx": -1,
       "cz": 0,
-      "hash": "5fce046d31f8c938",
-      "verts": 1852,
-      "mats": ["kit|kit:glow","kit|kit:prop"],
+      "hash": "dd8e3df9b67086f1",
+      "verts": 1932,
+      "mats": ["kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
-        ["kit|kit:prop",1836],
-        ["kit|kit:glow",16]
+        ["kit|kit:prop",1900],
+        ["kit|kit:glow",16],
+        ["kit|kit:decal",16]
       ],
       "solids": [
         [-20,0,6.533,-19.867,2.8,13.467],
@@ -965,14 +977,15 @@
     {
       "cx": 0,
       "cz": 0,
-      "hash": "5b974b4a7022ed22",
-      "verts": 5472,
-      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
+      "hash": "7f8891d3f28057d4",
+      "verts": 6608,
+      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",160],
-        ["kit|kit:prop",5292],
+        ["kit|kit:prop",6396],
         ["kit|L18:floorFoam",4],
-        ["kit|kit:glow",16]
+        ["kit|kit:glow",16],
+        ["kit|kit:decal",32]
       ],
       "solids": [
         [0,0,3.2,0.133,2.8,6.8],
@@ -1047,14 +1060,15 @@
     {
       "cx": 1,
       "cz": 0,
-      "hash": "4b51c9298cacf0e9",
-      "verts": 5472,
-      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
+      "hash": "923a4614bf6d18d0",
+      "verts": 6612,
+      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",160],
-        ["kit|kit:prop",5292],
+        ["kit|kit:prop",6396],
         ["kit|L18:floorFoam",4],
-        ["kit|kit:glow",16]
+        ["kit|kit:glow",16],
+        ["kit|kit:decal",36]
       ],
       "solids": [
         [20,0,3.2,20.133,2.8,6.8],
@@ -1129,14 +1143,15 @@
     {
       "cx": 2,
       "cz": 0,
-      "hash": "c5b6a76c6b053f79",
-      "verts": 5472,
-      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
+      "hash": "f4b8ba82dae3dd93",
+      "verts": 6624,
+      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",160],
-        ["kit|kit:prop",5292],
+        ["kit|kit:prop",6396],
         ["kit|L18:floorFoam",4],
-        ["kit|kit:glow",16]
+        ["kit|kit:glow",16],
+        ["kit|kit:decal",48]
       ],
       "solids": [
         [40,0,3.2,40.133,2.8,6.8],
@@ -1211,14 +1226,15 @@
     {
       "cx": -2,
       "cz": 1,
-      "hash": "b68df82d72c0513e",
-      "verts": 5408,
-      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
+      "hash": "045600bd2a9ebfd5",
+      "verts": 6556,
+      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",136],
-        ["kit|kit:prop",5252],
+        ["kit|kit:prop",6356],
         ["kit|L18:floorFoam",4],
-        ["kit|kit:glow",16]
+        ["kit|kit:glow",16],
+        ["kit|kit:decal",44]
       ],
       "solids": [
         [-40,0,26.533,-39.867,2.8,30.133],
@@ -1291,14 +1307,15 @@
     {
       "cx": -1,
       "cz": 1,
-      "hash": "34e0c3bd9dfd4be6",
-      "verts": 5440,
-      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
+      "hash": "4e40cfadd4e8fad1",
+      "verts": 6596,
+      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",148],
-        ["kit|kit:prop",5272],
+        ["kit|kit:prop",6376],
         ["kit|L18:floorFoam",4],
-        ["kit|kit:glow",16]
+        ["kit|kit:glow",16],
+        ["kit|kit:decal",52]
       ],
       "solids": [
         [-20,0,26.533,-19.867,2.8,30.133],
@@ -1372,12 +1389,13 @@
     {
       "cx": 0,
       "cz": 1,
-      "hash": "4e164ae103550a34",
-      "verts": 1852,
-      "mats": ["kit|kit:glow","kit|kit:prop"],
+      "hash": "136681995bbd6afa",
+      "verts": 1932,
+      "mats": ["kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
-        ["kit|kit:prop",1836],
-        ["kit|kit:glow",16]
+        ["kit|kit:prop",1900],
+        ["kit|kit:glow",16],
+        ["kit|kit:decal",16]
       ],
       "solids": [
         [0,0,23.2,0.133,2.8,26.8],
@@ -1442,12 +1460,13 @@
     {
       "cx": 1,
       "cz": 1,
-      "hash": "07cffdb27177a05d",
-      "verts": 1864,
-      "mats": ["kit|kit:glow","kit|kit:prop"],
+      "hash": "1e8003669c2cb578",
+      "verts": 1944,
+      "mats": ["kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
-        ["kit|kit:prop",1848],
-        ["kit|kit:glow",16]
+        ["kit|kit:prop",1912],
+        ["kit|kit:glow",16],
+        ["kit|kit:decal",16]
       ],
       "solids": [
         [20,0,19.867,20.133,2.8,23.467],
@@ -1513,14 +1532,15 @@
     {
       "cx": 2,
       "cz": 1,
-      "hash": "ac580adf60f76f5a",
-      "verts": 5440,
-      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
+      "hash": "69d40d25242cf1f3",
+      "verts": 6592,
+      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",148],
-        ["kit|kit:prop",5272],
+        ["kit|kit:prop",6376],
         ["kit|L18:floorFoam",4],
-        ["kit|kit:glow",16]
+        ["kit|kit:glow",16],
+        ["kit|kit:decal",48]
       ],
       "solids": [
         [40,0,19.867,40.133,2.8,26.8],
@@ -1594,11 +1614,12 @@
     {
       "cx": -2,
       "cz": 2,
-      "hash": "e7ea2efb0ca543e4",
-      "verts": 588,
-      "mats": ["kit|kit:prop"],
+      "hash": "bb0176da76aa1f71",
+      "verts": 660,
+      "mats": ["kit|kit:decal","kit|kit:prop"],
       "meshes": [
-        ["kit|kit:prop",588]
+        ["kit|kit:prop",652],
+        ["kit|kit:decal",8]
       ],
       "solids": [
         [-40,0,39.867,-39.867,2.8,43.467],
@@ -1663,14 +1684,15 @@
     {
       "cx": -1,
       "cz": 2,
-      "hash": "cef2c01d510ce12b",
-      "verts": 5504,
-      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
+      "hash": "2ef493c03db65d62",
+      "verts": 6656,
+      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",172],
-        ["kit|kit:prop",5312],
+        ["kit|kit:prop",6416],
         ["kit|L18:floorFoam",4],
-        ["kit|kit:glow",16]
+        ["kit|kit:glow",16],
+        ["kit|kit:decal",48]
       ],
       "solids": [
         [-20,0,39.867,-19.867,2.8,43.467],
@@ -1746,12 +1768,13 @@
     {
       "cx": 0,
       "cz": 2,
-      "hash": "c148554c54abeab0",
-      "verts": 2580,
-      "mats": ["kit|kit:glow","kit|kit:prop"],
+      "hash": "d725353faff3c156",
+      "verts": 3068,
+      "mats": ["kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
-        ["kit|kit:prop",2564],
-        ["kit|kit:glow",16]
+        ["kit|kit:prop",3044],
+        ["kit|kit:glow",16],
+        ["kit|kit:decal",8]
       ],
       "solids": [
         [0,0,39.867,0.133,2.8,43.467],
@@ -1818,12 +1841,13 @@
     {
       "cx": 1,
       "cz": 2,
-      "hash": "1e85eaa9cba7c494",
-      "verts": 1840,
-      "mats": ["kit|kit:glow","kit|kit:prop"],
+      "hash": "fdd62a690de03975",
+      "verts": 1916,
+      "mats": ["kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
-        ["kit|kit:prop",1824],
-        ["kit|kit:glow",16]
+        ["kit|kit:prop",1888],
+        ["kit|kit:glow",16],
+        ["kit|kit:decal",12]
       ],
       "solids": [
         [20,0,39.867,20.133,2.8,46.8],
@@ -1887,14 +1911,15 @@
     {
       "cx": 2,
       "cz": 2,
-      "hash": "bd1be24d98fd3701",
-      "verts": 5440,
-      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:glow","kit|kit:prop"],
+      "hash": "53ff6ef3433d6fbd",
+      "verts": 6576,
+      "mats": ["kit|L18:floorFoam","kit|L18:wallNursery","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L18:wallNursery",148],
-        ["kit|kit:prop",5272],
+        ["kit|kit:prop",6376],
         ["kit|L18:floorFoam",4],
-        ["kit|kit:glow",16]
+        ["kit|kit:glow",16],
+        ["kit|kit:decal",32]
       ],
       "solids": [
         [40,0,46.533,40.133,2.8,56.8],

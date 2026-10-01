@@ -365,11 +365,15 @@ async function inWorld(browser, base) {
       }
     }
     out.world = BR.world.debugInfo();
+    // 预算按画质分：高 10000 / 低 8000（BR.kit.budget，_TEMPLATE.md 第 16 节）
+    const lowQ = BR.game && BR.game.settings && BR.game.settings.quality === 'low';
+    out.triCap = lowQ ? BR.kit.budget.trisLow : BR.kit.budget.trisHigh;
+    out.quality = lowQ ? 'low' : 'high';
     return out;
   });
   check('Level Dev：出生点周围 5×5 区块全部由 kit 建成', st.chunks === 25, { chunks: st.chunks });
   check('Level Dev：每块 mesh ≤ 8（按材质合并）', st.maxMeshes <= 8, { maxMeshes: st.maxMeshes, at: st.maxMeshesKey, names: st.names });
-  check('Level Dev：每块三角形 ≤ 8000', st.maxTris <= 8000, { maxTris: st.maxTris, avg: Math.round(st.sumTris / Math.max(1, st.chunks)) });
+  check('Level Dev：每块三角形 ≤ ' + st.triCap + '（' + st.quality + ' 画质）', st.maxTris <= st.triCap, { maxTris: st.maxTris, avg: Math.round(st.sumTris / Math.max(1, st.chunks)) });
   check('Level Dev：刷新点都不在碰撞体里、数量够', st.bad.length === 0 && st.spawnPts >= st.chunks * 20, { spawnPts: st.spawnPts, dropped: st.dropped, bad: st.bad.slice(0, 5) });
 
   const ex = await ev(page, () => {

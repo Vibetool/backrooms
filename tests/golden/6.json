@@ -6,16 +6,16 @@
   "spawnFactor": 1,
   "radius": 2,
   "chunkSize": 40,
-  "hash": "8963fbb15ff479a887c8e2d71b9e33fa914d535540960205f85d9979fd2c72b2",
+  "hash": "116bc9682e72dd196c0d503239cc22e0c07665f5eb99c24806bcce1ccf0b75ec",
   "chunks": [
     {
       "cx": -2,
       "cz": -2,
-      "hash": "6a5314ccf09c6551",
-      "verts": 415,
+      "hash": "eafc1d919766d469",
+      "verts": 447,
       "mats": ["kit|L6:ground","kit|L6:rock","kit|kit:glow","kit|kit:prop"],
       "meshes": [
-        ["kit|L6:rock",260],
+        ["kit|L6:rock",292],
         ["kit|L6:ground",4],
         ["kit|kit:prop",130],
         ["kit|kit:glow",21]
@@ -108,11 +108,11 @@
     {
       "cx": -1,
       "cz": -2,
-      "hash": "808681dc4e0c9edf",
-      "verts": 152,
+      "hash": "68ff0f944c033c94",
+      "verts": 168,
       "mats": ["kit|L6:ground","kit|L6:rock"],
       "meshes": [
-        ["kit|L6:rock",148],
+        ["kit|L6:rock",164],
         ["kit|L6:ground",4]
       ],
       "solids": [
@@ -198,16 +198,17 @@
     {
       "cx": 0,
       "cz": -2,
-      "hash": "d42e76c70bf4b753",
-      "verts": 3537,
-      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "ebb06599b6bf8222",
+      "verts": 3583,
+      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L6:pipeWall",456],
         ["kit|kit:prop",2986],
         ["kit|L6:pipeCeil",4],
         ["kit|L6:pipeFloor",4],
         ["kit|kit:glow",40],
-        ["kit|kit:water",47]
+        ["kit|kit:water",89],
+        ["kit|kit:decal",4]
       ],
       "solids": [
         [4.867,0,-50.133,5.133,2.6,-39.867],
@@ -312,16 +313,17 @@
     {
       "cx": 1,
       "cz": -2,
-      "hash": "c59fb3cf3b3c0235",
-      "verts": 4063,
-      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "d56d90df180b8769",
+      "verts": 4155,
+      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L6:pipeWall",412],
         ["kit|kit:prop",3480],
         ["kit|L6:pipeCeil",4],
         ["kit|L6:pipeFloor",4],
         ["kit|kit:glow",48],
-        ["kit|kit:water",115]
+        ["kit|kit:water",199],
+        ["kit|kit:decal",8]
       ],
       "solids": [
         [40,0,-55.133,40.133,2.6,-49.867],
@@ -424,16 +426,17 @@
     {
       "cx": 2,
       "cz": -2,
-      "hash": "23d8d2f84098af3d",
-      "verts": 3671,
-      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "e7bce354f0287283",
+      "verts": 3763,
+      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L6:pipeWall",472],
         ["kit|kit:prop",3044],
         ["kit|L6:pipeCeil",4],
         ["kit|L6:pipeFloor",4],
         ["kit|kit:glow",32],
-        ["kit|kit:water",115]
+        ["kit|kit:water",199],
+        ["kit|kit:decal",8]
       ],
       "solids": [
         [80,0,-55.133,80.133,2.6,-49.867],
@@ -539,11 +542,11 @@
     {
       "cx": -2,
       "cz": -1,
-      "hash": "0bbff4f520e2debf",
-      "verts": 284,
+      "hash": "c2083ba762b350c1",
+      "verts": 300,
       "mats": ["kit|L6:ground","kit|L6:rock","kit|kit:glow","kit|kit:prop"],
       "meshes": [
-        ["kit|L6:rock",216],
+        ["kit|L6:rock",232],
         ["kit|L6:ground",4],
         ["kit|kit:glow",52],
         ["kit|kit:prop",12]
@@ -724,16 +727,17 @@
     {
       "cx": 0,
       "cz": -1,
-      "hash": "5ba7936ed1cb5d90",
-      "verts": 3389,
-      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "5e8d303bd3098252",
+      "verts": 3435,
+      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L6:pipeWall",504],
         ["kit|kit:prop",2798],
         ["kit|L6:pipeCeil",4],
         ["kit|L6:pipeFloor",4],
         ["kit|kit:glow",32],
-        ["kit|kit:water",47]
+        ["kit|kit:water",89],
+        ["kit|kit:decal",4]
       ],
       "solids": [
         [4.867,0,-40.133,5.133,2.6,-34.867],
@@ -841,16 +845,17 @@
     {
       "cx": 1,
       "cz": -1,
-      "hash": "1e2d1483fb455aaf",
-      "verts": 4187,
-      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "09367f5f7b2e4f37",
+      "verts": 4279,
+      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L6:pipeWall",492],
         ["kit|kit:prop",3528],
         ["kit|L6:pipeCeil",4],
         ["kit|L6:pipeFloor",4],
         ["kit|kit:glow",44],
-        ["kit|kit:water",115]
+        ["kit|kit:water",199],
+        ["kit|kit:decal",8]
       ],
       "solids": [
         [44.867,0,-35.133,45.133,2.6,-29.867],
@@ -958,16 +963,17 @@
     {
       "cx": 2,
       "cz": -1,
-      "hash": "ceda5a6c6384b694",
-      "verts": 3361,
-      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "00b5a51165ef29d1",
+      "verts": 3407,
+      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L6:pipeWall",500],
         ["kit|kit:prop",2774],
         ["kit|L6:pipeCeil",4],
         ["kit|L6:pipeFloor",4],
         ["kit|kit:glow",32],
-        ["kit|kit:water",47]
+        ["kit|kit:water",89],
+        ["kit|kit:decal",4]
       ],
       "solids": [
         [80,0,-20.133,80.133,2.6,-14.867],
@@ -1075,16 +1081,17 @@
     {
       "cx": -2,
       "cz": 0,
-      "hash": "7da14d24a3ee8215",
-      "verts": 3511,
-      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "18fab163dde463b5",
+      "verts": 3603,
+      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L6:pipeWall",424],
         ["kit|kit:prop",2932],
         ["kit|L6:pipeCeil",4],
         ["kit|L6:pipeFloor",4],
         ["kit|kit:glow",32],
-        ["kit|kit:water",115]
+        ["kit|kit:water",199],
+        ["kit|kit:decal",8]
       ],
       "solids": [
         [-80,0,-0.133,-79.867,2.6,5.133],
@@ -1305,11 +1312,11 @@
     {
       "cx": 0,
       "cz": 0,
-      "hash": "ca2468d69797a219",
-      "verts": 180,
+      "hash": "a02f3fea40fc4b21",
+      "verts": 212,
       "mats": ["kit|L6:ground","kit|L6:rock"],
       "meshes": [
-        ["kit|L6:rock",176],
+        ["kit|L6:rock",208],
         ["kit|L6:ground",4]
       ],
       "solids": [
@@ -1392,16 +1399,17 @@
     {
       "cx": 1,
       "cz": 0,
-      "hash": "a886de83ce00f915",
-      "verts": 3554,
-      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "a089c9e3a0ae9e15",
+      "verts": 3600,
+      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L6:pipeWall",456],
         ["kit|kit:prop",2982],
         ["kit|L6:pipeCeil",4],
         ["kit|L6:pipeFloor",4],
         ["kit|kit:glow",40],
-        ["kit|kit:water",68]
+        ["kit|kit:water",110],
+        ["kit|kit:decal",4]
       ],
       "solids": [
         [44.867,0,24.867,45.133,2.6,35.133],
@@ -1506,16 +1514,17 @@
     {
       "cx": 2,
       "cz": 0,
-      "hash": "78b22948d01d33f6",
-      "verts": 3907,
-      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "c49365be6b260ff3",
+      "verts": 3999,
+      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L6:pipeWall",536],
         ["kit|kit:prop",3216],
         ["kit|L6:pipeCeil",4],
         ["kit|L6:pipeFloor",4],
         ["kit|kit:glow",32],
-        ["kit|kit:water",115]
+        ["kit|kit:water",199],
+        ["kit|kit:decal",8]
       ],
       "solids": [
         [80,0,24.867,80.133,2.6,40.133],
@@ -1859,16 +1868,17 @@
     {
       "cx": 0,
       "cz": 1,
-      "hash": "3f062ad99f4c9e55",
-      "verts": 4216,
-      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "51adfc9156778eb7",
+      "verts": 4308,
+      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L6:pipeWall",448],
         ["kit|kit:prop",3576],
         ["kit|L6:pipeCeil",4],
         ["kit|L6:pipeFloor",4],
         ["kit|kit:glow",48],
-        ["kit|kit:water",136]
+        ["kit|kit:water",220],
+        ["kit|kit:decal",8]
       ],
       "solids": [
         [4.867,0,44.867,5.133,2.6,50.133],
@@ -1973,16 +1983,17 @@
     {
       "cx": 1,
       "cz": 1,
-      "hash": "3bc1c2ac3f9bd8c6",
-      "verts": 3598,
-      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "51fa786eafa80c51",
+      "verts": 3644,
+      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L6:pipeWall",424],
         ["kit|kit:prop",3054],
         ["kit|L6:pipeCeil",4],
         ["kit|L6:pipeFloor",4],
         ["kit|kit:glow",44],
-        ["kit|kit:water",68]
+        ["kit|kit:water",110],
+        ["kit|kit:decal",4]
       ],
       "solids": [
         [40,0,64.867,40.133,2.6,70.133],
@@ -2200,16 +2211,17 @@
     {
       "cx": -2,
       "cz": 2,
-      "hash": "c7289f27ee737391",
-      "verts": 4196,
-      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "7dc95cffe6541e43",
+      "verts": 4334,
+      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L6:pipeWall",476],
         ["kit|kit:prop",3514],
         ["kit|L6:pipeCeil",4],
         ["kit|L6:pipeFloor",4],
         ["kit|kit:glow",36],
-        ["kit|kit:water",162]
+        ["kit|kit:water",288],
+        ["kit|kit:decal",12]
       ],
       "solids": [
         [-80,0,94.867,-79.867,2.6,100.133],
@@ -2428,16 +2440,17 @@
     {
       "cx": 0,
       "cz": 2,
-      "hash": "c10b913c181c63b0",
-      "verts": 3466,
-      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "b60a8f35b0c1484f",
+      "verts": 3558,
+      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L6:pipeWall",512],
         ["kit|kit:prop",2828],
         ["kit|L6:pipeCeil",4],
         ["kit|L6:pipeFloor",4],
         ["kit|kit:glow",24],
-        ["kit|kit:water",94]
+        ["kit|kit:water",178],
+        ["kit|kit:decal",8]
       ],
       "solids": [
         [0,0,109.867,0.133,2.6,115.133],
@@ -2546,16 +2559,17 @@
     {
       "cx": 1,
       "cz": 2,
-      "hash": "3f29b427f5fdcb8b",
-      "verts": 4483,
-      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "353f27366580847d",
+      "verts": 4575,
+      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L6:pipeWall",484],
         ["kit|kit:prop",3824],
         ["kit|L6:pipeCeil",4],
         ["kit|L6:pipeFloor",4],
         ["kit|kit:glow",52],
-        ["kit|kit:water",115]
+        ["kit|kit:water",199],
+        ["kit|kit:decal",8]
       ],
       "solids": [
         [40,0,109.867,40.133,2.6,115.133],
@@ -2662,16 +2676,17 @@
     {
       "cx": 2,
       "cz": 2,
-      "hash": "6c4ef7ea2e0c5c3e",
-      "verts": 3852,
-      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:glow","kit|kit:prop","kit|kit:water"],
+      "hash": "b8142a601db597bb",
+      "verts": 3944,
+      "mats": ["kit|L6:pipeCeil","kit|L6:pipeFloor","kit|L6:pipeWall","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L6:pipeWall",516],
         ["kit|kit:prop",3160],
         ["kit|L6:pipeCeil",4],
         ["kit|L6:pipeFloor",4],
         ["kit|kit:glow",32],
-        ["kit|kit:water",136]
+        ["kit|kit:water",220],
+        ["kit|kit:decal",8]
       ],
       "solids": [
         [80,0,89.867,80.133,2.6,115.133],

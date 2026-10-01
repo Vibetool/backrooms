@@ -6,7 +6,7 @@
   "spawnFactor": 1,
   "radius": 2,
   "chunkSize": 44,
-  "hash": "995ec096e882c4bb679dd15166fb845929d98a7094f558d18928abd54f200d02",
+  "hash": "8e162b85cab508bc6b3f109bd063e5a40018702d21c22d02f0d221af97dbfdea",
   "chunks": [
     {
       "cx": -2,
@@ -161,11 +161,11 @@
     {
       "cx": -1,
       "cz": -2,
-      "hash": "6726a21133ad22b6",
-      "verts": 9571,
+      "hash": "5f609ebb1938288d",
+      "verts": 9613,
       "mats": ["kit|L10:crop","kit|L10:field","kit|kit:water"],
       "meshes": [
-        ["kit|kit:water",47],
+        ["kit|kit:water",89],
         ["kit|L10:field",4],
         ["kit|L10:crop",9520]
       ],
@@ -1598,11 +1598,11 @@
     {
       "cx": -2,
       "cz": 1,
-      "hash": "20af31b31c29cd00",
-      "verts": 9168,
+      "hash": "d9ecb04681cf1adb",
+      "verts": 9210,
       "mats": ["kit|L10:crop","kit|L10:field","kit|kit:water"],
       "meshes": [
-        ["kit|kit:water",68],
+        ["kit|kit:water",110],
         ["kit|L10:field",4],
         ["kit|L10:crop",9096]
       ],
@@ -2394,14 +2394,15 @@
     {
       "cx": -1,
       "cz": 2,
-      "hash": "f31346d597b1a401",
-      "verts": 11272,
-      "mats": ["kit|L10:crop","kit|L10:field","kit|L10:wood","kit|kit:prop"],
+      "hash": "ef56bd2272e30318",
+      "verts": 11496,
+      "mats": ["kit|L10:crop","kit|L10:field","kit|L10:wood","kit|kit:decal","kit|kit:prop"],
       "meshes": [
         ["kit|L10:wood",124],
-        ["kit|kit:prop",928],
+        ["kit|kit:prop",1136],
         ["kit|L10:field",4],
-        ["kit|L10:crop",10216]
+        ["kit|L10:crop",10216],
+        ["kit|kit:decal",16]
       ],
       "solids": [
         [-22.477,0,109.126,-22.377,2.6,119.126],
@@ -2606,11 +2607,11 @@
     {
       "cx": 1,
       "cz": 2,
-      "hash": "5c22ae980a752145",
-      "verts": 9088,
+      "hash": "ff4623e839287c4f",
+      "verts": 9130,
       "mats": ["kit|L10:crop","kit|L10:field","kit|kit:water"],
       "meshes": [
-        ["kit|kit:water",68],
+        ["kit|kit:water",110],
         ["kit|L10:field",4],
         ["kit|L10:crop",9016]
       ],
