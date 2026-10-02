@@ -959,9 +959,12 @@ function buildChunk(ctx, cx, cz, rng) {
   const rf = R('floor');
   b.plane(A0 + 0.45, 0.003, 14.6, 0.3, 0.3, 'kit:prop', { facing: 'up', color: 0x0c0d0c, uv: 'stretch' });
   for (let k = 0; k < 5; k++) P(b, A0 + 0.45, 0.003, 14.48 + k * 0.06, 0.28, 0.008, 0.022, 0x3a3c38, ['py']);
-  if (rf() < 0.6) kit.prop.puddle(b, A0 + 0.75 + rf() * 0.4, 14.9, rf() * 3, { rx: 0.6 + rf() * 0.4, rz: 0.4 + rf() * 0.3, color: [0.035, 0.045, 0.04] });
+  // 水坑外不画那圈干水渍印（ring: false）：缺省是水色深一号 = 近黑，1–2.6 m 的圈在灯下像马克笔描的线；换浅色 0.25 仍是挂在水坑外的一圈虚线框。
+  // 地漏边上的水一直是湿的，不该有"干了的圈"，湿边（水面外那一环）已经够当软边（上线前复查 2026-10-02，返修第二轮）
+  if (rf() < 0.6) kit.prop.puddle(b, A0 + 0.75 + rf() * 0.4, 14.9, rf() * 3, { rx: 0.6 + rf() * 0.4, rz: 0.4 + rf() * 0.3, color: [0.035, 0.045, 0.04], ring: false });
   else { rf(); rf(); rf(); rf(); }
-  kit.decal(b, { kind: 'water', x: A0 + 0.45, y: 0, z: 14.6, facing: 'up', w: 0.9, color: 0x1a1e18, opacity: 0.5 });   // 地漏四周一圈湿痕
+  // 地漏四周一片湿痕：软斑（stain），不用水渍圈（water）—— 潮痕格子放大到 0.9 m 是两道 1.5–2 cm 宽的深色线，一圈绕地漏、一圈挂在水坑外，像马克笔画的（上线前复查 2026-10-02）
+  kit.decal(b, { kind: 'stain', x: A0 + 0.45, y: 0, z: 14.6, facing: 'up', w: 0.65, color: 0x1a1e18, opacity: 0.3 });
   const rm = R('mold');
   for (let k = 0; k < 4 && walls.length; k++) {
     const w = walls[Math.floor(rm() * walls.length)];
@@ -1082,7 +1085,7 @@ function buildChunk(ctx, cx, cz, rng) {
   // 12) 软边痕迹（贴花最后贴：本块到了细节上限时先被截掉的是它们；低画质整段不画）。只用派生流（scatterDecals 自己按 salt 派生），不吃主 rng
   //   通道墙面：下半截瓷砖上的擦痕、刮痕、污迹；上半截涂料上从天花板渗下来的水痕、水渍圈 —— 只撒在四条通道两侧的墙上（凹间、房间里不撒）
   //   地面：湿痕（水渍圈、污斑、拖把抹痕、油渍）；天花板：漏水干掉的水渍
-  //   各段上限（墙下 4、墙上 3、地 4、顶 2）压着每块贴花总数：L3 一块平均不到 60 张（_TEMPLATE.md 5.5 建议 10–60，透明叠画在手机上要省；
+  //   各段上限（墙下 4、墙上 3、地 3 + 水渍圈 1、顶 2）压着每块贴花总数：L3 一块平均不到 60 张（_TEMPLATE.md 5.5 建议 10–60，透明叠画在手机上要省；
   //   地面、天花板的是最大的几张，先压它们）
   const corr = [];
   for (const w of walls) {
@@ -1097,7 +1100,12 @@ function buildChunk(ctx, cx, cz, rng) {
   ];
   if (W !== 'wall') arms.push({ x: A0 / 2, z: C, w: A0, h: 2 * HW });
   if (E !== 'wall') arms.push({ x: (A1 + SIZE) / 2, z: C, w: SIZE - A1, h: 2 * HW });
-  kit.scatterDecals(b, arms.map(a => Object.assign({ y: 0, facing: 'up' }, a)), { salt: 'L3-floorWet', kinds: [['water', 3], ['stain', 2], ['drag', 1], ['oil', 1]], per: 0.08, max: 4, size: [0.8, 1.5], color: 0x161a14, opacity: [0.3, 0.6] });
+  //   地面湿痕分两次撒（上线前复查 2026-10-02：水渍圈和污斑共用 0x161a14、0.3–0.6，灯下圈线近乎黑色，像铅笔画的深圈）：
+  //   污斑/拖把抹痕/油渍颜色、浓淡、尺寸照旧，per/max 按原来 4/7 的份额收，块里这几样的数量和以前差不多；
+  //   干掉的水渍圈单独一条派生流，颜色浅、很淡、尺寸小，每块最多 1 个（两次合计 ≤ 4，和原来一样，块里贴花总数不涨）
+  const floorArms = arms.map(a => Object.assign({ y: 0, facing: 'up' }, a));
+  kit.scatterDecals(b, floorArms, { salt: 'L3-floorWet', kinds: [['stain', 2], ['drag', 1], ['oil', 1]], per: 0.045, max: 3, size: [0.8, 1.5], color: 0x161a14, opacity: [0.3, 0.6] });
+  kit.scatterDecals(b, floorArms, { salt: 'L3-floorWetRing', kinds: ['water'], per: 0.03, max: 1, size: [0.6, 1.0], color: 0x2a3028, opacity: [0.12, 0.24] });
   kit.scatterDecals(b, arms.map(a => Object.assign({ y: H, facing: 'down' }, a)), { salt: 'L3-ceilWater', kinds: [['stain', 2], ['water', 1]], per: 0.035, max: 2, size: [0.8, 1.4], color: 0x4a3c26, opacity: [0.25, 0.45] });
 
   // 13) 刷新点：通道中线每 2 m 一个，凹间和房间里各几个（碰撞体里、出口圈上的 finish 会剔掉）

@@ -208,6 +208,22 @@ function grainFlat(g, ex, ey, ez) {
   if (a < b) { t = a; a = b; b = t; }
   return a * b >= GRAIN_FLAT_AREA || (a >= GRAIN_FLAT_LONG && b >= GRAIN_FLAT_SECOND);
 }
+// 浅色件也整件退回纯色（上线前复查 2026-10-02：L17 被子枕头、L18 白柜黄桌面、L22 白桌板、L13 奶油色柜子、L4 米白门框 ——
+// 纹理是乘在顶点色上的，浅色、低饱和的面上那点明暗起伏读出来就是"发灰发花"，像脏了；深色木头、金属、石头上读作材质，留着）。
+// 只管缺省（opts.grain 没传）的件：false / true 显式要的照旧。判断在 finish 里做（fillUV 之前），用的是这件最终的顶点色
+// （_piece 之后、finish 之前 setColor 改过的也算）：各顶点相对亮度（kit:prop 顶点色是线性值，Y = 0.2126R + 0.7152G + 0.0722B）的平均
+// > GRAIN_FLAT_LUMA 就整件钉在均值纹素上。纹理只能整件开关（一张贴图、UV 要么铺开要么钉死），所以是阈值，不是按亮度渐变。
+// 阈值 0.75（屏幕上约 88% 亮）：复查点名的浅色件最暗的是 L17 灰蓝被子 0xb7c2cc（0.754），其余被褥/白柜/黄桌面/白纸/门框都在 0.78 以上；
+// 复查看过没点名的中浅色件留着纹理 —— kit 桌面层压板 0xc9b99b（0.73）、L4 桌面 0xc3b69b（0.72）、电梯门不锈钢 0xb9bdc1（0.74）、
+// L2 镀锌线槽/穿线管（0.63/0.74）、L1 镀锌件（0.68）和黄色警示漆（0.67）。注意：亮度只看顶点色，灯光照得很亮的深色件（L8 M.E.G. 据点
+// 0x3a5a3a 的储物柜，0.32）这条规则管不到（kit.prop.* 目前也不把 opts.grain 转给零件，要另想办法）
+const GRAIN_FLAT_LUMA = 0.75;
+function grainBright(col, start, count) {
+  if (!col || !(count > 0)) return false;
+  let sum = 0;
+  for (let i = start; i < start + count; i++) sum += 0.2126 * col[i * 3] + 0.7152 * col[i * 3 + 1] + 0.0722 * col[i * 3 + 2];
+  return sum / count > GRAIN_FLAT_LUMA;
+}
 
 // 盒子六个面：法线、"上"方向、面中心相对盒子中心的偏移轴、面在"右/上"方向上的半尺寸取哪两个轴
 // right = up × normal，四个角 BL→BR→TR→TL 按这个顺序对外是逆时针（正面）
@@ -336,7 +352,10 @@ class Builder {
     });
     const piece = new Piece(a, start, a.n - start, o.uv || 'world', o.uvScale, o.uvRepeat);
     if (o.uvMetric) piece.uvMetric = o.uvMetric;
-    if (a.grainTex && a.n > start) piece.flat = grainFlat(o.grain, x1 - x0, y1 - y0, z1 - z0);
+    if (a.grainTex && a.n > start) {
+      piece.flat = grainFlat(o.grain, x1 - x0, y1 - y0, z1 - z0);
+      if (gb) piece.grainAuto = true;   // 缺省按自动规则：finish 时还要按颜色再判一次（浅色件退回纯色，见 grainBright）
+    }
     a.pieces.push(piece);
     if (o.solid) self._solidFromRange(a, start, a.n);
     return piece;
@@ -368,7 +387,7 @@ class Builder {
   // 少画的面（faces 里没有的）旁边那几条棱不倒（贴地/贴墙那一面本来看不见）。半径超过所涉边长的一半自动收小；
   // 低画质、opts.detail === false、本块已到 DETAIL_TRI_CAP 时退回普通盒（碰撞体、占地完全一样）
   // opts.grain（只对 'kit:prop' 有意义，box/aabb/plane/quad/cylinder/mesh 通用）：false 或 0 = 这件不铺表面纹理（白板、白漆面、整面墙），
-  // true = 一定铺；缺省按大小自动（最大一面 ≥ 3 m² 或细长大件不铺，见 grainFlat）。两档画质一样
+  // true = 一定铺；缺省按大小自动（最大一面 ≥ 3 m² 或细长大件不铺，见 grainFlat），浅色件（顶点色平均相对亮度 > 0.75）也不铺（见 grainBright）。两档画质一样
   box(x, y, z, w, h, d, matKey, opts) {
     const o = opts || {};
     if (o.bevel > 0 && hiDetail(this, o)) {
@@ -867,7 +886,7 @@ function fillUV(a, pc, rep, off, ox, oz, uvAll) {
   const P = a.pos, N = a.nor, T = a.uv;
   let mode = pc.uv;
   if (uvAll === 'world' && mode !== 'solid' && mode !== 'scaled') mode = pc.uvMetric ? 'metric' : 'world';
-  // pc.flat：kit:prop 整件退回纯色（opts.grain === false 或大面自动判断，见 grainFlat）—— 和 'solid' 一样钉在均值纹素上
+  // pc.flat：kit:prop 整件退回纯色（opts.grain === false、大面自动判断 grainFlat、浅色件 grainBright）—— 和 'solid' 一样钉在均值纹素上
   if (mode === 'solid' || pc.flat) {
     for (let i = i0; i < i1; i++) { T[i * 2] = WHITE_UV[0]; T[i * 2 + 1] = WHITE_UV[1]; }
     return;
@@ -937,7 +956,11 @@ Builder.prototype.finish = function () {
     const m = mat(a.key);
     const def = defOf(a.key) || {};
     const rep = (m.userData && m.userData.kitRepeat) || repeatOf(def);
-    for (let i = 0; i < a.pieces.length; i++) fillUV(a, a.pieces[i], rep, def.uvOffset, this.ox, this.oz, def.uvAll);
+    for (let i = 0; i < a.pieces.length; i++) {
+      const pc = a.pieces[i];
+      if (pc.grainAuto && !pc.flat && grainBright(a.col, pc.start, pc.count)) pc.flat = true;
+      fillUV(a, pc, rep, def.uvOffset, this.ox, this.oz, def.uvAll);
+    }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(a.pos, 3));
     geo.setAttribute('normal', new THREE.Float32BufferAttribute(a.nor, 3));
@@ -2039,6 +2062,10 @@ function pipe(b, x, z, rot, opts) {
 }
 
 // 水坑：不规则半透明水面（形状按位置哈希，不消耗 rng），不挡路
+// opts.ringColor / opts.ringOpacity：外面那圈干掉的水渍印（高画质、rx·rz ≤ 0.7）的颜色（屏幕色 hex）和浓淡；缺省 = 水色深一号、0.42。
+// 水色很深（近黑的污水、地漏积水）时缺省那圈也近黑，像马克笔描了一圈 —— 这种传一个浅一点的 ringColor，或者干脆 ring: false
+// （上线前复查 2026-10-02：L3 地漏积水先试了 ringColor 0x2a3028 + 0.25，仍是挂在水坑外的一圈，最后用 ring: false）。
+// opts.ring === false：不画这圈
 function puddle(b, x, z, rot, opts) {
   const o = opts || {};
   const rx = num(o.rx, 0.8), rz = num(o.rz, 0.5), seg = 14;
@@ -2100,11 +2127,12 @@ function puddle(b, x, z, rot, opts) {
     linkVisible(piece, wa.pieces.slice(n0));
     // ④ 水渍圈：水坑外面一圈干了的水印（软边环线，环比水坑轮廓大一成左右；环内很淡）。跟着水面一起显隐；
     //    贴在地面上、水面下面 2–3.5 mm（透明件都不写深度，不会和水面互相闪）。大水坑不加（整片透明贴花太大，费填充率）
-    if (rx * rz <= 0.7) {
-      const dy = Math.min(0.0035, py * 0.6);
+    if (rx * rz <= 0.7 && o.ring !== false) {
+      const dy = Math.min(0.0035, py * 0.6), rc = o.ringColor != null;
       wear(b, hi, {
         kind: 'water', x: 0, y: py - dy, z: 0, facing: 'up', offset: 0, w: rx * 2.6, h: rz * 2.6, rot: wh(b, 5) < 0.5 ? 0 : Math.PI,
-        flip: wh(b, 6) < 0.5, color: o.color != null ? tone(o.color, 0.8) : 0x5c5546, srgb: o.color == null, opacity: 0.42,
+        flip: wh(b, 6) < 0.5, color: rc ? o.ringColor : o.color != null ? tone(o.color, 0.8) : 0x5c5546, srgb: rc || o.color == null,
+        opacity: o.ringOpacity != null ? o.ringOpacity : 0.42,
       }, piece);
     }
   }
@@ -2511,11 +2539,12 @@ function bed(b, x, z, rot, opts) {
     part(b, 0, 0.55, L / 2 + 0.0085, W + 0.08, 0.025, 0.065, wd, bv(hi, 0.008, 'top', { faces: 'noBottom' }));
     // ③ 被子床头那端翻出来的一截白被单（上棱和被子一样倒 3 cm，叠在被子斜面外面 ≥ 5 mm）
     part(b, 0, 0.3, L * 0.18 - L * 0.31 + 0.069, W + 0.03, 0.206, 0.142, 0xf0ede4, bv(hi, 0.03, 'top', { faces: 'noBottom' }));   // 头端比被子多出 2 mm
-    // ④ 磨损：被子上一块很淡的旧水渍（被子颜色深一号，软边）
+    // ④ 磨损：被子上一块很淡的旧水渍（被子颜色深一点点，软边，单团不带小尾巴的那个变体）。
+    //    上线前复查 2026-10-02：原来 tone 0.55、opacity 0.35 + 带尾巴的变体，浅色被子上像烧焦/破了个洞 → tone 0.8、opacity 0.2、variant 0
     if (wh(b, 140) < 0.5 && W > 0.5) {
       wear(b, hi, {
-        kind: 'stain', x: (wh(b, 141) - 0.5) * (W - 0.5), y: 0.5, z: L * (0.05 + 0.3 * wh(b, 142)), facing: 'up',
-        w: 0.32 + 0.14 * wh(b, 143), rot: wh(b, 144) * TAU, color: tone(blanket, 0.55), opacity: 0.35,
+        kind: 'stain', variant: 0, x: (wh(b, 141) - 0.5) * (W - 0.5), y: 0.5, z: L * (0.05 + 0.3 * wh(b, 142)), facing: 'up',
+        w: 0.32 + 0.14 * wh(b, 143), rot: wh(b, 144) * TAU, color: tone(blanket, 0.8), opacity: 0.2,
       });
     }
   }

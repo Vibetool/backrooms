@@ -343,35 +343,37 @@ function car(b, x, z, rot, rng, style, hollow) {
   b.push(x, z, rot);
   const solid = !hollow;
   const paint = U.pick(rng, C.carPaint);       // 「覆尘」的褪色旧车漆，一半以上已经锈透
+  // 整车一种表面：车身大盒（≥ 3 m²）会被 kit:prop 大面规则退回纯色，引擎盖/车顶这些小件却铺着纹理，近看顶面发花、侧面平
+  // （上线前复查 2026-10-02）→ 车上所有 kit:prop 件一律 grain: false。只改贴图 UV，几何、碰撞体、rng 消耗都不变
   if (style === 'shell50') {
     // landmarks「唯一一块相对完整的是一辆 50 年代汽车的外壳」：
     // 低车身 + 前后缩短的引擎盖/行李箱 + 中后段的驾驶室 + 尾鳍与镀铬保险杠，架在混凝土垛上（轮子早没了）
-    b.box(0, 0.38, 0, 1.86, 0.44, 4.5, 'kit:prop', { color: C.paint50, solid });          // 车身主体
-    b.box(0, 0.82, 1.42, 1.72, 0.2, 1.6, 'kit:prop', { color: C.paint50, solid: false }); // 引擎盖
-    b.box(0, 0.82, -1.62, 1.72, 0.22, 1.2, 'kit:prop', { color: C.paint50, solid: false }); // 行李箱
-    b.box(0, 0.82, -0.25, 1.62, 0.56, 2.0, 'kit:prop', { color: C.paint50, solid: false }); // 驾驶室
-    b.box(0, 0.94, -0.25, 1.68, 0.3, 1.66, 'kit:prop', { color: C.glass, solid: false });   // 一圈车窗
-    b.box(0, 1.38, -0.3, 1.5, 0.06, 1.7, 'kit:prop', { color: C.paint50, solid: false });   // 车顶
-    for (const sx of [-0.8, 0.8]) b.box(sx, 1.04, -2.0, 0.16, 0.36, 0.7, 'kit:prop', { color: C.paint50, solid: false });  // 尾鳍
-    for (const sz of [2.28, -2.24]) b.box(0, 0.3, sz, 1.9, 0.16, 0.1, 'kit:prop', { color: C.chrome, solid: false });      // 保险杠
-    b.box(0, 0.16, 0, 1.92, 0.06, 4.1, 'kit:prop', { color: C.chrome, solid: false });      // 侧面镀铬饰条
+    b.box(0, 0.38, 0, 1.86, 0.44, 4.5, 'kit:prop', { grain: false, color: C.paint50, solid });          // 车身主体
+    b.box(0, 0.82, 1.42, 1.72, 0.2, 1.6, 'kit:prop', { grain: false, color: C.paint50, solid: false }); // 引擎盖
+    b.box(0, 0.82, -1.62, 1.72, 0.22, 1.2, 'kit:prop', { grain: false, color: C.paint50, solid: false }); // 行李箱
+    b.box(0, 0.82, -0.25, 1.62, 0.56, 2.0, 'kit:prop', { grain: false, color: C.paint50, solid: false }); // 驾驶室
+    b.box(0, 0.94, -0.25, 1.68, 0.3, 1.66, 'kit:prop', { grain: false, color: C.glass, solid: false });   // 一圈车窗
+    b.box(0, 1.38, -0.3, 1.5, 0.06, 1.7, 'kit:prop', { grain: false, color: C.paint50, solid: false });   // 车顶
+    for (const sx of [-0.8, 0.8]) b.box(sx, 1.04, -2.0, 0.16, 0.36, 0.7, 'kit:prop', { grain: false, color: C.paint50, solid: false });  // 尾鳍
+    for (const sz of [2.28, -2.24]) b.box(0, 0.3, sz, 1.9, 0.16, 0.1, 'kit:prop', { grain: false, color: C.chrome, solid: false });      // 保险杠
+    b.box(0, 0.16, 0, 1.92, 0.06, 4.1, 'kit:prop', { grain: false, color: C.chrome, solid: false });      // 侧面镀铬饰条
     for (const sx of [-0.72, 0.72]) for (const sz of [-1.7, 1.7]) b.box(sx, 0, sz, 0.44, 0.4, 0.44, MAT, { color: C.rubbleA, solid: false });
   } else if (style === 'frame') {
     // 只剩底盘和一半车身的骨架
-    b.box(0, 0.34, 0, 1.75, 0.34, 3.9, 'kit:prop', { color: C.rustDark, solid });
-    b.box(0, 0.68, 1.0, 1.6, 0.5, 1.3, 'kit:prop', { color: C.rust, solid: false });
-    for (let k = 0; k < 4; k++) b.box(-0.8 + k * 0.53, 0.68, -0.9, 0.05, 0.6, 0.05, 'kit:prop', { color: C.rebar, solid: false });
-    b.cylinder(-0.85, 0.3, 1.4, 0.3, 0.2, 'kit:prop', { axis: 'x', segments: 6, color: C.rustDark, solid: false });
+    b.box(0, 0.34, 0, 1.75, 0.34, 3.9, 'kit:prop', { grain: false, color: C.rustDark, solid });
+    b.box(0, 0.68, 1.0, 1.6, 0.5, 1.3, 'kit:prop', { grain: false, color: C.rust, solid: false });
+    for (let k = 0; k < 4; k++) b.box(-0.8 + k * 0.53, 0.68, -0.9, 0.05, 0.6, 0.05, 'kit:prop', { grain: false, color: C.rebar, solid: false });
+    b.cylinder(-0.85, 0.3, 1.4, 0.3, 0.2, 'kit:prop', { axis: 'x', segments: 6, grain: false, color: C.rustDark, solid: false });
   } else {
-    b.box(0, 0.3, 0, 1.8, 0.4, 4.1, 'kit:prop', { color: paint, solid });                   // 车身
-    b.box(0, 0.7, 1.28, 1.66, 0.18, 1.4, 'kit:prop', { color: paint, solid: false });       // 引擎盖
-    b.box(0, 0.7, -1.5, 1.66, 0.2, 1.0, 'kit:prop', { color: paint, solid: false });        // 行李箱
-    b.box(0, 0.7, -0.25, 1.58, 0.52, 1.8, 'kit:prop', { color: C.rustDark, solid: false }); // 驾驶室（玻璃早碎光了）
-    b.box(0.15, 1.18, -0.3, 1.36, 0.06, 1.5, 'kit:prop', { color: paint, rotY: 0.07, solid: false });  // 压扁歪掉的车顶
+    b.box(0, 0.3, 0, 1.8, 0.4, 4.1, 'kit:prop', { grain: false, color: paint, solid });                   // 车身
+    b.box(0, 0.7, 1.28, 1.66, 0.18, 1.4, 'kit:prop', { grain: false, color: paint, solid: false });       // 引擎盖
+    b.box(0, 0.7, -1.5, 1.66, 0.2, 1.0, 'kit:prop', { grain: false, color: paint, solid: false });        // 行李箱
+    b.box(0, 0.7, -0.25, 1.58, 0.52, 1.8, 'kit:prop', { grain: false, color: C.rustDark, solid: false }); // 驾驶室（玻璃早碎光了）
+    b.box(0.15, 1.18, -0.3, 1.36, 0.06, 1.5, 'kit:prop', { grain: false, color: paint, rotY: 0.07, solid: false });  // 压扁歪掉的车顶
     for (const sx of [-0.78, 0.78]) {
       for (const sz of [-1.45, 1.45]) {
         if (rng() < 0.35) continue;                                   // 轮子丢了一两个
-        b.cylinder(sx, 0.22, sz, 0.3, 0.2, 'kit:prop', { axis: 'x', segments: 6, color: C.rubbleB, solid: false });
+        b.cylinder(sx, 0.22, sz, 0.3, 0.2, 'kit:prop', { axis: 'x', segments: 6, grain: false, color: C.rubbleB, solid: false });
       }
     }
   }
