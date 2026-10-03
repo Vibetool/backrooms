@@ -45,16 +45,20 @@
 
 /* ---------- 右下角「游玩」：挂着的牌子 ----------
    照孩子的手稿（tests/output/sign/1.jpg → 整理稿 sign-tidy.html）：一根横棍，两根吊绳，下面挂一块扁长牌子。
+   第二稿（tests/output/sign2/sketch.jpg，手稿里棍子右端是开口的）：棍子右端插进屏幕右边缘，左端短一点；颜色回到改挂牌前的金黄。
      .home-sign       外框，只管定位，不吃事件
-     .home-sign-rod   横棍：比牌子左右各长 10%，粗 ≈ 牌子宽 9%，两头圆（装饰，aria-hidden）
+     .home-sign-rod   横棍：左端比牌子左边伸出牌子宽的 5%（--home-rod-l），圆头；
+                      右端一直伸到屏幕最右边（连刘海 / 安全区那一截一起），正好截在屏幕边上、右头不画边框不倒圆，看着像插进墙里；
+                      粗 ≈ 牌子宽 9%（装饰，aria-hidden）
      .home-sign-rope  两根吊绳：离牌子左右边各 21%，从棍子里一直伸到牌子背后（装饰，aria-hidden）
      .home-play       牌子本身，也是唯一能点的部分（测试和代码都点它）
    棍子、吊绳 pointer-events:none，点上去穿透到画布，照样能点人物换制服。
    牌子按下时下沉 4px：吊绳下端本来就压在牌子背后 10px，牌子往下一走露出来的就是变长的那截，不会断开露缝；棍子不动。
-   几何都放在下面这几个变量里，「创意工坊 / 设置」按钮组的 bottom 也用它们算，各断点只改变量，两边一起变 */
+   几何都放在下面这几个变量里，「创意工坊 / 设置」按钮组的位置也用它们算，各断点只改变量，两边一起变 */
 .home-root {
   --home-edge: 24px;      /* 牌子离屏幕下边 */
-  --home-edge-r: 30px;    /* 牌子离屏幕右边：横棍比牌子右边再伸出 10%（14–18px），棍头离屏幕边还剩 12–16px */
+  --home-edge-r: 30px;    /* 牌子离屏幕右边（再加右安全区）；横棍从牌子右边往右伸的正是这一段，伸到屏幕边为止 */
+  --home-rod-l: .05;      /* 横棍左端伸出牌子左边多少，按牌子宽的比例（5%，720 高的桌面约 8px）。竖屏手机按钮组的位置也用它算 */
   /* 牌子宽随「游玩」字号（clamp(22px, 3.6vmin, 32px)）变，高、吊绳、棍子跟着按同一个 vmin 变，比例 ≈ 整理稿：
      宽:高 ≈ 300:114（2.63），吊绳 ≈ 0.32 倍宽，棍子 ≈ 9% 宽。桌面高 ≥720 时牌子宽 162–179：720 高 162×62 / 52 / 14，
      900 高 179×68 / 57 / 15.6；高约 650–720 时宽 156–162（1366×700 实测 160.5×62）；再矮就被 min-width 156 托底，约 156×62（≈ 2.5:1） */
@@ -77,12 +81,18 @@
 .home-sign-rod, .home-sign-rope { position: absolute; box-sizing: border-box; pointer-events: none; }
 .home-sign-rod {
   z-index: 1;
-  top: 0; left: -10%; right: -10%;
+  top: 0;
+  left: calc(var(--home-rod-l) * -100%);
+  /* .home-sign 的右边离屏幕右边正好是 --home-edge-r + 右安全区，往右伸同样多就到了屏幕边（viewport-fit=cover，视口就是整块物理屏，
+     横屏刘海那一侧也伸进去）。只伸到边、不越出去：页面不会因此多出横向可滚动的宽度 */
+  right: calc(-1 * (var(--home-edge-r) + env(safe-area-inset-right)));
   height: var(--home-rod);
-  /* 和牌子一样的淡黄，略深一点点 */
-  background: linear-gradient(#f8ebb0, #e3cd7e);
+  /* 和牌子同一种金黄，略深一点点，跟牌子分得开 */
+  background: linear-gradient(#ecc94e, #cfa52c);
   border: 2px solid #2c2208;
-  border-radius: 999px;
+  /* 右头被屏幕边截掉：不画右边框、右边不倒圆，上下两条边框直通到屏幕边 */
+  border-right: 0;
+  border-radius: 999px 0 0 999px;
 }
 .home-sign-rope {
   /* 上端藏在棍子背后（棍子 z-index 更高），下端压在牌子背后 10px */
@@ -105,8 +115,8 @@
   font-size: clamp(22px, 3.6vmin, 32px); font-weight: 800;
   letter-spacing: .24em; text-indent: .24em;
   color: #1d1705;
-  /* 牌子是淡黄的（孩子指定），字和描边仍是深色 */
-  background: linear-gradient(#fbf0b8, #ecd88a);
+  /* 改挂牌之前就是这个金黄（孩子说要原来的黄，不要米黄），字和描边是深色 */
+  background: linear-gradient(#f5d964, #dcb434);
   border: 2px solid #2c2208;
   border-radius: 12px;
   /* 底下那条厚边 + 投影：改成挂牌前就有，原样保留 */
@@ -117,8 +127,8 @@
 .home-play:hover { filter: brightness(1.06); }
 .home-play:active { transform: translateY(4px); box-shadow: 0 2px 0 #6b5816, 0 6px 14px rgba(20, 14, 0, .3); }
 /* 焦点描边只围牌子（outline 画在按钮自己身上，棍子、吊绳不在里面）。
-   牌子改成淡黄后，原来的浅色描边 #fff4c4 和牌子、墙纸、地毯都分不开，还会在吊绳上切出一道浅色缺口；
-   改成和描边、吊绳同色的深色圈：吊绳穿过它看着还是连着的，对浅黄背景对比度约 10:1 */
+   不用改挂牌前的浅色描边 #fff4c4：它和墙纸、地毯都分不开，还会在吊绳上切出一道浅色缺口；
+   用和描边、吊绳同色的深色圈：吊绳穿过它看着还是连着的，对浅黄墙纸 / 地毯对比度约 10:1 */
 .home-play:focus-visible { outline: 3px solid #2c2208; outline-offset: 3px; }
 
 /* ---------- 挂牌正上方：创意工坊 / 设置（次要按钮，WORKSHOP.md 第 9 节；竖屏手机放挂牌左边，见文件末尾） ---------- */
@@ -372,14 +382,15 @@
 /* 竖屏手机（宽 ≤559）：人物站在屏幕正中，靴底在约 0.7 倍屏高处，触屏还有一圈放大的碰撞体（宽约 0.22 倍屏高，镜头还会左右漂移）。
    按钮组叠在挂牌正上方时顶边离屏幕底约 255–260px，会压住右靴：看着挡脚，点靴子还会开「创意工坊」而不是换制服。
    所以这一档把两个按钮挪到挂牌左边，仍然竖排，底边和牌子底边对齐（离屏幕底 24 + 安全区）：
-   右边 = 牌子右边距 + 牌子宽 × 1.1（横棍往左再伸出 10%）+ 12px，跟横棍左端留 12px；
+   右边 = 牌子右边距 + 牌子宽 × (1 + --home-rod-l)（横棍往左再伸出 5%）+ 12px，跟横棍左端留 12px
+   （横棍右端伸到屏幕右边，在按钮组的另一侧，碰不到）；
    宽最多 130，屏幕太窄（320）时按剩下的地方缩，左边至少留 16px，最窄 96 也放得下「创意工坊」四个字 */
 @media (max-aspect-ratio: 17/20) and (max-width: 559px) {
   .home-root { --home-side-gap: 12px; }
   .home-secondary-actions {
-    right: calc(var(--home-edge-r) + var(--home-play-w) * 1.1 + var(--home-side-gap) + env(safe-area-inset-right));
+    right: calc(var(--home-edge-r) + var(--home-play-w) * (1 + var(--home-rod-l)) + var(--home-side-gap) + env(safe-area-inset-right));
     bottom: calc(var(--home-edge) + env(safe-area-inset-bottom));
-    width: clamp(96px, calc(100vw - var(--home-edge-r) - var(--home-play-w) * 1.1 - var(--home-side-gap) - 16px - env(safe-area-inset-left) - env(safe-area-inset-right)), 130px);
+    width: clamp(96px, calc(100vw - var(--home-edge-r) - var(--home-play-w) * (1 + var(--home-rod-l)) - var(--home-side-gap) - 16px - env(safe-area-inset-left) - env(safe-area-inset-right)), 130px);
   }
   .home-secondary-btn { min-width: 0; padding: 0 10px; }
 }

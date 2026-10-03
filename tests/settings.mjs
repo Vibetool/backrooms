@@ -71,6 +71,21 @@ async function injectSettings(page, base) {
 }
 const ev = (page, fn, arg) => page.evaluate(fn, arg);
 
+// 「游玩」挂牌第二稿（css/home.css「右下角『游玩』」一节）：横棍右端插进屏幕右边缘（右边正好到视口右边、右头不画边框），
+// 左端只伸出牌子宽的约 5%；牌子是改挂牌前的金黄；页面不能因为棍子伸到边而横向可滚
+function signGeometry() {
+  const rod = document.querySelector('.home-sign-rod'), play = document.querySelector('.home-play');
+  const r = rod.getBoundingClientRect(), p = play.getBoundingClientRect(), s = getComputedStyle(rod);
+  return {
+    rodRight: +r.right.toFixed(2), vw: innerWidth, leftOut: +((p.left - r.left) / p.width).toFixed(3), borderR: s.borderRightWidth,
+    docSW: document.documentElement.scrollWidth, bodySW: document.body.scrollWidth, playBg: getComputedStyle(play).backgroundImage,
+  };
+}
+function signOk(g) {
+  return Math.abs(g.rodRight - g.vw) <= 0.5 && g.borderR === '0px' && g.leftOut >= 0.035 && g.leftOut <= 0.065
+    && g.docSW <= g.vw && g.bodySW <= g.vw && /rgb\(245, 217, 100\).*rgb\(220, 180, 52\)/.test(g.playBg);
+}
+
 async function main() {
   const srv = await startServer();
   const base = 'http://127.0.0.1:' + srv.address().port + '/';
@@ -128,6 +143,8 @@ async function desktop(browser, base) {
   check('主页：两个按钮都在「游玩」挂牌正上方（不压横棍、吊绳、牌子）', allAbovePlay, { btns: layout.rects, play: layout.play });
   check('主页：不挡标题', layout.rects.every(r => r.y >= layout.title.bottom), { btns: layout.rects, title: layout.title });
   check('主页：两个按钮点击目标 ≥ 44px', layout.rects.every(r => r.h >= 44 && r.w >= 44), layout.rects);
+  const geo = await ev(page, signGeometry);
+  check('主页：横棍右端插进屏幕右边缘、左端伸出牌子约 5%，牌子金黄，页面不横向滚动', signOk(geo), geo);
   await shot(page, 'desktop-home');
 
   // ---------- 点「创意工坊」打开工坊界面、不报错；关掉回到主页再测「设置」 ----------
@@ -270,6 +287,8 @@ async function mobile(browser, base) {
   const lowBtn = layout.btns[layout.btns.length - 1];
   check('手机竖屏：两个按钮在挂牌左边，下面那个和牌子底边齐平', layout.btns.every(r => r.right <= layout.rodL - 8) && Math.abs(lowBtn.bottom - layout.play.bottom) <= 2, layout);
   check('手机竖屏：两个按钮都在视口内', layout.btns.every(r => r.x >= 0 && r.y >= 0 && r.right <= layout.vw && r.bottom <= layout.vh), layout);
+  const geo = await ev(page, signGeometry);
+  check('手机竖屏：横棍右端插进屏幕右边缘、左端伸出牌子约 5%，牌子金黄，页面不横向滚动', signOk(geo), geo);
   await shot(page, 'mobile-home');
 
   await ctx.close();

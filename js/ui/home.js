@@ -519,7 +519,7 @@ function hintHits(x, y, rs) {
   return false;
 }
 
-// 提示条要躲开的两块：「创意工坊 / 设置」按钮组；「游玩」挂牌（牌子 + 吊绳 + 伸出牌子两边的横棍）
+// 提示条要躲开的两块：「创意工坊 / 设置」按钮组；「游玩」挂牌（牌子 + 吊绳 + 横棍：左端伸出牌子一点，右端一直伸到屏幕右边）
 function avoidRects() {
   if (!S.secRect && S.secEl) {
     const r = S.secEl.getBoundingClientRect();
@@ -949,7 +949,7 @@ function buildDom() {
   S.hint.setAttribute('aria-hidden', 'true');
 
   // 「游玩」做成挂着的牌子（孩子的手稿，见 css/home.css「右下角『游玩』」一节）：
-  // 外框只管定位；横棍和两根吊绳是纯装饰（aria-hidden，CSS 里 pointer-events:none，点上去穿透到画布）；
+  // 外框只管定位；横棍（右端插进屏幕右边缘）和两根吊绳是纯装饰（aria-hidden，CSS 里 pointer-events:none，点上去穿透到画布）；
   // .home-play 仍是牌子本身那个按钮，可点区域只有牌子
   const sign = S.signEl = mk('div', 'home-sign', root);
   for (const cls of ['home-sign-rope is-left', 'home-sign-rope is-right', 'home-sign-rod']) {

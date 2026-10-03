@@ -282,6 +282,7 @@ const extra = new WeakMap();
 // 是全块第一片贴花，那时块里 0 片、离 DETAIL_TRI_CAP 很远，高画质一定画得出来 → 从这以后 hi 都判得准
 function ext(b) { let e = extra.get(b); if (!e) { e = { tris: 0, decals: 0, hi: false, lim: Infinity, cat: '-', by: {}, lost: {}, keep: {} }; extra.set(b, e); } return e; }
 function addExtra(e, n) { e.tris += n; e.by[e.cat] = (e.by[e.cat] || 0) + n; }
+// 还没建出来的叉车由占位累加器按"改前那台在这里会建出多少面"算在 rawTri 里（见 forklift）：中间这段时间别的东西倒不倒角和改之前一模一样
 function overD(b) { return rawTri(b) - triCount(b); }
 function mul3(a, c) { return [a[0] * c[0], a[1] * c[1], a[2] * c[2]]; }
 function charge(b, n) { kitAdj.set(b, (kitAdj.get(b) || 0) + n); }
@@ -1215,27 +1216,705 @@ function palletJack(b, x, z, rot) {
   b.pop();
   b.solid(x - 0.5, 0, z - 0.5, x + 0.5, 0.3, z + 0.5);
 }
-// 叉车（停着的，没人开）
+// ---------- 叉车 ----------
+// 用户 2026-10-02：「level1 的叉车车身细节不够」→ 照仓库里最常见的平衡重式叉车（内燃 · 液化气）重做；紧接着又要「叉车能开、能举东西」——
+// 这次只做模型，但按"会动的部分"拆开写（forkliftModel 的 part），各部分的枢轴 / 局部原点都在 FORKLIFT_GEO 里，以后做可驾驶的叉车原样拿去用：
+//   body（车身，不动）：深灰底盘；黄色钣金 —— 包住前轮上半的翼子板（里面一块深灰挡泥内板）、侧裙 + 黑色防滑上车踏板、驾驶位橡胶地台、
+//     仪表台（斜面上仪表板 + 表、右边一排液压操纵杆、转向柱）、发动机盖（前上角斜切，两侧散热百叶 + 车身编号）、铭牌；
+//     后部圆角的铸铁配重（顶上散热格栅、后面黄黑警示条、两个尾灯、牵引销）；横放在配重上的液化气瓶（托架、箍带、阀门、接进发动机盖的软管）；
+//     座椅（减震底座、坐垫、靠背、橙色安全带 + 卷收器 + 锁扣）；护顶架（四根斜立柱、四根边梁、顶上一排格栅横条）、两个前大灯、
+//     顶上黄色警示灯、左前立柱上的上车扶手、后视镜；两根倾斜油缸（缸筒尾端在仪表台前脸，活塞杆接外门架的耳座）
+//   wheelsFront / wheelsRear：前轮大（驱动）后轮小（转向）；胎面（花纹块）+ 胎肩 + 胎侧 + 轮辋 + 轮毂盖
+//   steeringWheel：轮圈 + 辐条 + 中心盖 + 助力球
+//   mastOuter：两根立柱、顶梁、坐在车架前面的底座、两根起升油缸缸筒、链条锚座、倾斜油缸耳座
+//   mastInner：两根立柱（套在外门架里）、顶梁、底梁、起升油缸活塞杆 + 杆头、顶上两个链轮
+//   carriage：货叉架上下横梁 + 链条挂点、两个滚轮架（把上下横梁连起来、后端贴着内门架立柱前脸滑）、挡货架（格栅）、两根 L 形货叉（叉根圆角、叉尖削薄）+ 挂钩
+//   chains：前段（货叉架挂点 → 链轮前缘）、后段（外门架锚座 → 链轮后缘），长度随升降变
+// 没有任何品牌名或商标（车身上只有编号）。
+//
+// 车身坐标：原点 = 车底投影中心的地面；−z = 车头（门架、货叉），+z = 车尾（配重）；+x = 坐在座椅上的人的右手边。
+// 以后做"能开、能举东西"的叉车：每个部分按 lift = 0、steer = 0 各建一份（forkliftModel 的 part），然后
+//   内门架整体上移 pose(lift).inner、货叉架整体上移 pose(lift).carriage（两级门架：起升油缸顶着内门架，链条一头锚在外门架上、
+//   绕过内门架顶上的链轮、另一头挂货叉架 —— 内门架升 d，货叉架升 2d），链条按 lift 重建（forkliftModel part 'chains'，或前 / 后段各沿 y 缩放）；
+//   后轮各绕自己的转向主销（过轮心的竖直轴 wheelRear）转 steer（叉车是后轮转向）；前轮绕轮心的 x 轴滚；
+//   方向盘绕自己的轴线转 steer × steerRatio；司机眼点 eye；货叉尖 forkTip（叉托盘用）；门架前后倾绕 mastPivot
+const FORKLIFT_GEO = {
+  wheelFront: { x: 0.48, y: 0.29, z: -0.62, r: 0.29, w: 0.2 },     // 驱动轮轮心（±x 对称）
+  wheelRear: { x: 0.44, y: 0.23, z: 0.8, r: 0.23, w: 0.16 },       // 转向轮轮心 = 转向主销（竖直轴）位置
+  mastPivot: { y: 0.1, z: -0.87 },          // 外门架底座铰点（门架前后倾时绕这条 x 轴转；倾斜油缸前端在外门架耳座 tiltEye）
+  tiltEye: { x: 0.42, y: 0.98, z: -0.97 },  // 倾斜油缸活塞杆端（外门架上）；缸筒尾端在仪表台前脸 tiltBase
+  tiltBase: { x: 0.42, y: 0.7, z: -0.8 },
+  mastOuterTop: 2.06,                       // 外门架顶
+  mastInnerTop: 2.12,                       // 内门架顶（lift = 0；lift = 1 时 3.42，仍在梁底 3.55 以下）
+  innerTravel: 1.3,                         // 内门架最大伸出量
+  carriageY: 0.08,                          // 货叉架下横梁底（lift = 0）
+  carriageMin: 0.08, carriageMax: 2.68,     // 货叉架下横梁底的最低 / 最高（= carriageY + 2 × innerTravel）。挡货架顶比它高 1.16：升满时 3.84，开到梁下面别升满
+  forkY: 0.015,                             // 货叉水平段底面（lift = 0；升到顶 = forkY + 2 × innerTravel ≈ 2.62，够得着第二层货架 2.3）
+  forkTip: { x: 0.28, z: -2.1 },            // 货叉尖（±x 两根，宽 0.1、厚 4 cm）
+  forkHeel: -1.16,                          // 货叉竖直段前面（托盘最多插到这里）
+  sprocket: { x: 0.12, y: 2.09, z: -1.01, r: 0.035 },   // 链轮（内门架上，lift = 0）
+  chain: { z: -1.045, back: -0.975, anchorY: 1.94, carriageY: 0.58 },   // 链条前段 / 后段的 z、外门架锚座高度、货叉架挂点顶（lift = 0）
+  steerWheel: { x: 0, y: 1.25, z: -0.5, tilt: 0.55, r: 0.16 },        // 方向盘中心；轴线从竖直往车尾倒 tilt 弧度
+  steerRatio: 6,                            // 方向盘转角 = 后轮转角 × steerRatio
+  seat: { y: 1.16, z: 0.24 },               // 坐垫顶面中心
+  eye: { x: 0, y: 1.8, z: 0.16 },           // 司机眼点
+  guardTop: 2.1,                            // 护顶架顶
+  half: { x: 0.6, z: 1.3, h: 2.15 },        // 碰撞盒半宽 / 半长 / 高（车身，不含伸到前面的货叉）
+  pose(lift) {
+    const d = Math.max(0, Math.min(1, +lift || 0)) * FORKLIFT_GEO.innerTravel;
+    return { inner: d, carriage: 2 * d };
+  },
+};
+const FK = {
+  body: [0.86, 0.66, 0.12], chassis: [0.15, 0.15, 0.16], cw: [0.17, 0.17, 0.18], black: [0.07, 0.07, 0.075],
+  mast: [0.12, 0.12, 0.13], mastIn: [0.16, 0.16, 0.17], fork: [0.22, 0.22, 0.23], tire: [0.1, 0.1, 0.1], lug: [0.055, 0.055, 0.055],
+  rim: [0.66, 0.66, 0.63], hub: [0.3, 0.3, 0.31], seat: [0.1, 0.1, 0.11], mat: [0.085, 0.085, 0.085],
+  belt: [0.95, 0.42, 0.08], amber: [1.05, 0.58, 0.1], lens: [0.95, 0.94, 0.86], tail: [0.62, 0.07, 0.05],
+  tank: [0.62, 0.64, 0.66], brass: [0.75, 0.58, 0.27], chrome: [0.8, 0.82, 0.84], steel: [0.48, 0.5, 0.53],
+  plate: [0.8, 0.81, 0.82], glass: [0.42, 0.5, 0.56], chain: [0.16, 0.16, 0.16], link: [0.36, 0.35, 0.33],
+  gauge: [0.62, 0.62, 0.6], hose: [0.05, 0.05, 0.05], rib: [0.15, 0.15, 0.15], digit: [0.05, 0.05, 0.05],
+};
+// 细节档。high / mid / lite / low 的轮廓和部件都一样（车身钣金、翼子板、配重、气瓶、座椅、护顶架、灯、两级门架 + 起升油缸（缸筒、活塞杆、杆头）、
+// 链轮 + 链轮轴、前后两段链条、货叉架 + 滚轮架 + 挡货架 + 货叉、倾斜油缸、四个轮子、方向盘、两侧百叶和车身编号）；
+// 差别在倒角、圆的段数、格栅根数、看不太见的面，和小点缀（后视镜、扶手撑、安全带卷收器、气瓶封头 / 箍带 / 软管、链板、牵引钳口……）。
+// 一块里放不下时再往下退的 lowb / min 见下面。面数见 fkTris（车身编号按最费面的 "88" 算）。挑档见 buildForklifts：
+//   高画质：high → mid → lite → low → lowb → min，整块实际面数放得下的最细一档；低画质：low → lowb → min（不倒角、不贴花）。
+//   wf / wr = 前 / 后轮 [一圈段数, 胎截面边数]；ring = 方向盘 [轮圈段数, 管截面段数]；cw = 配重俯视轮廓点数；ch / cwC / backC = 端面斜角（米）；
+//   其余是数量（根数、段数）或开关
+const FK_LOD = {
+  high: { bev: true, ch: 0.025, cwC: 0.04, cw: 10, backC: 0.02, fendU: true, fendP: true, wf: [10, 2], wr: [8, 2], hub: 5, hubR: true, ring: [10, 3], spokes: 3, swHub: 5, knob: 4,
+    slats: 5, slatF: ['py', 'ny', 'pz', 'nz'], back: [-0.27, 0, 0.27], midRail: true, louvers: 3, ribs: 3, grille: 5, digits: 2,
+    plate: 3, gauges: 2, levers: 3, knobs: true, mirror: true, lampF: ['py', 'ny', 'px', 'nx', 'nz'], beacon: 6, beaconBase: true,
+    cyl: 6, cylCap: true, rod: 5, rods: true, column: 6, tank: 8, domes: true, straps: true, valve: true, hose: true, links: 0.12, backChain: true,
+    sprocket: 6, axle: true, heads: true, ears: true, tilt: 2, hitch: 1, belt: 3, heel: true, tip: true, hook: true, ridges: true, step: true, matSides: true,
+    tails: true, handle: 2, seatBase: true, guardEnds: true, posts: 'noBottom', bracket: true, decals: 10 },
+  mid: { bev: true, ch: 0.02, cwC: 0.03, cw: 8, backC: 0, fendU: false, fendP: true, wf: [8, 2], wr: [8, 2], hub: 4, hubR: false, ring: [8, 3], spokes: 2, swHub: 5, knob: 0,
+    slats: 3, slatF: ['py', 'ny'], back: [-0.27, 0.27], midRail: false, louvers: 3, ribs: 2, grille: 3, digits: 2,
+    plate: 1, gauges: 1, levers: 2, knobs: true, mirror: false, lampF: ['py', 'px', 'nx', 'nz'], beacon: 6, beaconBase: false,
+    cyl: 5, cylCap: true, rod: 4, rods: true, column: 5, tank: 8, domes: false, straps: false, valve: true, hose: false, links: 0, backChain: true,
+    sprocket: 5, axle: true, heads: true, ears: true, tilt: 2, hitch: 0, belt: 2, heel: false, tip: true, hook: true, ridges: false, step: true, matSides: false,
+    tails: false, handle: 1, seatBase: true, guardEnds: true, posts: 'noBottom', bracket: true, decals: 6 },
+  low: { bev: false, ch: 0, cwC: 0, cw: 8, backC: 0, fendU: false, fendP: false, wf: [8, 1], wr: [8, 1], hub: 0, hubR: false, ring: [6, 3], spokes: 2, swHub: 0, knob: 0,
+    slats: 2, slatF: ['py', 'ny'], back: [-0.27, 0.27], midRail: false, louvers: 2, ribs: 0, grille: 0, digits: 2,
+    plate: 0, gauges: 0, levers: 1, knobs: false, mirror: false, lampF: ['py', 'nz'], beacon: 5, beaconBase: false,
+    cyl: 4, cylCap: false, rod: 4, rods: true, column: 4, tank: 8, domes: false, straps: false, valve: false, hose: false, links: 0, backChain: true,
+    sprocket: 5, axle: true, heads: true, ears: false, tilt: 1, hitch: 0, belt: 0, heel: false, tip: false, hook: false, ridges: false, step: false, matSides: false,
+    tails: false, handle: 0, seatBase: false, guardEnds: false, posts: 'sides', bracket: true, decals: 0 },
+};
+// lite：高画质里一块挤了两三台叉车、连 mid 都放不下时用 —— low 的几何 + 倒角（和高画质别的东西一样是圆边）+ 扶手、安全带、倾斜油缸耳座、几片磨损
+FK_LOD.lite = Object.assign({}, FK_LOD.low, { bev: true, ch: 0.02, cwC: 0.03, handle: 1, belt: 1, ears: true, tilt: 2, decals: 4 });
+// 一块里放不下 low 时往下退（两种画质都可能用到）。trim = 省掉站着看不见或很窄的面（侧裙前后端、翼子板两头的端面、轮胎贴着车架那面、
+// 地台前沿、配重用六边形、靠背不收角、门架 / 货叉架横梁只画朝外的面），气瓶不要托架、直接落在配重顶上。
+//   lowb：会动部件之间的关系件都还在（起升油缸 + 活塞杆 + 杆头、链轮 + 轴、前后两段链条、滚轮架、倾斜油缸、百叶），编号只喷右边
+//   min：最后的保底，只剩轮廓（车身、翼子板、配重、气瓶、护顶架、座椅、两级门架、货叉架 + 滚轮架 + 货叉、链条、轮子、方向盘）
+FK_LOD.lowb = Object.assign({}, FK_LOD.low, { trim: true, cw: 6, wr: [6, 1], ring: [6, 2], digits: 1, tank: 6, slats: 0, back: [], levers: 0 });
+FK_LOD.min = Object.assign({}, FK_LOD.lowb, { wf: [6, 1], louvers: 0, digits: 0, lampF: null,
+  cyl: 0, rods: false, column: 3, backChain: false, sprocket: 0, axle: false, heads: false, tilt: 0 });
+
+// ---- 叉车用的几何小工具（全部进 kit:prop、不出碰撞体）----
+// 倒角盒：这一档要倒角时直接走 kit 的切角实现（叉车在整块最后按剩余额度挑档，不再看 DETAIL_TRI_CAP）
+function fkBox(b, L, x, y, z, w, h, d, color, faces, r, edges) {
+  const o = { color, solid: false, faces: faces || 'all', uv: 'stretch' };
+  if (r > 0 && L.bev) { const p = b._bevelBox(x, y, z, w, h, d, 'kit:prop', Object.assign({ bevel: r, bevelEdges: edges }, o)); if (p) return p; }
+  return b.box(x, y, z, w, h, d, 'kit:prop', o);
+}
+// 凸多边形截面沿一根轴拉伸成棱柱（车身钣金、配重、货叉、立柱都用它）。
+// poly = [[u, v], ...]（凸，任意绕向）；axis 'x'：(u, v) = (z, y)；'y'：(u, v) = (x, z)；'z'：(u, v) = (x, y)；沿轴从 a0 到 a1。
+// o.c0 / o.c1：a0 / a1 端面一圈棱倒 45° 斜角（米）；o.cap0 / o.cap1 = false：不画那个端面（贴着别的零件、永远看不见）；
+// o.skip：不画的侧面（截面边序号，边 i = 点 i → 点 i+1；贴着别的零件的面），这几条边上也不倒角
+function fkPrism(b, poly, axis, a0, a1, color, o) {
+  o = o || {};
+  const n = poly.length, skip = o.skip || [], on = i => skip.indexOf(i) < 0;
+  let ar = 0, cu = 0, cv = 0;
+  for (let i = 0; i < n; i++) { const p = poly[i], q = poly[(i + 1) % n]; ar += p[0] * q[1] - q[0] * p[1]; cu += p[0] / n; cv += p[1] / n; }
+  const sg = ar > 0 ? 1 : -1;
+  const M = axis === 'x' ? (u, v, a) => [a, v, u] : axis === 'y' ? (u, v, a) => [u, a, v] : (u, v, a) => [u, v, a];
+  const N = [];   // 每条边的内法线
+  for (let i = 0; i < n; i++) {
+    const p = poly[i], q = poly[(i + 1) % n], du = q[0] - p[0], dv = q[1] - p[1], l = Math.hypot(du, dv) || 1;
+    N.push([-dv / l * sg, du / l * sg]);
+  }
+  // 端面往里缩：每条边按自己的倒角量平移（skip 的边不动），相邻两条平移线的交点
+  const inset = c => poly.map((p, i) => {
+    const ia = (i + n - 1) % n, A = N[ia], B = N[i], da = on(ia) ? c : 0, db = on(i) ? c : 0;
+    const det = A[0] * B[1] - A[1] * B[0];
+    if (Math.abs(det) < 1e-9) return [p[0] + A[0] * da, p[1] + A[1] * da];
+    return [p[0] + (da * B[1] - db * A[1]) / det, p[1] + (A[0] * db - B[0] * da) / det];
+  });
+  const cap0 = o.cap0 !== false, cap1 = o.cap1 !== false;
+  const sd = a1 > a0 ? 1 : -1;
+  const c0 = cap0 && o.c0 > 0 ? o.c0 : 0, c1 = cap1 && o.c1 > 0 ? o.c1 : 0;
+  const b0 = a0 + sd * c0, b1 = a1 - sd * c1, F = [];
+  for (let i = 0; i < n; i++) if (on(i)) {
+    const p = poly[i], q = poly[(i + 1) % n];
+    F.push([M(p[0], p[1], b0), M(q[0], q[1], b0), M(q[0], q[1], b1), M(p[0], p[1], b1)]);
+  }
+  const end = (c, a, bb) => {
+    const P = c > 0 ? inset(c) : poly;
+    if (c > 0) for (let i = 0; i < n; i++) if (on(i)) {
+      const j = (i + 1) % n;
+      F.push([M(poly[i][0], poly[i][1], bb), M(poly[j][0], poly[j][1], bb), M(P[j][0], P[j][1], a), M(P[i][0], P[i][1], a)]);
+    }
+    F.push(P.map(p => M(p[0], p[1], a)));
+  };
+  if (cap0) end(c0, a0, b0);
+  if (cap1) end(c1, a1, b1);
+  return facets(b, 'kit:prop', F, color, M(cu, cv, (a0 + a1) / 2));
+}
+// 开口折线 P（[u, v]）往 toward 那一侧平移 t（中间的拐点按两条边的平移线求交）：翼子板的内表面
+function fkOffsetLine(P, t, toward) {
+  const N = [];
+  for (let i = 0; i + 1 < P.length; i++) {
+    const du = P[i + 1][0] - P[i][0], dv = P[i + 1][1] - P[i][1], l = Math.hypot(du, dv) || 1;
+    let nn = [-dv / l, du / l];
+    if (nn[0] * (toward[0] - (P[i][0] + P[i + 1][0]) / 2) + nn[1] * (toward[1] - (P[i][1] + P[i + 1][1]) / 2) < 0) nn = [-nn[0], -nn[1]];
+    N.push(nn);
+  }
+  return P.map((p, i) => {
+    const A = N[Math.max(0, i - 1)], B = N[Math.min(N.length - 1, i)], det = A[0] * B[1] - A[1] * B[0];
+    if (Math.abs(det) < 1e-9) return [p[0] + A[0] * t, p[1] + A[1] * t];
+    return [p[0] + (t * B[1] - t * A[1]) / det, p[1] + (A[0] * t - B[0] * t) / det];
+  });
+}
+// 两点间的圆管（油缸、活塞杆、转向柱、软管、气瓶）：侧面法线光滑；o.r1 = B 端半径（锥台），o.cap0 / o.cap1 = 画 A / B 端的盖；
+// o.arc = [k0, k1]：只画第 k0..k1 段（箍带只包气瓶露在外面的上半圈）。第 k 段从 e1 转到 e2，管轴接近水平时 e1 = 轴 × 竖直、e2 = 轴 × e1
+function fkTube(b, A, B, r, seg, color, o) {
+  o = o || {};
+  const d = norm3(sub3(B, A)), up = Math.abs(d[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+  const e1 = norm3(cross3(d, up)), e2 = cross3(d, e1), r1 = o.r1 != null ? o.r1 : r, n = seg || 8;
+  const k0 = o.arc ? o.arc[0] : 0, k1 = o.arc ? o.arc[1] : n;
+  const dir = k => { const a = k / n * TAU, c = Math.cos(a), s = Math.sin(a); return [e1[0] * c + e2[0] * s, e1[1] * c + e2[1] * s, e1[2] * c + e2[2] * s]; };
+  return b._piece('kit:prop', 0, 0, 0, 0, (v, t) => {
+    for (let k = k0; k <= k1; k++) {
+      const m = dir(k);
+      v(A[0] + m[0] * r, A[1] + m[1] * r, A[2] + m[2] * r, m[0], m[1], m[2], 0, 0);
+      v(B[0] + m[0] * r1, B[1] + m[1] * r1, B[2] + m[2] * r1, m[0], m[1], m[2], 0, 0);
+    }
+    for (let k = 0; k < k1 - k0; k++) { const a = 2 * k; t(a, a + 2, a + 3); t(a, a + 3, a + 1); }
+    let base = 2 * (k1 - k0 + 1);
+    if (o.arc) return;
+    for (const [want, C, rr, sgn] of [[o.cap0, A, r, -1], [o.cap1, B, r1, 1]]) {
+      if (!want) continue;
+      for (let k = 0; k < n; k++) { const m = dir(k); v(C[0] + m[0] * rr, C[1] + m[1] * rr, C[2] + m[2] * rr, d[0] * sgn, d[1] * sgn, d[2] * sgn, 0, 0); }
+      for (let k = 1; k + 1 < n; k++) if (sgn > 0) t(base, base + k, base + k + 1); else t(base, base + k + 1, base + k);
+      base += n;
+    }
+  }, { color, uv: 'stretch', solid: false });
+}
+// 竖直的圆管（警示灯、链轮）：底面圆心 (x, y, z)、高 h；caps 同 fkTube
+function fkPost(b, x, y, z, r, h, seg, color, o) { return fkTube(b, [x, y, z], [x, y + h, z], r, seg, color, o); }
+// 圆环（方向盘轮圈）：圆心 C、轴线 ax（单位向量）、环半径 R、管半径 r，N × M 个四边形，法线光滑
+function fkRing(b, C, ax, R, r, N, Mm, color, e1) {
+  const u = e1 || norm3(cross3(ax, Math.abs(ax[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0])), w = cross3(ax, u);
+  return b._piece('kit:prop', 0, 0, 0, 0, (v, t) => {
+    for (let i = 0; i <= N; i++) for (let j = 0; j <= Mm; j++) {
+      const th = i / N * TAU, ph = (j + 0.5) / Mm * TAU, ct = Math.cos(th), st = Math.sin(th), cp = Math.cos(ph), sp = Math.sin(ph);
+      const rho = [u[0] * ct + w[0] * st, u[1] * ct + w[1] * st, u[2] * ct + w[2] * st];
+      const nn = [rho[0] * cp + ax[0] * sp, rho[1] * cp + ax[1] * sp, rho[2] * cp + ax[2] * sp];
+      v(C[0] + rho[0] * R + nn[0] * r, C[1] + rho[1] * R + nn[1] * r, C[2] + rho[2] * R + nn[2] * r, nn[0], nn[1], nn[2], 0, 0);
+    }
+    for (let i = 0; i < N; i++) for (let j = 0; j < Mm; j++) { const a = i * (Mm + 1) + j, c = a + Mm + 1; t(a, c, c + 1); t(a, c + 1, a + 1); }
+  }, { color, uv: 'stretch', solid: false });
+}
+// 绕 x 轴的回转面（轮胎）：截面折线 prof = [[半径, x], ...]（x 相对轮心），一圈 S 段；绕轴方向法线光滑。
+// cols[k]：第 k 条截面边的颜色，或 [颜色 A, 颜色 B] = 相邻段交替（胎面花纹块）；inside：截面里面一点 [半径, x]（定法线朝外）
+function fkLathe(b, C, prof, S, cols, inside) {
+  const groups = new Map();
+  for (let k = 0; k + 1 < prof.length; k++) {
+    const r0 = prof[k][0], x0 = prof[k][1], r1 = prof[k + 1][0], x1 = prof[k + 1][1];
+    let nr = x1 - x0, nx = -(r1 - r0);
+    const l = Math.hypot(nr, nx) || 1;
+    nr /= l; nx /= l;
+    if (nr * ((r0 + r1) / 2 - inside[0]) + nx * ((x0 + x1) / 2 - inside[1]) < 0) { nr = -nr; nx = -nx; }
+    for (let j = 0; j < S; j++) {
+      const c = Array.isArray(cols[k][0]) ? cols[k][j % 2] : cols[k];
+      if (!groups.has(c)) groups.set(c, []);
+      groups.get(c).push([r0, x0, r1, x1, nr, nx, j]);
+    }
+  }
+  groups.forEach((qs, col) => b._piece('kit:prop', 0, 0, 0, 0, (v, t) => {
+    let i = 0;
+    for (const [r0, x0, r1, x1, nr, nx, j] of qs) {
+      const a0 = j / S * TAU, a1 = (j + 1) / S * TAU, c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
+      const q = [[C[0] + x0, C[1] + r0 * c0, C[2] + r0 * s0, nx, nr * c0, nr * s0], [C[0] + x0, C[1] + r0 * c1, C[2] + r0 * s1, nx, nr * c1, nr * s1],
+        [C[0] + x1, C[1] + r1 * c1, C[2] + r1 * s1, nx, nr * c1, nr * s1], [C[0] + x1, C[1] + r1 * c0, C[2] + r1 * s0, nx, nr * c0, nr * s0]];
+      for (const p of q) v(p[0], p[1], p[2], p[3], p[4], p[5], 0, 0);
+      // 正反面：让三角形的几何法线和这一段中间的法线同向
+      const g = cross3(sub3(q[1], q[0]), sub3(q[2], q[0])), cm = Math.cos((a0 + a1) / 2), sm = Math.sin((a0 + a1) / 2);
+      if (g[0] * nx + g[1] * nr * cm + g[2] * nr * sm >= 0) { t(i, i + 1, i + 2); t(i, i + 2, i + 3); } else { t(i, i + 2, i + 1); t(i, i + 3, i + 2); }
+      i += 4;
+    }
+  }, { color: col, uv: 'stretch', solid: false }));
+}
+// 垂直于 x 轴的正多边形圆盘（轮辋、轮胎内侧），正面朝 side·x；顶点和同段数的 fkLathe 对齐
+function fkDisc(b, cx, cy, cz, r, n, color, side) {
+  const pts = [];
+  for (let k = 0; k < n; k++) { const a = k / n * TAU; pts.push([cx, cy + r * Math.cos(a), cz + r * Math.sin(a)]); }
+  return facets(b, 'kit:prop', [pts], color, [cx - side, cy, cz]);
+}
+// 竖直面（法线 ±z）上一块平面多边形的点 [x, y] → 只留 s·(x − xc) ≥ 0 的部分（警示条裁到带子里）
+function fkClip(poly, xc, s) {
+  const out = [];
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i], q = poly[(i + 1) % poly.length], dp = s * (p[0] - xc), dq = s * (q[0] - xc);
+    if (dp >= 0) out.push(p);
+    if (dp * dq < 0) { const k = dp / (dp - dq); out.push([xc, p[1] + (q[1] - p[1]) * k]); }
+  }
+  return out;
+}
+// 黄黑警示条：z = zf、朝 +z 的竖直面上，x0..x1 × y0..y1 的带子里一排 45° 斜条（条宽 wd，底色是配重本身的深灰）
+function fkStripes(b, x0, x1, y0, y1, zf, wd, color) {
+  const h = y1 - y0, F = [];
+  for (let xs = x0 - h; xs < x1; xs += 2 * wd) {
+    const p = fkClip(fkClip([[xs, y0], [xs + wd, y0], [xs + wd + h, y1], [xs + h, y1]], x0, 1), x1, -1);
+    let a = 0;
+    for (let i = 0; i < p.length; i++) { const q = p[(i + 1) % p.length]; a += p[i][0] * q[1] - q[0] * p[i][1]; }
+    if (p.length >= 3 && Math.abs(a) > 1e-4) F.push(p.map(q => [q[0], q[1], zf]));
+  }
+  if (F.length) facets(b, 'kit:prop', F, color, [(x0 + x1) / 2, (y0 + y1) / 2, zf - 0.1]);
+}
+// 车身编号：两位数、7 段数码字形（黑漆喷在黄色侧面上）。side = ±1：x = side·xs 的侧面，从外面看左读到右；(zc, y0) = 号码底边中点，H = 字高
+const FK_SEG7 = ['abcdef', 'bc', 'abdeg', 'abcdg', 'bcfg', 'acdfg', 'acdefg', 'abc', 'abcdefg', 'abcdfg'];
+// 字形：a / d 横笔占满整个字宽；左右两根竖笔夹在 a、d 之间，上下两段在半高处接上（g 不亮的 0、1、7 竖笔也是连着的）；
+// g 夹在两根竖笔之间。同一根竖笔上下两段都亮时合成一块（少两个三角形）。各笔只在边上相接，不重叠、不共面
+function fkNumber(b, num, side, xs, zc, y0, H, color) {
+  const W = H * 0.5, t = H * 0.14, hh = H / 2 - t, str = String(num).padStart(2, '0'), dir = -side, xv = (W - t) / 2;
+  for (let i = 0; i < str.length; i++) {
+    const uc = (i - (str.length - 1) / 2) * W * 1.45, on = FK_SEG7[+str[i]], S = [];
+    if (on.includes('a')) S.push([0, H - t, W, t]);
+    if (on.includes('d')) S.push([0, 0, W, t]);
+    if (on.includes('g')) S.push([0, (H - t) / 2, W - 2 * t, t]);
+    for (const [x, up, dn] of [[-xv, 'f', 'e'], [xv, 'b', 'c']]) {
+      const u = on.includes(up), d = on.includes(dn);
+      if (u && d) S.push([x, t, t, H - 2 * t]);
+      else if (u) S.push([x, H / 2, t, hh]);
+      else if (d) S.push([x, t, t, hh]);
+    }
+    for (const s of S) sheet(b, side * xs, y0 + s[1], zc + dir * (uc + s[0]), s[2], s[3], side > 0 ? '+x' : '-x', color);
+  }
+}
+
+// ---- 车身（不动的部分）----
+function fkBody(b, L, o) {
+  const G = FORKLIFT_GEO, K = FK, WF = G.wheelFront, M = !!L.trim;
+  // 底盘（深灰）：前脸 z = −0.80（外门架底座贴在这里）。顶面全被地台 / 发动机盖盖住、后头埋进配重，只画两侧和前脸
+  dbox(b, 0, 0.12, 0.13, 0.68, 0.46, 1.86, K.chassis, ['px', 'nx', 'nz']);
+  for (const s of [-1, 1]) {
+    // 侧裙（踏板下面那段车身）：外侧、顶、前、后四面，顶上一圈棱倒 3 cm
+    fkBox(b, L, s * 0.445, 0.14, 0.12, 0.21, 0.26, 0.84, K.body, M ? [s > 0 ? 'px' : 'nx', 'py'] : [s > 0 ? 'px' : 'nx', 'py', 'pz', 'nz'], 0.03, 'top');
+    // 上车踏板：前轮后面、发动机盖前面那一段侧裙顶上的黑色防滑板（+ 两道防滑棱）。低档只画顶面，压低到离侧裙顶 3 mm（不悬空）
+    dbox(b, s * 0.46, 0.4, -0.19, 0.12, L.step ? 0.012 : 0.003, 0.16, K.black, L.step ? 'noBottom' : ['py']);
+    if (L.ridges) for (const dz of [-0.04, 0.04]) sheet(b, s * 0.46, 0.415, -0.19 + dz, 0.11, 0.012, 'up', K.steel);
+  }
+  // 驾驶位地台：橡胶垫（后面贴着发动机盖前脸，那一面不画）+ 横向防滑棱
+  dbox(b, 0, 0.585, -0.44, 0.74, 0.03, 0.68, K.mat, L.matSides ? ['py', 'px', 'nx', 'nz'] : M ? ['py'] : ['py', 'nz']);
+  for (let k = 0; k < L.ribs; k++) sheet(b, 0, 0.618, -0.46 + k * 0.1, 0.62, 0.016, 'up', K.rib);
+  // 前翼子板：2.5 cm 厚的钣金折成"斜 — 平 — 斜"三段包住前轮上半；里面一块深灰挡泥内板把它和车架、侧裙连起来。
+  // 朝里的端面贴着仪表台 / 车架，不画；低档不画翼子板底面（朝着轮胎、站着看不见）和挡泥内板（后面就是同色的车架侧面）
+  const FO = [[-0.935, 0.44], [-0.86, 0.665], [-0.4, 0.665], [-0.28, 0.43]];
+  const FI = fkOffsetLine(FO, 0.025, [WF.z, WF.y]);
+  for (const s of [-1, 1]) {
+    const xa = s > 0 ? 0.355 : -0.59, xb = s > 0 ? 0.59 : -0.355, u = L.fendU ? [] : [2];
+    for (let i = 0; i < 3; i++) {   // trim：前后两头 2.5 cm 的钣金端面也省掉
+      fkPrism(b, [FO[i], FO[i + 1], FI[i + 1], FI[i]], 'x', xa, xb, K.body, { cap0: s < 0, cap1: s > 0, skip: (i === 0 ? [1] : i === 1 ? [1, 3] : [3]).concat(u, M ? [1, 3] : []) });
+    }
+    if (L.fendP) fkPrism(b, [[FI[0][0], 0.33], FI[0], FI[1], FI[2], FI[3], [FI[3][0], 0.33]], 'x', s * 0.355, s * 0.375, K.chassis, { skip: [1, 2, 3], cap0: false });
+  }
+  // 仪表台（前围）：上半截宽到 ±0.47、坐在两边翼子板上（前立柱脚、操纵杆、转向柱都在它上面），斜面朝司机；下半截在两块挡泥内板之间
+  const CP = [[-0.8, 0.665], [-0.56, 0.665], [-0.56, 0.86], [-0.66, 1.02], [-0.8, 1.02]];
+  fkPrism(b, CP, 'x', -0.47, 0.47, K.body, { c0: L.ch, c1: L.ch, skip: [0] });
+  fkPrism(b, [[-0.8, 0.58], [-0.56, 0.58], [-0.56, 0.665], [-0.8, 0.665]], 'x', -0.355, 0.355, K.body, { cap0: false, cap1: false, skip: [0, 2] });
+  // 斜面上的仪表板（黑）+ 表盘：slant(x, f, off) = 斜面上 f（0 = 下沿、1 = 上沿）处、离面 off 的点
+  const slant = (x, f, off) => [x, 0.86 + 0.16 * f + 0.53 * off, -0.56 - 0.1 * f + 0.848 * off];
+  if (!M) facets(b, 'kit:prop', [[slant(-0.3, 0.18, 0.003), slant(0.3, 0.18, 0.003), slant(0.3, 0.82, 0.003), slant(-0.3, 0.82, 0.003)]], K.black, [0, 0.8, -0.7]);
+  for (let g = 0; g < L.gauges; g++) {
+    const pts = [];
+    for (let k = 0; k < 6; k++) { const a = k / 6 * TAU; pts.push(slant((g ? 0.13 : -0.13) + Math.cos(a) * 0.045, 0.5 + Math.sin(a) * 0.045 / 0.189, 0.006)); }
+    facets(b, 'kit:prop', [pts], K.gauge, [0, 0.8, -0.7]);
+  }
+  // 铭牌：仪表台右侧面一块铝牌 + 几行字（只是几道黑线，没有任何文字 / 商标）
+  if (L.plate) {
+    sheet(b, 0.473, 0.77, -0.68, 0.11, 0.065, '+x', K.plate);
+    for (let k = 0; k < L.plate; k++) sheet(b, 0.475, 0.783 + k * 0.016, -0.68 + (k === 0 ? 0.012 : 0), k === 0 ? 0.06 : 0.085, 0.006, '+x', K.black);
+  }
+  // 发动机盖：前上角斜切；底边落在侧裙 / 底盘上、后边贴着配重，这两面不画
+  fkPrism(b, [[-0.1, 0.4], [0.56, 0.4], [0.56, 1.0], [-0.03, 1.0], [-0.1, 0.93]], 'x', -0.53, 0.53, K.body, { c0: L.ch && L.ch + 0.005, c1: L.ch && L.ch + 0.005, skip: [0, 1] });
+  for (const s of [-1, 1]) {
+    for (let k = 0; k < L.louvers; k++) sheet(b, s * 0.533, 0.72 + k * 0.055, 0.34, 0.3, 0.024, s > 0 ? '+x' : '-x', K.black);   // 散热百叶
+    if (L.digits > 1 || (L.digits && s > 0)) fkNumber(b, o.number || 7, s, 0.533, 0.05, 0.5, 0.14, K.digit);                    // 车身编号（两边都喷）
+  }
+  // 配重：铸铁，俯视后角是圆的；上半截在后轮上面（顶棱倒圆），下半截在后轮后面往下一直到离地 12 cm。
+  // 上半截的底面（悬在后轮上方 4 cm）和下半截的底面看不见，不画
+  const CWP = L.cw > 8 ? [[-0.55, 0.56], [0.55, 0.56], [0.55, 1.05], [0.52, 1.14], [0.44, 1.21], [0.3, 1.25], [-0.3, 1.25], [-0.44, 1.21], [-0.52, 1.14], [-0.55, 1.05]]
+    : L.cw > 6 ? [[-0.55, 0.56], [0.55, 0.56], [0.55, 1.05], [0.47, 1.2], [0.3, 1.25], [-0.3, 1.25], [-0.47, 1.2], [-0.55, 1.05]]
+    : [[-0.55, 0.56], [0.55, 0.56], [0.55, 1.08], [0.4, 1.25], [-0.4, 1.25], [-0.55, 1.08]];
+  fkPrism(b, CWP, 'y', 0.5, 1.12, K.cw, { cap0: false, c1: L.cwC });
+  fkPrism(b, CWP.slice(2), 'y', 0.12, 0.5, K.cw, { cap0: false, cap1: false, skip: L.bev ? [] : [CWP.length - 3] });
+  // 配重顶上的散热格栅（几道黑缝）、后面的黄黑警示条、两个尾灯
+  for (let k = 0; k < L.grille; k++) sheet(b, 0, 1.123, 1.0 + k * 0.04, 0.48, 0.02, 'up', K.black);
+  fkStripes(b, -0.28, 0.28, 0.64, 0.86, 1.253, L.bev ? 0.07 : 0.09, K.body);
+  for (const s of [-1, 1]) {
+    if (L.tails) dbox(b, s * 0.22, 0.94, 1.26, 0.12, 0.08, 0.02, K.black, ['py', 'ny', 'px', 'nx', 'pz']);
+    sheet(b, s * 0.22, 0.95, L.tails ? 1.273 : 1.253, 0.1, 0.06, '+z', K.tail);
+  }
+  // 牵引销：配重下半截后面一个凹口（黑）+ 下面一片钳口 + 竖插的销子
+  if (!M) sheet(b, 0, 0.27, 1.252, 0.12, 0.08, '+z', [0.03, 0.03, 0.03]);
+  if (L.hitch) dbox(b, 0, 0.235, 1.2725, 0.16, 0.035, 0.045, K.mast, ['py', 'ny', 'px', 'nx', 'pz']);
+  if (L.hitch || L.bev) fkPost(b, 0, L.hitch ? 0.2 : 0.23, 1.268, 0.014, L.hitch ? 0.23 : 0.17, 5, K.steel, { cap1: true });
+  // 液化气瓶：横放在配重顶上（两块托架 + 两道箍带），右头是阀门和接进发动机盖的软管。
+  // trim 档（lowb / min，六棱的瓶子）不画托架：瓶子底下那条棱面（离轴 0.866·TR = 0.13）直接落在配重顶上、压进 5 mm
+  const TY = M ? 1.245 : 1.32, TZ = 0.86, TR = 0.15, TL = L.domes ? 0.3 : 0.36;
+  if (L.tank) {
+    fkTube(b, [-TL, TY, TZ], [TL, TY, TZ], TR, L.tank, K.tank, { cap0: !L.domes, cap1: !L.domes });
+    for (const s of [-1, 1]) {
+      if (L.domes) fkTube(b, [s * 0.3, TY, TZ], [s * 0.36, TY, TZ], TR, L.tank, K.tank, { r1: 0.095, cap1: true });   // 两头的封头
+      if (!M) dbox(b, s * 0.16, 1.12, TZ, 0.05, 0.07, 0.26, K.black, 'noBottom');                       // 托架
+      if (L.straps) fkTube(b, [s * 0.16 - 0.018, TY, TZ], [s * 0.16 + 0.018, TY, TZ], TR + 0.004, L.tank, K.black, { arc: [L.tank / 2, L.tank] });   // 箍带（上半圈）
+    }
+    if (L.valve) fkTube(b, [0.36, TY, TZ], [0.41, TY, TZ], 0.022, 5, K.brass, { cap1: true });
+    if (L.hose) fkTube(b, [0.4, TY - 0.015, TZ], [0.37, 0.99, 0.47], 0.012, 4, K.hose);
+  }
+  // 座椅：减震底座、坐垫、靠背（略后仰，四周倒圆；trim 档的靠背顶上不收角）
+  if (L.seatBase) dbox(b, 0, 1.0, 0.24, 0.4, 0.06, 0.36, K.black, 'sides');
+  fkBox(b, L, 0, L.seatBase ? 1.06 : 1.003, 0.24, 0.5, L.seatBase ? 0.1 : 0.157, 0.44, K.seat, 'noBottom', 0.035, 'top');
+  fkPrism(b, M ? [[0.4, 1.13], [0.5, 1.13], [0.54, 1.63], [0.44, 1.63]] : [[0.4, 1.13], [0.5, 1.13], [0.54, 1.6], [0.52, 1.63], [0.46, 1.63], [0.44, 1.6]],
+    'x', -0.24, 0.24, K.seat, { c0: L.backC, c1: L.backC, skip: [0] });
+  // 安全带：右边靠背上的卷收器 → 一条橙色带子顺着坐垫右侧斜下来；左边坐垫旁一个锁扣
+  if (L.belt) {
+    const A = [0.47, 1.44], B2 = [0.14, 1.13], du = B2[0] - A[0], dv = B2[1] - A[1], l = Math.hypot(du, dv), nu = -dv / l * 0.022, nv = du / l * 0.022;
+    fkPrism(b, [[A[0] + nu, A[1] + nv], [B2[0] + nu, B2[1] + nv], [B2[0] - nu, B2[1] - nv], [A[0] - nu, A[1] - nv]], 'x', 0.252, 0.258, K.belt, { cap0: false, cap1: L.belt > 1 });
+    if (L.belt > 2) dbox(b, 0.255, 1.4, 0.49, 0.04, 0.09, 0.07, K.black, 'noBottom');
+    if (L.belt > 1) dbox(b, -0.265, 1.08, 0.16, 0.03, 0.05, 0.06, K.steel, ['py', 'nx', 'pz', 'nz']);
+  }
+  // 护顶架（黑）：前立柱从仪表台两角、后立柱从配重顶斜着上去，顶上四根边梁 + 一排格栅横条
+  for (const s of [-1, 1]) {
+    const xa = s > 0 ? 0.405 : -0.455, xb = s > 0 ? 0.455 : -0.405;   // 立柱比顶上边梁窄 1 cm，侧面不和边梁共面
+    fkPrism(b, [[-0.75, 0.99], [-0.69, 0.99], [-0.52, 2.07], [-0.58, 2.07]], 'x', xa, xb, K.black, { skip: [0, 2] });
+    fkPrism(b, [[0.59, 1.08], [0.65, 1.08], [0.56, 2.07], [0.5, 2.07]], 'x', xa, xb, K.black, { skip: [0, 2] });
+    dbox(b, s * 0.43, 2.04, -0.03, 0.06, 0.06, 1.18, K.black, L.guardEnds ? 'all' : 'sides');
+  }
+  for (const z of [-0.59, 0.53]) dbox(b, 0, 2.04, z, 0.8, 0.06, 0.06, K.black, M ? ['py', z < 0 ? 'nz' : 'pz'] : L.bev ? ['py', 'ny', 'pz', 'nz'] : ['py', 'ny', z < 0 ? 'nz' : 'pz']);
+  for (let k = 0; k < L.slats; k++) dbox(b, 0, 2.07, -0.45 + k * 0.9 / (L.slats - 1), 0.8, 0.015, 0.05, K.black, L.slatF);
+  // 前大灯：两根前立柱上头朝前各一个
+  if (L.lampF) for (const s of [-1, 1]) {
+    dbox(b, s * 0.43, 1.86, -0.645, 0.08, 0.08, 0.08, K.black, L.lampF);
+    sheet(b, s * 0.43, 1.87, -0.688, 0.06, 0.06, '-z', K.lens);
+  }
+  // 警示灯：后横梁正中，黑底座 + 黄色灯罩（顶上收小）
+  if (L.beaconBase) fkPost(b, 0, 2.1, 0.53, 0.05, 0.025, L.beacon, K.black, { cap1: true });
+  if (L.beacon) fkPost(b, 0, L.beaconBase ? 2.125 : 2.1, 0.53, 0.045, 0.075, L.beacon, K.amber, { r1: 0.03, cap1: true });
+  // 上车扶手：左前立柱后面一根黄色把手（两头各一根短撑）
+  {
+    const zb = y => -0.69 + (y - 0.99) / 1.08 * 0.17;   // 前立柱后面那条边
+    if (L.handle > 1) {
+      stick(b, [-0.43, 1.2, zb(1.2) + 0.05], [-0.43, 1.62, zb(1.62) + 0.05], 0.014, K.body);
+      for (const y of [1.24, 1.58]) stick(b, [-0.43, y, zb(y) - 0.01], [-0.43, y, zb(y) + 0.05], 0.01, K.black);
+    } else if (L.handle) stick(b, [-0.43, 1.2, zb(1.2) + 0.012], [-0.43, 1.62, zb(1.62) + 0.012], 0.014, K.body);   // 中档：直接贴着立柱
+  }
+  // 后视镜：左前立柱外侧
+  if (L.mirror) {
+    stick(b, [-0.46, 1.76, -0.6], [-0.53, 1.79, -0.655], 0.008, K.black);
+    dbox(b, -0.545, 1.74, -0.655, 0.09, 0.1, 0.02, K.black, 'all');
+    sheet(b, -0.545, 1.75, -0.642, 0.08, 0.08, '+z', K.glass);
+  }
+  // 转向柱：从仪表台里伸出来，往司机这边倒
+  const SW = G.steerWheel, ca = Math.cos(SW.tilt), sa = Math.sin(SW.tilt);
+  // 没有方向盘中心盖（swHub）的档：转向柱一直伸到轮圈中心、顶上封口，辐条横穿过它（方向盘不悬空）
+  const cTop = L.swHub ? 0.04 : 0.004;
+  fkTube(b, [SW.x, SW.y - ca * 0.38, SW.z - sa * 0.38], [SW.x, SW.y - ca * cTop, SW.z - sa * cTop], 0.03, L.column, K.black, { cap1: !L.swHub });
+  // 液压操纵杆：仪表台右边一排（升降、前后倾……），根部一块黑色防尘罩
+  if (L.levers > 2) dbox(b, 0.235, 1.02, -0.72, 0.2, 0.015, 0.07, K.black, ['py', 'pz', 'nz', 'px', 'nx']);
+  else if (L.levers > 1) sheet(b, 0.235, 1.023, -0.72, 0.2, 0.07, 'up', K.black);
+  for (let k = 0; k < L.levers; k++) {
+    const x = L.levers > 2 ? 0.17 + k * 0.065 : 0.19 + k * 0.09;
+    stick(b, [x, 1.02, -0.72], [x, 1.22, -0.645], 0.008, K.steel);
+    if (L.knobs) dbox(b, x, 1.215, -0.645, 0.03, 0.05, 0.03, K.black, 'noBottom');
+  }
+  // 倾斜油缸：缸筒尾端在仪表台前脸，活塞杆伸到外门架外侧的耳座
+  if (L.tilt) for (const s of [-1, 1]) {
+    const A = [s * G.tiltBase.x, G.tiltBase.y, G.tiltBase.z], B2 = [s * G.tiltEye.x, G.tiltEye.y, G.tiltEye.z];
+    if (L.tilt < 2) { fkTube(b, A, [s * 0.385, B2[1], B2[2]], 0.03, 4, K.mast); continue; }   // 低档：一根管直接顶到外门架立柱外侧（没有耳座）
+    const M = [A[0] + (B2[0] - A[0]) * 0.62, A[1] + (B2[1] - A[1]) * 0.62, A[2] + (B2[2] - A[2]) * 0.62];
+    fkTube(b, A, M, 0.034, L.cyl, K.mast, { cap1: true });
+    fkTube(b, M, B2, 0.017, L.rod, K.chrome);
+  }
+}
+// ---- 轮子：在当前坐标系原点（轮心正下方的地面）建，s = 外侧朝 ±x ----
+function fkWheel(b, L, s, front) {
+  const W = front ? FORKLIFT_GEO.wheelFront : FORKLIFT_GEO.wheelRear, K = FK, R = W.r, hw = W.w / 2, y = W.y, C = [0, y, 0];
+  const [S, np] = front ? L.wf : L.wr, rr = R * 0.6;
+  // 截面：轮辋边 → 胎侧（略往外鼓）→ 胎肩 → 胎面 → 内侧边；胎面一深一浅 = 花纹块。np = 截面边数（3 / 2 / 1 = 只有胎面）
+  if (np >= 2) {
+    const prof = np >= 3 ? [[rr, s * (hw - 0.012)], [R - 0.035, s * hw], [R, s * (hw - 0.03)], [R, -s * (hw - 0.02)]]
+      : [[rr, s * (hw - 0.012)], [R, s * (hw - 0.02)], [R, -s * (hw - 0.02)]];
+    fkLathe(b, C, prof, S, np >= 3 ? [K.tire, K.tire, [K.tire, K.lug]] : [K.tire, [K.tire, K.lug]], [(rr + R) / 2, 0]);
+    fkDisc(b, -s * (hw - 0.02), y, 0, R, S, K.tire, -s);                     // 轮胎内侧（贴着车架那面）
+    fkDisc(b, s * (hw - 0.012), y, 0, rr, S, K.rim, s);                       // 轮辋（凹在胎侧里 1.2 cm）
+  } else {                                                                     // 低档：胎面一圈 + 内外两面，外面一块灰色轮辋（trim 档不画贴着车架那面）
+    fkLathe(b, C, [[R, s * hw], [R, -s * hw]], S, [K.tire], [R * 0.5, 0]);
+    if (!L.trim) fkDisc(b, -s * hw, y, 0, R, S, K.tire, -s);
+    fkDisc(b, s * hw, y, 0, R, S, K.tire, s);
+    fkDisc(b, s * (hw + 0.003), y, 0, rr, S, K.rim, s);
+  }
+  if (L.hub && (front || L.hubR)) fkTube(b, [s * (hw - 0.012), y, 0], [s * (hw + 0.008), y, 0], R * 0.2, L.hub, K.hub, { cap1: true });   // 轮毂盖
+}
+// ---- 方向盘：轮圈 + 辐条 + 中心盖 + 助力球；turn = 方向盘自己转了多少（弧度）----
+function fkSteeringWheel(b, L, turn) {
+  const SW = FORKLIFT_GEO.steerWheel, K = FK, ca = Math.cos(SW.tilt), sa = Math.sin(SW.tilt);
+  const C = [SW.x, SW.y, SW.z], ax = [0, ca, sa], e2 = cross3(ax, [1, 0, 0]);   // e2：盘面里朝车头的方向
+  const dir = a => { const c = Math.cos(a + turn), s = Math.sin(a + turn); return [c, e2[1] * s, e2[2] * s]; };
+  const at = (a, r, up) => { const d = dir(a); return [C[0] + d[0] * r + ax[0] * up, C[1] + d[1] * r + ax[1] * up, C[2] + d[2] * r + ax[2] * up]; };
+  fkRing(b, C, ax, SW.r, 0.016, L.ring[0], L.ring[1], K.black, dir(0));
+  if (L.spokes > 2) for (const a of [0, Math.PI, -HALF_PI]) stick(b, at(a, 0.035, -0.012), at(a, SW.r - 0.01, 0), 0.009, K.black);
+  else stick(b, at(0, SW.r - 0.01, 0), at(Math.PI, SW.r - 0.01, 0), 0.009, K.black);
+  if (L.swHub) fkTube(b, at(0, 0, -0.035), at(0, 0, 0.004), 0.04, L.swHub, K.black, { cap1: true });
+  // 助力球：左前方（单手打方向用）
+  if (L.knob) { const P = at(Math.PI * 0.8, SW.r, 0); fkTube(b, P, [P[0] + ax[0] * 0.055, P[1] + ax[1] * 0.055, P[2] + ax[2] * 0.055], 0.016, L.knob, K.black, { cap1: true }); }
+}
+// ---- 外门架：两根立柱（前后 12 cm、左右 7 cm）、顶梁、底座、起升油缸缸筒、链条锚座、倾斜油缸耳座 ----
+function fkMastOuter(b, L) {
+  const K = FK, G = FORKLIFT_GEO, M = !!L.trim;
+  for (const s of [-1, 1]) {
+    dbox(b, s * 0.33, 0.06, -1.0, 0.07, G.mastOuterTop - 0.06, 0.12, K.mast, L.posts);                                       // 立柱
+    if (L.ears) dbox(b, s * 0.4075, 0.94, -0.97, 0.085, 0.08, 0.06, K.mast, ['py', 'ny', s > 0 ? 'px' : 'nx', 'pz', 'nz']);   // 倾斜油缸耳座
+    if (L.cyl) fkTube(b, [s * 0.2, 0.14, -0.865], [s * 0.2, 1.75, -0.865], 0.04, L.cyl, K.mast, { cap1: L.cylCap });         // 起升油缸缸筒（坐在底座上）
+  }
+  dbox(b, 0, 1.9, -0.925, 0.73, 0.08, 0.03, K.mast, M ? ['py', 'pz'] : ['py', 'ny', 'pz', 'nz']);   // 顶梁（在内门架后面，两头接立柱）
+  dbox(b, 0, 0.06, -0.87, 0.73, 0.08, 0.14, K.mast, M ? ['py', 'nz'] : ['py', 'nz', 'px', 'nx']);   // 底座：后面贴着车架前脸
+  if (L.backChain || !M) dbox(b, 0, 1.92, -0.9625, 0.3, 0.05, 0.045, K.mast, L.backChain ? ['py', 'ny', 'nz', 'px', 'nx'] : ['py', 'nz']);   // 链条锚座
+}
+// ---- 内门架（lift = 0 的位置；升起来时整体上移 pose(lift).inner）----
+function fkMastInner(b, L) {
+  const K = FK, G = FORKLIFT_GEO, sp = G.sprocket, M = !!L.trim;
+  for (const s of [-1, 1]) {
+    dbox(b, s * 0.265, 0.1, -1.0, 0.1, G.mastInnerTop - 0.1, 0.07, K.mastIn, L.posts);                                        // 立柱
+    if (L.rods) fkTube(b, [s * 0.2, 0.4, -0.865], [s * 0.2, 2.07, -0.865], 0.022, L.rod, K.chrome);                           // 起升油缸活塞杆
+    if (L.heads) dbox(b, s * 0.2, 2.06, -0.8975, 0.06, 0.055, 0.135, K.mast, L.bev ? ['py', 'ny', 'px', 'nx', 'pz'] : ['py', 'px', 'nx', 'pz']);   // 杆头：顶住内门架顶梁
+    // 链轮 + 链轮轴（从立柱内侧伸出来）。min：一块方的，往后伸进顶梁 2 mm（不悬空）
+    if (L.sprocket) {
+      // 低档（不倒角）：链轮只画朝里那个端面（朝立柱那面被轴挡住），轴只画顶面和正面
+      fkTube(b, [s * (sp.x - 0.015), sp.y, sp.z], [s * (sp.x + 0.015), sp.y, sp.z], sp.r, L.sprocket, K.steel, { cap0: L.axle, cap1: L.bev || !L.axle });
+      if (L.axle) dbox(b, s * 0.175, sp.y - 0.01, sp.z, 0.08, 0.02, 0.02, K.steel, L.bev ? ['py', 'ny', 'pz', 'nz'] : ['py', 'nz']);
+    } else dbox(b, s * sp.x, sp.y - sp.r, sp.z + 0.006, 0.03, 2 * sp.r, 0.082, K.steel, ['nz', 'px', 'nx', 'py']);
+  }
+  dbox(b, 0, G.mastInnerTop - 0.08, -0.9475, 0.43, 0.08, 0.035, K.mastIn, M ? ['py', 'nz'] : ['py', 'ny', 'pz', 'nz']);   // 顶梁
+  if (!M) dbox(b, 0, 0.16, -0.9475, 0.43, 0.08, 0.035, K.mastIn, ['py', 'pz', 'nz']);                         // 底梁
+}
+// ---- 货叉架 + 挡货架 + 货叉（lift = 0 的位置；升起来时整体上移 pose(lift).carriage）----
+function fkCarriage(b, L) {
+  const K = FK, G = FORKLIFT_GEO, M = !!L.trim;
+  fkBox(b, L, 0, 0.44, -1.09, 0.92, 0.1, 0.05, K.mast, L.hook ? 'all' : M ? ['py', 'nz'] : ['py', 'ny', 'pz', 'nz'], 0.01, 'top');   // 上横梁（货叉挂在它上面）
+  dbox(b, 0, 0.08, -1.09, 0.92, 0.08, 0.05, K.mast, L.heel ? ['py', 'ny', 'pz', 'nz', 'px', 'nx'] : M ? ['py', 'nz'] : ['py', 'pz', 'nz']);   // 下横梁
+  for (const s of [-1, 1]) {
+    dbox(b, s * G.sprocket.x, 0.5, -1.052, 0.03, 0.08, 0.026, K.steel, L.hook ? ['py', 'pz', 'px', 'nx'] : ['py', 'pz']);             // 链条挂点（上横梁后面）
+    dbox(b, s * 0.44, 0.54, -1.085, 0.04, 0.7, 0.03, K.mast, L.hook ? ['pz', 'nz', 'px', 'nx', 'py'] : M ? ['nz', 'pz'] : 'sides');   // 挡货架立柱
+    // 滚轮架：把上下横梁连起来，后端顶到内门架立柱前脸（z −1.035，那一面不画）—— 升降时货叉架靠它沿内门架上下滑。
+    // 顶比上横梁低 5 mm、前面插进两根横梁 5 mm，不和横梁的面共面
+    if (L.bracket) dbox(b, s * 0.26, 0.08, -1.0525, 0.05, 0.455, 0.035, K.mast, L.bev ? ['px', 'nx', 'nz', 'py'] : ['px', 'nx', 'nz']);
+  }
+  dbox(b, 0, 1.2, -1.085, 0.84, 0.04, 0.03, K.mast, M ? ['pz', 'nz'] : ['pz', 'nz', 'py', 'ny']);
+  if (L.midRail) dbox(b, 0, 0.88, -1.085, 0.84, 0.03, 0.03, K.mast, ['pz', 'nz', 'py']);
+  for (const x of L.back) dbox(b, x, 0.54, -1.085, 0.025, 0.66, 0.02, K.mast, L.bev ? ['pz', 'nz', 'px', 'nx'] : ['pz', 'nz']);
+  // 货叉：竖直段（后下角圆过渡）+ 水平段（叉尖上面削薄、下面倒角）+ 骑在上横梁上的挂钩。
+  // 低档：竖直段直接贴到上横梁前面（不画挂钩），水平段是一块平板
+  for (const s of [-1, 1]) {
+    const x0 = s * G.forkTip.x - 0.05, x1 = s * G.forkTip.x + 0.05, T = G.forkTip.z, zb = L.hook ? -1.12 : -1.115;
+    fkPrism(b, L.heel ? [[-1.16, 0.015], [-1.135, 0.015], [-1.12, 0.03], [-1.12, 0.58], [-1.16, 0.58]] : [[-1.16, 0.015], [zb, 0.015], [zb, 0.58], [-1.16, 0.58]],
+      'x', x0, x1, K.fork, { skip: L.hook ? [0] : [0, 1] });
+    if (L.tip) fkPrism(b, [[T, 0.024], [T + 0.025, 0.015], [-1.16, 0.015], [-1.16, 0.055], [-1.97, 0.055], [T, 0.034]], 'x', x0, x1, K.fork, { skip: [1, 2] });
+    else fkPrism(b, [[T, 0.015], [-1.16, 0.015], [-1.16, 0.055], [T, 0.035]], 'x', x0, x1, K.fork, { skip: [0, 1] });
+    if (L.hook) dbox(b, s * G.forkTip.x, 0.54, -1.09, 0.1, 0.04, 0.06, K.fork, ['py', 'pz', 'px', 'nx']);
+  }
+}
+// ---- 链条：前段（货叉架挂点 → 链轮前缘）、后段（外门架锚座 → 链轮后缘）；长度跟着升降变 ----
+function fkChains(b, L, ps) {
+  const K = FK, G = FORKLIFT_GEO, sp = G.sprocket, top = sp.y + ps.inner, y0 = G.chain.carriageY + ps.carriage;
+  for (const s of [-1, 1]) {
+    const x = s * sp.x, h = top - y0;
+    dbox(b, x, y0, G.chain.z, 0.026, h, 0.012, K.chain, L.backChain ? ['nz', 'px', 'nx', 'pz'] : ['nz', 'px', 'nx']);   // 比链轮窄 4 mm：侧面不和链轮端面共面
+    if (L.links) {   // 链板：正面一节深一节浅
+      const n = Math.max(2, Math.round(h / L.links)), p = h / n;
+      for (let k = 0; k < n; k += 2) sheet(b, x, y0 + k * p, G.chain.z - 0.008, 0.026, p, '-z', K.link);
+    }
+    if (L.backChain) dbox(b, x, G.chain.anchorY, G.chain.back, 0.026, top - G.chain.anchorY, 0.012, K.chain, ['nz', 'pz']);
+  }
+}
+// ---- 磨损（软边贴花，只在高画质）：踏板边上蹭掉的漆、配重后角的刮痕、配重侧面的锈迹、仪表台前脸往下流的油痕、
+//      地台上的泥脚印、门架前地上的一滩油、货叉上面磨亮的刮痕。按重要程度排，细节档 decals 决定贴前几片 ----
+const FK_WEAR = [
+  ['body', { kind: 'oil', x: 0.04, y: 0, z: -1.28, facing: 'up', w: 0.62, h: 0.46, rot: 0.6, opacity: 0.5, offset: FLOOR_DECAL }],
+  ['carriage', { kind: 'scratch', x: -0.28, y: 0.055, z: -1.62, facing: 'up', w: 0.62, h: 0.03, rot: HALF_PI - 0.02, color: 0x8d8a82, opacity: 0.45 }],
+  ['carriage', { kind: 'scratch', x: 0.28, y: 0.055, z: -1.62, facing: 'up', w: 0.62, h: 0.03, rot: HALF_PI + 0.02, color: 0x8d8a82, opacity: 0.45 }],
+  ['body', { kind: 'scuff', x: -0.55, y: 0.33, z: -0.12, facing: '-x', w: 0.32, h: 0.05, rot: 0.08 }],
+  ['body', { kind: 'rust', x: 0.55, y: 0.78, z: 0.86, facing: '+x', w: 0.14, h: 0.44, color: 0x6a3d22, opacity: 0.5 }],
+  ['body', { kind: 'drip', x: 0.28, y: 0.84, z: -0.8, facing: '-z', w: 0.09, h: 0.3, color: 0x1a1814, opacity: 0.55 }],
+  ['body', { kind: 'scratch', x: 0.37, y: 0.82, z: 1.23, normal: [0.275, 0, 0.962], w: 0.26, h: 0.02, rot: 0.2, color: 0x8a8578, opacity: 0.55 }],
+  ['body', { kind: 'stain', x: 0.06, y: 0.615, z: -0.34, facing: 'up', w: 0.36, color: 0x3a342a, opacity: 0.4, offset: 0.006 }],
+  ['body', { kind: 'scuff', x: 0.55, y: 0.3, z: -0.14, facing: '+x', w: 0.26, h: 0.045, rot: -0.06 }],
+  ['body', { kind: 'scratch', x: -0.2, y: 1.12, z: 0.62, facing: 'up', w: 0.3, h: 0.02, rot: 0.4, color: 0x8a8578, opacity: 0.5 }],
+];
+// 贴这一档的磨损（part 同 forkliftModel；货叉上的跟着货叉架升 ps.carriage）。dec(o) → Piece | null
+function fkWearEmit(b, L, want, ps, dec) {
+  for (let k = 0; k < Math.min(L.decals, FK_WEAR.length); k++) {
+    const [part, o] = FK_WEAR[k];
+    if (!want(part)) continue;
+    dec(part === 'carriage' ? Object.assign({}, o, { y: o.y + ps.carriage }) : o);
+  }
+}
+// 纯建模：在当前坐标系原点建一台叉车（不出碰撞体、不吃随机数）。
+// opts：{ lift: 0..1 货叉升起比例, steer: 后轮转角（弧度，正 = 车头往左偏）, part: 'all' | 'body' | 'wheelsFront' | 'wheelsRear' | 'steeringWheel'
+//         | 'mastOuter' | 'mastInner' | 'carriage' | 'chains', detail: 'high' | 'mid' | 'lite' | 'low' | 'lowb' | 'min', number: 车身编号, decal: 贴花函数（缺省不贴）}
+function forkliftModel(b, opts) {
+  const o = opts || {}, G = FORKLIFT_GEO, L = FK_LOD[o.detail] || FK_LOD.high, part = o.part || 'all';
+  const want = k => part === 'all' || part === k, ps = G.pose(o.lift), steer = +o.steer || 0;
+  if (want('body')) fkBody(b, L, o);
+  if (want('wheelsFront')) for (const s of [-1, 1]) { b.push(s * G.wheelFront.x, G.wheelFront.z, 0); fkWheel(b, L, s, true); b.pop(); }
+  if (want('wheelsRear')) for (const s of [-1, 1]) { b.push(s * G.wheelRear.x, G.wheelRear.z, steer); fkWheel(b, L, s, false); b.pop(); }
+  if (want('steeringWheel')) fkSteeringWheel(b, L, steer * G.steerRatio);
+  if (want('mastOuter')) fkMastOuter(b, L);
+  if (want('mastInner')) { b.push(0, 0, 0, ps.inner); fkMastInner(b, L); b.pop(); }
+  if (want('carriage')) { b.push(0, 0, 0, ps.carriage); fkCarriage(b, L); b.pop(); }
+  if (want('chains')) fkChains(b, L, ps);
+  if (typeof o.decal === 'function') fkWearEmit(b, L, want, ps, o.decal);
+}
+// 场景里停着的叉车（没人开）：货叉落地、轮子摆正。
+// 账面：一律按改之前那台叉车的面数 FK_NOMINAL 入账（两种画质一样）→ 后面的柱间、货架、堆垛分到的额度和改之前逐字节一致。
+// 真正的几何留到这块 b.finish 里才建（buildChunk 开头给 b.finish 包了一层；kit 构件的磨损贴花也是 finish 时才贴、包在更外面，
+// 所以顺序是：磨损贴花 → 叉车 → 合并几何）。那时这块别的东西都建完了，看实际还剩多少面挑细节档（FK_LADDER，整块 ≤ FK_CAP）。
+// 在那之前，forklift() 先往这块塞一个"占位"累加器 FK_PH：没有顶点（n = 0），三角形数 = 改前那台叉车在这里会建出的面数 pend
+// （FK_NOMINAL + 改前 5 个倒角盒在高画质下多出来的面，fkOldExtra 按改前的顺序和条件逐个判断）。rawTri、kit 的 DETAIL_TRI_CAP 判断
+// （倒角、贴花、构件细节档、finish 时的磨损贴花）都把它算进去 → 生成过程中块里的面数和改之前一模一样，别的东西倒不倒角、
+// 贴花画不画都不变；kit 的 finish / 磨损贴花判断 mesh 时 n = 0 的累加器直接跳过，buildForklifts 一开头就把它删掉。
+// 叉车自己的磨损贴花在它的几何之前贴（离 DETAIL_TRI_CAP 最远），只往已经有贴花 mesh 的块里贴（不多开 mesh）。
+// 多出来的面数记在细节档 D 上（和倒角、贴花一样，只影响可见几何）。
+const FK_NOMINAL = 318;                       // 改前叉车的面数（4 个倒角盒按普通盒算 + 门架 / 货叉 / 方向盘 / 4 个轮子），两种画质都是这个
+const FK_CAP = { high: 9950, low: 7950 };     // 建完叉车后整块实际面数的上限（kit 预算 10000 / 8000，留 50 的余量）
+// 挑档顺序：高画质 high → mid → lite → low → lowb → min；低画质 low → lowb → min（不倒角、不贴花）
+const FK_LADDER = { high: ['high', 'mid', 'lite', 'low', 'lowb', 'min'], low: ['low', 'lowb', 'min'] };
+const FK_PH = 'L1:forklift-pending';          // 占位累加器的 key（不是材质，不会建成 mesh）
+const fkQueue = new WeakMap(), fkCost = {};
+// 改前那台叉车的 5 个倒角盒（车身、配重、座椅、靠背、护顶）：[w, h, d, faces, 倒角, 倒哪些棱, 它前面先建了多少面（护顶前面是 4 根立柱）]
+const FK_OLD_BEV = [[1.1, 0.75, 1.9, 'noBottom', 0.02], [1.08, 0.28, 0.62, 'noBottom', 0.04], [0.5, 0.12, 0.5, 'noBottom', 0.03],
+  [0.5, 0.45, 0.08, 'noBottom', 0.025], [1.0, 0.04, 1.3, 'all', 0.015, 'top', 32]];
+let fkOldX = null;
+function fkOldExtra(b) {
+  if (lowQ()) return 0;   // 低画质改前也不倒角
+  if (!fkOldX) fkOldX = FK_OLD_BEV.map(([w, h, d, f, r, ed]) => {   // 每个盒倒了角多几个面（kit 同一个切角实现，量一次）
+    const t = kit.builder({}, 0, 0, () => 0, { height: H });
+    const pc = t._bevelBox(0, 0, 0, w, h, d, 'kit:prop', { color: C.dark, solid: false, faces: f, uv: 'stretch', bevel: r, bevelEdges: ed });
+    return pc ? rawTri(t) - nFaces(f) * 2 : 0;
+  });
+  // 改前 bev()：D（overD）没到 min(EXTRA_CAP, e.lim)、kit 那边块里的实际面数没到 DETAIL_TRI_CAP 才倒。
+  // 改前那时块里的实际面数 = 现在的（前面几台还没建的叉车已经由占位累加器算在里面）+ 本台已经建了的那几块
+  const e = ext(b), cap = Math.min(EXTRA_CAP, e.lim);
+  let x = 0, raw = rawTri(b);
+  FK_OLD_BEV.forEach((k, i) => {
+    raw += k[6] || 0;
+    const on = fkOldX[i] > 0 && overD(b) + x < cap && raw < kit.budget.detailCap;
+    if (on) x += fkOldX[i];
+    raw += nFaces(k[3]) * 2 + (on ? fkOldX[i] : 0);
+  });
+  return x;
+}
+// 每档一台叉车实际多少面：建一台到临时 Builder 里量（每档只量一次）；贴花每片 2 个三角形另加
+function fkTris(detail) {
+  if (fkCost[detail] == null) {
+    const t = kit.builder({}, 0, 0, () => 0, { height: H });
+    forkliftModel(t, { detail, number: 88 });
+    fkCost[detail] = rawTri(t) + Math.min(FK_LOD[detail].decals, FK_WEAR.length) * 2;
+  }
+  return fkCost[detail];
+}
+// 工坊地图：kit 的 finish 在叉车之后才让工坊把自由墙、新增出口摆进这块（BR.workshop.decorate），先给它们留出面数
+// （自由墙一面 12 个三角形；出口按最费面的那种留：高画质门 250、楼梯间 224、电梯 200 → 300；低画质楼梯间 148、门 116 → 160）。
+// 不在工坊地图里时是 0
+const FK_WS_EXIT = { high: 300, low: 160 };
+function fkWsReserve(b) {
+  const ws = BR.workshop && BR.workshop.active;
+  if (!ws || b._wsHelper) return 0;
+  const inC = o => { const x = +o.x || 0, z = +o.z || 0; return x >= b.ox && x < b.ox + b.size && z >= b.oz && z < b.oz + b.size; };
+  let n = 0;
+  for (const w of Array.isArray(ws.freeWalls) ? ws.freeWalls : []) if (w && w.len > 0 && inC(w)) n += 12;
+  for (const a of ws.exits && Array.isArray(ws.exits.added) ? ws.exits.added : []) if (a && a.to != null && inC(a)) n += FK_WS_EXIT[lowQ() ? 'low' : 'high'];
+  return n;
+}
 function forklift(b, x, z, rot) {
-  b.push(x, z, rot);
-  const Y = [0.86, 0.66, 0.12];
-  // 车身、配重、座椅、靠背倒角（钣金件和坐垫都是圆边）
-  bbox(b, 0, 0.18, 0, 1.1, 0.75, 1.9, Y, 'noBottom', 0.02);              // 车身（2 cm：配重压在车身顶后沿上，倒大了底下露缝）
-  bbox(b, 0, 0.93, 0.62, 1.08, 0.28, 0.62, C.dark, 'noBottom', 0.04);    // 配重
-  bbox(b, 0, 0.93, -0.15, 0.5, 0.12, 0.5, C.dark, 'noBottom', 0.03);     // 座椅
-  bbox(b, 0, 1.05, 0.08, 0.5, 0.45, 0.08, C.dark, 'noBottom', 0.025);    // 靠背
-  for (const sx of [-0.48, 0.48]) for (const sz of [-0.75, 0.55]) stick(b, [sx, 0.93, sz], [sx, 2.1, sz * 0.9], 0.025, C.dark);   // 护顶架立柱
-  bbox(b, 0, 2.1, -0.1, 1.0, 0.04, 1.3, C.dark, 'all', 0.015, 'top');    // 护顶
-  for (const sx of [-0.3, 0.3]) dbox(b, sx, 0.05, -1.05, 0.08, 2.5, 0.08, C.dark, 'sides');   // 门架
-  dbox(b, 0, 0.05, -1.05, 0.7, 0.1, 0.1, C.dark, 'noBottom');
-  for (const sx of [-0.25, 0.25]) dbox(b, sx, 0.02, -1.6, 0.1, 0.04, 1.0, C.steel, 'noBottom');   // 货叉
-  stick(b, [0, 1.0, -0.55], [0, 1.35, -0.62], 0.02, C.dark);                                        // 方向盘柱
-  b.cylinder(0, 1.36, -0.62, 0.15, 0.03, 'kit:prop', { segments: 10, caps: false, color: C.dark, solid: false, uv: 'stretch' });
-  for (const sx of [-0.56, 0.56]) for (const sz of [-0.6, 0.65]) b.cylinder(sx, 0.25, sz, 0.25, 0.2, 'kit:prop', { axis: 'x', segments: 10, color: C.dark, solid: false, uv: 'stretch' });
-  b.pop();
+  const p = b.point(x, z), w = b.world(x, z), R = b._T.rot + rot;
+  const pend = FK_NOMINAL + fkOldExtra(b);
+  if (!fkQueue.has(b)) fkQueue.set(b, []);
+  fkQueue.get(b).push({ x: p.x, z: p.z, y: b._T.y, rot: R, pend, number: 1 + U.hashInts(b.seed, 'L1-forklift', Math.round(w.x * 10), Math.round(w.z * 10)) % 98 });
+  (b.data.forklifts || (b.data.forklifts = [])).push({ x: w.x, z: w.z, rot: R, detail: null, tris: 0 });   // 世界坐标：自测找机位用，以后开叉车也从这里找
+  // 占位：先按改前那台的面数 pend 占上（见上面的说明）。账面只记 FK_NOMINAL：pend 里多出来的倒角面数和改前一样记在细节档 D 上
+  let ph = b._accs.get(FK_PH);
+  if (!ph) { ph = { key: FK_PH, n: 0, idx: [] }; b._accs.set(FK_PH, ph); }
+  ph.idx.length += 3 * pend;
+  charge(b, FK_NOMINAL - pend);
+  addExtra(ext(b), pend - FK_NOMINAL);
   const c = Math.abs(Math.cos(rot)), s = Math.abs(Math.sin(rot));
   const hx = 0.6 * c + 1.3 * s, hz = 0.6 * s + 1.3 * c;
   b.solid(x - hx, 0, z - hz, x + hx, 2.15, z + hz);
+}
+// 块里不走累加器、单独挂进去的物体（出口地上的发光圈、noclip 墙片……，kit 的 b.object）的三角面：rawTri 数不到，整块合计要算上
+function fkObjTris(b) {
+  let n = 0;
+  for (const obj of b._objects) obj.traverse(m => {
+    const g = m.isMesh && m.geometry, P = g && g.attributes && g.attributes.position;
+    if (P) n += (g.index ? g.index.count : P.count) / 3 * (m.isInstancedMesh ? m.count : 1);
+  });
+  return n;
+}
+// b.finish 里（kit 构件的磨损贴花贴完之后、合并几何之前）：删掉占位、把排队的叉车真正建出来
+function buildForklifts(b) {
+  const q = fkQueue.get(b);
+  b._accs.delete(FK_PH);
+  if (!q || !q.length) return;
+  fkQueue.delete(b);
+  const lad = FK_LADDER[lowQ() ? 'low' : 'high'], cap = FK_CAP[lowQ() ? 'low' : 'high'] - fkWsReserve(b);
+  const e = ext(b), cat = e.cat, T0 = b._T, t0 = rawTri(b), n = q.length, pend = q.reduce((a, f) => a + f.pend, 0);
+  // 挑档：先定保底档 = 所有台都用同一档时放得下的最细一档（都放不下就用最省的 min），所有台都按它占上；
+  // 再从第一台起逐台往细里升，放得下就升。整块合计 = 累加器里的 + 单独挂进去的物体 + 叉车
+  const base = t0 + fkObjTris(b);
+  let fl = lad.length - 1;
+  for (let j = 0; j < lad.length; j++) if (base + n * fkTris(lad[j]) <= cap) { fl = j; break; }
+  const det = q.map(() => fl);
+  let used = base + n * fkTris(lad[fl]);
+  q.forEach((f, i) => {
+    for (let j = 0; j < fl; j++) {
+      const u = used - fkTris(lad[fl]) + fkTris(lad[j]);
+      if (u <= cap) { det[i] = j; used = u; break; }
+    }
+  });
+  e.cat = 'forklift';
+  b._T = { x: 0, y: 0, z: 0, rot: 0, c: 1, s: 0 };   // 区块本地坐标系（队列里记的就是区块本地坐标）
+  const got = q.map(() => 0);
+  // 先贴磨损：这块已经有贴花 mesh（低画质没有）才贴，贴花总数不过 kit 的上限
+  const da = b._accs.get('kit:decal');
+  if (da && da.idx && da.idx.length) {
+    const dec = o => { if ((b._decalN || 0) >= kit.budget.decalsPerChunk) return null; const pc = kit.decal(b, o); if (pc) e.decals++; return pc; };
+    q.forEach((f, i) => {
+      const r0 = rawTri(b);
+      b.push(f.x, f.z, f.rot, f.y);
+      fkWearEmit(b, FK_LOD[lad[det[i]]], () => true, FORKLIFT_GEO.pose(0), dec);
+      b.pop();
+      got[i] += rawTri(b) - r0;
+    });
+  }
+  q.forEach((f, i) => {
+    const r0 = rawTri(b);
+    b.push(f.x, f.z, f.rot, f.y);
+    forkliftModel(b, { part: 'all', lift: 0, steer: 0, detail: lad[det[i]], number: f.number });
+    b.pop();
+    got[i] += rawTri(b) - r0;
+    const rec = b.data.forklifts[i];
+    rec.detail = lad[det[i]]; rec.tris = got[i];
+  });
+  // 占位删掉了（rawTri 少了 pend）、叉车建上了（多了 all）：账面不变，多出来的记在细节档 D 上
+  const all = rawTri(b) - t0;
+  charge(b, pend - all);
+  addExtra(e, all - pend);
+  if (b.data.tri) { b.data.tri.extra = e.tris; b.data.tri.decals = e.decals; }
+  b._T = T0;
+  e.cat = cat;
 }
 
 // ---------- 小屋（「小径」房间）----------
@@ -1993,7 +2672,7 @@ function doorExtras(b, look, x, z, rot) {
     sheet(b, 0, 0.02, zfr, 0.86, 0.55, '+z', [0.92, 0.96, 1.0]);
     facets(b, 'kit:prop', [[[-0.43, 0.57, zfr], [0.43, 0.57, zfr], [0.3, 0.75, zfr], [-0.1, 0.66, zfr], [-0.35, 0.8, zfr]]], [0.92, 0.96, 1.0], [0, 0.6, -1]);
     for (let q = 0; q < 6; q++) b.cylinder(-0.45 + q * 0.18, 2.13 - (0.12 + (q % 3) * 0.07), 0.07, 0.003, 0.12 + (q % 3) * 0.07, 'kit:prop', { rTop: 0.022, segments: 5, caps: false, color: [0.85, 0.93, 1.0], solid: false, uv: 'stretch' });
-    kitPuddle(b, 0, 0.55, { rx: 0.6, rz: 0.35, y: 0.009, color: [0.65, 0.78, 0.86] });   // kit.prop.puddle 没有 ring 开关：冰面外那圈淡水印照画（像化开的冰水）
+    kitPuddle(b, 0, 0.55, { rx: 0.6, rz: 0.35, y: 0.009, color: [0.65, 0.78, 0.86] });   // 冰面外那圈淡水印照画（像化开的冰水；kit.prop.puddle 现在有 ring:false 开关，这里有意保留）
   } else if (look === 'bunker') {
     // 依据：exits[4]「掩体门」——厚重的暗绿钢门，转盘把手、三个大合页、门框刷黄黑警示条
     b.cylinder(0, 1.1, 0.06, 0.2, 0.03, 'kit:prop', { axis: 'z', segments: 10, color: [0.3, 0.32, 0.28], solid: false, uv: 'stretch' });
@@ -2175,6 +2854,10 @@ function addSpawns(b, env) {
 function buildChunk(ctx, cx, cz, rng) {
   defineMaterials();
   const b = kit.builder(ctx, cx, cz, rng, { height: H });
+  // 叉车的几何留到 finish 里才建（账面早就按改前的面数记过了，见 forklift / buildForklifts）。这一层包在最里面：
+  // kit 构件第一次记磨损贴花时会把 b.finish 再包一层（先贴磨损、再调这里），所以顺序是 磨损贴花 → 叉车 → 合并几何
+  const fin = b.finish;
+  b.finish = function () { buildForklifts(this); return fin.apply(this, arguments); };
   const seed = b.seed;
   const isSpawn = cx === 0 && cz === 0;
   const sector = sectorAt(seed, cx, cz);

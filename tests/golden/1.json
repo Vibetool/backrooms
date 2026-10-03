@@ -6,7 +6,7 @@
   "spawnFactor": 1,
   "radius": 2,
   "chunkSize": 32,
-  "hash": "6acefdc0bed1202198c64e31a4751866c7894f8e36627dded2be0ef586edb521",
+  "hash": "70cc067d24e405f8da63ae622506f2cd29937ac3d1f3b3558a418c8f2823a8a0",
   "chunks": [
     {
       "cx": -2,
@@ -497,13 +497,13 @@
     {
       "cx": 2,
       "cz": -2,
-      "hash": "d7400e5e27baed4f",
-      "verts": 17011,
+      "hash": "b705f3790db7ebe7",
+      "verts": 18809,
       "mats": ["kit|L1:floor","kit|L1:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L1:floor",4],
         ["kit|L1:wall",3620],
-        ["kit|kit:prop",12687],
+        ["kit|kit:prop",14485],
         ["kit|kit:decal",296],
         ["kit|kit:glow",184],
         ["kit|kit:water",220]
@@ -1457,14 +1457,14 @@
     {
       "cx": 0,
       "cz": 0,
-      "hash": "0776fb2780994b6b",
-      "verts": 16726,
+      "hash": "68f7bc81313125dd",
+      "verts": 18546,
       "mats": ["kit|L1:floor","kit|L1:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L1:floor",4],
         ["kit|L1:wall",3620],
-        ["kit|kit:prop",12285],
-        ["kit|kit:decal",324],
+        ["kit|kit:prop",14081],
+        ["kit|kit:decal",348],
         ["kit|kit:glow",184],
         ["kit|kit:water",309]
       ],
@@ -1573,14 +1573,14 @@
     {
       "cx": 1,
       "cz": 0,
-      "hash": "4fd640654136daa6",
-      "verts": 16146,
+      "hash": "44925d9d7bc42bab",
+      "verts": 17922,
       "mats": ["kit|L1:floor","kit|L1:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L1:floor",4],
         ["kit|L1:wall",3724],
-        ["kit|kit:prop",11168],
-        ["kit|kit:decal",400],
+        ["kit|kit:prop",12920],
+        ["kit|kit:decal",424],
         ["kit|kit:glow",232],
         ["kit|kit:water",618]
       ],
@@ -2431,14 +2431,14 @@
     {
       "cx": -2,
       "cz": 2,
-      "hash": "a4b04371d911c556",
-      "verts": 15511,
+      "hash": "ec5dd52ba483c6d4",
+      "verts": 18105,
       "mats": ["kit|L1:floor","kit|L1:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L1:floor",4],
         ["kit|L1:wall",3732],
-        ["kit|kit:prop",11153],
-        ["kit|kit:decal",336],
+        ["kit|kit:prop",13707],
+        ["kit|kit:decal",376],
         ["kit|kit:glow",286]
       ],
       "solids": [
