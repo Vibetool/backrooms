@@ -256,8 +256,10 @@ async function desktop(browser, base) {
   await shot(page, 'pause');
   await page.waitForTimeout(700);
   await page.click('.hud-btn-home');
-  await page.waitForTimeout(100);
-  await page.click('.hud-btn-home');
+  // 第二下要在 HOME_CONFIRM_MS（2.5 s）内点到。机器负载高时 page.click 的可点检查能拖过这个窗口，第二下反而重新进了「再点一次」
+  // （2026-10-02 验收复现，改前的 HEAD 一样）：等「再点一次」出来就直接在页面里点
+  await page.waitForFunction(() => /再点一次/.test((document.querySelector('.hud-btn-home') || {}).textContent || ''), null, { timeout: 10000 });
+  await page.$eval('.hud-btn-home', b => b.click());
   await page.waitForFunction(() => BR.game.screen === 'home' && BR.home.shown, null, { timeout: 10000 });
   const backHome = await ev(page, () => ({ lv: BR.world.current, ents: BR.entities.list.length, items: BR.items.list.length, hud: BR.hud.visible, inputOn: BR.input.enabled }));
   check('返回主页：世界/实体/物品清空、HUD 收起、输入关闭', !backHome.lv && backHome.ents === 0 && backHome.items === 0 && !backHome.hud && !backHome.inputOn, backHome);

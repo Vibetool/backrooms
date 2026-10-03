@@ -7,6 +7,34 @@
 //   麦克风、测试面板的触屏按钮分别由 coop.js、testmode.js 自建，不归本文件
 //   额外接口：locked（只读）、sensitivity（视角灵敏度倍率，记在 localStorage）、
 //     tap(el, fn)（菜单按钮轻点：另一根手指按着屏幕时也能触发，鼠标键盘照旧走 click，见「菜单按钮轻点」一节）
+//
+//   空格 / 长按（A1）：
+//   - 空格（e.code 'Space'，老内核 e.key ' ' / 'spacebar'）和 E 都映射到 'interact'；E 只是隐藏别名，界面文字里只写空格
+//   - 'interact'、'liftUp'、'liftDown' 是「动作级」计数：所有按着它的键和手指合在一起算，0→1 发 pressed、1→0 发 released，
+//     空格和 E 同时按只出一次边沿；按下时刻取 event.timeStamp，同一帧里 down+up（Playwright keyboard.press）也能判成短按
+//     released(a)        本帧松手（只有正常松手才发；关输入、失焦、情境不允许、按钮被禁用 = 打断，只发 cancelled）
+//     cancelled(a)       按住被打断。从打断起一直为真，直到下一个「输入开着」的帧 endFrame 才清：
+//                        单机暂停时 player 不跑，也不会漏；读的一方要幂等（idle 状态忽略即可）
+//     heldMs(a)          还按着时已经按了多久（ms），没按着是 0
+//     lastHoldMs(a)      上一次按住（松手或被打断）一共多久（ms）
+//   - 输入关着时按下的 interact 不计数；按住穿过暂停再恢复，held 是 false，要重新按一次（e.repeat 不起头）
+//   - 输入开着时空格的 keydown、keyup 都 preventDefault；BR.game.screen 为 'dead' / 'paused' 时也拦空格，
+//     免得狂按空格点到暂停菜单、死亡结算里拿着焦点的按钮（只认 Enter 和点击）
+//   - 触屏「互动」键按住也能滑动转视角（和冲刺键一样），但先有 10 px 死区，轻点不会晃视角
+//   - haptic(ms)：包装 navigator.vibrate，iOS 等不支持的环境静默返回 false；页面还没被用户点过时也不调（Chrome 会报干预警告）
+//
+//   情境（setContext）：只改「已有动作怎么解释」，F 在所有情境里都是 use，Esc / 暂停键一直可用
+//     'walk'   默认
+//     'seat'   坐着：冲刺不可用（坐下、起身由 BR.interact 处理：空格短按起身）
+//     'view'   看屏幕：冲刺不可用（换画面由 BR.interact 处理）
+//     'drive'  开车：W/S/A/D 照旧进 move，由 BR.vehicles 读成油门和方向；冲刺、丢弃不可用；
+//              多两个开车专用动作 liftUp（KeyR）/ liftDown（KeyC），手机上只在这个情境多显示「升」「降」两个触屏键。
+//              下车 = 空格短按（BR.interact 处理）
+//     liftUp / liftDown 只在 drive 里有效，别的情境按 R、C 什么都不发生
+//   setButtons(map)：改触屏键的文字和可用状态，map = { interact|use|sprint|drop|liftUp|liftDown: { label, disabled } | null }
+//     label 为 null / '' 恢复默认文字；disabled 为 true = 这个动作现在不可用（键灰掉，键盘也不响应），'pause' 不能禁用；
+//     某个键给 null 清掉它的覆盖；setButtons(null) 全部清掉。换情境时覆盖一并清掉（同一情境重复 setContext 不清）
+//   buttonLabel(a)：触屏键现在显示的文字（HUD 写「点「互动」…」时可以跟着它）
 (function () {
 'use strict';
 const BR = window.BR;
@@ -30,18 +58,27 @@ const MOVE_SPIKE_PX = 600;
 // 连续失败这么多次就当环境锁不了（如 iframe 没给 allow-pointer-lock），改成拖拽转视角、轻点即使用
 const LOCK_FAIL_LIMIT = 2;
 const STICK_DEAD = 0.12;
+// 按住「互动」键滑动转视角前的死区：轻点、按住拖东西时拇指难免挪几像素，不该晃视角（冲刺键没有死区）
+const INTERACT_LOOK_DEAD_PX = 10;
+const HAPTIC_MAX_MS = 400;
+// event.timeStamp 和 performance.now() 同源才能直接相减；差得离谱（老内核给的是纪元毫秒）就退回当前时刻
+const TS_SANE_MS = 60000;
 
-const EDGE_ACTIONS = { interact: 1, use: 1, pause: 1, drop: 1, slot1: 1, slot2: 1, slot3: 1, slot4: 1, slot5: 1, mic: 1, testmenu: 1 };
+const EDGE_ACTIONS = { interact: 1, use: 1, pause: 1, drop: 1, slot1: 1, slot2: 1, slot3: 1, slot4: 1, slot5: 1, mic: 1, testmenu: 1, liftUp: 1, liftDown: 1 };
 // 输入禁用（暂停、面板打开）时也要记录的边沿：它们本身就是开关菜单外功能用的
 const ALWAYS_EDGES = { mic: 1, testmenu: 1 };
 const MOVE_ACTIONS = { fwd: 1, back: 1, left: 1, right: 1 };
+// 动作级计数的动作：按下 / 松开 / 打断 / 按了多久都按「所有键和手指合起来」算，见文件头
+const ACT_LEVEL = { interact: 1, liftUp: 1, liftDown: 1 };
 
 // 用 e.code 按物理键位映射，不受输入法和键盘布局影响
 const CODE_ACTION = {
   KeyW: 'fwd', ArrowUp: 'fwd', KeyS: 'back', ArrowDown: 'back',
   KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right',
   ShiftLeft: 'sprint', ShiftRight: 'sprint',
-  KeyE: 'interact', KeyF: 'use', KeyQ: 'drop', Escape: 'pause', KeyV: 'mic', KeyT: 'testmenu',
+  Space: 'interact', KeyE: 'interact',   // KeyE 是隐藏别名
+  KeyF: 'use', KeyQ: 'drop', Escape: 'pause', KeyV: 'mic', KeyT: 'testmenu',
+  KeyR: 'liftUp', KeyC: 'liftDown',      // 只在 drive 情境有效
   Digit1: 'slot1', Digit2: 'slot2', Digit3: 'slot3', Digit4: 'slot4', Digit5: 'slot5',
   Numpad1: 'slot1', Numpad2: 'slot2', Numpad3: 'slot3', Numpad4: 'slot4', Numpad5: 'slot5',
 };
@@ -49,11 +86,27 @@ const CODE_ACTION = {
 const KEY_ACTION = {
   w: 'fwd', arrowup: 'fwd', up: 'fwd', s: 'back', arrowdown: 'back', down: 'back',
   a: 'left', arrowleft: 'left', left: 'left', d: 'right', arrowright: 'right', right: 'right',
-  shift: 'sprint', e: 'interact', f: 'use', q: 'drop', escape: 'pause', esc: 'pause', v: 'mic', t: 'testmenu',
+  shift: 'sprint', ' ': 'interact', spacebar: 'interact', e: 'interact',
+  f: 'use', q: 'drop', escape: 'pause', esc: 'pause', v: 'mic', t: 'testmenu',
+  r: 'liftUp', c: 'liftDown',
   1: 'slot1', 2: 'slot2', 3: 'slot3', 4: 'slot4', 5: 'slot5',
 };
 
-const TOUCH_BUTTONS = [['interact', '互动'], ['use', '使用'], ['sprint', '冲刺'], ['drop', '丢弃'], ['pause', '暂停']];
+// 「升」「降」平时隐藏，只在 drive 情境显示
+const TOUCH_BUTTONS = [['interact', '互动'], ['use', '使用'], ['sprint', '冲刺'], ['drop', '丢弃'], ['pause', '暂停'],
+  ['liftUp', '升'], ['liftDown', '降']];
+const BTN_DEFAULT = {};
+for (const pair of TOUCH_BUTTONS) BTN_DEFAULT[pair[0]] = pair[1];
+
+// 情境：off = 这个情境里不可用的动作（键盘、触屏都不响应，触屏键灰掉）；show = 这个情境才显示的触屏键
+const LIFT_OFF = { liftUp: 1, liftDown: 1 };
+const CONTEXTS = {
+  walk: { off: LIFT_OFF, show: {} },
+  seat: { off: Object.assign({ sprint: 1 }, LIFT_OFF), show: {} },
+  view: { off: Object.assign({ sprint: 1 }, LIFT_OFF), show: {} },
+  drive: { off: { sprint: 1, drop: 1 }, show: { liftUp: 1, liftDown: 1 } },
+};
+const HIDDEN_UNLESS_SHOWN = { liftUp: 1, liftDown: 1 };
 
 // ---------- 状态 ----------
 const move = { x: 0, y: 0 };
@@ -73,13 +126,22 @@ const S = {
   skipMoves: 0,
   mouseUse: false,
   drag: null,             // 未锁定时按住画布拖动：{ x, y, moved }
+  // 动作级计数（ACT_LEVEL）：srcs 是按着它的来源 'k:'+键 / 't:'+手指；on 是否算按着；downAt 按下时刻；lastHold 上次按了多久
+  act: {},
+  releases: new Set(),    // 本帧松手的动作，endFrame 清空
+  cancels: new Set(),     // 被打断的动作，下一个输入开着的帧 endFrame 才清
+  ctx: 'walk',
+  btnOverride: {},        // setButtons 的覆盖：动作 → { label?, disabled? }
 };
+for (const a in ACT_LEVEL) S.act[a] = { on: false, downAt: 0, lastHold: 0, srcs: new Set() };
 const T = {
   active: false,
   root: null, stickEl: null, knobEl: null, btns: {},
   owners: new Map(),      // touch.identifier → 'stick' | 'look' | 按钮动作
   btnTouches: {},         // 按钮动作 → 按着它的 identifier 集合（两根手指按同一个键也不会提前松开）
-  btnPos: new Map(),      // 冲刺键手指 identifier → 上次坐标 { x, y, skip }：按着冲刺拖动也转视角
+  // 冲刺 / 互动键手指 identifier → { x, y, skip, ox, oy, live }：按着拖动也转视角。
+  // x/y 上次坐标；ox/oy 按下点；live 出了死区才开始转（冲刺键一按下就是 live）
+  btnPos: new Map(),
   waiting: new Map(),     // 落在已被占用的摇杆/视角区的手指 identifier → { who, x, y, stale }，前一根抬起后接管
   landscape: null,        // 上次量到的横竖屏，只有它翻转才算转屏
   // reanchor / skip：转屏后下一次移动重定摇杆圆心 / 跳过一次视角增量
@@ -120,7 +182,76 @@ function touchHeld(action) {
   const set = T.btnTouches[action];
   return !!set && set.size > 0;
 }
-function sprinting() { return S.enabled && (keyHeld('sprint') || touchHeld('sprint')); }
+function sprinting() { return S.enabled && !actionOff('sprint') && (keyHeld('sprint') || touchHeld('sprint')); }
+
+function isSpaceId(id) { return id === 'Space' || id === 'key: ' || id === 'key:spacebar'; }
+
+// 暂停菜单、死亡结算的「继续」拿着焦点：这时空格也要拦，只认 Enter 和点击
+function screenBlocksSpace() {
+  const g = BR.game;
+  return !!g && (g.screen === 'dead' || g.screen === 'paused');
+}
+
+function evTime(e) {
+  const n = nowMs();
+  const ts = e && typeof e.timeStamp === 'number' ? e.timeStamp : -1;
+  return ts > 0 && ts <= n + 50 && ts > n - TS_SANE_MS ? ts : n;
+}
+
+// ---------- 情境与按钮可用状态 ----------
+// 这个动作现在能不能用：情境不允许，或 setButtons 禁用了。暂停永远可用
+function actionOff(a) {
+  if (a === 'pause') return false;
+  const c = CONTEXTS[S.ctx];
+  if (c && c.off[a]) return true;
+  const o = S.btnOverride[a];
+  return !!(o && o.disabled);
+}
+
+// ---------- 动作级计数（interact / liftUp / liftDown） ----------
+function actDown(a, src, ts) {
+  const st = S.act[a];
+  if (!st || !S.enabled || actionOff(a)) return false;
+  st.srcs.add(src);
+  if (!st.on) {
+    st.on = true;
+    st.downAt = ts;
+    S.edges.add(a);
+  }
+  return true;
+}
+
+function actUp(a, src, ts) {
+  const st = S.act[a];
+  if (!st || !st.srcs.delete(src) || st.srcs.size > 0 || !st.on) return;
+  st.on = false;
+  st.lastHold = Math.max(0, ts - st.downAt);
+  S.releases.add(a);
+}
+
+// 打断：不发 released，只记 cancelled；来源全部丢掉，之后松开的键、手指都不再算数
+function actCancel(a) {
+  const st = S.act[a];
+  if (!st) return;
+  st.srcs.clear();
+  if (!st.on) return;
+  st.on = false;
+  st.lastHold = Math.max(0, nowMs() - st.downAt);
+  S.releases.delete(a);
+  S.cancels.add(a);
+}
+
+function cancelAllAct() { for (const a in S.act) actCancel(a); }
+
+// Mac 松开 ⌘ 时收不到别的键的 keyup：键盘来源全部作废，还有手指按着的不动
+function dropKeySources() {
+  for (const a in S.act) {
+    const st = S.act[a];
+    let had = false;
+    for (const src of st.srcs) if (src.charAt(0) === 'k') { st.srcs.delete(src); had = true; }
+    if (had && st.srcs.size === 0) actCancel(a);
+  }
+}
 
 function isTypingTarget(el) {
   if (!el || el.nodeType !== 1) return false;
@@ -165,6 +296,8 @@ function updateMove() {
 
 // 切后台、失焦时收不到 keyup/touchend，不清掉就会一直往前走
 function releaseAll() {
+  // 按着的空格 / 互动键算打断，不算松手：失焦那一下不能被当成短按拾取
+  cancelAllAct();
   S.keys.clear();
   S.mouseUse = false;
   S.drag = null;
@@ -176,9 +309,13 @@ function releaseAll() {
 function setEnabled(v) {
   v = !!v;
   if (v === S.enabled) return;
+  // 关输入时按着的 interact 只记 cancelled、不发 released；动作级的键本来就不进 S.keys，恢复后 held 不会直接为真
+  if (!v) cancelAllAct();
   S.enabled = v;
-  // 两个方向都清边沿：暂停瞬间残留的按键不该在菜单里生效，菜单里按的 Esc 也不该回到游戏后立刻再暂停一次
+  // 两个方向都清边沿：暂停瞬间残留的按键不该在菜单里生效，菜单里按的 Esc 也不该回到游戏后立刻再暂停一次。
+  // cancels 不清：单机暂停时 player 不跑，留到恢复后的第一帧让 BR.interact 看到
   S.edges.clear();
+  S.releases.clear();
   S.lookDx = S.lookDy = 0;
   S.mouseUse = false;
   S.drag = null;
@@ -205,21 +342,31 @@ function onKeyDown(e) {
   if (!act) return;
   // 带修饰键的留给浏览器快捷键；Mac 按住 ⌘ 时其他键收不到 keyup，记下来会卡键
   if (e.ctrlKey || e.metaKey || e.altKey) return;
-  const fresh = !S.keys.has(id) && !e.repeat;
-  S.keys.add(id);
-  if (fresh) {
-    if (act === 'pause') firePause();
-    else if ((S.enabled || ALWAYS_EDGES[act]) && EDGE_ACTIONS[act]) S.edges.add(act);
+  if (ACT_LEVEL[act]) {
+    // 动作级：输入关着时不计数；按住穿过暂停的那次（只剩 repeat）不起头，要重新按
+    if (!e.repeat) actDown(act, 'k:' + id, evTime(e));
+  } else {
+    const fresh = !S.keys.has(id) && !e.repeat;
+    S.keys.add(id);
+    if (fresh) {
+      if (act === 'pause') firePause();
+      else if ((S.enabled || ALWAYS_EDGES[act]) && EDGE_ACTIONS[act] && !actionOff(act)) S.edges.add(act);
+    }
+    if (MOVE_ACTIONS[act]) updateMove();
   }
-  if (MOVE_ACTIONS[act]) updateMove();
-  if (S.enabled && e.cancelable) e.preventDefault();   // 方向键别滚动页面
+  // 方向键、空格别滚动页面；暂停菜单、结算里拿着焦点的按钮也不能被空格点到
+  if ((S.enabled || (isSpaceId(id) && screenBlocksSpace())) && e.cancelable) e.preventDefault();
 }
 
 function onKeyUp(e) {
   // Mac 松开 ⌘ 之前按下的字母键不会发 keyup，干脆全部清掉
-  if (e.key === 'Meta' || e.key === 'OS') { S.keys.clear(); updateMove(); return; }
+  if (e.key === 'Meta' || e.key === 'OS') { S.keys.clear(); dropKeySources(); updateMove(); return; }
   const id = keyId(e);
-  if (S.keys.delete(id) && MOVE_ACTIONS[actionOf(id)]) updateMove();
+  const act = actionOf(id);
+  if (ACT_LEVEL[act]) actUp(act, 'k:' + id, evTime(e));
+  else if (S.keys.delete(id) && MOVE_ACTIONS[act]) updateMove();
+  // 按钮在空格 keyup 时才合成 click，keydown 拦了 keyup 也要拦
+  if (isSpaceId(id) && !isTypingTarget(e.target) && (S.enabled || screenBlocksSpace()) && e.cancelable) e.preventDefault();
 }
 
 // ---------- 鼠标与指针锁定 ----------
@@ -344,6 +491,11 @@ const TOUCH_CSS = [
     'background:rgba(22,19,8,.42);color:#fff5cc;font-size:14px;font-weight:600;letter-spacing:1px;' +
     'text-shadow:0 1px 2px rgba(0,0,0,.7);transition:transform .08s,background-color .08s}',
   '.touch-btn.touch-on{background:rgba(255,236,150,.62);color:#211d0c;text-shadow:none;transform:scale(.93)}',
+  // 当前情境不可用（开车时的冲刺、丢弃）：灰掉，按了没反应
+  '.touch-btn.touch-off{opacity:.4;border-color:rgba(200,200,200,.4);background:rgba(30,30,30,.36);color:#bdbdbd}',
+  '.touch-btn.touch-off.touch-on{transform:none}',
+  // setButtons 换的文字超过两个字时缩小字号，免得撑出圆圈
+  '.touch-btn.touch-long{font-size:12px;letter-spacing:0}',
   // 右下角弧形排布：拇指落点最近的是「使用」，互动在左、冲刺在上，丢弃在冲刺左侧、互动上方；
   // 右上角只有暂停，麦克风按钮由 coop.js 摆在它下方
   btnCss('use', 76, 22, 26, false, 'font-size:16px'),
@@ -351,9 +503,15 @@ const TOUCH_CSS = [
   btnCss('sprint', 62, 30, 116, false),
   btnCss('drop', 52, 117, 104, false, 'font-size:13px;letter-spacing:0'),
   btnCss('pause', 48, 12, 12, true, 'border-radius:14px;font-size:13px;letter-spacing:0'),
+  // 开车专用「升」「降」：只在 drive 情境显示。横屏摞在丢弃键正上方，升在上：
+  // 底边中间是背包格和物品名（窄横屏、平板竖屏会伸到右边），屏幕中线下方是拾取提示（css/game.css 限宽到 right:177 以左），都让开
+  btnCss('liftUp', 54, 120, 234, false, 'font-size:16px'),
+  btnCss('liftDown', 54, 120, 168, false, 'font-size:16px'),
   // 竖屏（与 css/game.css 背包改两排的断点相同）：左下物品名标签和互动、冲刺同一高度带，长名字会伸到丢弃键底下，
-  // 丢弃键挪到冲刺键正上方
-  '@media (max-width:559px){' + btnCss('drop', 52, 35, 188, false) + '}',
+  // 丢弃键挪到冲刺键正上方；升降键接着摞在丢弃键上面（右边一列）：互动键上方是长物品名，屏幕中间是提示，
+  // 开车时的提示只有「下车」这类短字，居中放得下
+  '@media (max-width:559px){' + btnCss('drop', 52, 35, 188, false) +
+    btnCss('liftDown', 50, 36, 252, false) + btnCss('liftUp', 50, 36, 308, false) + '}',
 ].join('\n');
 
 function injectStyle() {
@@ -396,7 +554,85 @@ function buildTouchUI() {
   root.addEventListener('touchcancel', onRootEnd, opt);
   host.appendChild(root);
   T.root = root;
+  applyButtons();
   layoutStickIdle();
+}
+
+function btnShown(act) {
+  if (!HIDDEN_UNLESS_SHOWN[act]) return true;
+  const c = CONTEXTS[S.ctx];
+  return !!(c && c.show[act]);
+}
+
+// 情境或 setButtons 变了：打断不再可用的动作，刷新触屏键的文字、显隐和灰态
+function applyButtons() {
+  for (const a in S.act) if (actionOff(a)) actCancel(a);
+  for (const act in BTN_DEFAULT) {
+    const el = T.btns[act];
+    if (!el) continue;
+    const o = S.btnOverride[act];
+    const label = (o && o.label) || BTN_DEFAULT[act];
+    if (el.textContent !== label) {
+      el.textContent = label;
+      el.setAttribute('aria-label', label);
+    }
+    el.classList.toggle('touch-long', label.length > 2);
+    const shown = btnShown(act), off = actionOff(act);
+    if (el.hidden !== !shown) el.hidden = !shown;
+    el.classList.toggle('touch-off', off);
+    if (off) el.setAttribute('aria-disabled', 'true');
+    else el.removeAttribute('aria-disabled');
+    // 正按着的键被藏起来或禁用：当作松开（动作级的已经在上面算成打断）
+    if ((off || !shown) && touchHeld(act)) clearButton(act);
+  }
+}
+
+function setContext(ctx) {
+  if (!CONTEXTS[ctx]) return false;
+  if (ctx === S.ctx) return true;
+  S.ctx = ctx;
+  S.btnOverride = {};
+  applyButtons();
+  return true;
+}
+
+function setButtons(map) {
+  if (map == null) S.btnOverride = {};
+  else if (typeof map === 'object') {
+    for (const act in map) {
+      if (!BTN_DEFAULT[act]) continue;
+      const v = map[act];
+      if (v == null) { delete S.btnOverride[act]; continue; }
+      if (typeof v !== 'object') continue;
+      const o = S.btnOverride[act] || (S.btnOverride[act] = {});
+      if ('label' in v) {
+        if (v.label == null || v.label === '') delete o.label;
+        else o.label = String(v.label);
+      }
+      if ('disabled' in v) {
+        if (v.disabled == null || act === 'pause') delete o.disabled;
+        else o.disabled = !!v.disabled;
+      }
+    }
+  }
+  applyButtons();
+}
+
+function buttonLabel(act) {
+  const o = S.btnOverride[act];
+  return (o && o.label) || BTN_DEFAULT[act] || '';
+}
+
+function haptic(ms) {
+  const nav = window.navigator;
+  if (!nav || typeof nav.vibrate !== 'function') return false;   // iOS Safari、桌面 Safari 没有
+  if (!(S.touchDevice || T.active)) return false;
+  // 页面还没被用户点过时 Chrome 会拦下并在控制台报干预警告
+  const ua = nav.userActivation;
+  if (ua && ua.hasBeenActive === false) return false;
+  const d = Math.round(clamp(+ms || 0, 0, HAPTIC_MAX_MS));
+  if (d <= 0) return false;
+  try { return !!nav.vibrate(d); } catch (err) { return false; }
 }
 
 function syncTouchVisibility() {
@@ -495,29 +731,42 @@ function endStick() {
   updateMove();
 }
 
-function pressButton(act, id) {
+// 灰掉的键（当前情境不可用）、藏起来的键按了不响应，手指也不转去控制视角
+function pressButton(act, id, ts) {
   const el = T.btns[act];
-  if (!el) return false;
+  if (!el || el.hidden || actionOff(act)) return false;
   const set = T.btnTouches[act] || (T.btnTouches[act] = new Set());
   const first = set.size === 0;
   set.add(id);
+  // 动作级：每根手指都是一个来源，和键盘合起来数
+  if (ACT_LEVEL[act]) actDown(act, 't:' + id, ts);
   if (first) {
     el.classList.add('touch-on');
     if (act === 'pause') firePause();
-    else if (EDGE_ACTIONS[act]) S.edges.add(act);
+    else if (!ACT_LEVEL[act] && EDGE_ACTIONS[act]) S.edges.add(act);
   }
   return true;
 }
 
-function releaseButton(act, id) {
+function releaseButton(act, id, ts) {
   const set = T.btnTouches[act];
-  if (!set || !set.delete(id) || set.size > 0) return;
+  if (!set || !set.delete(id)) return;
+  if (ACT_LEVEL[act]) actUp(act, 't:' + id, ts);
+  if (set.size > 0) return;
   if (T.btns[act]) T.btns[act].classList.remove('touch-on');
 }
 
 function clearButton(act) {
   const set = T.btnTouches[act];
-  if (set) set.clear();
+  if (set) {
+    // 动作级：这些手指不再算数；只剩它们按着的话算打断，不算松手
+    const st = S.act[act];
+    if (st && set.size > 0) {
+      set.forEach(function (id) { st.srcs.delete('t:' + id); });
+      if (st.srcs.size === 0) actCancel(act);
+    }
+    set.clear();
+  }
   if (T.btns[act]) T.btns[act].classList.remove('touch-on');
 }
 
@@ -584,12 +833,35 @@ function onRootStart(e) {
       }
       takeZone(who, t.identifier, t.clientX, t.clientY, false);
     } else {
-      if (!pressButton(who, t.identifier)) continue;
-      // 按着冲刺拖动顺带转视角：两个拇指就能边冲刺边拐弯
-      if (who === 'sprint') T.btnPos.set(t.identifier, { x: t.clientX, y: t.clientY, skip: false });
+      if (!pressButton(who, t.identifier, evTime(e))) continue;
+      // 按着冲刺拖动顺带转视角：两个拇指就能边冲刺边拐弯；按着互动（拖东西）也能转，但先过 10 px 死区
+      if (who === 'sprint' || who === 'interact') {
+        T.btnPos.set(t.identifier, { x: t.clientX, y: t.clientY, skip: false, ox: t.clientX, oy: t.clientY, live: who === 'sprint' });
+      }
     }
     T.owners.set(t.identifier, who);
   }
+}
+
+// 按钮手指滑动转视角；互动键没出死区前不转，出死区那一刻从死区边上接着算，不会突跳
+function moveBtnLook(p, t) {
+  const cx = t.clientX, cy = t.clientY;
+  if (p.skip) {
+    p.skip = false;
+    p.x = cx; p.y = cy;
+    if (!p.live) { p.ox = cx; p.oy = cy; }
+    return;
+  }
+  if (!p.live) {
+    const dx = cx - p.ox, dy = cy - p.oy, d = Math.sqrt(dx * dx + dy * dy);
+    if (d < INTERACT_LOOK_DEAD_PX) return;
+    p.live = true;
+    p.x = p.ox + dx * INTERACT_LOOK_DEAD_PX / d;
+    p.y = p.oy + dy * INTERACT_LOOK_DEAD_PX / d;
+  }
+  addLook(cx - p.x, cy - p.y, touchRadPerPx());
+  p.x = cx;
+  p.y = cy;
 }
 
 function onRootMove(e) {
@@ -608,14 +880,9 @@ function onRootMove(e) {
       else addLook(t.clientX - T.look.x, t.clientY - T.look.y, touchRadPerPx());
       T.look.x = t.clientX;
       T.look.y = t.clientY;
-    } else if (who === 'sprint') {
+    } else if (who === 'sprint' || who === 'interact') {
       const p = T.btnPos.get(t.identifier);
-      if (p) {
-        if (p.skip) p.skip = false;
-        else addLook(t.clientX - p.x, t.clientY - p.y, touchRadPerPx());
-        p.x = t.clientX;
-        p.y = t.clientY;
-      }
+      if (p) moveBtnLook(p, t);
     }
     // 按钮手指滑出按钮范围仍算按住，直到抬起，冲刺时拇指稍微挪一下不会断
   }
@@ -624,6 +891,7 @@ function onRootMove(e) {
 function onRootEnd(e) {
   if (e.cancelable) e.preventDefault();
   const list = e.changedTouches;
+  const ts = evTime(e);
   for (let i = 0; i < list.length; i++) {
     const id = list[i].identifier;
     if (T.waiting.delete(id)) continue;
@@ -633,7 +901,16 @@ function onRootEnd(e) {
     T.btnPos.delete(id);
     if (who === 'stick') { if (T.stick.id === id) { endStick(); promoteWaiting('stick'); } }
     else if (who === 'look') { if (T.look.id === id) { T.look.id = null; promoteWaiting('look'); } }
-    else releaseButton(who, id);
+    else if (e.type === 'touchcancel' && ACT_LEVEL[who]) {
+      // 系统抢走手指（来电、手势）：动作级算打断，不当成松手拾取
+      const set = T.btnTouches[who];
+      if (set && set.delete(id)) {
+        const st = S.act[who];
+        st.srcs.delete('t:' + id);
+        if (st.srcs.size === 0) actCancel(who);
+        if (set.size === 0 && T.btns[who]) T.btns[who].classList.remove('touch-on');
+      }
+    } else releaseButton(who, id, ts);
   }
 }
 
@@ -866,19 +1143,44 @@ BR.input = {
     return r;
   },
 
-  pressed(action) { return S.edges.has(action); },
+  pressed(action) { return S.edges.has(action) && !actionOff(action); },
 
   // 不依赖 this，解构出来单独调也行
   held(action) {
     switch (action) {
       case 'sprint': return sprinting();
-      case 'use': return S.enabled && (S.mouseUse || keyHeld('use') || touchHeld('use'));
-      case 'interact': return S.enabled && (keyHeld('interact') || touchHeld('interact'));
+      case 'use': return S.enabled && !actionOff('use') && (S.mouseUse || keyHeld('use') || touchHeld('use'));
+      case 'interact': case 'liftUp': case 'liftDown': return S.enabled && S.act[action].on;
       default: return false;
     }
   },
 
-  endFrame() { S.edges.clear(); },
+  // 以下只对动作级的 'interact' 'liftUp' 'liftDown' 有意义，其他动作恒为 false / 0，见文件头
+  released(action) { return S.releases.has(action); },
+  cancelled(action) { return S.cancels.has(action); },
+  heldMs(action) {
+    const st = S.act[action];
+    return st && st.on && S.enabled ? Math.max(0, nowMs() - st.downAt) : 0;
+  },
+  lastHoldMs(action) {
+    const st = S.act[action];
+    return st ? st.lastHold : 0;
+  },
+
+  endFrame() {
+    S.edges.clear();
+    S.releases.clear();
+    // 打断要撑到输入恢复后的第一帧：单机暂停、结算时 player 不跑，否则 BR.interact 永远看不到
+    if (S.enabled) S.cancels.clear();
+  },
+
+  haptic,
+
+  // 情境：'walk' | 'seat' | 'view' | 'drive'，只改已有动作怎么解释，不加键（drive 的 R / C 升降除外，见文件头）
+  setContext,
+  get context() { return S.ctx; },
+  setButtons,
+  buttonLabel,
 
   lock,
 

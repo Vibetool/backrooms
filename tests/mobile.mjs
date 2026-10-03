@@ -1001,7 +1001,7 @@ async function secGuestBack(D) {
   const g0 = await D.ev(() => {
     const L = window.__netL || [];
     L.forEach(fn => fn('connected'));
-    L.forEach(fn => fn('msg', { t: 'hello', game: 'backrooms', v: BR.config.version, name: '房主X', skin: 'pink' }));
+    L.forEach(fn => fn('msg', { t: 'hello', game: 'backrooms', v: BR.config.version, name: '房主X', skin: 'pink', caps: ['ev1', 'fx1', 'veh1'] }));
     return { phase: BR.coop.phase, role: BR.coop.role, lobby: __m.vis('.coop-lobby'), state: history.state };
   });
   if (g0.phase !== 'active') throw new Error('客机桩没接通：' + JSON.stringify(g0));
@@ -1665,7 +1665,7 @@ async function coopConnect() {
   for (let i = 0; i < 80 && BR.coop.phase !== 'hosting'; i++) await new Promise(r => setTimeout(r, 25));
   L.forEach(fn => fn('peerJoined', '队友'));
   L.forEach(fn => fn('connected'));
-  L.forEach(fn => fn('msg', { t: 'hello', game: 'backrooms', v: BR.config.version, name: '队友', skin: 'blue' }));
+  L.forEach(fn => fn('msg', { t: 'hello', game: 'backrooms', v: BR.config.version, name: '队友', skin: 'blue', caps: ['ev1', 'fx1', 'veh1'] }));
   return { active: BR.coop.active, role: BR.coop.role, phase: BR.coop.phase, listeners: L.length };
 }
 function coopLayout() {

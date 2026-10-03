@@ -250,6 +250,113 @@ function faceList(f) {
 }
 
 // =====================================================================
+// 道具登记的小工具（Builder 的作用域、finish、moveProp 共用）
+// =====================================================================
+// 记录 → 内部状态（顶点段带累加器引用、父子链、拖动用的基准副本……）。放 WeakMap 里：res.kit.* 的记录本身是纯数据，JSON 干净
+const INT = new WeakMap();
+// part 的缺省行程：slide 米、hinge 弧度（按 three.js rotation.y 的正方向，100° ≈ 1.75）、button 按下深度、swivel 0 = 不限
+const DEF_TRAVEL = { slide: 0.35, hinge: 1.75, button: 0.004, swivel: 0 };
+const DEF_AXIS = { slide: [0, 0, 1], hinge: [0, 1, 0], button: [0, 0, -1], swivel: [0, 1, 0] };
+// 记录自己的字段：meta 里同名的不再原样拷进记录（pivot 之类要换算过）
+// （label、why 不在表里：道具/设备自己有这两个字段，不会被覆盖；容器、部件上写了就原样拷）
+const REC_FIELDS = new Set(['n', 'key', 'skey', 'kind', 'spans', 'span', 'solids', 'pivot', 'obb', 'volume', 'draggable', 'exitOverlap',
+  'children', 'on', 'parts', 'seats', 'beds', 't', 'plugged', 'grid', 'inert', 'dims', 'color', 'bev', 'parentKey', 'loot', 'slots',
+  'name', 'type', 'axis', 'travel', 'container', 'lights']);
+function r4(v) { const r = Math.round(v * 1e4) / 1e4; return r === 0 ? 0 : r; }
+function r6(v) { const r = Math.round(v * 1e6) / 1e6; return r === 0 ? 0 : r; }
+// 道具 key → 碰撞体 key：去掉 '<层级>@' 前缀（'L1@3,-1#p2' → '3,-1#p2'，正好是 `${chunkKey}#p${n}`）；BR.phys 的 ignoreKey 认这条约定
+function skeyOf(key) { const s = String(key); const i = s.indexOf('@'); return i >= 0 ? s.slice(i + 1) : s; }
+// 纯数据拷贝（数字、字符串、布尔、数组、普通对象）：记录里不留函数、THREE 对象、层级闭包
+function cleanData(v, depth) {
+  const d = depth | 0;
+  if (v == null) return null;
+  const t = typeof v;
+  if (t === 'number') return Number.isFinite(v) ? v : null;
+  if (t === 'string' || t === 'boolean') return v;
+  if (t !== 'object' || d > 4 || v.isObject3D || v.isMaterial || v.isBufferGeometry) return undefined;
+  if (Array.isArray(v)) return v.map(x => { const c = cleanData(x, d + 1); return c === undefined ? null : c; });
+  const o = {};
+  for (const k of Object.keys(v)) { const c = cleanData(v[k], d + 1); if (c !== undefined) o[k] = c; }
+  return o;
+}
+function copyExtra(rec, m) {
+  for (const k of Object.keys(m)) {
+    if (REC_FIELDS.has(k) || k in rec) continue;
+    const c = cleanData(m[k]);
+    if (c !== undefined) rec[k] = c;
+  }
+}
+// 锚点（座位、躺位、格位）：坐标都在所属记录的枢轴坐标系里
+function cleanAnchor(a, list) {
+  if (!a || typeof a !== 'object') return null;
+  const src = Array.isArray(a) ? { x: a[0], y: a[1], z: a[2] } : a;
+  const o = cleanData(src) || {};
+  o.x = r4(num(+src.x, 0)); o.z = r4(num(+src.z, 0));
+  if (list === 'slots') o.y = r4(num(+src.y, 0));
+  else {
+    o.h = r4(num(+src.h, 0));
+    o.yaw = r6(num(+src.yaw, 0));
+    if (list === 'seats') o.swivel = !!src.swivel;
+    if (Array.isArray(src.head)) o.head = [r4(num(+src.head[0], 0)), r4(num(+src.head[1], 0))];
+  }
+  return o;
+}
+// span（单数）是 spans 的别名：方案接口里容器/部件写的是 span。不可枚举，JSON 里只出现一次
+function defineSpanAlias(rec) {
+  if (!Object.prototype.hasOwnProperty.call(rec, 'span')) Object.defineProperty(rec, 'span', { get() { return this.spans; }, enumerable: false });
+}
+// 区块本地点 → 某个枢轴坐标系（frame 用区块本地坐标）。point() 的逆：x = c·lx + s·lz、z = −s·lx + c·lz
+function toLocal(F, x, y, z) {
+  const dx = x - F.x, dz = z - F.z;
+  return { x: F.c * dx - F.s * dz, y: y - F.y, z: F.s * dx + F.c * dz };
+}
+function matName(acc) {
+  const k = acc.key;
+  return k && k.isMaterial ? (k.name || 'material') : String(k);
+}
+// 记录追加一段顶点（同一累加器首尾相接就并成一段；已经包含的不重复记）
+function addSeg(rec, acc, v0, v1) {
+  if (!(v1 > v0)) return;
+  const I = INT.get(rec);
+  if (!I) return;
+  for (const g of I.segs) {
+    if (g.acc !== acc) continue;
+    if (v0 >= g.v0 && v1 <= g.v1) return;
+    if (g.v1 === v0 && !g.base) { g.v1 = v1; syncSpans(rec); return; }
+  }
+  I.segs.push({ acc, v0, v1, base: null });
+  syncSpans(rec);
+}
+function syncSpans(rec) {
+  const I = INT.get(rec);
+  rec.spans = I.segs.map(g => ({ mat: matName(g.acc), v0: g.v0, v1: g.v1 }));
+}
+// full 里扣掉嵌套道具占的段（嵌套段一定落在某一段里面）
+function subtractSegs(full, kids) {
+  const out = [];
+  for (const f of full) {
+    const ks = kids.filter(k => k.acc === f.acc && k.v1 > f.v0 && k.v0 < f.v1).sort((a, b) => a.v0 - b.v0);
+    let cur = f.v0;
+    for (const k of ks) {
+      if (k.v0 > cur) out.push({ acc: f.acc, v0: cur, v1: k.v0 });
+      if (k.v1 > cur) cur = k.v1;
+    }
+    if (cur < f.v1) out.push({ acc: f.acc, v0: cur, v1: f.v1 });
+  }
+  return out;
+}
+function subtractRanges(a, b, kids) {
+  const out = [];
+  let cur = a;
+  for (const k of kids.slice().sort((p, q) => p[0] - q[0])) {
+    if (k[0] > cur) out.push([cur, Math.min(k[0], b)]);
+    if (k[1] > cur) cur = k[1];
+  }
+  if (cur < b) out.push([cur, b]);
+  return out.filter(r => r[1] > r[0]);
+}
+
+// =====================================================================
 // Builder
 // =====================================================================
 class Builder {
@@ -278,6 +385,12 @@ class Builder {
     this._stack = [];
     this._T = { x: 0, y: 0, z: 0, rot: 0, c: 1, s: 0 };
     this._done = false;
+    // 道具登记（8.1 节）：作用域栈、记录表、各自独立的序号（顶层道具 p、容器 c、固定设备 f）
+    this._scopes = [];
+    this._kitProps = [];
+    this._kitContainers = [];
+    this._kitFixtures = [];
+    this._kitN = { p: 0, c: 0, f: 0 };
   }
 
   // ---------- 局部坐标系 ----------
@@ -733,6 +846,234 @@ class Builder {
     if (piece && src) this._glowLinks.push({ piece, src, base: base || [1, 1, 1], off: num(offRatio, 0.06), last: -1 });
     return this;
   }
+
+  // ---------- 道具登记（2026-10-02 A1：准心对准 + 空格短按使用、长按拖动；写法见 _TEMPLATE.md 8.1 节） ----------
+  // 作用域只记数据、不加几何、不吃 rng：开始时快照各材质累加器的顶点数和碰撞体/灯/出口/独立物体的条数，结束时得到自己的那几段。
+  // 登记调用一律写在 hiDetail / 倒角 / 贴花分支外面 —— key 按调用顺序编号，高低画质（联机两边可以不同）必须一一对上。
+  // prop：能拖的家具（记录进 res.kit.props）；fixture：插着电/钉死的固定设备，不能拖（res.kit.fixtures）；
+  // container：能打开、里面可能有东西的箱体（res.kit.containers）；part：道具里会动的子件（抽屉、柜门、按钮、转椅座面，进所属道具的 parts）
+  beginProp(meta) { return this._scopeBegin('prop', meta); }
+  endProp() { return this._scopeEnd('prop'); }
+  prop(meta, fn) { return this._scoped('prop', meta, fn); }
+  beginFixture(meta) { return this._scopeBegin('fixture', meta); }
+  endFixture() { return this._scopeEnd('fixture'); }
+  fixture(meta, fn) { return this._scoped('fixture', meta, fn); }
+  beginContainer(meta) { return this._scopeBegin('container', meta); }
+  endContainer() { return this._scopeEnd('container'); }
+  container(meta, fn) { return this._scoped('container', meta, fn); }
+  // part 没有所属道具/设备时只执行 fn、不登记（返回 null）。同一个道具里 name 相同的 part 合并成一条记录（零件散在几处画时分几次包）
+  beginPart(meta) { return this._scopeBegin('part', meta); }
+  endPart() { return this._scopeEnd('part'); }
+  part(meta, fn) { return this._scoped('part', meta, fn); }
+
+  // 座位 / 躺位锚点（当前坐标系），记进最内层道具或设备：{ x, z, yaw, h, swivel } / { x, z, yaw, h, w, l, head: [x, z] }。
+  // yaw 用玩家的约定（朝向 = (−sin yaw, −cos yaw)），h = 座面/床面离地高度。存进记录时换成所属道具枢轴坐标系
+  seat(desc) { return this._anchor('seats', desc); }
+  bedSpot(desc) { return this._anchor('beds', desc); }
+
+  _scoped(type, meta, fn) {
+    const rec = this._scopeBegin(type, meta);
+    try { if (typeof fn === 'function') fn(rec); }
+    finally { this._scopeEnd(type); }
+    return rec;
+  }
+  _ownerScope() {
+    for (let i = this._scopes.length - 1; i >= 0; i--) {
+      const t = this._scopes[i].type;
+      if (t === 'prop' || t === 'fixture') return this._scopes[i];
+    }
+    return null;
+  }
+  _containerScope() {
+    for (let i = this._scopes.length - 1; i >= 0; i--) {
+      const t = this._scopes[i].type;
+      if (t === 'container') return this._scopes[i];
+      if (t === 'prop' || t === 'fixture') return null;   // 容器外面又套了道具：不算这一层的容器
+    }
+    return null;
+  }
+  _scopeBegin(type, meta) {
+    const m = meta && typeof meta === 'object' ? meta : {};
+    const T = this._T;
+    let fx = T.x, fz = T.z, fy = T.y, fr = T.rot;
+    if (m.pivot && type !== 'part') {
+      // meta.pivot：[x, z, rot, y] 或 { x, z, rot, y }（当前坐标系）；缺省 = 当前坐标系原点。part 的 pivot 是 [x, y, z]，下面单独换算
+      const a = Array.isArray(m.pivot) ? { x: m.pivot[0], z: m.pivot[1], rot: m.pivot[2], y: m.pivot[3] } : m.pivot;
+      const p = this.point(num(a.x, 0), num(a.z, 0));
+      fx = p.x; fz = p.z; fy = T.y + num(a.y, 0); fr = T.rot + num(a.rot, 0);
+    }
+    const frame = { x: fx, y: fy, z: fz, rot: fr, c: Math.cos(fr), s: Math.sin(fr) };
+    const owner = this._ownerScope();
+    const lv = this.level && this.level.id != null ? String(this.level.id) : '';
+    const base = lv + '@' + this.cx + ',' + this.cz;
+    const N = this._kitN;
+    const pivot = { x: r4(this.ox + fx), y: r4(fy), z: r4(this.oz + fz), rot: r6(fr) };
+    let rec = null, merged = false;
+    if (type === 'prop' || type === 'fixture') {
+      let n, key;
+      if (type === 'prop') {
+        if (owner) { n = ++owner.childN; key = m.key != null ? String(m.key) : owner.rec.key + '.' + n; }
+        else { n = ++N.p; key = m.key != null ? String(m.key) : base + '#p' + n; }
+      } else {
+        n = ++N.f; key = m.key != null ? String(m.key) : base + '#f' + n;
+      }
+      rec = {
+        n, key, skey: skeyOf(key), kind: String(m.kind || type), label: m.label != null ? String(m.label) : '',
+        spans: [], solids: [this._solids.length, this._solids.length], pivot, obb: null, volume: 0,
+        draggable: false, exitOverlap: false,
+        children: [], on: m.on != null ? String(m.on) : (owner && type === 'prop' ? owner.rec.key : null),
+        parts: [], seats: [], beds: [],
+      };
+      if (type === 'prop') {
+        rec.t = { dx: 0, dy: 0, dz: 0, ry: 0 };
+        if (m.plugged) rec.plugged = true;              // 插着电的道具（极少：一般直接登记成 fixture）
+      } else {
+        rec.plugged = !!m.plugged; rec.grid = !!m.grid;
+        rec.inert = m.inert != null && m.inert !== false ? String(m.inert) : null;
+      }
+      // why：拖不动 / 用不了时给玩家看的原因（灰字）。inert 设备就是它的原因；插着电的缺省「插着电，拖不动」
+      rec.why = m.why != null ? String(m.why) : rec.inert ? rec.inert : rec.plugged ? '插着电，拖不动' : null;
+      if (Array.isArray(m.seats)) for (const s of m.seats) { const a = cleanAnchor(s, 'seats'); if (a) rec.seats.push(a); }
+      if (Array.isArray(m.beds)) for (const s of m.beds) { const a = cleanAnchor(s, 'beds'); if (a) rec.beds.push(a); }
+      copyExtra(rec, m);
+      (type === 'prop' ? this._kitProps : this._kitFixtures).push(rec);
+    } else if (type === 'container') {
+      const n = ++N.c;
+      const key = m.key != null ? String(m.key) : base + '#c' + n;
+      rec = {
+        n, key, kind: String(m.kind || 'container'), label: m.label != null ? String(m.label) : '',
+        spans: [], solids: [this._solids.length, this._solids.length], pivot, obb: null,
+        dims: Array.isArray(m.dims) ? m.dims.map(v => r4(num(+v, 0))) : null,
+        color: m.color != null ? m.color : null,
+        bev: m.bev != null ? cleanData(m.bev) : null,
+        parentKey: m.parentKey != null ? String(m.parentKey) : owner ? owner.rec.key : null,
+        loot: m.loot != null ? cleanData(m.loot) : null,
+        slots: [], parts: [],
+        on: m.on != null ? String(m.on) : null,
+      };
+      if (Array.isArray(m.slots)) for (const s of m.slots) { const a = cleanAnchor(s, 'slots'); if (a) rec.slots.push(a); }
+      copyExtra(rec, m);
+      this._kitContainers.push(rec);
+    } else if (type === 'part') {
+      if (!owner) {
+        // 没有所属道具（层级传了 opts.prop = false 又没自己包作用域）：几何照画，不登记
+        this._scopes.push({ type, rec: null, dead: true });
+        return null;
+      }
+      const own = owner.rec, OF = INT.get(own).frame;
+      const name = m.name != null ? String(m.name) : null;
+      if (name) for (const p of own.parts) if (p.name === name) { rec = p; merged = true; break; }
+      if (!rec) {
+        const ptype = DEF_TRAVEL[m.type] !== undefined ? m.type : 'button';
+        if (ptype !== m.type) warnOnce('part-type:' + m.type, 'part 的 type 只能是 slide | hinge | button | swivel，"' + m.type + '" 当 button');
+        // 枢轴、轴向：meta 写在当前坐标系，存进记录时换成所属道具/设备的枢轴坐标系
+        const pv = Array.isArray(m.pivot) ? m.pivot : [0, 0, 0];
+        const P = this.point(num(pv[0], 0), num(pv[2], 0));
+        const L = toLocal(OF, P.x, T.y + num(pv[1], 0), P.z);
+        const ax = Array.isArray(m.axis) ? m.axis : DEF_AXIS[ptype];
+        const da = T.rot - OF.rot, ca = Math.cos(da), sa = Math.sin(da);
+        const axl = [ca * num(ax[0], 0) + sa * num(ax[2], 0), num(ax[1], 0), -sa * num(ax[0], 0) + ca * num(ax[2], 0)];
+        const al = Math.hypot(axl[0], axl[1], axl[2]) || 1;
+        const cs = this._containerScope();
+        rec = {
+          n: own.parts.length + 1, key: '', name, type: ptype,
+          pivot: [r4(L.x), r4(L.y), r4(L.z)], axis: [r6(axl[0] / al), r6(axl[1] / al), r6(axl[2] / al)],
+          travel: num(m.travel, DEF_TRAVEL[ptype]), spans: [],
+          container: cs && cs.rec ? cs.rec.key : null,
+        };
+        rec.key = own.key + '#k' + rec.n;
+        copyExtra(rec, m);
+        own.parts.push(rec);
+        if (cs && cs.rec) cs.rec.parts.push(rec.key);
+      }
+    } else {
+      throw new Error('[kit] 未知作用域 ' + type);
+    }
+    if (!merged) {
+      INT.set(rec, {
+        type, frame, segs: [], ownSolids: [], ownLights: [], ownObjs: [],
+        // 父链：嵌套道具 → 外层道具；容器、部件 → 所属道具/设备（moveProp 时跟着它走）
+        parent: (type === 'prop' || type === 'container' || type === 'part') && owner ? owner.rec : null,
+        kids: [], hasExit: false, hasFixtureKid: false, wantDrag: m.draggable !== false,
+        meshes: null, lightBase: null, objBase: null,
+      });
+      defineSpanAlias(rec);
+    }
+    const snap = new Map();
+    this._accs.forEach(a => snap.set(a, a.n));
+    const sc = {
+      type, rec, owner, snap,
+      s0: this._solids.length, l0: this._lights.length, e0: this._exits.length, o0: this._objects.length,
+      kidSegs: [], kidSolids: [], kidLights: [], kidObjs: [], childN: 0,
+    };
+    this._scopes.push(sc);
+    return rec;
+  }
+  _scopeEnd(type) {
+    const st = this._scopes;
+    let idx = st.length - 1;
+    if (idx < 0 || st[idx].type !== type) {
+      warnOnce('scope-end:' + type, 'end' + type + '() 和 begin 没配对（作用域栈顶是 ' + (idx >= 0 ? st[idx].type : '空') + '），按栈关到最近的 ' + type);
+      while (idx >= 0 && st[idx].type !== type) idx--;
+      if (idx < 0) return null;
+      while (st.length - 1 > idx) this._scopeEnd(st[st.length - 1].type);
+    }
+    const sc = st.pop();
+    if (sc.dead || !sc.rec) return null;
+    const rec = sc.rec, I = INT.get(rec);
+    const full = [];
+    this._accs.forEach(a => {
+      const v0 = sc.snap.has(a) ? sc.snap.get(a) : 0;
+      if (a.n > v0) full.push({ acc: a, v0, v1: a.n, base: null });
+    });
+    const s1 = this._solids.length, l1 = this._lights.length, o1 = this._objects.length;
+    if (type === 'prop' || type === 'fixture') {
+      for (const g of subtractSegs(full, sc.kidSegs)) addSeg(rec, g.acc, g.v0, g.v1);
+      I.ownSolids = subtractRanges(sc.s0, s1, sc.kidSolids);
+      I.ownLights = subtractRanges(sc.l0, l1, sc.kidLights);
+      I.ownObjs = subtractRanges(sc.o0, o1, sc.kidObjs);
+      rec.solids = [sc.s0, s1];
+      if (this._exits.length > sc.e0) I.hasExit = true;
+      if (sc.owner) {
+        for (const g of full) sc.owner.kidSegs.push(g);
+        sc.owner.kidSolids.push([sc.s0, s1]);
+        sc.owner.kidLights.push([sc.l0, l1]);
+        sc.owner.kidObjs.push([sc.o0, o1]);
+        const P = sc.owner.rec, PI = INT.get(P);
+        if (type === 'prop') { PI.kids.push(rec); P.children.push(rec.key); }
+        else PI.hasFixtureKid = true;
+        if (I.hasExit) PI.hasExit = true;
+      }
+    } else if (type === 'container') {
+      for (const g of full) addSeg(rec, g.acc, g.v0, g.v1);
+      rec.solids = [sc.s0, s1];
+    } else {
+      for (const g of full) addSeg(rec, g.acc, g.v0, g.v1);
+    }
+    return rec;
+  }
+  _closeScopes() {
+    if (!this._scopes.length) return;
+    warnOnce('scope-open', '有道具作用域到 finish 都没关（begin 和 end 没配对），自动关掉：' + this._scopes.map(s => s.type).join(' > '));
+    while (this._scopes.length) this._scopeEnd(this._scopes[this._scopes.length - 1].type);
+  }
+  _anchor(list, desc) {
+    const sc = this._ownerScope();
+    if (!sc || !desc) return null;
+    const OF = INT.get(sc.rec).frame, T = this._T;
+    const P = this.point(num(desc.x, 0), num(desc.z, 0));
+    const L = toLocal(OF, P.x, T.y, P.z);
+    // h 是离当前坐标系地面的高度，换成离所属道具枢轴的高度（构件里 push 了 y 的情况）
+    const d = Object.assign({}, desc, { x: L.x, z: L.z, yaw: num(desc.yaw, 0) + T.rot - OF.rot, h: num(desc.h, 0) + T.y - OF.y });
+    if (Array.isArray(desc.head)) {
+      const H = this.point(num(desc.head[0], 0), num(desc.head[1], 0));
+      const HL = toLocal(OF, H.x, T.y, H.z);
+      d.head = [HL.x, HL.z];
+    }
+    const a = cleanAnchor(d, list);
+    if (a) sc.rec[list].push(a);
+    return a;
+  }
 }
 
 // ---------- 已合并几何里的一件：之后可以改颜色、隐藏 ----------
@@ -946,8 +1287,11 @@ function flickerOf(src) {
 Builder.prototype.finish = function () {
   if (this._done) throw new Error('[kit] 同一个 builder 只能 finish 一次');
   this._done = true;
+  this._closeScopes();
   // 工坊钩子：合并几何前让工坊把新增出口、自由墙摆进去；_wsHelper 标记的内部一次性 builder（noclipPatch 那种）跳过
   if (!this._wsHelper && BR.workshop && typeof BR.workshop.decorate === 'function') BR.workshop.decorate(this);
+  // 道具登记收尾（父子链、OBB、体积、出口重叠、能不能拖）：要读顶点，必须在下面把 JS 数组拷进 typed array、释放之前
+  const reg = kitFinalize(this);
   const group = new THREE.Group();
   group.name = 'chunk ' + (this.level ? this.level.id : '?') + ' ' + this.cx + ',' + this.cz;
   let tris = 0;
@@ -1011,8 +1355,13 @@ Builder.prototype.finish = function () {
   const res = {
     group, solids, lights: this._lights, spawnPoints, exits,
     data: this.data,
-    kit: { exits: this._exits, stats: { meshes: group.children.length, triangles: tris, solids: solids.length, lights: this._lights.length, spawnPoints: spawnPoints.length, spawnDropped: dropped } },
+    kit: {
+      exits: this._exits, stats: { meshes: group.children.length, triangles: tris, solids: solids.length, lights: this._lights.length, spawnPoints: spawnPoints.length, spawnDropped: dropped },
+      // 道具登记（8.1 节）：只是数据，不改 solids / exits / 几何。world 用 kit.splitSolids 拆碰撞体、kit.moveProp 挪顶点
+      props: reg.props, containers: reg.containers, fixtures: reg.fixtures,
+    },
   };
+  KIT_RES.set(res.kit, { res, byKey: reg.byKey, objects: this._objects, lights: this._lights });
   const links = this._glowLinks, ups = this._updates;
   if (links.length || ups.length) {
     let t = 0;
@@ -1030,6 +1379,286 @@ Builder.prototype.finish = function () {
   }
   return res;
 };
+
+// =====================================================================
+// 道具登记：finish 收尾 + 拖动时挪顶点（8.1 节）
+// =====================================================================
+// res.kit → { res, byKey, objects, lights }（moveProp 要找独立物体和灯描述；propByKey 查表）
+const KIT_RES = new WeakMap();
+// 被拖离出口圈多远算压着出口（和 world/interact 的 exitMargin 一致）
+const EXIT_MARGIN = 0.4;
+
+function isAncestor(a, b) {   // a 是不是 b 的祖先
+  let r = INT.get(b) && INT.get(b).parent, guard = 0;
+  while (r && guard++ < 64) { if (r === a) return true; const I = INT.get(r); r = I && I.parent; }
+  return false;
+}
+// 一组顶点段在某个枢轴坐标系里的包围盒（finish 时 acc.pos 还是 JS 数组）
+function boundsIn(segs, F) {
+  let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+  for (const g of segs) {
+    const P = g.acc.pos;
+    if (!P) continue;
+    for (let i = g.v0; i < g.v1; i++) {
+      const dx = P[i * 3] - F.x, dz = P[i * 3 + 2] - F.z;
+      const lx = F.c * dx - F.s * dz, lz = F.s * dx + F.c * dz, ly = P[i * 3 + 1] - F.y;
+      if (lx < x0) x0 = lx; if (lx > x1) x1 = lx;
+      if (ly < y0) y0 = ly; if (ly > y1) y1 = ly;
+      if (lz < z0) z0 = lz; if (lz > z1) z1 = lz;
+    }
+  }
+  return x0 <= x1 ? { min: [r4(x0), r4(y0), r4(z0)], max: [r4(x1), r4(y1), r4(z1)] } : null;
+}
+function solidVol(s) {
+  const v = (s.maxX - s.minX) * (s.maxY - s.minY) * (s.maxZ - s.minZ);
+  return Number.isFinite(v) && v > 0 ? v : 0;
+}
+function circleHitsBox(cx, cz, r, minX, minZ, maxX, maxZ) {
+  const qx = cx < minX ? minX : cx > maxX ? maxX : cx, qz = cz < minZ ? minZ : cz > maxZ ? maxZ : cz;
+  return (cx - qx) * (cx - qx) + (cz - qz) * (cz - qz) < r * r;
+}
+// 道具连同子道具（嵌套的、on 挂上来的）
+function subtree(rec, out) {
+  out.push(rec);
+  const I = INT.get(rec);
+  if (I) for (const k of I.kids) if (out.indexOf(k) < 0) subtree(k, out);
+  return out;
+}
+function kitFinalize(b) {
+  const props = b._kitProps, fixtures = b._kitFixtures, containers = b._kitContainers;
+  const byKey = new Map();
+  for (const list of [props, fixtures, containers]) for (const r of list) byKey.set(r.key, r);
+  // ① 显式 on（不是嵌套出来的）：on 等于某个道具 key，或是 '<道具 key>#<格号>'（货架格位）→ 挂成它的子道具；别的区块的不管
+  for (const r of props) {
+    const I = INT.get(r);
+    if (I.parent || !r.on) continue;
+    let P = byKey.get(r.on);
+    if (!P || INT.get(P).type !== 'prop') {
+      P = null;
+      for (const q of props) if (q !== r && r.on.startsWith(q.key + '#') && (!P || q.key.length > P.key.length)) P = q;
+    }
+    if (!P || P === r || isAncestor(r, P)) continue;
+    I.parent = P;
+    INT.get(P).kids.push(r);
+    P.children.push(r.key);
+  }
+  // ② 包围盒：各自枢轴坐标系里，只算自己的顶点段（子道具各有各的）
+  for (const list of [props, fixtures, containers]) for (const r of list) { const I = INT.get(r); r.obb = boundsIn(I.segs, I.frame); }
+  // ③ 体积、压没压出口圈、能不能拖（道具）。都按碰撞体算 —— 碰撞体两种画质完全一样，联机两边结论一致；
+  //    没有碰撞体的才退回顶点包围盒（体积 ×0.5）
+  const solids = b._solids, exits = b._exits.map(h => h.desc);
+  const ownVol = new Map();
+  for (const r of props) {
+    let v = 0;
+    for (const rg of INT.get(r).ownSolids) for (let i = rg[0]; i < rg[1]; i++) v += solidVol(solids[i]);
+    ownVol.set(r, v);
+  }
+  for (const r of props) {
+    const tree = subtree(r, []);
+    let vol = 0, hasSolid = false, overlap = false, exitInside = false, fixtureKid = false;
+    for (const q of tree) {
+      const I = INT.get(q);
+      vol += ownVol.get(q) || 0;
+      if (I.hasExit) exitInside = true;
+      if (I.hasFixtureKid) fixtureKid = true;
+      for (const rg of I.ownSolids) for (let i = rg[0]; i < rg[1]; i++) {
+        const s = solids[i];
+        hasSolid = true;
+        for (const e of exits) if (!overlap && circleHitsBox(e.x, e.z, num(e.radius, 1) + EXIT_MARGIN, s.minX, s.minZ, s.maxX, s.maxZ)) overlap = true;
+      }
+    }
+    if (!hasSolid) {
+      for (const q of tree) {
+        if (!q.obb) continue;
+        const F = INT.get(q).frame;
+        let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+        for (const lx of [q.obb.min[0], q.obb.max[0]]) for (const lz of [q.obb.min[2], q.obb.max[2]]) {
+          const X = b.ox + F.x + F.c * lx + F.s * lz, Z = b.oz + F.z - F.s * lx + F.c * lz;
+          if (X < x0) x0 = X; if (X > x1) x1 = X; if (Z < z0) z0 = Z; if (Z > z1) z1 = Z;
+        }
+        for (const e of exits) if (!overlap && circleHitsBox(e.x, e.z, num(e.radius, 1) + EXIT_MARGIN, x0, z0, x1, z1)) overlap = true;
+      }
+      const o = r.obb;
+      if (o) vol = (o.max[0] - o.min[0]) * (o.max[1] - o.min[1]) * (o.max[2] - o.min[2]) * 0.5;
+    }
+    r.volume = r4(vol);
+    r.exitOverlap = overlap;
+    r.draggable = INT.get(r).wantDrag && !exitInside && !overlap && !r.plugged && !fixtureKid;
+  }
+  return { props, containers, fixtures, byKey };
+}
+
+// ---------- 运行时：挪顶点、碰撞体 ----------
+function meshOf(acc) {
+  const ps = acc.pieces;
+  for (let i = 0; i < ps.length; i++) if (ps[i].mesh) return ps[i].mesh;
+  return null;
+}
+// 累加器里第一个 start ≥ v0 的件（件按 start 递增排列）
+function firstPiece(acc, v0) {
+  const ps = acc.pieces;
+  let lo = 0, hi = ps.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (ps[mid].start < v0) lo = mid + 1; else hi = mid; }
+  return lo;
+}
+// 生成时的顶点坐标（第一次挪之前拷一份）：被 setVisible(false) 藏起来的件，真坐标在它的 _saved 里
+function baseOf(g, arr) {
+  const B = arr.slice(g.v0 * 3, g.v1 * 3);
+  const ps = g.acc.pieces;
+  for (let i = firstPiece(g.acc, g.v0); i < ps.length && ps[i].start < g.v1; i++) {
+    const pc = ps[i];
+    if (pc._saved && pc.start + pc.count <= g.v1) B.set(pc._saved, (pc.start - g.v0) * 3);
+  }
+  return B;
+}
+// 一条记录现在相对生成时的总位移：自己的 t 加上父链（子道具跟着父道具走；容器、部件跟着所属道具走）
+function effOf(rec) {
+  let dx = 0, dy = 0, dz = 0, r = rec, guard = 0;
+  while (r && guard++ < 64) {
+    if (r.t) { dx += num(r.t.dx, 0); dz += num(r.t.dz, 0); dy += num(r.t.dy, 0); }
+    const I = INT.get(r);
+    r = I && I.parent;
+  }
+  return { dx, dy, dz };
+}
+function writeOwn(rec, E, info) {
+  const I = INT.get(rec);
+  for (const g of I.segs) {
+    const mesh = meshOf(g.acc);
+    if (!mesh) continue;
+    const attr = mesh.geometry.attributes.position, arr = attr.array;
+    if (!g.base) g.base = baseOf(g, arr);
+    const B = g.base;
+    for (let i = g.v0 * 3, k = 0, e = g.v1 * 3; i < e; i += 3, k += 3) {
+      arr[i] = B[k] + E.dx; arr[i + 1] = B[k + 1]; arr[i + 2] = B[k + 2] + E.dz;
+    }
+    // 藏起来的件：新坐标写进 _saved（之后 setVisible(true) 恢复的是挪过的位置），网格里仍叠成一点
+    const ps = g.acc.pieces;
+    for (let i = firstPiece(g.acc, g.v0); i < ps.length && ps[i].start < g.v1; i++) {
+      const pc = ps[i];
+      if (!pc._saved || pc.start + pc.count > g.v1) continue;
+      const s = pc.start * 3, e = s + pc.count * 3;
+      pc._saved = arr.slice(s, e);
+      const x = arr[s], y = arr[s + 1], z = arr[s + 2];
+      for (let j = s; j < e; j += 3) { arr[j] = x; arr[j + 1] = y; arr[j + 2] = z; }
+    }
+    markRange(attr, g.v0, g.v1 - g.v0);
+    // 拖动中关视锥裁剪：包围球还是生成时的，道具拖出球外会被整块裁掉"突然消失"。settleProp 时重算再打开
+    mesh.frustumCulled = false;
+    const ud = mesh.userData;
+    (ud.kitDrag || (ud.kitDrag = new Set())).add(rec);
+    (I.meshes || (I.meshes = new Set())).add(mesh);
+  }
+  if (info) {
+    if (I.ownObjs.length) {
+      if (!I.objBase) { I.objBase = []; for (const rg of I.ownObjs) for (let i = rg[0]; i < rg[1]; i++) { const o = info.objects[i]; if (o) I.objBase.push([o, o.position.x, o.position.z]); } }
+      for (const ob of I.objBase) { ob[0].position.x = ob[1] + E.dx; ob[0].position.z = ob[2] + E.dz; ob[0].updateMatrix(); }
+    }
+    if (I.ownLights.length) {
+      if (!I.lightBase) { I.lightBase = []; for (const rg of I.ownLights) for (let i = rg[0]; i < rg[1]; i++) { const L = info.lights[i]; if (L) I.lightBase.push([L, L.x, L.z]); } }
+      for (const lb of I.lightBase) { lb[0].x = lb[1] + E.dx; lb[0].z = lb[2] + E.dz; }
+    }
+  }
+}
+function writeTree(rec, info) {
+  for (const q of subtree(rec, [])) writeOwn(q, effOf(q), info);
+}
+function asT(t, dzLegacy) {
+  if (typeof t === 'number') return { dx: num(t, 0), dy: 0, dz: num(+dzLegacy, 0), ry: 0 };
+  const o = t || {};
+  return { dx: num(o.dx, 0), dy: num(o.dy, 0), dz: num(o.dz, 0), ry: num(o.ry, 0) };
+}
+
+// kit.moveProp(res, rec, {dx, dy, dz, ry})：把道具（连同子道具、所属容器和部件的顶点）摆到"相对生成位置"的这个变换。
+// 是绝对量，不是增量：world.movePropTo 每帧传"手点 − 生成时枢轴"，levelState 存的也是它。
+// A1 只实现 dx、dz（dy、ry 记进 rec.t 但不生效：D2 只转顶点、F1 带 OBB 再实现）。也接受旧写法 moveProp(res, rec, dx, dz)。
+// 第一次挪时从合并网格拷一份基准，之后都从基准算，误差不累积；用 updateRange 局部上传。挪完（松手、建块套用 levelState 后）调 settleProp
+function moveProp(res, rec, t, dzLegacy) {
+  const I = rec && INT.get(rec);
+  if (!I || I.type !== 'prop') return false;
+  const T = asT(t, dzLegacy);
+  if (T.dy !== 0 || T.ry !== 0) warnOnce('moveProp-dy-ry', 'kit.moveProp：这一版只实现 dx/dz，dy、ry 先记下不生效（D2/F1 再实现）');
+  rec.t.dx = T.dx; rec.t.dy = T.dy; rec.t.dz = T.dz; rec.t.ry = T.ry;
+  writeTree(rec, res && res.kit ? KIT_RES.get(res.kit) : null);
+  return true;
+}
+// 松手 / 套用完：重算包围球、恢复视锥裁剪（同一个 mesh 上还有别的道具正被拖着时先不恢复）
+function settleProp(rec) {
+  const I = rec && INT.get(rec);
+  if (!I) return false;
+  const meshes = new Set();
+  for (const q of subtree(rec, [])) {
+    const QI = INT.get(q);
+    if (!QI.meshes) continue;
+    QI.meshes.forEach(m => { meshes.add(m); if (m.userData.kitDrag) m.userData.kitDrag.delete(q); });
+    QI.meshes = null;
+  }
+  meshes.forEach(m => {
+    m.geometry.computeBoundingSphere();
+    if (m.geometry.boundingBox) m.geometry.computeBoundingBox();
+    if (!m.userData.kitDrag || m.userData.kitDrag.size === 0) m.frustumCulled = true;
+  });
+  return true;
+}
+// kit.propSolids(res, rec, t?)：这件道具自己的碰撞体（不含子道具，子道具各有各的 key），按 t（缺省 = rec.t）加父链位移平移后的 AABB 副本。
+// 不改 res.solids。也接受旧写法 propSolids(res, rec, dx, dz)
+function propSolids(res, rec, t, dzLegacy) {
+  const I = rec && INT.get(rec);
+  const solids = res && Array.isArray(res.solids) ? res.solids : null;
+  if (!I || !solids) return [];
+  let E = effOf(rec);
+  if (t != null && rec.t) {
+    const T = asT(t, dzLegacy);
+    E = { dx: E.dx - rec.t.dx + T.dx, dz: E.dz - rec.t.dz + T.dz };
+  }
+  const out = [];
+  for (const rg of I.ownSolids) for (let i = rg[0]; i < rg[1]; i++) {
+    const s = solids[i];
+    if (!s) continue;
+    out.push({ minX: s.minX + E.dx, minY: s.minY, minZ: s.minZ + E.dz, maxX: s.maxX + E.dx, maxY: s.maxY, maxZ: s.maxZ + E.dz });
+  }
+  return out;
+}
+// kit.splitSolids(res) → { statics, owners: [{ rec, key, solids }] }：区块碰撞体按"属于哪件道具/设备"拆开。
+// statics 用区块 key 登记；每个 owner 用 owner.key（= rec.skey，`${chunkKey}#p${n}` / '#f'）登记，solids 已按当前 rec.t 平移
+function splitSolids(res) {
+  const solids = res && Array.isArray(res.solids) ? res.solids : [];
+  const k = res && res.kit;
+  const own = new Array(solids.length).fill(false);
+  const owners = [];
+  if (k) {
+    for (const list of [k.props || [], k.fixtures || []]) for (const r of list) {
+      const I = INT.get(r);
+      if (!I || !I.ownSolids.length) continue;
+      for (const rg of I.ownSolids) for (let i = rg[0]; i < rg[1]; i++) own[i] = true;
+      owners.push({ rec: r, key: r.skey, solids: propSolids(res, r) });
+    }
+  }
+  const statics = [];
+  for (let i = 0; i < solids.length; i++) if (!own[i]) statics.push(solids[i]);
+  return { statics, owners };
+}
+// kit.toWorld(rec, local, out?)：记录枢轴坐标系里的点（格位 slots、座位 seats、躺位 beds、部件 pivot）→ 世界坐标，带上现在的位移。
+// local 可以是 [x, y, z] 或 { x, y, z, yaw, h }（h 当 y 用）；返回 { x, y, z, yaw }（yaw 是玩家约定的世界朝向）。
+// 部件的 pivot 用所属道具的记录换算：kit.toWorld(prop, part.pivot)
+function toWorld(rec, local, out) {
+  const o = out || {};
+  const I = rec && INT.get(rec);
+  if (!I || !local) return null;
+  const lx = num(Array.isArray(local) ? local[0] : local.x, 0);
+  const ly = num(Array.isArray(local) ? local[1] : local.y != null ? local.y : local.h, 0);
+  const lz = num(Array.isArray(local) ? local[2] : local.z, 0);
+  const P = rec.pivot, c = Math.cos(P.rot), s = Math.sin(P.rot), E = effOf(rec);
+  o.x = P.x + c * lx + s * lz + E.dx;
+  o.y = P.y + ly + E.dy;
+  o.z = P.z - s * lx + c * lz + E.dz;
+  o.yaw = P.rot + num(Array.isArray(local) ? 0 : local.yaw, 0);
+  return o;
+}
+function propByKey(res, key) {
+  const K = res && res.kit && KIT_RES.get(res.kit);
+  return K ? K.byKey.get(String(key)) || null : null;
+}
 
 // =====================================================================
 // 格子布局（跨区块无缝）
@@ -1595,11 +2224,22 @@ function wear(b, hi, o, follow) {
     const fin = b.finish;
     b.finish = function () { flushWear(this); return fin.apply(this, arguments); };   // 只包这一个 builder 实例，Builder 本身不动
   }
-  q.push({ T: b._T, o: Object.assign({ srgb: false }, o), follow: follow || null });
+  // 记下当时开着的登记作用域：贴花晚到 finish 才画，顶点段要补记给当时所在的道具/容器/部件（拖动时跟着走）
+  q.push({ T: b._T, o: Object.assign({ srgb: false }, o), follow: follow || null, scopes: b._scopes && b._scopes.length ? b._scopes.slice() : null });
+}
+// 晚画的贴花补记进作用域：容器、部件都记；道具/设备只记最内层那个（外层道具的 spans 只含自己的顶点）
+function attributeLate(scopes, p) {
+  let inner = null;
+  for (let i = scopes.length - 1; i >= 0; i--) if (scopes[i].type === 'prop' || scopes[i].type === 'fixture') { inner = scopes[i]; break; }
+  for (const sc of scopes) {
+    if (!sc.rec || sc.dead) continue;
+    if (sc.type === 'container' || sc.type === 'part' || sc === inner) addSeg(sc.rec, p.acc, p.start, p.start + p.count);
+  }
 }
 function flushWear(b) {
   const q = b._kitWear;
   b._kitWear = null;
+  if (b._closeScopes) b._closeScopes();
   if (!q || !q.length) return;
   let n = b._objects.length, has = false;
   b._accs.forEach((a, k) => { if (a.n && a.idx && a.idx.length) { n++; if (k === 'kit:decal') has = true; } });
@@ -1608,6 +2248,7 @@ function flushWear(b) {
   for (let i = 0; i < q.length; i++) {
     b._T = q[i].T;                      // 记账时的坐标系（构件 push 进去的那一层）
     const p = decal(b, q[i].o);
+    if (p && q[i].scopes) attributeLate(q[i].scopes, p);
     const f = q[i].follow;
     if (p && f) {
       linkVisible(f, [p]);
@@ -2140,7 +2781,28 @@ function puddle(b, x, z, rot, opts) {
   return { piece };
 }
 
-// 纸箱（可叠 stack 个，每层按位置哈希轻微错角）
+// ---------- kit 构件的登记（8.1 节） ----------
+// 构件自己包作用域（在 push 进自己坐标系之后），层级不用再包。opts.prop：false = 不登记成道具/设备（层级在外面自己包了，或它在这里算房屋结构）；
+// 对象 = 覆盖缺省登记字段（label、draggable、why、seats、key……）。opts.container 同理管容器（loot、locked、strapped……）。
+// 登记调用全部在 hiDetail 分支外面：key、kind、parts 的个数和顺序两种画质一样，只有 spans 不同
+function regMeta(def, over) { return over && typeof over === 'object' ? Object.assign({}, def, over) : def; }
+function regBegin(b, o, type, def) {
+  if (o.prop === false) return null;
+  return type === 'fixture' ? b.beginFixture(regMeta(def, o.prop)) : b.beginProp(regMeta(def, o.prop));
+}
+function regEnd(b, rec) {
+  if (!rec) return;
+  if (INT.get(rec).type === 'fixture') b.endFixture(); else b.endProp();
+}
+function contBegin(b, o, def) {
+  if (o.container === false) return null;
+  const d = o.locked != null ? Object.assign({}, def, { locked: !!o.locked }) : def;
+  return b.beginContainer(regMeta(d, o.container));
+}
+function contEnd(b, rec) { if (rec) b.endContainer(); }
+
+// 纸箱（可叠 stack 个，每层按位置哈希轻微错角）。登记：整摞一个道具「纸箱」；每只箱子一个容器 'carton'（on = 下面那只的 key，
+// 给 D1 现算"上面压着"；一摞只有最上面那只能开）
 function box(b, x, z, rot, opts) {
   const o = opts || {};
   const W = num(o.w, 0.5), Hh = num(o.h, 0.38), D = num(o.d, 0.4);
@@ -2148,8 +2810,14 @@ function box(b, x, z, rot, opts) {
   const stack = Math.max(1, o.stack | 0 || 1);
   const hi = hiDetail(b, o);
   b.push(x, z, rot);
+  const reg = regBegin(b, o, 'prop', { kind: 'box', label: '纸箱' });
+  let below = null;
   for (let k = 0; k < stack; k++) {
     b.push(0, 0, (posHash(b, k) - 0.5) * 0.35, k * Hh);
+    const cr = contBegin(b, o, {
+      kind: 'carton', label: '纸箱', dims: [W, Hh, D], color: c, bev: { r: Math.min(0.014, W * 0.05, D * 0.05), edges: 'vertical' },
+      loot: 'carton', slots: [{ x: 0, y: 0.02, z: 0 }], stack: k, on: below,
+    });
     // 高画质：四条竖棱倒 1.4 cm（纸箱的折角是圆的）；上棱不倒 —— 封箱胶带和中缝是横跨顶面的，倒了会悬在斜面外面
     part(b, 0, 0, 0, W, Hh, D, c, bv(hi, Math.min(0.014, W * 0.05, D * 0.05), 'vertical', { faces: 'noBottom' }));
     part(b, 0, Hh, 0, 0.07, 0.004, D + 0.004, PC.tape);
@@ -2183,19 +2851,27 @@ function box(b, x, z, rot, opts) {
         }
       }
     }
+    contEnd(b, cr);
+    if (cr) below = cr.key;
     b.pop();
   }
   if (o.solid !== false) b.solid(-W / 2 - 0.06, 0, -D / 2 - 0.06, W / 2 + 0.06, Hh * stack, D / 2 + 0.06);
+  regEnd(b, reg);
   b.pop();
-  return {};
+  return { rec: reg };
 }
 
-// 木箱：箱体 + 12 条包边木条
+// 木箱：箱体 + 12 条包边木条。登记：道具「木箱」+ 容器 'crate'（盖子怎么撬开由 D1 按容器记录画，这里不拆盖子）
 function crate(b, x, z, rot, opts) {
   const o = opts || {};
   const S = num(o.size, 0.8), c = o.color != null ? o.color : 0x8a6a42, e = 0x6a4f30, t = 0.07;
   const hi = hiDetail(b, o);
   b.push(x, z, rot);
+  const reg = regBegin(b, o, 'prop', { kind: 'crate', label: '木箱' });
+  const cr = contBegin(b, o, {
+    kind: 'crate', label: '木箱', dims: [S, S, S], color: c, bev: { r: Math.min(0.018, t * 0.26), edges: 'vertical' },
+    loot: 'crate', slots: [{ x: 0, y: 0.05, z: 0 }],
+  });
   part(b, 0, 0, 0, S, S, S, c, { faces: 'noBottom' });
   const h = S / 2 + 0.005;
   // 角柱和上压边比箱顶高出一点：原来这三者的顶面都落在 y=S 同一个平面上，深度缓冲分不出先后，
@@ -2242,17 +2918,23 @@ function crate(b, x, z, rot, opts) {
     }
   }
   if (o.solid !== false) b.solid(-S / 2, 0, -S / 2, S / 2, S, S / 2);
+  contEnd(b, cr);
+  regEnd(b, reg);
   b.pop();
-  return {};
+  return { rec: reg };
 }
 
-// 办公桌：桌面 + 四腿 + 挡板 + 右侧抽屉柜；monitor: true 放一台 CRT
+// 办公桌：桌面 + 四腿 + 挡板 + 右侧抽屉柜；monitor: true 放一台 CRT。
+// 登记：没显示器 = 道具「办公桌」（能拖）；有显示器 = 固定设备「电脑桌」（插着电，拖不动），显示器是 part 'monitor'（电源键）。
+// 右侧三个抽屉都是 part（slide，一律 locked：桌子太多，放东西补给会泛滥 —— 只给「锁着」的反馈）
 function desk(b, x, z, rot, opts) {
   const o = opts || {};
   const W = num(o.w, 1.4), D = num(o.d, 0.7), Hh = num(o.h, 0.75);
   const hi = hiDetail(b, o);
   const topC = o.color != null ? o.color : PC.laminate;
   b.push(x, z, rot);
+  const reg = o.monitor ? regBegin(b, o, 'fixture', { kind: 'desk', label: '电脑桌', plugged: true })
+    : regBegin(b, o, 'prop', { kind: 'desk', label: '办公桌' });
   // 高画质：桌面上一圈棱倒 1 cm（斜面接灯光，远看一道亮边），抽屉柜四条竖棱倒 8 mm
   const tr = hi ? 0.01 : 0;
   part(b, 0, Hh - 0.03, 0, W, 0.03, D, topC, bv(hi, tr, 'top'));
@@ -2261,16 +2943,21 @@ function desk(b, x, z, rot, opts) {
   const dx = W / 2 - 0.24, dh = (Hh - 0.03) / 3;
   part(b, dx, 0, 0, 0.4, Hh - 0.03, D - 0.06, 0xb3a78e, bv(hi, 0.008, 'vertical', { faces: 'noBottom' }));
   for (let k = 1; k <= 2; k++) part(b, dx, k * (Hh - 0.03) / 3, D / 2 - 0.03, 0.38, 0.008, 0.006, 0x6e6658);
-  if (!hi) {
-    for (let k = 0; k < 3; k++) part(b, dx, (k + 0.6) * (Hh - 0.03) / 3, D / 2 - 0.02, 0.1, 0.02, 0.02, 0x3d4044);
-  } else {
-    // ① 抽屉：三块独立的抽屉面板（缝里露出原来那两道深色线）+ 贴在面板上的拉手 + 顶层抽屉右上角的锁芯
-    const fz = D / 2 - 0.03;
-    for (let k = 0; k < 3; k++) {
+  // 三个抽屉（k = 0 最下面）：登记在画质分支外面，两档都是同名同序 3 个 part。
+  // 低画质只有拉手；高画质 ① 三块独立的抽屉面板（缝里露出原来那两道深色线）+ 贴在面板上的拉手 + 顶层抽屉右上角的锁芯
+  const fz = D / 2 - 0.03;
+  for (let k = 0; k < 3; k++) {
+    b.part({ type: 'slide', name: 'drawer' + k, label: '抽屉', pivot: [dx, k * dh + dh / 2, fz], travel: 0.3, locked: true, why: '锁着' }, () => {
+      if (!hi) {
+        part(b, dx, (k + 0.6) * (Hh - 0.03) / 3, D / 2 - 0.02, 0.1, 0.02, 0.02, 0x3d4044);
+        return;
+      }
       part(b, dx, k * dh + 0.006, fz + 0.006, 0.376, dh - 0.012, 0.012, 0xc1b59b, { faces: ['pz', 'py', 'ny', 'px', 'nx'] });   // 比缝里的深色线窄 4 mm，侧面不共面
       part(b, dx, k * dh + dh * 0.62, fz + 0.02, 0.12, 0.022, 0.016, 0x3d4044, { faces: ['pz', 'py', 'ny', 'px', 'nx'] });
-    }
-    face(b, dx + 0.15, 2 * dh + dh * 0.7, fz + 0.014, 0.018, 0.018, '+z', 0xb9bcbf);
+      if (k === 2) face(b, dx + 0.15, 2 * dh + dh * 0.7, fz + 0.014, 0.018, 0.018, '+z', 0xb9bcbf);
+    });
+  }
+  if (hi) {
     // ② 桌沿封边：桌面四周一圈深色封边条（凸出 1.5 mm），只包到桌面侧面倒角斜面的下沿 —— 上面那道斜面露出桌面本色，是一道亮边
     const eb = shade(topC, 0.55), ey = Hh - 0.0305, eh = 0.0305 - tr;
     for (const sz of [-1, 1]) part(b, 0, ey, sz * (D / 2 + 0.0015), W + 0.006, eh, 0.003, eb, { faces: [sz > 0 ? 'pz' : 'nz', 'py'] });
@@ -2280,20 +2967,26 @@ function desk(b, x, z, rot, opts) {
   }
   if (o.monitor) {
     const my = hi ? Hh + 0.025 : Hh;
-    part(b, -0.15, my, -0.08, 0.42, 0.36, 0.4, 0xd8d0bd, bv(hi, 0.012, 'all'));   // CRT 机身 12 条棱倒 1.2 cm（塑料外壳是圆角的）
-    b.plane(-0.15, my + 0.05, 0.121, 0.32, 0.25, 'kit:glow', { facing: '+z', uv: 'solid', color: o.screen != null ? rgb(o.screen) : 0.03 });
+    // 显示器 part：枢轴在屏幕中心（高画质有底座垫高 2.5 cm，两档差这一点 —— 只给画屏幕用，key 不受影响）
+    b.part({ type: 'button', name: 'monitor', label: '显示器', pivot: [-0.15, my + 0.175, 0.121], screen: { w: 0.32, h: 0.25, normal: [0, 0, 1] } }, () => {
+      part(b, -0.15, my, -0.08, 0.42, 0.36, 0.4, 0xd8d0bd, bv(hi, 0.012, 'all'));   // CRT 机身 12 条棱倒 1.2 cm（塑料外壳是圆角的）
+      b.plane(-0.15, my + 0.05, 0.121, 0.32, 0.25, 'kit:glow', { facing: '+z', uv: 'solid', color: o.screen != null ? rgb(o.screen) : 0.03 });
+      if (hi) {
+        // 显示器：底座（把机身垫高 2.5 cm）、后壳凸起、屏幕四周深一圈的边框、电源灯和按钮
+        part(b, -0.15, Hh, -0.06, 0.26, 0.025, 0.24, 0xc8c0ab, { faces: 'noBottom' });
+        part(b, -0.15, my + 0.05, -0.3, 0.3, 0.25, 0.04, 0xcdc5b1, { faces: ['nz', 'py', 'ny', 'px', 'nx'] });
+        const bz = 0.1225, bc = 0xb4ac98;
+        face(b, -0.15, my + 0.03, bz, 0.36, 0.02, '+z', bc);
+        face(b, -0.15, my + 0.30, bz, 0.36, 0.02, '+z', bc);
+        face(b, -0.32, my + 0.05, bz, 0.02, 0.25, '+z', bc);
+        face(b, 0.02, my + 0.05, bz, 0.02, 0.25, '+z', bc);
+        // 电源灯、按钮在机身正面倒角斜面之上、下边框之下（离斜面上沿 ≥ 3 mm，不悬在斜面外）
+        face(b, 0.01, my + 0.016, bz, 0.012, 0.008, '+z', [0.3, 1.4, 0.4], 'kit:glow');
+        face(b, -0.02, my + 0.0155, bz, 0.02, 0.012, '+z', 0x6f6a5e);
+      }
+    });
     if (hi) {
-      // 显示器：底座（把机身垫高 2.5 cm）、后壳凸起、屏幕四周深一圈的边框、电源灯和按钮；桌上一副键盘 + 鼠标
-      part(b, -0.15, Hh, -0.06, 0.26, 0.025, 0.24, 0xc8c0ab, { faces: 'noBottom' });
-      part(b, -0.15, my + 0.05, -0.3, 0.3, 0.25, 0.04, 0xcdc5b1, { faces: ['nz', 'py', 'ny', 'px', 'nx'] });
-      const bz = 0.1225, bc = 0xb4ac98;
-      face(b, -0.15, my + 0.03, bz, 0.36, 0.02, '+z', bc);
-      face(b, -0.15, my + 0.30, bz, 0.36, 0.02, '+z', bc);
-      face(b, -0.32, my + 0.05, bz, 0.02, 0.25, '+z', bc);
-      face(b, 0.02, my + 0.05, bz, 0.02, 0.25, '+z', bc);
-      // 电源灯、按钮在机身正面倒角斜面之上、下边框之下（离斜面上沿 ≥ 3 mm，不悬在斜面外）
-      face(b, 0.01, my + 0.016, bz, 0.012, 0.008, '+z', [0.3, 1.4, 0.4], 'kit:glow');
-      face(b, -0.02, my + 0.0155, bz, 0.02, 0.012, '+z', 0x6f6a5e);
+      // 桌上一副键盘 + 鼠标
       part(b, -0.15, Hh, 0.215, 0.44, 0.022, 0.15, 0xcfc6b0, bv(hi, 0.006, 'top', { faces: 'noBottom' }));
       face(b, -0.15, Hh + 0.024, 0.22, 0.41, 0.11, 'up', 0xa39b88);
       for (let r = 0; r < 3; r++) face(b, -0.15, Hh + 0.026, 0.186 + r * 0.03, 0.4, 0.004, 'up', 0x6f6a5e);
@@ -2319,20 +3012,26 @@ function desk(b, x, z, rot, opts) {
     }
   }
   if (o.solid !== false) b.solid(-W / 2, 0, -D / 2, W / 2, Hh, D / 2);
+  regEnd(b, reg);
   b.pop();
-  return {};
+  return { rec: reg };
 }
 
-// 办公椅：座面、靠背（在 −Z）、气压杆、五爪脚
+// 办公椅：座面、靠背（在 −Z）、气压杆、五爪脚。登记：道具「椅子」+ 一个座位（面朝 +Z，座面高 0.5 m，转椅）
+// + swivel 部件 'seat'（座面、靠背、扶手、底下的调节机构，绕气压杆转；气压杆和五爪脚不转）
+const CHAIR_SWIVEL = { type: 'swivel', name: 'seat', label: '座面', pivot: [0, 0.42, 0], axis: [0, 1, 0], travel: 0 };
 function chair(b, x, z, rot, opts) {
   const o = opts || {};
   const c = o.color != null ? o.color : PC.fabric;
   const hi = hiDetail(b, o);
   b.push(x, z, rot);
+  const reg = regBegin(b, o, 'prop', { kind: 'chair', label: '椅子', seats: [{ x: 0, z: 0, yaw: Math.PI, h: 0.5, swivel: true }] });
   // 高画质：坐垫、靠背 12 条棱都倒 2 cm（软包的边是鼓起来的圆边）
-  part(b, 0, 0.42, 0, 0.46, 0.08, 0.46, c, bv(hi, 0.02));
-  part(b, 0, 0.56, -0.22, 0.44, 0.48, 0.06, c, bv(hi, 0.02));
-  part(b, 0, 0.44, -0.26, 0.05, 0.2, 0.03, PC.dark);
+  b.part(CHAIR_SWIVEL, () => {
+    part(b, 0, 0.42, 0, 0.46, 0.08, 0.46, c, bv(hi, 0.02));
+    part(b, 0, 0.56, -0.22, 0.44, 0.48, 0.06, c, bv(hi, 0.02));
+    part(b, 0, 0.44, -0.26, 0.05, 0.2, 0.03, PC.dark);
+  });
   b.cylinder(0, 0.08, 0, 0.03, 0.34, 'kit:prop', { color: PC.dark, uv: 'stretch', solid: false, segments: 6 });
   for (let k = 0; k < 5; k++) {
     b.push(0, 0, k * TAU / 5);
@@ -2340,7 +3039,9 @@ function chair(b, x, z, rot, opts) {
     if (hi) part(b, 0, 0, 0.275, 0.03, 0.032, 0.05, 0x1a1a1c, { faces: 'noBottom' });   // ① 五爪脚末端的脚轮
     b.pop();
   }
-  if (hi) {
+  // 高画质的软包面、腰托、调节机构、扶手都跟着座面转：并进同一个 swivel 部件（同名 part 合并）
+  b.part(CHAIR_SWIVEL, () => {
+    if (!hi) return;
     // ② 坐垫、靠背上浅一号的软包面（四周一圈原色就是缝线边）
     const pc = shade(c, 1.2);
     face(b, 0, 0.502, 0.01, 0.38, 0.38, 'up', pc);
@@ -2353,13 +3054,15 @@ function chair(b, x, z, rot, opts) {
       part(b, sx * 0.245, 0.43, -0.04, 0.03, 0.23, 0.04, PC.dark, { faces: ['px', 'nx', 'pz', 'nz'] });
       part(b, sx * 0.245, 0.66, -0.02, 0.06, 0.025, 0.24, 0x2a2c2f);
     }
-  }
+  });
   if (o.solid !== false) b.solid(-0.28, 0, -0.28, 0.28, 1.0, 0.28);
+  regEnd(b, reg);
   b.pop();
-  return {};
+  return { rec: reg };
 }
 
-// 隔间：背板 + 左右隔板（正面 +Z 敞开），默认带桌椅
+// 隔间：背板 + 左右隔板（正面 +Z 敞开），默认带桌椅。
+// 登记：隔板算房屋结构，不登记（整个隔间的包围盒是个空心大框，登记了会挡住准心对里面的桌椅）；里面的桌、椅各自登记成道具/设备
 function cubicle(b, x, z, rot, opts) {
   const o = opts || {};
   const W = num(o.w, 2), D = num(o.d, 2), Hh = num(o.h, 1.4), t = 0.06;
@@ -2460,26 +3163,67 @@ function windowProp(b, x, z, rot, opts) {
   return { pane };
 }
 
-// 自动售货机：机身 + 发光展示窗 + 一排排饮料 + 投币面板；light: false 可去掉那盏小灯
+// 自动售货机：机身 + 发光展示窗 + 一排排饮料 + 投币面板；light: false 可去掉那盏小灯。
+// 登记成固定设备（不是道具）：三百多公斤又插着电，拖不动（改了原方案"售货机能拖"）。
+// part 'select'（选货键：投币面板 + 指示灯 + 高画质的按键）、'flap'（取货口翻板，铰链在上沿，往里翻）；
+// vend：每台每 60 秒出一件、取货口最多放 2 件（D1 的 BR.devices 读它，冷却按台、联机共享），tray 是取货口里两个落点（枢轴坐标系）
+// 会出货的机器（opts.items = 出的物品类型，2026-10-02 起 L7 入口房间那台；world.js 的最小出货逻辑认 vend.items）：
+//   展示窗按会出的东西上色（只换颜色，不加顶点：上两排第一种、下三排最后一种）；取货口是真的开口——0.32 m 高、0.2 m 深的暗色槽，
+//   没有翻板，掉出来的东西落在槽底（vend.tray 的 y 就是槽底），站着就看得见、对得准。不传 items 的（L20、L4、Ldev，等 D1）和以前一模一样。
+// opts.cord：层级自己画了插头和墙上的插座（看得见电线），登记里记 cord: true；没画的，world 显示原因时不说「插着电」
+const VEND_STOCK = { food_ration: 0x5c6234, almond_water: 0xbdb3e3 };   // 罐头口粮的橄榄绿罐身、杏仁水淡紫标签的透明瓶
+const VEND_BIN = { y0: 0.1, y1: 0.42, d: 0.2 };
 function vending(b, x, z, rot, opts) {
   const o = opts || {};
   const W = 0.9, Hh = 1.8, D = 0.8, c = o.color != null ? o.color : 0xb3202a;
   const pal = [0xd23b2f, 0x2f6fd2, 0xe0c341, 0x3fa34d, 0xeeeeee, 0x7b3fa0];
   const hi = hiDetail(b, o);
+  const gx = -0.12, gw = 0.58, fz = D / 2;
+  const items = Array.isArray(o.items) ? o.items.filter(t => typeof t === 'string' && t) : [];
+  const bin = items.length > 0;
   b.push(x, z, rot);
-  // 机身：高画质四条竖棱倒 1 cm（正面展示窗外框贴边到 ±0.44，倒角再大框就悬在斜面外了）
-  part(b, 0, 0, 0, W, Hh, D, c, bv(hi, 0.01, 'vertical', { faces: 'noBottom' }));
-  const gx = -0.12, gw = 0.58;
+  const def = {
+    kind: 'vending', label: '售货机', plugged: true, why: '插着电，三百多公斤，拖不动',
+    vend: bin
+      ? { cooldown: 60, trayMax: 2, tray: [[gx - 0.14, VEND_BIN.y0 + 0.002, fz - 0.09], [gx + 0.14, VEND_BIN.y0 + 0.002, fz - 0.09]], items: items.slice() }
+      : { cooldown: 60, trayMax: 2, tray: [[gx - 0.12, 0.14, fz - 0.08], [gx + 0.12, 0.14, fz - 0.08]] },
+  };
+  if (o.cord) def.cord = true;
+  const reg = regBegin(b, o, 'fixture', def);
+  const SELECT = { type: 'button', name: 'select', label: '选货键', pivot: [0.33, 1.045, fz + 0.0225] };
+  // 机身：高画质四条竖棱倒 1 cm（正面展示窗外框贴边到 ±0.44，倒角再大框就悬在斜面外了）。
+  // 出货的机器正面要开取货口：机身不画正面（前两条竖棱也就不倒），正面用四块面围出开口，开口里是暗色的槽
+  if (bin) {
+    const y0 = VEND_BIN.y0, y1 = VEND_BIN.y1, bd = VEND_BIN.d, bx0 = gx - gw / 2, bx1 = gx + gw / 2, dkb = 0x1c1c1e;
+    part(b, 0, 0, 0, W, Hh, D, c, bv(hi, 0.01, 'vertical', { faces: ['px', 'nx', 'py', 'nz'] }));
+    face(b, 0, 0, fz, W, y0, '+z', c);
+    face(b, 0, y1, fz, W, Hh - y1, '+z', c);
+    face(b, (bx0 - W / 2) / 2, y0, fz, bx0 + W / 2, y1 - y0, '+z', c);
+    face(b, (bx1 + W / 2) / 2, y0, fz, W / 2 - bx1, y1 - y0, '+z', c);
+    face(b, gx, y0, fz - bd / 2, gw, bd, 'up', dkb);
+    face(b, gx, y1, fz - bd / 2, gw, bd, 'down', dkb);
+    face(b, gx, y0, fz - bd, gw, y1 - y0, '+z', dkb);
+    face(b, bx0, y0, fz - bd / 2, bd, y1 - y0, '+x', dkb);
+    face(b, bx1, y0, fz - bd / 2, bd, y1 - y0, '-x', dkb);
+  } else {
+    part(b, 0, 0, 0, W, Hh, D, c, bv(hi, 0.01, 'vertical', { faces: 'noBottom' }));
+  }
   b.plane(gx, 0.55, D / 2 + 0.004, gw, 1.15, 'kit:glow', { facing: '+z', uv: 'solid', color: o.glow != null ? rgb(o.glow) : [1.25, 1.25, 1.1] });
+  const stock = (r, k) => {
+    const t = bin ? items[r >= 3 ? 0 : items.length - 1] : null;
+    return t && VEND_STOCK[t] != null ? VEND_STOCK[t] : pal[(r * 4 + k * 3) % pal.length];
+  };
   for (let r = 0; r < 5; r++) {
     part(b, gx, 0.6 + r * 0.22, D / 2 + 0.012, gw, 0.012, 0.02, 0x333333);
-    for (let k = 0; k < 4; k++) part(b, gx + (k - 1.5) * 0.13, 0.62 + r * 0.22, D / 2 + 0.024, 0.07, 0.14, 0.03, pal[(r * 4 + k * 3) % pal.length]);
+    for (let k = 0; k < 4; k++) part(b, gx + (k - 1.5) * 0.13, 0.62 + r * 0.22, D / 2 + 0.024, 0.07, 0.14, 0.03, stock(r, k));
   }
-  part(b, 0.33, 0.9, D / 2 + 0.01, 0.16, 0.5, 0.02, 0x2b2b2b);
-  glowBox(b, 0.33, 1.25, D / 2 + 0.025, 0.06, 0.04, 0.01, [1.4, 0.4, 0.3]);
-  b.plane(gx, 0.12, D / 2 + 0.004, gw, 0.28, 'kit:glow', { facing: '+z', uv: 'solid', color: 0.01 });
+  b.part(SELECT, () => {
+    part(b, 0.33, 0.9, D / 2 + 0.01, 0.16, 0.5, 0.02, 0x2b2b2b);
+    glowBox(b, 0.33, 1.25, D / 2 + 0.025, 0.06, 0.04, 0.01, [1.4, 0.4, 0.3]);
+  });
+  if (!bin) b.plane(gx, 0.12, D / 2 + 0.004, gw, 0.28, 'kit:glow', { facing: '+z', uv: 'solid', color: 0.01 });
+  const dk = 0x2a2a2c;
   if (hi) {
-    const fz = D / 2, dk = 0x2a2a2c;
     // ① 展示窗一圈深色窗框（比饮料罐还凸出一点）
     const X0 = gx - gw / 2, X1 = gx + gw / 2, e = 0.03, fd = 0.045;
     part(b, gx, 0.55 - e, fz + fd / 2, gw + e * 2, e, fd, dk, { faces: ['pz', 'py', 'ny', 'px', 'nx'] });
@@ -2489,14 +3233,23 @@ function vending(b, x, z, rot, opts) {
     // ② 顶上一条亮的招牌灯带（机身颜色调亮）
     const cc = rgb(c);
     face(b, 0, 1.738, fz + 0.004, W - 0.06, 0.048, '+z', [cc[0] * 1.5 + 0.15, cc[1] * 1.5 + 0.15, cc[2] * 1.5 + 0.15], 'kit:glow');
-    // ③ 投币面板：3×4 选货按键、纸币口、退币口
+  }
+  // ③ 投币面板：3×4 选货按键、纸币口、退币口（并进 'select'）
+  b.part(SELECT, () => {
+    if (!hi) return;
     const kz = fz + 0.0225;
     for (let i = 0; i < 3; i++) for (let j = 0; j < 4; j++) face(b, 0.295 + i * 0.035, 1.0 + j * 0.03, kz, 0.026, 0.018, '+z', 0xb8bcc0);
     face(b, 0.33, 1.14, kz, 0.09, 0.05, '+z', 0x121212);
     face(b, 0.33, 0.93, kz, 0.06, 0.04, '+z', 0x121212);
-    // ④ 取货口上半截的翻板 + 把手；⑤ 底部深色踢脚板
+  });
+  // ④ 取货口上半截的翻板 + 把手（低画质只有黑色的取货口，part 段为空）。出货的机器取货口是敞开的槽，不装翻板
+  if (!bin) b.part({ type: 'hinge', name: 'flap', label: '取货口', pivot: [gx, 0.39, fz + 0.006], axis: [1, 0, 0], travel: 1.2 }, () => {
+    if (!hi) return;
     part(b, gx, 0.26, fz + 0.006, gw - 0.02, 0.13, 0.008, 0x3a3a3a, { faces: ['pz', 'py', 'ny', 'px', 'nx'] });
     face(b, gx, 0.36, fz + 0.0125, 0.12, 0.015, '+z', 0x7a7a7a);
+  });
+  if (hi) {
+    // ⑤ 底部深色踢脚板
     face(b, 0, 0.02, fz + 0.003, W - 0.04, 0.08, '+z', shade(c, 0.45));
     // ⑥ 磨损：投币面板下方被踢出来的黑色鞋痕；一侧机身上一道刮掉漆的浅色长刮痕
     if (wh(b, 130) < 0.75) {
@@ -2513,16 +3266,18 @@ function vending(b, x, z, rot, opts) {
   let src = null;
   if (o.light !== false) src = b.light({ x: 0, z: D / 2 + 0.6, y: 1.1, color: 0xdfe8ff, intensity: num(o.intensity, 0.35), range: num(o.range, 3.5) });
   if (o.solid !== false) b.solid(-W / 2, 0, -D / 2, W / 2, Hh, D / 2);
+  regEnd(b, reg);
   b.pop();
-  return { src };
+  return { src, rec: reg };
 }
 
-// 床：床头在 −Z，床尾朝 +Z
+// 床：床头在 −Z，床尾朝 +Z。登记：道具「床」+ 一个躺位（床面中心，头朝 −Z 枕头那头，h = 被子面 0.5 m；yaw = 脚朝的方向 +Z）
 function bed(b, x, z, rot, opts) {
   const o = opts || {};
   const W = num(o.w, 1.0), L = num(o.l, 2.0), wood = o.frameColor != null ? o.frameColor : 0x6d4c33;
   const hi = hiDetail(b, o), blanket = o.color != null ? o.color : 0x5a6f8a;
   b.push(x, z, rot);
+  const reg = regBegin(b, o, 'prop', { kind: 'bed', label: '床', beds: [{ x: 0, z: 0.02, yaw: Math.PI, h: 0.5, w: W - 0.02, l: L - 0.06, head: [0, -L / 2 + 0.25] }] });
   // 高画质倒角：床架上棱 1.2 cm；床垫、被子上棱 3 cm、枕头 12 条棱 3.5 cm（软的东西边是鼓起来的圆边）；床头板不倒（高画质有立柱和压顶包着）
   part(b, 0, 0, 0, W + 0.06, 0.3, L + 0.06, wood, bv(hi, 0.012, 'top', { faces: 'noBottom' }));
   part(b, 0, 0.3, 0.02, W - 0.02, 0.18, L - 0.06, 0xe8e3d6, bv(hi, 0.03, 'top'));
@@ -2549,52 +3304,72 @@ function bed(b, x, z, rot, opts) {
     }
   }
   if (o.solid !== false) b.solid(-W / 2 - 0.05, 0, -L / 2 - 0.06, W / 2 + 0.05, 0.6, L / 2 + 0.03);
+  regEnd(b, reg);
   b.pop();
-  return {};
+  return { rec: reg };
 }
 
-// 柜子：kind 'file'（四层金属文件柜，默认）| 'wardrobe'（木衣柜）| 'locker'（储物柜）
+// 柜子：kind 'file'（四层金属文件柜，默认）| 'wardrobe'（木衣柜）| 'locker'（储物柜）。
+// 登记：道具（文件柜 / 衣柜 / 储物柜，能拖）+ 容器（'fileCab' | 'wardrobe' | 'locker'，loot 'one' = 整个柜子正好一件，放在哪一格由 D1 按种子定）
+// + part：文件柜 4 个抽屉（slide 0.35 m，k = 0 最下面）、衣柜两扇门（hinge，左门 doorL 绕左边、右门 doorR 绕右边，往外开 100°）、储物柜一扇门（绕左边）。
+// 容器 slots 是每一格的落点（枢轴坐标系，part = 属于哪个抽屉/门）。opts.locked 记进容器（D1 画锁、只给「锁着」）
 function cabinet(b, x, z, rot, opts) {
   const o = opts || {};
   const kind = o.kind || 'file';
   const hi = hiDetail(b, o);
   b.push(x, z, rot);
-  let W, H, D;
+  let W, H, D, c;
+  if (kind === 'wardrobe') { W = num(o.w, 1.0); H = num(o.h, 1.9); D = num(o.d, 0.55); c = o.color != null ? o.color : 0x7b5a3c; }
+  else if (kind === 'locker') { W = num(o.w, 0.4); H = num(o.h, 1.8); D = num(o.d, 0.5); c = o.color != null ? o.color : 0x5b6f86; }
+  else { W = num(o.w, 0.46); H = num(o.h, 1.32); D = num(o.d, 0.62); c = o.color != null ? o.color : PC.metal; }
+  const variant = kind === 'wardrobe' || kind === 'locker' ? kind : 'file';
+  const label = variant === 'wardrobe' ? '衣柜' : variant === 'locker' ? '储物柜' : '文件柜';
+  const dh = (H - 0.06) / 4;   // 文件柜每层抽屉高
+  const DRW = k => ({ type: 'slide', name: 'drawer' + k, label: '抽屉', pivot: [0, 0.04 + k * dh + (dh - 0.02) / 2, D / 2 + 0.01], travel: 0.35 });
+  const DL = { type: 'hinge', name: 'doorL', label: '柜门', pivot: [-W / 2, 0, D / 2], travel: -1.75 };
+  const DR = { type: 'hinge', name: 'doorR', label: '柜门', pivot: [W / 2, 0, D / 2], travel: 1.75 };
+  const DOOR = { type: 'hinge', name: 'door', label: '柜门', pivot: [-W / 2, 0, D / 2], travel: -1.75 };
+  const slots = variant === 'file' ? [0, 1, 2, 3].map(k => ({ x: 0, y: r4(0.04 + k * dh + 0.02), z: r4(D / 2 - 0.2), part: 'drawer' + k }))
+    : variant === 'wardrobe' ? [{ x: -W / 4, y: 0.08, z: 0, part: 'doorL' }, { x: W / 4, y: 0.08, z: 0, part: 'doorR' }]
+    : [{ x: 0, y: H - 0.42, z: 0, part: 'door' }];
+  const reg = regBegin(b, o, 'prop', { kind: 'cabinet', variant, label });
+  const cr = contBegin(b, o, {
+    kind: variant === 'file' ? 'fileCab' : variant, label, dims: [W, H, D], color: c,
+    bev: { r: variant === 'locker' ? 0.008 : 0.016, edges: 'vertical' }, loot: 'one', slots,
+  });
   // 高画质：柜体四条竖棱倒角（衣柜 1.6 cm、储物柜 8 mm、文件柜 1.6 cm；正面的门缝、合页、标签、踢脚都在斜面以内），衣柜顶上的檐板上下沿倒 1 cm，文件柜顶盖上沿倒 5 mm
-  if (kind === 'wardrobe') {
-    W = num(o.w, 1.0); H = num(o.h, 1.9); D = num(o.d, 0.55);
-    const c = o.color != null ? o.color : 0x7b5a3c;
+  if (variant === 'wardrobe') {
     part(b, 0, 0, 0, W, H, D, c, bv(hi, 0.016, 'vertical', { faces: 'noBottom' }));
     part(b, 0, H, 0, W + 0.06, 0.05, D + 0.04, 0x5f432b, bv(hi, 0.01, 'horizontal'));
     part(b, 0, 0.06, D / 2 + 0.003, 0.01, H - 0.12, 0.006, 0x3e2b1b);
-    for (const s of [-1, 1]) part(b, s * 0.06, H * 0.5, D / 2 + 0.02, 0.02, 0.16, 0.03, 0xc9b27a);
-    if (hi) {
-      // ① 两扇门各上下两块凸起的门板；② 底部深色踢脚；③ 外侧边上的合页、右门把手下的锁孔
-      const pw = W / 2 - 0.14, pc = shade(c, 1.1);
-      for (const sx of [-1, 1]) {
-        part(b, sx * W / 4, H * 0.52, D / 2 + 0.004, pw, H - 0.16 - H * 0.52, 0.008, pc, { faces: ['pz', 'py', 'ny', 'px', 'nx'] });
-        part(b, sx * W / 4, 0.14, D / 2 + 0.004, pw, H * 0.46 - 0.14, 0.008, pc, { faces: ['pz', 'py', 'ny', 'px', 'nx'] });
-        for (const hy of [0.3, H - 0.4]) face(b, sx * (W / 2 - 0.028), hy, D / 2 + 0.003, 0.02, 0.08, '+z', 0xb59a5a);   // 外沿离柜体竖棱 1.8 cm，在倒角斜面以内
-      }
-      face(b, 0, 0.005, D / 2 + 0.003, W - 0.036, 0.05, '+z', shade(c, 0.5));
-      face(b, 0.06, H * 0.5 - 0.05, D / 2 + 0.003, 0.012, 0.02, '+z', 0x1c140c);
-      // ④ 磨损：一扇门的下门板上一道露出浅色木头的刮痕（贴在凸起的门板面上）
-      const ly0 = 0.2, ly1 = H * 0.46 - 0.06;
-      if (wh(b, 150) < 0.6 && ly1 > ly0 && pw > 0.12) {
-        const sx = wh(b, 151) < 0.5 ? 1 : -1, sw = Math.min(pw * 0.75, 0.26);
-        wear(b, hi, {
-          kind: 'scratch', x: sx * W / 4 + (wh(b, 152) - 0.5) * (pw - sw) * 0.8, y: ly0 + (ly1 - ly0) * wh(b, 153), z: D / 2 + 0.008, facing: '+z',
-          w: sw, rot: (wh(b, 154) - 0.5) * 0.5, color: mix(c, 0xead6b0, 0.5), opacity: 0.55,
-        });
-      }
-    }
-  } else if (kind === 'locker') {
-    W = num(o.w, 0.4); H = num(o.h, 1.8); D = num(o.d, 0.5);
-    const c = o.color != null ? o.color : 0x5b6f86;
+    for (const s of [-1, 1]) b.part(s < 0 ? DL : DR, () => part(b, s * 0.06, H * 0.5, D / 2 + 0.02, 0.02, 0.16, 0.03, 0xc9b27a));
+    // ① 两扇门各上下两块凸起的门板 + 外侧边上的合页（并进各自的门）；② 底部深色踢脚；③ 右门把手下的锁孔
+    const pw = W / 2 - 0.14, pc = shade(c, 1.1);
+    for (const sx of [-1, 1]) b.part(sx < 0 ? DL : DR, () => {
+      if (!hi) return;
+      part(b, sx * W / 4, H * 0.52, D / 2 + 0.004, pw, H - 0.16 - H * 0.52, 0.008, pc, { faces: ['pz', 'py', 'ny', 'px', 'nx'] });
+      part(b, sx * W / 4, 0.14, D / 2 + 0.004, pw, H * 0.46 - 0.14, 0.008, pc, { faces: ['pz', 'py', 'ny', 'px', 'nx'] });
+      for (const hy of [0.3, H - 0.4]) face(b, sx * (W / 2 - 0.028), hy, D / 2 + 0.003, 0.02, 0.08, '+z', 0xb59a5a);   // 外沿离柜体竖棱 1.8 cm，在倒角斜面以内
+    });
+    if (hi) face(b, 0, 0.005, D / 2 + 0.003, W - 0.036, 0.05, '+z', shade(c, 0.5));
+    b.part(DR, () => { if (hi) face(b, 0.06, H * 0.5 - 0.05, D / 2 + 0.003, 0.012, 0.02, '+z', 0x1c140c); });
+    // ④ 磨损：一扇门的下门板上一道露出浅色木头的刮痕（贴在凸起的门板面上，跟着那扇门）
+    const ly0 = 0.2, ly1 = H * 0.46 - 0.06, wsx = wh(b, 151) < 0.5 ? 1 : -1;
+    b.part(wsx < 0 ? DL : DR, () => {
+      if (!(hi && wh(b, 150) < 0.6 && ly1 > ly0 && pw > 0.12)) return;
+      const sw = Math.min(pw * 0.75, 0.26);
+      wear(b, hi, {
+        kind: 'scratch', x: wsx * W / 4 + (wh(b, 152) - 0.5) * (pw - sw) * 0.8, y: ly0 + (ly1 - ly0) * wh(b, 153), z: D / 2 + 0.008, facing: '+z',
+        w: sw, rot: (wh(b, 154) - 0.5) * 0.5, color: mix(c, 0xead6b0, 0.5), opacity: 0.55,
+      });
+    });
+  } else if (variant === 'locker') {
     part(b, 0, 0, 0, W, H, D, c, bv(hi, 0.008, 'vertical', { faces: 'noBottom' }));
-    for (let k = 0; k < 3; k++) part(b, 0, H - 0.25 - k * 0.05, D / 2 + 0.002, W * 0.6, 0.015, 0.004, 0x1f2833);
-    part(b, W / 2 - 0.07, H * 0.5, D / 2 + 0.015, 0.03, 0.12, 0.03, 0xb8bcc0);
-    if (hi) {
+    // 柜门上的东西（百叶、把手、高画质的门缝线、号码牌、挂锁扣、合页、门上的划痕）都并进 'door'
+    b.part(DOOR, () => {
+      for (let k = 0; k < 3; k++) part(b, 0, H - 0.25 - k * 0.05, D / 2 + 0.002, W * 0.6, 0.015, 0.004, 0x1f2833);
+      part(b, W / 2 - 0.07, H * 0.5, D / 2 + 0.015, 0.03, 0.12, 0.03, 0xb8bcc0);
+      if (!hi) return;
       const lz = D / 2 + 0.003, lc = shade(c, 0.55);
       // ① 柜门轮廓线（门缝）；② 底部再三道通风百叶；③ 顶上的号码牌、把手上方的挂锁扣、左边两片合页
       face(b, -W / 2 + 0.02, 0.05, lz, 0.006, H - 0.08, '+z', lc);
@@ -2614,20 +3389,17 @@ function cabinet(b, x, z, rot, opts) {
         if (wh(b, 159) < 0.5) wear(b, hi, { kind: 'scratch', x: (wh(b, 160) - 0.5) * (W - 0.2), y: H * (0.35 + 0.2 * wh(b, 161)), z: D / 2, facing: '+z', w: Math.min(W - 0.12, 0.16), h: 0.011, rot: (wh(b, 162) - 0.5) * 1.4, color: bare, opacity: 0.5 });
       }
       if (wh(b, 163) < 0.6) wear(b, hi, { kind: 'scuff', x: (wh(b, 164) - 0.5) * (W - 0.24), y: 0.09, z: D / 2, facing: '+z', w: Math.min(W - 0.08, 0.2), rot: (wh(b, 165) - 0.5) * 0.4, color: 0x1c1c1c, srgb: true, opacity: 0.45 });
-    }
+    });
   } else {
-    W = num(o.w, 0.46); H = num(o.h, 1.32); D = num(o.d, 0.62);
-    const c = o.color != null ? o.color : PC.metal;
     part(b, 0, 0, 0, W, H, D, c, bv(hi, 0.016, 'vertical', { faces: 'noBottom' }));
-    const dh = (H - 0.06) / 4;
-    for (let k = 0; k < 4; k++) {
+    for (let k = 0; k < 4; k++) b.part(DRW(k), () => {
       part(b, 0, 0.04 + k * dh, D / 2 + 0.005, W - 0.04, dh - 0.02, 0.01, 0xa2a7ac);
       part(b, 0, 0.04 + k * dh + dh * 0.62, D / 2 + 0.02, 0.12, 0.025, 0.02, PC.dark);
-    }
+    });
+    // ① 每个抽屉拉手上方的标签框；② 顶层抽屉右上角的锁芯（都并进各自的抽屉）；③ 顶面压边、底部深色踢脚
+    for (let k = 0; k < 4; k++) b.part(DRW(k), () => { if (hi && dh > 0.12) face(b, 0, 0.04 + k * dh + dh * 0.78, D / 2 + 0.0125, 0.1, Math.min(0.035, dh * 0.12), '+z', 0xe6e2d6); });
+    b.part(DRW(3), () => { if (hi) face(b, W / 2 - 0.06, 0.04 + 3 * dh + dh * 0.72, D / 2 + 0.0125, 0.02, 0.02, '+z', 0xc7cacd); });
     if (hi) {
-      // ① 每个抽屉拉手上方的标签框；② 顶层抽屉右上角的锁芯；③ 顶面压边、底部深色踢脚
-      for (let k = 0; k < 4; k++) if (dh > 0.12) face(b, 0, 0.04 + k * dh + dh * 0.78, D / 2 + 0.0125, 0.1, Math.min(0.035, dh * 0.12), '+z', 0xe6e2d6);
-      face(b, W / 2 - 0.06, 0.04 + 3 * dh + dh * 0.72, D / 2 + 0.0125, 0.02, 0.02, '+z', 0xc7cacd);
       part(b, 0, H, 0, W + 0.01, 0.012, D + 0.01, shade(c, 0.85), bv(hi, 0.005, 'top', { faces: 'noBottom' }));
       face(b, 0, 0.004, D / 2 + 0.003, W - 0.036, 0.03, '+z', PC.dark);
       // ④ 磨损：一侧柜身下半截一道刮掉漆的浅色刮痕（拉抽屉时被蹭的那一侧）
@@ -2641,8 +3413,10 @@ function cabinet(b, x, z, rot, opts) {
     }
   }
   if (o.solid !== false) b.solid(-W / 2, 0, -D / 2, W / 2, H, D / 2);
+  contEnd(b, cr);
+  regEnd(b, reg);
   b.pop();
-  return {};
+  return { rec: reg };
 }
 
 // 路灯：灯杆在原点，灯臂伸向 +Z；state 同灯盘
@@ -3717,6 +4491,17 @@ BR.kit = {
   budget: { trisHigh: 10000, trisLow: 8000, detailCap: DETAIL_TRI_CAP, meshes: 8, drawCalls: 120, decalsPerChunk: DECAL_CAP, decalsLowEssential: DECAL_CAP_LOW },
   PROP_TEX, DECAL_TEX,
   rgb,
+  // 2026-10-02 道具登记（A1，写法见 _TEMPLATE.md 8.1 节）：Builder 的 prop / container / part / fixture 作用域记数据，
+  // 这几个函数在运行时按记录挪顶点、拆碰撞体、换算锚点
+  moveProp, settleProp, propSolids, splitSolids, toWorld, propByKey,
+  propTree: rec => (rec && INT.get(rec) ? subtree(rec, []) : []),   // [rec, ...子道具]：拖父道具时每件都要按自己的 skey 重登碰撞体
+  // 这件道具（连同子道具）的作用域里登记过灯：moveProp 会改灯描述的 x/z，调用方（world）要重排动态灯
+  propHasLights: rec => {
+    if (!rec || !INT.get(rec)) return false;
+    for (const q of subtree(rec, [])) { const QI = INT.get(q); if (QI && QI.ownLights && QI.ownLights.length) return true; }
+    return false;
+  },
+  skeyOf,
   levelId: normId,
   levelName,
   inRange,

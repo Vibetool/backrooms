@@ -16,6 +16,14 @@
 //   计时、转化只在房主跑，客机只从快照拿"感染了没有 + 第几阶段"
 // 资源约定：模型的几何体/材质默认当作共享的（assets 缓存、模块级缓存、GLB 克隆都共享），移除实体时不释放；
 //   实例独有的几何体或材质把自己的 userData.entityOwned 设为 true，移除时统一 dispose。
+// 拖动（2026-10 交互大改 A1）：
+//   def.draggable: true 的实体可以被准心对准、长按空格拖着走；def.drag = { vol } 是拖动手感用的体积（m³，越大越慢），
+//   缺省按圆柱体积算。只在单机或房主上执行：grab(id, by) / hold(id, x, z) / release(id) / isHeld(id)。
+//   被拖着的实体不跑 think、不参与软分离，每帧用 moveBy（会贴墙）朝手点走，限速和道具一样 v = dragV0/(1+dragK·vol)；
+//   一路记面包屑 e.data.crumbs = [[x, z], …]（相邻两点 > 0.75 m，最多 200 个，满了隔一个删一个；C 阶段 NPC 回营用）。
+//   联机客机自己拖时由 coop 设 e._localHold = { x, z }（或用 localHold(id, x, z)），本机按手点覆盖显示位置，松手后回到快照
+// 噪音：makeNoise(level, sec)：玩家这一刻弄出 level（0..1）的响动，持续 sec 秒，和走路冲刺的 player.noise 取大，
+//   走同一套听觉判断（perceive、archetypes 的 hearPlayer 都读 playerNoise）。只在实体会打玩家的模式（噩梦）生效
 (function () {
 'use strict';
 const BR = window.BR;
@@ -48,6 +56,11 @@ const SNAP_SEC = 0.1;          // 快照 10Hz，插值 100ms
 const SEARCH_STEP_MIN = 0.25, SEARCH_MAX = 6, SEARCH_DY = 1;   // 落点被挡时往外找空位的步长、最远距离、允许高度差
 const IDLE_MIN = 6, IDLE_MAX = 14, IDLE_HEAR = 25, ALERT_HEAR = 30;
 const DARK = 0.2;              // perception.needsLight 的实体在低于这个光照处看不见
+const CRUMB_STEP = 0.75;       // 被拖时面包屑的间距
+const CRUMB_MAX = 200;
+const NOISE_SLOTS = 8;         // 同时生效的 makeNoise 条数：喇叭的短响和行驶的持续低响要能并存
+// 拖动限速的缺省值，和 BR.config.interact 同名字段一致（base.js 里有就用那边的）
+const DRAG_V0 = 1.8, DRAG_K = 0.6, DRAG_VMIN = 0.25;
 
 // ---------- 状态 ----------
 const ents = [];               // 对外的 list：只做原地压缩，外部拿到的引用始终有效
@@ -61,6 +74,8 @@ let curDt = 0;                 // 当前 think 的步长；远处实体降频时
 let orphanT = 0;
 const warned = new Set();
 const cands = [];
+const noises = [];             // makeNoise 的活动条目 { lv, until }（until 按本模块的 time 计，暂停时不走）
+const sourcedTo = new WeakSet(); // 已经 addSource 过的 BR.interact 对象（测试页换掉再换回来时不重复注册）
 
 // ---------- 小工具 ----------
 function has(obj, fn) { return !!obj && typeof obj[fn] === 'function'; }
@@ -118,10 +133,45 @@ function nearestPlayerD2(x, z) {
   return best;
 }
 
+// 玩家当前的噪音 0..1：走路 / 冲刺的 player.noise 和 makeNoise 的活动条目取大
 function playerNoise() {
   const p = BR.player;
   if (!p || p.dead) return 0;
-  return U.clamp(num(p.noise, 0), 0, 1);
+  return Math.max(U.clamp(num(p.noise, 0), 0, 1), extraNoise());
+}
+function extraNoise() {
+  let m = 0;
+  for (let i = 0; i < noises.length; i++) {
+    const n = noises[i];
+    if (n.until > time && n.lv > m) m = n.lv;
+  }
+  return m;
+}
+// 玩家弄出一次响动（按喇叭、戳气球、开箱、发动机……数值表在 BR.config.noise，D1 定）。
+// 只在噩梦模式生效：游玩 / 测试模式实体不打玩家，响动也不该把它们引过来（archetypes 的 investigate 不分模式都听 playerNoise）。
+// 同样响度的再来一次只续时长；持续的响动（行驶、倒车蜂鸣）每帧调一次、给一个比帧长的 sec 就行。返回是否生效
+function makeNoise(level, sec) {
+  if (!BR.game.attackPlayers) return false;
+  const lv = U.clamp(num(level, 0), 0, 1);
+  const s = Math.max(0, num(sec, 0));
+  if (!(lv > 0) || !(s > 0)) return false;
+  const until = time + s;
+  let slot = null;
+  for (let i = 0; i < noises.length; i++) {
+    const n = noises[i];
+    if (n.lv === lv) { slot = n; break; }
+  }
+  if (slot) { if (until > slot.until) slot.until = until; return true; }
+  for (let i = 0; i < noises.length && !slot; i++) if (noises[i].until <= time) slot = noises[i];
+  if (!slot && noises.length < NOISE_SLOTS) noises.push(slot = { lv: 0, until: 0 });
+  if (!slot) {
+    // 满了：换掉最先结束的那条
+    slot = noises[0];
+    for (let i = 1; i < noises.length; i++) if (noises[i].until < slot.until) slot = noises[i];
+  }
+  slot.lv = lv;
+  slot.until = until;
+  return true;
 }
 function lightAt(x, z) {
   return has(BR.world, 'lightAt') ? U.clamp(num(BR.world.lightAt(x, z), 1), 0, 1) : 1;
@@ -441,6 +491,7 @@ function kill(e, killer) {
   e.dead = true;
   e.state = 'dead';
   e.target = null;
+  e.held = null;           // 拖着的被打死了：手里就空了（interact 看到目标死了会自己取消）
   e._m.killer = info[0];
   e._m.killerType = info[1];
   e._m.diedAt = time;
@@ -537,6 +588,8 @@ function detach(e) {
   e.removed = true;
   e.dead = true;
   e.target = null;
+  e.held = null;
+  e._localHold = null;
   if (e.obj) {
     if (e.obj.parent) e.obj.parent.remove(e.obj);
     disposeOwned(e.obj);
@@ -569,6 +622,8 @@ function makeEntity(def, id, x, y, z, yaw) {
     dead: false, removed: false,
     hitAt: -1e9, spawnedAt: time,
     infection: null,         // 感染症状状态（只读），见文件头与 infect()
+    held: null,              // 被拖着时 { by, x, z, since }（手点在 x/z），只在单机 / 房主上有；见 grab()
+    _localHold: null,        // 联机客机自己拖着时的手点 { x, z }，由 coop 设，只影响本机显示
     // 管理器私有状态，行为代码请用 data
     _m: {
       diedAt: null,
@@ -744,6 +799,7 @@ function clear() {
   batch(() => { for (let i = 0; i < ents.length; i++) detach(ents[i]); });
   ents.length = 0;
   byId.clear();
+  noises.length = 0;
   aiRng = U.mulberry32(U.hashInts(BR.game.seed >>> 0, 'ai'));
 }
 
@@ -926,6 +982,201 @@ function transform(target, toType, opts) {
   return ne;
 }
 
+// ---------- 拖动（A1：准心对准 + 长按空格） ----------
+// 只在单机 / 房主执行；客机拖实体走 coop 租约 'e:'+id，房主按客机的手点调 hold，客机本地用 _localHold 显示
+function draggableEnt(e) {
+  return alive(e) && e.def.draggable === true && !(e.fixed === true || e.def.fixed === true);
+}
+function dragVol(e) {
+  const v = num(e.def.drag && e.def.drag.vol, NaN);
+  return v > 0 ? v : Math.PI * e.r * e.r * e.h;
+}
+// 和拖道具同一条限速：v = dragV0 / (1 + dragK·V)，不低于 dragVMin
+function dragSpeed(e) {
+  const c = BR.config.interact || {};
+  const v0 = num(c.dragV0, DRAG_V0), k = num(c.dragK, DRAG_K), vmin = num(c.dragVMin, DRAG_VMIN);
+  return Math.max(vmin, v0 / (1 + k * Math.max(0, dragVol(e))));
+}
+function entOf(id) {
+  if (id && typeof id === 'object' && id.def) return id;
+  return id != null ? byId.get(String(id)) || null : null;
+}
+// 本机玩家的 by：单机时谁拿着都是自己；联机时 'me' / 本机角色算自己，其余（队友的角色）算别人
+function isLocalBy(by) {
+  if (by == null || by === 'me' || by === 'local') return true;
+  const C = BR.coop;
+  if (!C || !C.active) return true;
+  return by === C.role;
+}
+function leaseByOther(k) {
+  const C = BR.coop;
+  if (!C || !C.active || !has(C, 'leaseOf')) return false;
+  let L;
+  try { L = C.leaseOf(k); } catch (err) { return false; }
+  if (L == null || L === false) return false;
+  const by = typeof L === 'object' ? L.by : L;
+  if (by == null || by === true) return false;
+  return !(by === 'me' || by === C.role);
+}
+
+// 面包屑：离上一点超过 CRUMB_STEP 记一个；满了隔一个删一个（保留第一个，也就是最早被拖走的地方）
+function crumb(e) {
+  let c = e.data.crumbs;
+  if (!Array.isArray(c)) c = e.data.crumbs = [];
+  const last = c[c.length - 1];
+  if (last && U.dist2(last[0], last[1], e.x, e.z) <= CRUMB_STEP * CRUMB_STEP) return;
+  if (c.length >= CRUMB_MAX) {
+    let j = 0;
+    for (let i = 0; i < c.length; i += 2) c[j++] = c[i];
+    c.length = j;
+  }
+  c.push([r2d(e.x), r2d(e.z)]);
+}
+
+// by：谁拿着（'me' 或联机角色 'host' / 'guest'）。已经被别人拿着、不可拖、死了、客机上调用都返回 false
+function grab(id, by) {
+  const e = entOf(id);
+  if (!isAuthoritative() || !draggableEnt(e)) return false;
+  const who = by == null ? 'me' : String(by);
+  if (e.held) return e.held.by === who;
+  e.held = { by: who, x: e.x, z: e.z, since: time };
+  e.target = null;
+  e.state = 'held';          // 快照里带着，客机的 animate 能画出"被拖着"的样子；旧客机只当一个不认识的状态
+  e._m.detourT = 0;
+  e._m.detourN = 0;
+  crumb(e);
+  BR.bus.emit('entity:grab', { id: e.id, type: e.type, by: who });
+  return true;
+}
+// 手点：每帧（或每收到一条队友的 h）更新；真正的移动在 update 里按限速走，贴墙
+function hold(id, x, z) {
+  const e = entOf(id);
+  if (!e || !e.held || !isAuthoritative()) return false;
+  x = +x; z = +z;
+  if (!Number.isFinite(x) || !Number.isFinite(z)) return false;
+  e.held.x = x;
+  e.held.z = z;
+  return true;
+}
+function release(id) {
+  const e = entOf(id);
+  if (!e || !e.held) return false;
+  const by = e.held.by;
+  e.held = null;
+  if (e.state === 'held') e.state = 'idle';
+  e._m.detourT = 0;
+  e._m.wanderT = 0;           // 放下后重新选方向，不接着往被拖之前的方向走
+  crumb(e);
+  BR.bus.emit('entity:release', { id: e.id, type: e.type, by, x: e.x, z: e.z });
+  return true;
+}
+// 单机 / 房主：有没有人拿着；客机：自己正拖着（_localHold）或租约在别人手里
+function isHeld(id) {
+  const e = entOf(id);
+  if (!e || e.removed) return false;
+  if (e.held || e._localHold) return true;
+  return leaseByOther('e:' + e.id);
+}
+// 客机本地显示用：自己拖着时按手点覆盖插值位置；传 null 松手，随后平滑回到快照
+function localHold(id, x, z) {
+  const e = entOf(id);
+  if (!e || e.removed) return false;
+  if (x == null || z == null) { e._localHold = null; return true; }
+  x = +x; z = +z;
+  if (!Number.isFinite(x) || !Number.isFinite(z)) return false;
+  if (e._localHold) { e._localHold.x = x; e._localHold.z = z; }
+  else e._localHold = { x, z };
+  return true;
+}
+function handOf(h) {
+  if (!h) return null;
+  const x = Array.isArray(h) ? +h[0] : +h.x, z = Array.isArray(h) ? +h[1] : +h.z;
+  return Number.isFinite(x) && Number.isFinite(z) ? { x, z } : null;
+}
+// 朝手点走一步：限速、贴墙（moveBy 走 phys.moveCircle），不转身（是被拽着走，不是自己走）
+function dragStep(e, hx, hz, dt) {
+  const dx = hx - e.x, dz = hz - e.z;
+  const d = Math.hypot(dx, dz);
+  if (d <= 1e-3) return;
+  const step = Math.min(d, dragSpeed(e) * dt);
+  moveBy(e, dx / d * step, dz / d * step);
+}
+
+// ---------- 准心候选（竖圆柱，只收 def.draggable） ----------
+// 射线 o + t·d 和竖圆柱（中心 cx/cz、半径 r、y0..y1）的第一个交点距离；没打中返回 -1
+function hitCylinder(ox, oy, oz, dx, dy, dz, cx, cz, r, y0, y1, reach) {
+  const px = ox - cx, pz = oz - cz;
+  const a = dx * dx + dz * dz;
+  const b = px * dx + pz * dz;
+  const c = px * px + pz * pz - r * r;
+  let tIn, tOut;
+  if (a < 1e-12) {
+    if (c > 0) return -1;      // 竖直射线在圆外
+    tIn = -Infinity; tOut = Infinity;
+  } else {
+    const disc = b * b - a * c;
+    if (disc < 0) return -1;
+    const s = Math.sqrt(disc);
+    tIn = (-b - s) / a; tOut = (-b + s) / a;
+  }
+  // 和 y 板 [y0, y1] 求交
+  let sIn = -Infinity, sOut = Infinity;
+  if (Math.abs(dy) < 1e-12) {
+    if (oy < y0 || oy > y1) return -1;
+  } else {
+    const t0 = (y0 - oy) / dy, t1 = (y1 - oy) / dy;
+    sIn = Math.min(t0, t1); sOut = Math.max(t0, t1);
+  }
+  const t = Math.max(tIn, sIn, 0), tEnd = Math.min(tOut, sOut);
+  if (t > tEnd || t > reach) return -1;
+  return t;
+}
+function entCandOf(e, t) {
+  let c = e._m.cand;
+  if (!c) {
+    c = e._m.cand = {
+      kind: 'entity', key: e.id, label: '', t: 0, small: false,
+      short: null, hold: null, canDrag: true, vol: 0, ref: e, parentKeys: [],
+    };
+  }
+  c.label = e.def.zh || e.type;
+  c.t = t;
+  c.vol = dragVol(e);
+  // 队友正拖着：对准时只出灰字原因，不能再抢
+  const other = (e.held && !isLocalBy(e.held.by)) || leaseByOther('e:' + e.id);
+  c.canDrag = !other;
+  c.short = other ? (c._busy || (c._busy = { verb: '拖动', ok: false, why: '队友正拿着它' })) : null;
+  return c;
+}
+function entSource(ray, reach, out) {
+  if (!ray || !ents.length) return;
+  const P = BR.player;
+  if (P && P.dead) return;
+  const ox = +ray.ox, oy = +ray.oy, oz = +ray.oz;
+  let dx = +ray.dx, dy = +ray.dy, dz = +ray.dz;
+  const L = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  if (!(L > 1e-9) || !Number.isFinite(ox + oy + oz)) return;
+  dx /= L; dy /= L; dz /= L;
+  const R = num(reach, 2.6);
+  for (let i = 0; i < ents.length; i++) {
+    const e = ents[i];
+    if (!draggableEnt(e) || (e.obj && e.obj.visible === false)) continue;
+    // 先粗筛：水平距离超过 reach + 半径的不算
+    const hx = e.x - ox, hz = e.z - oz, lim = R + e.r;
+    if (hx * hx + hz * hz > lim * lim) continue;
+    const t = hitCylinder(ox, oy, oz, dx, dy, dz, e.x, e.z, e.r, e.y, e.y + e.h, R);
+    if (t < 0) continue;
+    out.push(entCandOf(e, t));
+  }
+}
+function ensureSource() {
+  const I = BR.interact;
+  if (!I || typeof I !== 'object' || sourcedTo.has(I) || !has(I, 'addSource')) return;
+  sourcedTo.add(I);
+  try { I.addSource('entities', entSource); }
+  catch (err) { console.error('[entities] 注册准心候选失败', err); }
+}
+
 // ---------- 每帧 ----------
 function runAI(dt) {
   const far2 = THINK_FAR * THINK_FAR;
@@ -936,7 +1187,16 @@ function runAI(dt) {
     if (e.infection) { tickInfection(e, dt); if (e.removed) continue; }
     const m = e._m;
     if (e.dead) {
+      e.held = null;
       if (m.removeAt != null && time >= m.removeAt) finalize(e);
+      continue;
+    }
+    // 被拖着：不想事，只被手拽着走，一路记面包屑（排在远处降频之前，拖着的一定跟着按真实帧走）
+    if (e.held) {
+      e.cooldown = Math.max(0, e.cooldown - dt);
+      curDt = dt;
+      dragStep(e, e.held.x, e.held.z, dt);
+      crumb(e);
       continue;
     }
     let step = dt;
@@ -963,15 +1223,16 @@ function runAI(dt) {
   api.dt = dt;
 }
 
-// 实体之间的软分离：phys 只管墙，不管实体互相穿插；友善和有害扭打在一起时不叠成一团
+// 实体之间的软分离：phys 只管墙，不管实体互相穿插；友善和有害扭打在一起时不叠成一团。
+// 被拖着的不参与：它的位置归手管，挤它会和手点来回拉扯
 function separate() {
   const n = ents.length;
   for (let i = 0; i < n; i++) {
     const a = ents[i];
-    if (a.dead) continue;
+    if (a.dead || a.held) continue;
     for (let j = i + 1; j < n; j++) {
       const b = ents[j];
-      if (b.dead || Math.abs(a.y - b.y) > FLOOR_DY) continue;
+      if (b.dead || b.held || Math.abs(a.y - b.y) > FLOOR_DY) continue;
       const dx = b.x - a.x, dz = b.z - a.z, min = a.r + b.r;
       const d2 = dx * dx + dz * dz;
       if (d2 >= min * min) continue;
@@ -1004,7 +1265,20 @@ function runInterp(dt) {
   for (let i = 0; i < ents.length; i++) {
     const e = ents[i];
     const s = e._m.snap;
-    if (e.removed || !s) continue;
+    if (e.removed) continue;
+    // 客机自己拖着：按手点显示（同样限速、贴墙），感觉不到来回的延迟；松手那一刻从当前显示位置平滑回到快照
+    const lh = handOf(e._localHold);
+    if (lh && !e.dead) {
+      curDt = dt;
+      dragStep(e, lh.x, lh.z, dt);
+      e._m.localHeld = true;
+      continue;
+    }
+    if (e._m.localHeld) {
+      e._m.localHeld = false;
+      if (s) { s.x0 = e.x; s.z0 = e.z; s.yaw0 = e.yaw; s.t = 0; }
+    }
+    if (!s) continue;
     s.t = Math.min(SNAP_SEC, s.t + dt);
     const k = s.t / SNAP_SEC;
     e.x = U.lerp(s.x0, s.x1, k);
@@ -1031,6 +1305,7 @@ function update(dt) {
   api.time = time;
   curDt = dt;
   api.dt = dt;
+  ensureSource();
   batch(() => {
     if (isAuthoritative()) { runAI(dt); sweepOrphans(dt); }
     else runInterp(dt);
@@ -1121,16 +1396,20 @@ function applySnapshot(list) {
 
 function debugInfo() {
   const byFaction = {};
-  let far = 0, infected = 0;
+  let far = 0, infected = 0, held = 0;
   for (const e of ents) {
     if (e.removed) continue;
     const f = e.def.faction;
     byFaction[f] = (byFaction[f] || 0) + 1;
     if (e.infection) infected++;
+    if (e.held || e._localHold) held++;
     const d2 = nearestPlayerD2(e.x, e.z);
     if (d2 !== Infinity && d2 > THINK_FAR * THINK_FAR) far++;
   }
-  return { total: ents.length, active: activeCount(), byFaction, farThinking: far, infected, authoritative: isAuthoritative(), time };
+  return {
+    total: ents.length, active: activeCount(), byFaction, farThinking: far, infected, held,
+    noise: playerNoise(), extraNoise: extraNoise(), authoritative: isAuthoritative(), time,
+  };
 }
 
 // ---------- 给 think 用的 api（全体实体共用一个对象，time/dt 每次调用前刷新） ----------
@@ -1174,8 +1453,18 @@ BR.entities = {
   infect,                        // (target, spec, source?) → bool：新感染上才返回 true；目标是本机玩家时走 BR.effects
   transform,                     // (e | id, toType, { key, cause }?) → 新实体 | null；仅房主
   isHuman,                       // (target) → bool：本机玩家或 def.human === true
+  // 拖动（A1）：只在单机 / 房主执行，客机调用返回 false；by 是 'me' 或联机角色
+  grab,                          // (e | id, by?) → bool：def.draggable 的活实体、没被别人拿着
+  hold,                          // (e | id, x, z) → bool：更新手点，update 里按限速贴墙走过去
+  release,                       // (e | id) → bool
+  isHeld,                        // (e | id) → bool：有人拿着（客机上看 _localHold 和 'e:' 租约）
+  localHold,                     // (e | id, x, z | null) → bool：联机客机自己拖着时的本机显示手点
+  dragSpeed: e => { const t = entOf(e); return t ? dragSpeed(t) : 0; },   // (e | id) → m/s
+  makeNoise,                     // (level 0..1, sec) → bool：玩家弄出的响动，只在噩梦模式生效
+  get noise() { return playerNoise(); },   // 当前玩家噪音（走路 / 冲刺 / makeNoise 取大）
   SNAP_FLAGS: { infected: SNAP_INFECTED },
   api,
   debugInfo,
 };
+ensureSource();   // interact.js 排在本文件前面时载入期就注册；否则第一次 update 时补上
 })();

@@ -272,7 +272,7 @@ const b = kit.builder(ctx, cx, cz, rng, { height: 2.8 });   // height 缺省 kit
 | `b.update(fn(dt, t, res))` | 区块级每帧回调（t = 本区块载入后秒数），区块卸载后自动停。闪烁、水面、事件门都放这里 |
 | `b.finish()` → `ChunkResult` | 同一个 builder 只能调一次 |
 
-`ChunkResult = { group, solids, lights, spawnPoints, exits, update?, data, kit: { exits: [ExitHandle], stats: { meshes, triangles, solids, lights, spawnPoints, spawnDropped } } }`
+`ChunkResult = { group, solids, lights, spawnPoints, exits, update?, data, kit: { exits: [ExitHandle], stats: { meshes, triangles, solids, lights, spawnPoints, spawnDropped }, props, containers, fixtures } }`（`props/containers/fixtures` 见 8.1 节道具登记）
 
 ### 5.4 倒角（用户 2026-10-01："一些方块的角不能太尖锐"）
 ```js
@@ -481,15 +481,15 @@ kit.gridSpawns(b, g);
 | `vent` 通风口 | `w = 0.6`, `h = 0.35`, `color`, `y = 2.3`（墙上，中心高度）；`ceiling: true` 贴天花板朝下（`y = b.height`） | `{}` |
 | `pipe` 管道 | `length = 3`, `r = 0.06`, `axis = 'x'\|'z'\|'y'`, `y`（横管轴线高 2.5；竖管底部 0）, `color`, `solid`（竖管缺省有） | `{}` |
 | `puddle` 水坑 | `rx = 0.8`, `rz = 0.5`, `y`, `color`（形状按位置哈希，不吃 rng，不挡路）；`ringColor`（屏幕色）/ `ringOpacity = 0.42` / `ring: false`：高画质外面那圈干水渍印（缺省 = 水色深一号，水色近黑时那圈也近黑，像描了一道线，传浅一点的 `ringColor`） | `{ piece }` |
-| `box` 纸箱 | `w = 0.5`, `h = 0.38`, `d = 0.4`, `stack = 1`, `color` | `{}` |
-| `crate` 木箱 | `size = 0.8`, `color` | `{}` |
-| `desk` 办公桌 | `w = 1.4`, `d = 0.7`, `h = 0.75`, `color`, `monitor`, `screen`（屏幕颜色，缺省黑） | `{}` |
-| `chair` 办公椅 | `color`（靠背在 −Z） | `{}` |
-| `cubicle` 隔间 | `w = 2`, `d = 2`, `h = 1.4`, `color`, `desk = true`, `chair = true`, `monitor = true`（正面 +Z 敞开） | `{}` |
+| `box` 纸箱 | `w = 0.5`, `h = 0.38`, `d = 0.4`, `stack = 1`, `color`；登记见 8.1 | `{ rec }` |
+| `crate` 木箱 | `size = 0.8`, `color`；登记见 8.1 | `{ rec }` |
+| `desk` 办公桌 | `w = 1.4`, `d = 0.7`, `h = 0.75`, `color`, `monitor`, `screen`（屏幕颜色，缺省黑）；登记见 8.1（有显示器 = 插电设备） | `{ rec }` |
+| `chair` 办公椅 | `color`（靠背在 −Z）；登记见 8.1 | `{ rec }` |
+| `cubicle` 隔间 | `w = 2`, `d = 2`, `h = 1.4`, `color`, `desk = true`, `chair = true`, `monitor = true`（正面 +Z 敞开）；隔板不登记，里面的桌椅各自登记 | `{}` |
 | `window` 窗户 | `w = 1.2`, `h = 1.2`, `y = 0.9`（窗台高）, `frameColor`, `mullions = true`, `blackout`（涂黑）+ `paint`, `glow`（true 或颜色：外面很亮）, `tint`（玻璃色）, `wall` | `{ pane }` |
-| `vending` 自动售货机 | `color`, `glow`, `light = true`, `intensity = 0.35`, `range = 3.5` | `{ src }` |
-| `bed` 床 | `w = 1`, `l = 2`, `frameColor`, `color`（床头在 −Z） | `{}` |
-| `cabinet` 柜子 | `kind = 'file'\|'wardrobe'\|'locker'`, `w`, `h`, `d`, `color` | `{}` |
+| `vending` 自动售货机 | `color`, `glow`, `light = true`, `intensity = 0.35`, `range = 3.5`；登记成插电设备（8.1） | `{ src, rec }` |
+| `bed` 床 | `w = 1`, `l = 2`, `frameColor`, `color`（床头在 −Z）；登记见 8.1 | `{ rec }` |
+| `cabinet` 柜子 | `kind = 'file'\|'wardrobe'\|'locker'`, `w`, `h`, `d`, `color`, `locked`（记进容器）；登记见 8.1 | `{ rec }` |
 | `streetlight` 路灯 | `h = 6`, `poleColor`, `state`（同灯盘）, `lampColor`, `light = true`, `color = 0xffc98a`, `intensity = 1.4`, `range = 14`, `flicker`（灯臂伸向 +Z） | `{ src, lens }` |
 | `fence` 栅栏 | `length = 4`, `h`, `kind = 'chain'\|'picket'\|'rail'`, `color`, `meshColor`（沿本地 x） | `{}` |
 | `pillar` 柱子 | `w = 0.6`, `d = w`, `h = b.height`, `matKey`（给贴图材质就按世界尺寸平铺）, `color` | `{ piece }` |
@@ -499,6 +499,88 @@ kit.gridSpawns(b, g);
 
 外观对照：`__br.start({ mode: 'test', levelId: 'dev' })` 后走到区块 (−1, 0)（世界 x −24..0），每种构件摆了一件；截图见 `tests/output/kit-show-*.png`。
 构件不够还原版本描述时，在自己文件里用 `b.push/b.box/b.cylinder` 拼（参照 `_kit.js` 里 `desk`、`vending` 的写法），颜色用 `'kit:prop'` 顶点色，不要为一件家具新建材质。
+
+### 8.1 道具登记：能拖、能打开、能用（2026-10-02 起）
+
+玩家准心对准 + 空格短按 = 使用/拾取，长按 = 拖动。**引擎只认登记过的东西**：没登记的几何（墙、地、天花板、柱子、门框、出口）准心对不上、也拖不动。
+登记只记数据（进 `res.kit.*`），**不加几何、不改碰撞体和出口、不吃 rng**，golden 逐字节不变。
+
+| 作用域 | 用途 | 记到 |
+|---|---|---|
+| `b.prop(meta, fn)` / `b.beginProp(meta)` … `b.endProp()` | 能拖的家具（箱子、桌椅、柜子、床……） | `res.kit.props` |
+| `b.fixture(meta, fn)` / `beginFixture` … `endFixture` | 固定设备：插着电的（售货机、冰箱、带显示器的电脑桌、电视、电台）、钉死的、只给原因的（`inert`）。**不能拖** | `res.kit.fixtures` |
+| `b.container(meta, fn)` / `beginContainer` … `endContainer` | 能打开、里面可能有东西的箱体（木箱、纸箱、柜子、集装箱、冰箱） | `res.kit.containers` |
+| `b.part(meta, fn)` / `beginPart` … `endPart` | 道具/设备里会动的子件：抽屉 `slide`、柜门/盖 `hinge`、按键 `button`、转椅座面 `swivel` | 所属道具的 `parts` |
+| `b.seat(desc)` / `b.bedSpot(desc)` | 座位、躺位锚点（当前坐标系，记进最内层道具/设备） | 所属道具的 `seats` / `beds` |
+
+```js
+b.push(x, z, rot);                                   // 先进自己的坐标系，再开作用域：枢轴 = 当前坐标系原点
+b.prop({ kind: 'shelf', label: '货架' }, () => {     // label 是准心提示里的名字（中文）
+  b.box(0, 0, 0, 1.2, 2.0, 0.5, 'kit:prop', { color: 0x777777, bevel: hi ? 0.01 : 0 });
+  b.container({ kind: 'crate', label: '木箱', dims: [0.6, 0.5, 0.5], color: 0x8a6a42, loot: 'crate', slots: [[0, 0.05, 0]] }, () => {
+    b.box(0, 1.0, 0, 0.6, 0.5, 0.5, 'kit:prop', { solid: false });
+  });
+  b.part({ type: 'slide', name: 'drawer0', label: '抽屉', pivot: [0, 0.3, 0.25], travel: 0.3, locked: true, why: '锁着' }, () => {
+    b.box(0, 0.2, 0.255, 0.4, 0.2, 0.01, 'kit:prop', { solid: false });
+  });
+  b.solid(-0.6, 0, -0.25, 0.6, 2.0, 0.25);
+});
+b.pop();
+```
+
+**硬规则**
+- **登记调用写在 `hiDetail` / 倒角 / 贴花分支外面。** key 按调用顺序编号；联机两边画质可以不同，只靠 key 对上。分支里只能放几何：
+  `b.part(meta, () => { if (hi) { ...细节件... } })` 可以，`if (hi) b.part(...)` 不行（同名 part 的合并调用除外，但也别这么写）。`tests/kit.mjs` 会把 26 层出生点 3×3 块高低画质的登记逐项比对。
+- 贴在道具上的贴花（`kit.decal`、kit 构件里的磨损 `wear`）**画在作用域里面**，拖的时候才会跟着走。kit 构件的磨损贴花晚到 `finish` 才画，kit 会按记账时开着的作用域补记，不用管。
+- **墙和房屋结构不要包**：墙、柱子、门框、楼梯、电梯、窗、吊顶、地板、踢脚线、管道、通风口、路灯、栅栏、隔间隔板、出口实物。作用域里出现出口（`b.exit` / `kit.exit`）的道具自动不能拖。
+- 不要在作用域里放 `b.spawn` 刷新点（拖走了点不跟着走）；`b.light` 可以（拖动时灯描述跟着平移），但能拖的东西尽量不带灯。
+- 不要包一个"空心大框"（整个隔间、整个房间）当道具：准心按包围盒选目标，大框会挡住里面的桌椅。
+
+**key**（字符串，和画质无关）
+- 顶层道具 `${层级 id}@${cx},${cz}#p${n}`；嵌套在别的道具里的 `${父 key}.${m}`；设备 `…#f${n}`；容器 `…#c${n}`；部件 `${所属 key}#k${n}`。三个计数器各自独立。
+- `meta.key` 可以直接给（例如 L3 发电机 `'L3:g:<cx>,<cz>:ns'`）。
+- 碰撞 key（`rec.skey`）= 道具 key 去掉 `层级@`，即 `${cx},${cz}#p${n}`：world 用它单独登记这件道具的碰撞体；`BR.phys.raycast/moveBox` 的 `ignoreKey` 两种写法都认。
+
+**meta**（所有坐标都在作用域的枢轴坐标系里 = 开作用域时的当前坐标系；`pivot: [x, z, rot, y]` 可另给）
+- 通用：`kind`、`label`、`key`、`pivot`、`why`（拖不动/用不了时的灰字原因）；没列出的纯数据字段（`strapped`、`liftable`、`weight`、`variant`……）原样拷进记录，给后面阶段用。
+- prop：`draggable`（缺省 true）、`on`（放在谁上面：嵌套的缺省 = 父道具 key；也可以写 `'<货架 key>#<格号>'`，同一块里能找到就挂成它的子道具）、`seats`、`beds`、`plugged`。
+- fixture：`plugged`（插着电，缺省原因「插着电，拖不动」）、`grid`（吃电网，断电时受影响）、`inert`（不做功能，字符串就是原因）。
+- container：`dims [w, h, d]`、`color`（冻结抽到的颜色）、`bev`（倒角参数，按高画质的设计值填，两档一样）、`parentKey`（缺省 = 最内层道具/设备）、`loot`（`'crate'|'carton'|'one'|'fridge'|…`，D1 按它和 `lootRng(levelSeed, key)` 定里面有什么）、`slots`（每一格的落点 `[x, y, z]` 或 `{x, y, z, part}`）、`on`（摞在哪只容器上面）、`locked`。
+- part：`type`、`name`（同一道具里同名的合并成一条：零件散在几处画时分几次包）、`pivot [x, y, z]`、`axis [x, y, z]`（slide 缺省 +Z 往外拉，hinge/swivel 缺省 +Y，button 缺省 −Z 往里按）、`travel`（slide 米，缺省 0.35；hinge 弧度，按 three.js `rotation.y` 正方向，左门往外开填负数；button 缺省 4 mm；swivel 0 = 不限）、`locked`。
+- seat：`{ x, z, yaw, h, swivel }`；bed：`{ x, z, yaw, h, w, l, head: [x, z] }`。`yaw` 是玩家约定（朝向 = (−sin yaw, −cos yaw)），本地 +Z 朝前就是 `Math.PI`；`h` = 座面/床面离地高度。
+
+**记录**（finish 之后，纯数据，可以 JSON）
+- `props[i]`：`{ n, key, skey, kind, label, spans: [{ mat, v0, v1 }], solids: [s0, s1), pivot: { x, y, z, rot }（世界坐标）, obb: { min, max }（枢轴坐标系，只算自己的顶点）, volume, draggable, exitOverlap, why, children, on, parts, seats, beds, t: { dx, dy, dz, ry } }`。
+  `spans` 只含自己的顶点（嵌套子道具的不算）；`solids` 是作用域里全部碰撞体的下标区间（含子道具）；`volume` 按碰撞体算（含子道具，没有碰撞体的取 OBB×0.5）；
+  碰撞体压到本块任一出口触发圈 +0.4 m 的 `exitOverlap = true` 且不能拖（准心对准时和出口一样什么都不显示；要给原因就写 `why`）。
+  `fixtures` 和不能拖的道具：有 `why` 的，准心对准时灰字显示它（例如售货机「插着电，三百多公斤，拖不动」），没有 `why` 的不出提示。
+- `fixtures[i]`：同上，没有 `t`，多 `plugged / grid / inert`。`containers[i]`：`{ n, key, kind, label, spans, solids, pivot, obb, dims, color, bev, parentKey, loot, slots, parts, on }`。
+  `parts[j]`：`{ n, key, name, type, pivot, axis, travel, spans, container }`（pivot、axis 在所属道具的枢轴坐标系）。
+
+**运行时**（world / interact / 后面阶段用）
+| 函数 | 说明 |
+|---|---|
+| `kit.splitSolids(res)` → `{ statics, owners: [{ rec, key, solids }] }` | 区块碰撞体按道具/设备拆开：statics 用区块 key 登记，每个 owner 用 `owner.key`（= `rec.skey`）登记 |
+| `kit.moveProp(res, rec, { dx, dy, dz, ry })` | 把道具摆到这个变换（绝对量，不是增量；是这件道具自己相对父道具的偏移，顶层道具就是相对生成位置，和 `levelState.props` 存的同一个值）；子道具、所属容器和部件的顶点跟着走。这一版只实现 `dx/dz`（`dy/ry` 记下不生效）。旧写法 `(res, rec, dx, dz)` 也认 |
+| `kit.settleProp(rec)` | 松手、建块套用完位移后调：重算包围球、恢复视锥裁剪（拖动中关着） |
+| `kit.propSolids(res, rec, t?)` | 这件道具自己的碰撞体按位移平移后的副本（子道具各自取），不改 `res.solids` |
+| `kit.toWorld(rec, local)` → `{ x, y, z, yaw }` | 枢轴坐标系里的锚点（座位、躺位、格位、部件枢轴）→ 世界坐标，带上父链的当前位移 |
+| `kit.propByKey(res, key)` | 按 key 找本块的道具/设备/容器记录 |
+| `kit.propTree(rec)` → `[rec, …子道具]` | 拖父道具时，子道具的碰撞体也要按各自的 `skey` 用 `propSolids` 重登 |
+| `kit.propHasLights(rec)` → bool | 这件道具（连同子道具）的作用域里登记过灯：`moveProp` 会改灯描述的 x/z，world 据此重排动态灯 |
+
+**kit 构件已经自己登记**（`opts.prop = false` 关掉、或传对象覆盖缺省字段；`opts.container` 同理）：
+
+| 构件 | 登记 |
+|---|---|
+| `box` | 道具「纸箱」；每只箱子一个容器 `carton`（`loot: 'carton'`，摞起来的 `on` = 下面那只） |
+| `crate` | 道具「木箱」+ 容器 `crate` |
+| `desk` | 没显示器：道具「办公桌」；有显示器：设备「电脑桌」（`plugged`）+ part `monitor`（`button`，枢轴在屏幕中心）。都带 3 个 `slide` 抽屉，一律 `locked` |
+| `chair` | 道具「椅子」+ 一个座位（面朝 +Z、`h` 0.5、`swivel`）+ part `seat`（`swivel`：座面、靠背、扶手、调节机构） |
+| `cabinet` | 道具「文件柜 / 衣柜 / 储物柜」+ 容器 `fileCab / wardrobe / locker`（`loot: 'one'` 整个柜子正好一件）+ 抽屉（4 个 `slide`）或柜门（`hinge`：衣柜 `doorL/doorR`，储物柜 `door`） |
+| `bed` | 道具「床」+ 一个躺位 |
+| `vending` | 设备「售货机」（`plugged`，「插着电，三百多公斤，拖不动」）+ part `select`（选货键）、`flap`（取货口翻板）；`vend: { cooldown: 60, trayMax: 2, tray }` |
+| `cubicle` | 隔板不登记（结构），里面的桌、椅各自登记 |
 
 ---
 

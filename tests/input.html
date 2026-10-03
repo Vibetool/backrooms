@@ -13,17 +13,21 @@
   #ui { position: fixed; left: 0; top: 0; right: 0; bottom: 0; pointer-events: none; }
   .test-panel { position: fixed; z-index: 40; left: 8px; top: 8px;
     left: calc(8px + env(safe-area-inset-left, 0px)); top: calc(8px + env(safe-area-inset-top, 0px));
-    max-width: 46vw; padding: 8px 10px; border-radius: 8px; background: rgba(0, 0, 0, .62); pointer-events: auto; }
+    max-width: 46vw; max-height: calc(100% - 16px); overflow: auto; box-sizing: border-box;
+    padding: 8px 10px; border-radius: 8px; background: rgba(0, 0, 0, .62); pointer-events: auto; }
   .test-panel pre { margin: 6px 0 0; font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; }
-  .test-panel button { min-height: 36px; margin: 0 6px 4px 0; padding: 0 10px; border-radius: 6px;
-    border: 1px solid #c9b86a; background: #2b2714; color: #f3e9b5; font-size: 13px; }
+  .test-panel button { min-height: 32px; margin: 0 4px 4px 0; padding: 0 8px; border-radius: 6px;
+    border: 1px solid #c9b86a; background: #2b2714; color: #f3e9b5; font-size: 12px; }
+  .test-panel button.on { background: #d9c35c; color: #1d1a0b; }
   .test-panel label { display: block; }
+  .test-row { margin-top: 4px; }
   .test-overlay { position: fixed; z-index: 60; left: 0; top: 0; right: 0; bottom: 0; display: flex;
     flex-direction: column; gap: 10px; align-items: center; justify-content: center;
     background: rgba(10, 9, 5, .72); pointer-events: auto; }
   .test-overlay[hidden] { display: none; }
   .test-overlay button { min-height: 52px; padding: 0 30px; border-radius: 10px; border: 2px solid #e8d67f;
     background: #d9c35c; color: #1d1a0b; font-size: 18px; font-weight: 700; }
+  .test-overlay small { opacity: .7; }
 </style>
 </head>
 <body>
@@ -32,11 +36,18 @@
 
 <div class="test-panel">
   <label>灵敏度 <input id="t-sens" type="range" min="0.2" max="3" step="0.1"> <span id="t-sens-v"></span></label>
+  <div class="test-row" id="t-ctx">情境
+    <button type="button" data-ctx="walk">walk</button><button type="button" data-ctx="seat">seat</button><button type="button" data-ctx="view">view</button><button type="button" data-ctx="drive">drive</button>
+  </div>
+  <div class="test-row">按钮
+    <button type="button" id="t-btn-label">互动改「下车」</button><button type="button" id="t-btn-drop">禁用丢弃</button><button type="button" id="t-btn-reset">清覆盖</button><button type="button" id="t-haptic">震动 30ms</button>
+  </div>
   <pre id="t-out"></pre>
 </div>
 <div class="test-overlay" id="t-overlay">
   <div id="t-msg">主页（输入禁用）</div>
   <button id="t-go" type="button">开始</button>
+  <small id="t-note"></small>
 </div>
 
 <script src="../js/core/base.js"></script>
@@ -48,9 +59,16 @@
   const $ = id => document.getElementById(id);
   const canvas = $('gl'), g = canvas.getContext('2d');
   // mic(V)、testmenu(T) 在暂停时也会记录，可以在暂停遮罩下按来验证
-  const EDGES = ['interact', 'use', 'pause', 'drop', 'slot1', 'slot2', 'slot3', 'slot4', 'slot5', 'mic', 'testmenu'];
+  const EDGES = ['interact', 'use', 'pause', 'drop', 'slot1', 'slot2', 'slot3', 'slot4', 'slot5', 'mic', 'testmenu', 'liftUp', 'liftDown'];
+  // 动作级的三个：另外显示 released / cancelled 和按了多久
+  const HOLDS = ['interact', 'liftUp', 'liftDown'];
   const log = [];
-  let yaw = 0, pitch = 0, px = 0, pz = 0, last = 0;
+  // 给 Playwright 探针读的逐帧记录：{ f, t, a, k: 'pressed'|'released'|'cancelled', ms }
+  const rec = window.__inputLog = [];
+  // 物理键：只为了显示「现在按着 Space / KeyE」，判定一律走 BR.input
+  const down = new Set();
+  let yaw = 0, pitch = 0, px = 0, pz = 0, last = 0, fno = 0, overlayClicks = 0;
+  window.__inputLook = () => ({ yaw, pitch });
 
   I.init(canvas);
 
@@ -61,10 +79,37 @@
     $('t-sens-v').textContent = I.sensitivity.toFixed(1);
   });
 
-  // 模拟 main 的暂停流程：暂停时 enabled=false；「继续」在点击里 lock()，Esc 继续则锁不上，需要再点一下画面
-  function pause() { I.enabled = false; $('t-msg').textContent = '已暂停'; $('t-go').textContent = '继续'; $('t-overlay').hidden = false; }
-  function resume(withLock) { $('t-overlay').hidden = true; I.enabled = true; if (withLock) I.lock(); }
-  $('t-go').addEventListener('click', () => resume(true));
+  window.addEventListener('keydown', e => { down.add(e.code || ('key:' + e.key)); });
+  window.addEventListener('keyup', e => { down.delete(e.code || ('key:' + e.key)); });
+  window.addEventListener('blur', () => down.clear());
+
+  // 模拟 main + hud 的暂停流程：暂停时 screen='paused'、enabled=false，焦点给「继续」（这时空格要被 input 拦掉，只认 Enter 和点击）；
+  // 「继续」在点击里 lock()，Esc 继续则锁不上，需要再点一下画面
+  function pause() {
+    BR.game.screen = 'paused';
+    I.enabled = false;
+    $('t-msg').textContent = '已暂停';
+    $('t-go').textContent = '继续';
+    $('t-note').textContent = '空格点不动这个按钮，Enter / 鼠标可以';
+    $('t-overlay').hidden = false;
+    try { $('t-go').focus({ preventScroll: true }); } catch (err) { $('t-go').focus(); }
+  }
+  function resume(withLock) { $('t-overlay').hidden = true; BR.game.screen = 'playing'; I.enabled = true; if (withLock) I.lock(); }
+  $('t-go').addEventListener('click', () => { overlayClicks++; resume(true); });
+  window.__overlayClicks = () => overlayClicks;
+
+  // 情境与按钮
+  function syncCtxBtns() {
+    document.querySelectorAll('#t-ctx button').forEach(b => b.classList.toggle('on', b.dataset.ctx === I.context));
+  }
+  document.querySelectorAll('#t-ctx button').forEach(b => b.addEventListener('click', () => { I.setContext(b.dataset.ctx); syncCtxBtns(); }));
+  let shownCtx = I.context;
+  syncCtxBtns();
+  $('t-btn-label').addEventListener('click', () => I.setButtons({ interact: { label: '下车' } }));
+  $('t-btn-drop').addEventListener('click', () => I.setButtons({ drop: { disabled: true } }));
+  $('t-btn-reset').addEventListener('click', () => I.setButtons(null));
+  let hapticRes = '-';
+  $('t-haptic').addEventListener('click', () => { hapticRes = String(I.haptic(30)); });
 
   function resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -85,9 +130,15 @@
     const step = W / 8, off = ((-yaw / (Math.PI / 4)) * step) % step;
     g.strokeStyle = 'rgba(40,34,14,.55)'; g.lineWidth = 2;
     for (let x = off - step; x < W + step; x += step) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, horizon); g.stroke(); }
-    // 准星
+    // 准星：按住 interact 时画进度环（350 ms 满一圈，对应 BR.config.interact.holdMs）
+    const cx0 = W / 2, cy0 = H / 2;
     g.strokeStyle = '#fff'; g.lineWidth = 1.5;
-    g.beginPath(); g.moveTo(W / 2 - 8, H / 2); g.lineTo(W / 2 + 8, H / 2); g.moveTo(W / 2, H / 2 - 8); g.lineTo(W / 2, H / 2 + 8); g.stroke();
+    g.beginPath(); g.moveTo(cx0 - 8, cy0); g.lineTo(cx0 + 8, cy0); g.moveTo(cx0, cy0 - 8); g.lineTo(cx0, cy0 + 8); g.stroke();
+    if (I.held('interact')) {
+      const k = Math.min(1, I.heldMs('interact') / 350);
+      g.strokeStyle = k >= 1 ? '#7dff7a' : '#ffe27a'; g.lineWidth = 3;
+      g.beginPath(); g.arc(cx0, cy0, 16, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2); g.stroke();
+    }
     // 移动向量
     const cx = W / 2, cy = H - 70;
     g.strokeStyle = 'rgba(255,255,255,.5)'; g.beginPath(); g.arc(cx, cy, 40, 0, Math.PI * 2); g.stroke();
@@ -98,6 +149,7 @@
   function frame(ts) {
     const dt = Math.min(0.1, (ts - last) / 1000 || 0);
     last = ts;
+    fno++;
     if (I.enabled) {
       const l = I.consumeLook();
       yaw += l.dx;
@@ -107,16 +159,33 @@
       px += (I.move.x * c + I.move.y * s) * sp * dt;
       pz += (I.move.x * s - I.move.y * c) * sp * dt;
     }
-    for (const a of EDGES) if (I.pressed(a)) log.unshift((ts / 1000).toFixed(2) + 's ' + a);
-    log.length = Math.min(log.length, 8);
+    const t = (ts / 1000).toFixed(2) + 's ';
+    for (const a of EDGES) if (I.pressed(a)) { log.unshift(t + a); rec.push({ f: fno, t: ts, a, k: 'pressed', ms: 0 }); }
+    for (const a of HOLDS) {
+      if (I.released(a)) { log.unshift(t + a + ' released ' + Math.round(I.lastHoldMs(a)) + 'ms'); rec.push({ f: fno, t: ts, a, k: 'released', ms: I.lastHoldMs(a) }); }
+      if (I.cancelled(a)) {
+        // cancelled 会撑到输入恢复后的第一帧，日志里只记第一次
+        const prev = rec.length ? rec[rec.length - 1] : null;
+        if (!(prev && prev.a === a && prev.k === 'cancelled' && prev.f === fno - 1)) log.unshift(t + a + ' cancelled ' + Math.round(I.lastHoldMs(a)) + 'ms');
+        rec.push({ f: fno, t: ts, a, k: 'cancelled', ms: I.lastHoldMs(a) });
+      }
+    }
+    if (rec.length > 400) rec.splice(0, rec.length - 400);
+    log.length = Math.min(log.length, 10);
     if (I.pressed('pause')) { if (I.enabled) pause(); else if (!$('t-overlay').hidden && $('t-go').textContent === '继续') resume(false); }
+    if (I.context !== shownCtx) { shownCtx = I.context; syncCtxBtns(); }   // 探针、控制台里 setContext 的也跟上
     draw();
+    const keys = Array.from(down).join(' ') || '-';
     $('t-out').textContent =
-      'isTouch ' + I.isTouch + '  enabled ' + I.enabled + '  locked ' + I.locked + '\n' +
+      'isTouch ' + I.isTouch + '  enabled ' + I.enabled + '  locked ' + I.locked + '  screen ' + BR.game.screen + '\n' +
+      'context ' + I.context + '  按钮 互动「' + I.buttonLabel('interact') + '」  haptic ' + hapticRes + '\n' +
       'move ' + I.move.x.toFixed(2) + ', ' + I.move.y.toFixed(2) + '  sprint ' + I.sprint + '\n' +
       'yaw ' + yaw.toFixed(2) + '  pitch ' + pitch.toFixed(2) + '\n' +
       'pos ' + px.toFixed(1) + ', ' + pz.toFixed(1) + '\n' +
+      '按着的键 ' + keys + '\n' +
       'held use ' + I.held('use') + '  interact ' + I.held('interact') + '\n' +
+      'interact heldMs ' + Math.round(I.heldMs('interact')) + '  lastHoldMs ' + Math.round(I.lastHoldMs('interact')) + '\n' +
+      'liftUp ' + I.held('liftUp') + '  liftDown ' + I.held('liftDown') + '\n' +
       '— 边沿 —\n' + log.join('\n');
     I.endFrame();
     requestAnimationFrame(frame);

@@ -299,7 +299,7 @@
   transition: width 0.12s, height 0.12s, margin 0.12s, background-color 0.12s, border-width 0.12s;
 }
 
-/* 对准可拾取物：点变成圈，和提示文字一起告诉玩家"现在按有用" */
+/* 对准有短按动作的东西：点变成圈，和提示文字一起告诉玩家"现在按有用" */
 .hud-cross.hud-cross-on {
   width: 18px;
   height: 18px;
@@ -309,6 +309,76 @@
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(0, 0, 0, 0.4);
 }
 
+/* 只有原因（short.ok=false 又拖不动）：圈变灰，按了也只是一声轻响 */
+.hud-cross.hud-cross-on.hud-cross-dim { border-color: rgba(190, 186, 172, 0.75); }
+
+/* 四角框（只能拖 / 拖动中）和进度环都画在伪元素上，以准星中心定位，不改准星本身的尺寸 */
+.hud-cross::before,
+.hud-cross::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 只能拖：中心点不变，外面四个角，像要把东西框住抓起来 */
+.hud-cross::before {
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  --hud-corner: var(--hud-accent);
+  background:
+    linear-gradient(var(--hud-corner), var(--hud-corner)) 0 0 / 7px 2px no-repeat,
+    linear-gradient(var(--hud-corner), var(--hud-corner)) 0 0 / 2px 7px no-repeat,
+    linear-gradient(var(--hud-corner), var(--hud-corner)) 100% 0 / 7px 2px no-repeat,
+    linear-gradient(var(--hud-corner), var(--hud-corner)) 100% 0 / 2px 7px no-repeat,
+    linear-gradient(var(--hud-corner), var(--hud-corner)) 0 100% / 7px 2px no-repeat,
+    linear-gradient(var(--hud-corner), var(--hud-corner)) 0 100% / 2px 7px no-repeat,
+    linear-gradient(var(--hud-corner), var(--hud-corner)) 100% 100% / 7px 2px no-repeat,
+    linear-gradient(var(--hud-corner), var(--hud-corner)) 100% 100% / 2px 7px no-repeat;
+  /* 贴在亮黄墙纸上也看得见：四个角压一圈黑边 */
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.9));
+  transition: opacity 0.12s, width 0.12s, height 0.12s, margin 0.12s;
+}
+
+.hud-cross.hud-cross-grab::before { opacity: 1; }
+
+/* 拖动中：四个角收紧、变亮，表示"抓住了" */
+.hud-cross.hud-cross-drag::before {
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  --hud-corner: var(--hud-accent-hi);
+}
+
+/* 进度环：hud.js 只在按下 ringDelayMs（120 ms）以后才加 .hud-cross-hold，并写 --hold（0..1）。
+   不支持 conic-gradient 的老内核退成一圈不动的细环，照样看得出"正在长按" */
+.hud-cross::after {
+  width: 30px;
+  height: 30px;
+  margin: -15px 0 0 -15px;
+  border: 2px solid rgba(243, 210, 102, 0.75);
+  border-radius: 50%;
+  transition: opacity 0.08s;
+}
+
+@supports ((background: conic-gradient(red 0deg, blue 0deg)) and ((-webkit-mask: none) or (mask: none))) {
+  .hud-cross::after {
+    border: 0;
+    background: conic-gradient(var(--hud-accent-hi) calc(var(--hold, 0) * 360deg), rgba(16, 13, 5, 0.55) 0);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  }
+}
+
+.hud-cross.hud-cross-hold::after { opacity: 1; }
+
+/* view 情境（看监控画面）不要准星 */
+.hud-cross.hud-cross-hide { visibility: hidden; }
+
+/* 三行：第一行「[按住] [空格] 动词 名字」、第二行「· 长按拖动」、最后是降下来的手动提示（层级风味文字、尚未开放） */
 .hud-prompt {
   position: absolute;
   left: 50%;
@@ -316,15 +386,54 @@
   margin-top: 28px;
   transform: translateX(-50%);
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 1px;
   max-width: calc(100vw - 24px);
   padding: 4px 12px;
   white-space: nowrap;
+  /* 窄屏折行时每一行也居中，和单行时对齐方式一致 */
+  text-align: center;
   background: var(--hud-panel);
   border: 1px solid var(--hud-line);
   border-radius: 3px;
 }
+
+/* 列里的每一行都不能比框宽：否则不换行的文字会撑出框外而不是出省略号 */
+.hud-prompt-main,
+.hud-prompt-sub,
+.hud-prompt-note {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.hud-prompt-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 「按住」「松开」「长按」：和动词一样不截 */
+.hud-key-lead { flex: none; }
+
+.hud-prompt-sub,
+.hud-prompt-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--hud-dim);
+}
+
+/* 降下来的手动提示（只在第一行是准心提示时出现）和上面隔一条细线 */
+.hud-prompt-note {
+  margin-top: 2px;
+  padding-top: 2px;
+  border-top: 1px solid rgba(231, 193, 74, 0.18);
+}
+
+/* 准心目标给不了动作，只写原因：灰字，不出键帽 */
+.hud-prompt.hud-prompt-why .hud-prompt-text { color: #b9b5a8; }
 
 .hud-key {
   flex: none;
@@ -345,36 +454,70 @@
   border-radius: 3px;
 }
 
+/* 第一行的文字：动词（含触屏的「点「互动」」）永远完整，放不下时只截名字 */
 .hud-prompt-text {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.hud-prompt-verb,
+.hud-prompt-tag { flex: none; }
+
+.hud-prompt-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.hud-touch .hud-prompt { font-size: 15px; }
+/* 桌面「空格 打开 木箱」动词和名字之间空一格；触屏「点「互动」打开木箱」连着写 */
+.hud-prompt-verb:not([hidden]) + .hud-prompt-name { margin-left: 0.35em; }
+.hud-touch .hud-prompt-verb:not([hidden]) + .hud-prompt-name { margin-left: 0; }
+.hud-prompt-tag { margin-left: 0.35em; }
 
-/* 横屏触屏：居中的拾取提示和丢弃键（input.js：right:117、宽 52、bottom:104）在同一高度带。
-   限宽到丢弃键左边再留 8px，超出的照旧省略号；560–639 宽（568×320、592×304 带虚拟导航栏）字号略收，常见的「…（背包已满）」也放得下 */
+/* 原因是整句话，宁可折行也不截；只在「，」「、」「· 」后面折（hud.js 把每段包进 .hud-nb），「拖不动」不会被拆开 */
+.hud-prompt.hud-prompt-why .hud-prompt-name { white-space: normal; }
+.hud-prompt.hud-prompt-why .hud-prompt-name .hud-nb { white-space: nowrap; }
+
+.hud-touch .hud-prompt { font-size: 15px; }
+.hud-touch .hud-prompt-sub,
+.hud-touch .hud-prompt-note { font-size: 13px; }
+
+/* 横屏触屏：居中的准心提示和丢弃键（input.js：right:117、宽 52、bottom:104）在同一高度带。
+   限宽到丢弃键左边再留 8px，超出的只截名字（动词不截）；560–639 宽（568×320、592×304 带虚拟导航栏）字号略收 */
 @media (min-width: 560px) and (max-height: 520px) {
   .hud-touch .hud-prompt {
+    /* 进度环外径 15px，留 5px：提示往上收一点，两行时（592×304）底边也不碰背包栏上的物品名 */
+    margin-top: 20px;
     max-width: calc(100vw - 354px);
     max-width: calc(100vw - 354px - 2 * env(safe-area-inset-right, 0px));
   }
+  /* 横屏准心到背包栏只有两行高：原因不折行（这么宽放得下常见的原因，放不下才截），
+     降下来的手动提示先收起 —— 不瞄东西时它会回到第一行 */
+  .hud-touch .hud-prompt.hud-prompt-why .hud-prompt-name { white-space: nowrap; }
+  .hud-touch .hud-prompt-note { display: none; }
 }
 
 @media (min-width: 560px) and (max-width: 639px) and (max-height: 520px) {
   .hud-touch .hud-prompt { padding: 4px 8px; font-size: 13px; }
+  .hud-touch .hud-prompt-sub,
+  .hud-touch .hud-prompt-note { font-size: 12px; }
 }
 
 /* 竖屏偏矮（375×553、360×560 带浏览器工具栏，320×568）：丢弃键在冲刺键正上方（right:35、宽 52、bottom:188），和提示同一高度带。
-   限宽到丢弃键左边再留 4px，放不下就折行，不截掉「（背包已满）」 */
+   放不下就折行，一个字都不截 */
 @media (max-width: 559px) and (min-height: 433px) and (max-height: 600px) {
+  /* 冲刺键（right:30、宽 62）比丢弃键更靠左：限宽到冲刺键左边再留 6px，提示折成三四行时也碰不到它 */
   .hud-touch .hud-prompt {
-    max-width: calc(100vw - 182px);
+    max-width: calc(100vw - 196px);
     padding: 4px 8px;
     font-size: 13px;
     white-space: normal;
   }
+  /* 窄到一行放不下「点「互动」启动发电机」：第一行改成普通的一段文字，照句子折行 */
+  .hud-touch .hud-prompt-text { display: block; }
+  .hud-touch .hud-prompt-sub,
+  .hud-touch .hud-prompt-note { font-size: 12px; }
 }
 
 /* ========== 层级大标题 ========== */
@@ -621,8 +764,10 @@
   z-index: 90;
   left: 50%;
   top: 50%;
-  /* 准星 + 互动提示下面，背包栏上面 */
+  /* 准星 + 互动提示下面，背包栏上面；提示折成多行时 hud.js 量提示框底边写 --hud-toast-dy，往下让开（不压住提示） */
   margin-top: 84px;
+  margin-top: var(--hud-toast-dy, 84px);
+  transition: margin-top 0.12s ease-out;
   transform: translateX(-50%);
   width: 520px;
   max-width: calc(100vw - 32px);
@@ -1267,6 +1412,8 @@
   .death-root::before { display: none; }
   .hud-bar-fill,
   .hud-cross,
+  .hud-cross::before,
+  .hud-cross::after,
   .death-btn,
   .hud-btn {
     transition: none;

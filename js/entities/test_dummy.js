@@ -13,6 +13,10 @@ const HIT_SEC = 0.35;        // 后仰 + 闪红持续
 const FALL_SEC = 0.55;       // 倒地动作时长
 const CORPSE_SEC = 3;        // 倒地后保留多久再移除
 const LIE_LIFT = 0.2;        // 躺平时抬高一点，别让半个身子陷进地板
+// 被长按空格拖着（A1）：上身朝被拽的方向斜过去、脚在后面蹭，不迈步。拽到这个速度时斜满 DRAG_TILT
+const DRAG_TILT = 0.16;
+const DRAG_FULL_SPEED = 1.2;
+const DRAG_TILT_RATE = 8;
 const FLASH_HEX = 0xff2a2a;
 
 // ---------- 感染症状（观感调出来的数，可调；时间线本身在 wretch.js 的 CYCLE 里） ----------
@@ -485,6 +489,10 @@ BR.entityTypes.register({
   // 人类目标：悲尸这类"划伤就感染"的攻击只对玩家和 human 实体生效（BR.entities.isHuman）
   human: true,
   hp: 100, radius: 0.3, height: HEIGHT,
+  // 准心对准、长按空格可以拖着走（A1）。vol 是手感用的体积（m³）：一个人大约 0.06 m³，但拖一个不配合的人比拖同样重的箱子费劲，
+  // 按 0.6 算，拖着走大约 1.3 m/s，比慢走还慢一点（默认值，可推翻）
+  draggable: true,
+  drag: { vol: 0.6 },
   // 玩家步行速度的一半（用户定死）
   speed: { walk: BR.config.player.walk * 0.5, run: BR.config.player.walk * 0.5 },
   perception: { sight: 0, hearing: 0, fov: 360 },
@@ -564,10 +572,12 @@ BR.entityTypes.register({
         lean = LEAN * Math.sin(Math.PI * k);   // 面朝 -Z，绕 X 轴正转 = 头往后仰
         flash = 1 - k;
       }
-      // 走动时轻微起伏，客机上靠位置变化判断
+      // 走动时轻微起伏，客机上靠位置变化判断。被拖着时不迈步，也就不起伏
+      // （房主 / 单机看 state === 'held'，联机客机自己拖着时看 _localHold，队友拖着时快照里的 state 也是 'held'）
+      const held = e.state === 'held' || !!e._localHold;
       const moved = Number.isFinite(u.lx) ? Math.hypot(e.x - u.lx, e.z - u.lz) : 0;
-      if (moved > 1e-4) u.phase += dt * 9;
-      lift = Math.abs(Math.sin(u.phase)) * 0.025;
+      if (moved > 1e-4 && !held) u.phase += dt * 9;
+      lift = held ? 0 : Math.abs(Math.sin(u.phase)) * 0.025;
       if (inf && inf.stage >= 0) {
         // 第一阶段起就间歇抽搐（抽的时候往一边踉跄），第三阶段换成剧烈版并且头部持续乱晃
         const cfg = inf.stage >= 2 ? TWITCH_HARD : TWITCH_MILD;
@@ -585,6 +595,21 @@ BR.entityTypes.register({
           hy = HEAD_WOBBLE * 0.7 * Math.sin(now * 3.9 + p);
         }
       }
+      // 被拽着走：上身朝拽的方向斜（世界位移转到本地，面朝 -Z；绕 X 正转 = 头往 +Z，绕 Z 正转 = 头往 -X）
+      let tx = 0, tz = 0;
+      if (held && moved > 1e-4 && dt > 0) {
+        const k = Math.min(1, moved / dt / DRAG_FULL_SPEED) * DRAG_TILT;
+        const wx = (e.x - u.lx) / moved, wz = (e.z - u.lz) / moved;
+        const c = Math.cos(e.yaw), sn = Math.sin(e.yaw);
+        tx = k * (wx * sn + wz * c);
+        tz = -k * (wx * c - wz * sn);
+      }
+      if (dt > 0) {
+        u.dragX = BR.util.damp(u.dragX || 0, tx, DRAG_TILT_RATE, dt);
+        u.dragZ = BR.util.damp(u.dragZ || 0, tz, DRAG_TILT_RATE, dt);
+      }
+      lean += u.dragX || 0;
+      roll += u.dragZ || 0;
     }
     u.lx = e.x; u.lz = e.z;
     u.pivot.rotation.x = lean;

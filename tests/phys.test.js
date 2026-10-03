@@ -410,5 +410,198 @@ test('性能：5000 块墙上 20000 次视线，候选收集不是全量遍历',
   ok(ms < 3000, `太慢：${ms} ms`);
 });
 
+// ======================= raycast 返回 key / ignoreKey =======================
+test('raycast：返回命中盒子的登记 key；ignoreKey 跳过（字符串、数组、道具 key 去掉层级前缀）', () => {
+  add('0,0', [box(5, -1, 6, 1)]);                 // 区块静态碰撞体
+  add('0,0#p2', [box(3, -1, 3.5, 1, 0, 1.2)]);     // 可拖道具（矮）
+  add('0,0#p2.1', [box(2, -0.2, 2.3, 0.2, 1.2, 1.5)]);   // 道具上摞的子道具
+  let h = P.raycast(0, 1, 0, 1, 0, 0, 20);
+  ok(h && h.key === '0,0#p2', `应先打到道具，实际 ${h && h.key}`); near(h.dist, 3, 1e-9, 'dist');
+  h = P.raycast(0, 1.3, 0, 1, 0, 0, 20);
+  ok(h && h.key === '0,0#p2.1', `高处先打到子道具，实际 ${h && h.key}`);
+  h = P.raycast(0, 1, 0, 1, 0, 0, 20, { ignoreKey: '0,0#p2' });
+  ok(h && h.key === '0,0' && Math.abs(h.dist - 5) < 1e-9, `ignoreKey 字符串：应打到墙，实际 ${JSON.stringify(h)}`);
+  h = P.raycast(0, 1.3, 0, 1, 0, 0, 20, { ignoreKey: ['L1@0,0#p2.1', 'L1@0,0#p2'] });
+  ok(h && h.key === '0,0', `ignoreKey 数组 + 道具 key：应打到墙，实际 ${JSON.stringify(h)}`);
+  h = P.raycast(0, 1.3, 0, 1, 0, 0, 20, { ignoreKey: ['a', 'b', 'c', 'L1@0,0#p2.1'] });
+  ok(h && h.key === '0,0', `ignoreKey 长数组：应打到墙，实际 ${JSON.stringify(h)}`);
+  ok(P.raycast(0, 1, 0, 1, 0, 0, 20, { ignoreKey: ['0,0', '0,0#p2'] }) === null, '全部忽略 → null');
+  // 不带 ignoreKey 的调用不受前一次影响（模块级状态复位）
+  h = P.raycast(0, 1, 0, 1, 0, 0, 20);
+  ok(h && h.key === '0,0#p2', '下一次不带 ignoreKey 恢复正常');
+  ok(!P.los(0, 1, 0, 8, 1, 0), 'los 不受 ignoreKey 影响');
+});
+
+test('raycast：巨型盒子也返回 key、也能被忽略', () => {
+  add('big', [box(20, -200, 100, 200)]);
+  add('wall', [box(30, -1, 31, 1)]);
+  let h = P.raycast(0, 1, 0, 1, 0, 0, 200);
+  ok(h && h.key === 'big', `应命中巨型盒子，实际 ${h && h.key}`);
+  h = P.raycast(0, 1, 0, 1, 0, 0, 200, { ignoreKey: 'big' });
+  ok(h && h.key === 'wall' && Math.abs(h.dist - 30) < 1e-9, `忽略巨型盒子后打到墙，实际 ${JSON.stringify(h)}`);
+});
+
+// ======================= moveBox（拖动道具） =======================
+// 暴力核对：盒子与任何（非忽略、Y 重叠的）盒子是否有正面积重叠
+function boxPen(x0, z0, x1, z1, skip, yFeet = 0, h = 1) {
+  let worst = 0;
+  for (const s of all) {
+    if (skip && skip.includes(s)) continue;
+    if (s.maxY <= yFeet + 0.01 || s.minY >= yFeet + h - 0.01) continue;
+    const ox = Math.min(x1, s.maxX) - Math.max(x0, s.minX), oz = Math.min(z1, s.maxZ) - Math.max(z0, s.minZ);
+    if (ox > 0 && oz > 0) worst = Math.max(worst, Math.min(ox, oz));
+  }
+  return worst;
+}
+function drag(st, w, d, dx, dz, frames, opts, label, skip) {
+  let res = null;
+  for (let i = 0; i < frames; i++) {
+    res = P.moveBox(st.x - w / 2, st.z - d / 2, st.x + w / 2, st.z + d / 2, 0, 1, dx, dz, opts);
+    st.x += res.dx; st.z += res.dz;
+    const p = boxPen(st.x - w / 2, st.z - d / 2, st.x + w / 2, st.z + d / 2, skip);
+    if (p > 1e-6) throw new Error(`${label} 第 ${i} 帧穿透 ${p.toFixed(6)} m @ (${st.x.toFixed(4)}, ${st.z.toFixed(4)})`);
+  }
+  return res;
+}
+
+test('moveBox：直推撞墙停在墙前；无障碍原样位移', () => {
+  add('c', [box(5, -10, 5.2, 10)]);
+  const st = { x: 0, z: 0 };
+  const res = drag(st, 0.8, 0.6, 0.1, 0, 80, null, '+X');
+  near(st.x + 0.4, 5, 1e-3, '箱子右沿贴墙');
+  ok(res.hitX && !res.hitZ && res.hit, `hitX=${res.hitX} hitZ=${res.hitZ}`);
+  const free = P.moveBox(-1, -1, 0, 0, 0, 1, -0.3, 0.2);
+  near(free.dx, -0.3, 1e-12, 'dx'); near(free.dz, 0.2, 1e-12, 'dz'); ok(!free.hit, '不该撞');
+  const big = P.moveBox(-0.4, -0.3, 0.4, 0.3, 0, 1, 50, 0);
+  near(big.dx, 5 - 0.4, 1e-3, '一次推 50 m 也停在墙前');
+});
+
+test('moveBox：贴墙滑动（斜推沿 X 的墙，X 走满、Z 被夹住；墙由多段拼成不卡接缝）', () => {
+  const segs = [];
+  for (let i = 0; i < 30; i++) segs.push(box(-2 + i * 1.1, 1, -2 + (i + 1) * 1.1, 1.2));
+  add('c', segs);
+  const st = { x: 0, z: 0 };
+  const res = drag(st, 0.6, 0.6, 0.1, 0.1, 100, null, '斜推');
+  near(st.x, 10, 1e-6, 'X 应走满 10 m');
+  near(st.z + 0.3, 1, 1e-3, 'Z 贴墙');
+  ok(res.hitZ && !res.hitX, `hitX=${res.hitX} hitZ=${res.hitZ}`);
+});
+
+test('moveBox：角落停住（L 形墙角，斜推两轴都贴住）', () => {
+  add('c', [box(1, -5, 1.2, 5), box(-5, 1, 5, 1.2)]);
+  const st = { x: 0, z: 0 };
+  const res = drag(st, 0.5, 0.5, 0.07, 0.05, 80, null, '凹角');
+  near(st.x + 0.25, 1, 1e-3, 'x'); near(st.z + 0.25, 1, 1e-3, 'z');
+  ok(res.hitX && res.hitZ, `hitX=${res.hitX} hitZ=${res.hitZ}`);
+});
+
+test('moveBox：ignoreKey 跳过自己的碰撞体（字符串/数组/道具 key）', () => {
+  const self = box(-0.4, -0.3, 0.4, 0.3, 0, 0.8);
+  add('0,0#p1', [self]);
+  add('0,0', [box(3, -5, 3.2, 5)]);
+  // 不忽略：出发就和自己重叠 → 自己不挡（重叠的不挡），照样能推，墙挡住
+  let st = { x: 0, z: 0 };
+  drag(st, 0.8, 0.6, 0.2, 0, 30, null, '不忽略', [self]);
+  near(st.x + 0.4, 3, 1e-3, '停在墙前');
+  // 回到原处、反向推：没忽略时，自己原来的碰撞体挡在路上（已经离开它了）
+  const back = P.moveBox(st.x - 0.4, -0.3, st.x + 0.4, 0.3, 0, 1, -5, 0);
+  near(st.x + back.dx - 0.4, 0.4, 1e-3, '没忽略时被自己留在原处的碰撞体挡住');
+  const back2 = P.moveBox(st.x - 0.4, -0.3, st.x + 0.4, 0.3, 0, 1, -5, 0, { ignoreKey: '0,0#p1' });
+  near(back2.dx, -5, 1e-12, '忽略字符串 key 后畅通');
+  const back3 = P.moveBox(st.x - 0.4, -0.3, st.x + 0.4, 0.3, 0, 1, -5, 0, { ignoreKey: ['x', 'L9@0,0#p1'] });
+  near(back3.dx, -5, 1e-12, '忽略道具 key（带层级前缀）后畅通');
+});
+
+test('moveBox：circles（玩家）挡路，侧面擦过不挡', () => {
+  add('c', [box(50, 50, 51, 51)]);
+  const r = P.moveBox(-0.4, -0.3, 0.4, 0.3, 0, 1, 3, 0, { circles: [[2, 0, 0.3]] });
+  near(0.4 + r.dx, 2 - 0.3, 1e-3, '正前方的人：停在圆前');
+  ok(r.hitX, 'hitX');
+  const r2 = P.moveBox(-0.4, -0.3, 0.4, 0.3, 0, 1, 3, 0, { circles: [[2, 0.65, 0.3]] });
+  near(r2.dx, 3, 1e-12, '人站在侧面 0.35 m 外：擦过不挡');
+  // 圆角：圆心在盒子 Z 范围外 0.2 m（< r），只挡住 sqrt(r²-0.2²) 的宽度
+  const r3 = P.moveBox(-0.4, -0.3, 0.4, 0.3, 0, 1, 3, 0, { circles: [[2, 0.5, 0.3]] });
+  near(0.4 + r3.dx, 2 - Math.sqrt(0.09 - 0.04), 1e-3, '圆角接触');
+  const r4 = P.moveBox(-0.4, -0.3, 0.4, 0.3, 0, 1, 0, 3, { circles: [[0, 2, 0.3]] });
+  near(0.3 + r4.dz, 2 - 0.3, 1e-3, '+Z 方向同样被挡');
+});
+
+test('moveBox：Y 过滤（头顶横梁、脚下地板不挡，及腰台面挡）', () => {
+  add('c', [
+    box(-50, -50, 50, 50, -0.3, 0),   // 地板
+    box(2, -5, 2.5, 5, 1.0, 2.5),     // 横梁底 1.0 = 箱顶（高 1）
+    box(6, -5, 6.5, 5, 0, 0.75),      // 桌面高的台子
+  ]);
+  const r = P.moveBox(-0.4, -0.3, 0.4, 0.3, 0, 1, 10, 0);
+  near(0.4 + r.dx, 6, 1e-3, '只被台子挡');
+  const tall = P.moveBox(-0.4, -0.3, 0.4, 0.3, 0, 1.5, 10, 0);
+  near(0.4 + tall.dx, 2, 1e-3, '高 1.5 的柜子撞横梁');
+});
+
+test('moveBox：随机模糊——随机墙体里拖 1500 步无穿透', () => {
+  const solids = [];
+  for (let i = 0; i < 120; i++) {
+    const x = rng() * 40 - 20, z = rng() * 40 - 20;
+    const w = 0.05 + rng() * 3, d = 0.05 + rng() * 3;
+    solids.push(rng() < 0.5 ? box(x, z, x + w, z + 0.1 + rng() * 0.3) : box(x, z, x + 0.1 + rng() * 0.3, z + d));
+  }
+  add('fz', solids);
+  let checked = 0;
+  for (let agent = 0; agent < 20; agent++) {
+    const w = 0.3 + rng() * 1.2, d = 0.3 + rng() * 1.2;
+    let x, z, tries = 0;
+    do { x = rng() * 40 - 20; z = rng() * 40 - 20; } while (boxPen(x - w / 2, z - d / 2, x + w / 2, z + d / 2) > 0 && ++tries < 500);
+    if (boxPen(x - w / 2, z - d / 2, x + w / 2, z + d / 2) > 0) continue;
+    const st = { x, z };
+    for (let step = 0; step < 75; step++) {
+      const a = rng() * Math.PI * 2, len = rng() < 0.1 ? rng() * 10 : rng() * 0.2;
+      drag(st, w, d, Math.cos(a) * len, Math.sin(a) * len, 1, null, `agent ${agent} step ${step}`);
+      checked++;
+    }
+  }
+  ok(checked >= 1000, `有效样本太少：${checked}`);
+});
+
+test('moveBox：非法输入不抛异常、不动', () => {
+  add('c', [box(5, -1, 6, 1)]);
+  const r = P.moveBox(NaN, 0, 1, 1, 0, 1, 1, 1);
+  ok(r.dx === 0 && r.dz === 0 && !r.hit, '非法盒子不动');
+  const r2 = P.moveBox(0, 0, 1, 1, 0, 1, Infinity, 0);
+  ok(r2.dx === 0 && r2.dz === 0, '非法位移不动');
+});
+
+test('removeSolids(区块 key) 连同道具子 key（"<key>#p1"）一起摘；同 key 覆盖不碰子 key；相近前缀不误伤', () => {
+  P.clear();
+  P.addSolids('3,4', [box(4, -1, 4.2, 1)]);
+  P.addSolids('3,4#p1', [box(-4.2, -1, -4, 1)]);
+  P.addSolids('3,4#f2', [box(-1, 4, 1, 4.2)]);
+  P.addSolids('3,40', [box(-1, -4.2, 1, -4)]);
+  P.addSolids('3,4', [box(4, -1, 4.2, 1)]);                    // 同 key 覆盖：子 key 留着
+  ok(!P.los(0, 1, 0, -8, 1, 0), '覆盖区块 key 后道具碰撞体还在');
+  const n = P.removeSolids('3,4');
+  ok(n === 3, `应摘掉区块和两个子 key 共 3 块，实际 ${n}`);
+  ok(P.los(0, 1, 0, 8, 1, 0) && P.los(0, 1, 0, -8, 1, 0) && P.los(0, 1, 0, 0, 1, 8), '区块和子 key 的都摘掉了');
+  ok(!P.los(0, 1, 0, 0, 1, -8), '"3,40" 不是 "3,4" 的子 key，不该被摘');
+  ok(P.removeSolids('3,4#p1') === 0, '已摘过的再摘返回 0');
+  P.clear();
+});
+
+test('overlapBox：压进去才算重叠（贴着不算），ignoreKey 跳过自己，out 拿到重叠的碰撞体，Y 不重叠不算', () => {
+  P.addSolids('w', [box(2, -1, 2.2, 1)]);
+  P.addSolids('3,4#p1', [box(-0.4, -0.3, 0.4, 0.3, 0, 0.8)]);
+  P.addSolids('beam', [box(-5, 5, 5, 5.2, 2.0, 2.5)]);
+  ok(P.overlapBox(1.0, -0.5, 2.0, 0.5, 0, 1) === 0, '右边正好贴着墙面：不算重叠');
+  ok(P.overlapBox(1.0, -0.5, 2.05, 0.5, 0, 1) === 1, '压进墙 5 cm：重叠');
+  ok(P.overlapBox(-0.4, -0.3, 0.4, 0.3, 0, 1) === 1, '和自己的碰撞体重叠');
+  ok(P.overlapBox(-0.4, -0.3, 0.4, 0.3, 0, 1, { ignoreKey: 'L1@3,4#p1' }) === 0, 'ignoreKey 用道具 key 也能跳过自己');
+  const out = [];
+  const n = P.overlapBox(-0.4, -0.3, 2.1, 0.3, 0, 1, { ignoreKey: ['3,4#p1'], out });
+  ok(n === 1 && out.length === 1 && out[0].key === 'w', `out 里应只有那面墙，实际 ${n} / ${out.map(s => s.key)}`);
+  ok(P.overlapBox(-1, 4.9, 1, 5.3, 0, 1) === 0, '横梁在头顶上（Y 不重叠）不算');
+  ok(P.overlapBox(-1, 4.9, 1, 5.3, 0, 2.2) === 1, '高 2.2 的柜子顶到横梁');
+  ok(P.overlapBox(NaN, 0, 1, 1, 0, 1) === 0, '非法输入返回 0');
+  ok(P.overlapBox(-0.4, -0.3, 0.4, 0.3, 0, 1, { ignoreKey: '3,4#p1' }) === 0 && P.moveBox(-0.4, -0.3, 0.4, 0.3, 0, 1, 1, 0).dx > 0, 'ignore 状态不残留到下一次查询');
+});
+
 console.log(`\nphys: ${passed} 通过, ${failed} 失败`);
 process.exit(failed ? 1 : 0);

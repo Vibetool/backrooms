@@ -87,6 +87,24 @@ BR.config = {
   },
   world: { loadRadius: 2, maxActiveEntities: 28, maxDynamicLights: 6 },
   death: { clearRadius: 30 },                  // 原地重生时清掉这个半径内的实体
+  // 准心交互（js/game/interact.js）。空格短按 = 使用 / 拾取，按满 holdMs = 拖动或长按动作
+  interact: {
+    reach: 2.6,              // 准心射线长度（米），从眼睛（不含头晃）算
+    holdMs: 350,             // 有「使用」动作的东西：按住不到它松手 = 短按，按满进拖动 / 长按动作
+    ringDelayMs: 120,        // 进度环按下这么久才出现，短按不闪
+    assistDeg: 2.5,          // 小目标（物资、按钮）的辅助瞄准角：桌面
+    assistDegTouch: 5,       //                                    触屏
+    pickSlop: 0.15,          // 只对物资：拖着累计挪了不到这么远就松手，按拾取算
+    dragV0: 1.8,             // 拖动限速 v = dragV0 / (1 + dragK·体积 m³)，不低于 dragVMin（m/s）
+    dragK: 0.6,
+    dragVMin: 0.25,
+    grabMin: 1.2,            // 手点离眼睛的水平距离夹在 grabMin..grabMax
+    grabMax: 2.5,
+    breakDist: 1.5,          // 手点和物体上被抓的那一点离这么远就自动松手（卡住、转身太快）
+    exitMargin: 0.4,         // 松手时压在出口圈（半径 + exitMargin）里就退回上一个合法位置
+    smallPrefer: 0.3,        // 小目标比大目标远不到这么多时，选小目标
+    partPrefer: 0.3,         // 部件（按钮、座位等子件）比父道具远不到这么多时，选部件；容器、容器里的物资、格子里的子道具总是压过父道具
+  },
   // 调研里的密度描述 → "正常后室"每 1000 m² 的实体数
   densityWords: { none: 0, rare: 0.04, low: 0.12, moderate: 0.35, high: 0.9, extreme: 2.2 },
 };

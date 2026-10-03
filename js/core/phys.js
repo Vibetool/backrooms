@@ -38,7 +38,7 @@ let slabTests = 0;       // 累计 slab 测试次数，自测用来确认候选�
 function addSolids(key, solids) {
   key = String(key);
   // 区块卸了又载会用同一个 key，直接覆盖，避免重复登记导致碰撞体翻倍
-  if (byKey.has(key)) removeSolids(key);
+  if (byKey.has(key)) removeExact(key);   // 只换这一个 key 的：同名前缀的道具碰撞体（'<key>#p2'）不受影响
   const recs = [];
   if (solids) {
     for (let i = 0; i < solids.length; i++) {
@@ -53,11 +53,12 @@ function addSolids(key, solids) {
         console.warn('[phys] 忽略非法 AABB', key, s);
         continue;
       }
+      // key：登记时的区块/道具 key（可拖道具是 `${chunkKey}#p${n}`），raycast 返回它，ignoreKey 按它跳过
       const rec = {
         minX, minY, minZ, maxX, maxY, maxZ,
         ix0: Math.floor(minX * INV_CELL), ix1: Math.floor(maxX * INV_CELL),
         iz0: Math.floor(minZ * INV_CELL), iz1: Math.floor(maxZ * INV_CELL),
-        big: false, q: 0,
+        big: false, q: 0, key,
       };
       if ((rec.ix1 - rec.ix0 + 1) * (rec.iz1 - rec.iz0 + 1) > BIG_CELLS) {
         rec.big = true;
@@ -80,8 +81,18 @@ function addSolids(key, solids) {
   return recs.length;
 }
 
+// removeSolids(key)：摘掉 key 登记的碰撞体，连同挂在它名下的子 key（'<key>#…'，即这块区块里道具 / 固定设备各自登记的
+// '3,-1#p2'、'3,-1#f1'）。区块卸载、tests/golden.mjs 只按区块 key 摘时，道具的碰撞体也一起摘干净。返回摘掉的个数
 function removeSolids(key) {
   key = String(key);
+  let n = removeExact(key);
+  const pre = key + '#';
+  let kids = null;
+  byKey.forEach((_, k) => { if (k.length > pre.length && k.startsWith(pre)) (kids || (kids = [])).push(k); });
+  if (kids) for (const k of kids) n += removeExact(k);
+  return n;
+}
+function removeExact(key) {
   const recs = byKey.get(key);
   if (!recs) return 0;
   byKey.delete(key);
@@ -331,6 +342,206 @@ function moveCircle(x, z, r, dx, dz, yFeet, height) {
   return { x: px, z: pz, hitX, hitZ, hit: hitX || hitZ };
 }
 
+// ---------- 忽略 key ----------
+// ignoreKey 可以是一个字符串或字符串数组；碰撞 key（'3,-1#p2'）和道具 key（'L1@3,-1#p2'）都认：
+// 道具 key 去掉 '<层级>@' 前缀就是它的碰撞 key（kit 的约定，见 _kit.js 的 skeyOf），interact 直接把父道具链的道具 key 传进来就行
+let ignA = null, ignB = null, ignList = null;
+function setIgnore(opts) {
+  ignA = ignB = ignList = null;
+  const k = opts && opts.ignoreKey;
+  if (k == null || k === '') return false;
+  const one = s => { s = String(s); const i = s.indexOf('@'); return i >= 0 ? s.slice(i + 1) : s; };
+  if (Array.isArray(k)) {
+    const out = [];
+    for (let i = 0; i < k.length; i++) {
+      if (k[i] == null || k[i] === '') continue;
+      const s = String(k[i]);
+      out.push(s);
+      const t = one(s);
+      if (t !== s) out.push(t);
+    }
+    if (!out.length) return false;
+    if (out.length <= 2) { ignA = out[0]; ignB = out.length > 1 ? out[1] : null; } else ignList = out;
+    return true;
+  }
+  ignA = String(k);
+  const t = one(ignA);
+  ignB = t !== ignA ? t : null;
+  return true;
+}
+function ignored(s) {
+  const k = s.key;
+  if (ignList) return ignList.indexOf(k) >= 0;
+  return k === ignA || (ignB !== null && k === ignB);
+}
+
+// ---------- 盒子移动（拖动道具） ----------
+// 轴对齐盒子 [minX,maxX]×[minZ,maxZ]（脚底 yFeet、高 h）在 XZ 上移动 (dx, dz)，分轴扫掠、贴墙滑动。
+// 和 moveCircle 同一套思路：每轴是一维区间扫掠，不穿墙；分步只是让"先 X 后 Z"的折线贴近斜线。
+// opts.ignoreKey：跳过这些 key 的碰撞体（被拖的道具自己、它的子道具）；opts.circles：[[x, z, r], ...] 额外的圆形障碍（玩家）。
+// 出发时已经和某块重叠的不挡（生成时就挨着的家具，拖开就好）。返回 { dx, dz, hit, hitX, hitZ }（实际走成的位移）
+const candBox = [];
+const BOX_TOL = 1e-7;
+function sweepBoxX(x0, z0, x1, z1, sx, list, circles) {
+  blocked = false;
+  if (sx === 0) return 0;
+  let best = sx;
+  for (let i = 0; i < list.length; i++) {
+    const s = list[i];
+    if (s.maxZ <= z0 + BOX_TOL || s.minZ >= z1 - BOX_TOL) continue;   // Z 不重叠（贴着面滑动不算）
+    if (sx > 0) {
+      const gap = s.minX - x1;
+      if (gap < -BOX_TOL) continue;                                    // 在身后或已重叠
+      const lim = Math.max(0, gap - SKIN);
+      if (lim < best) { best = lim; blocked = true; }
+    } else {
+      const gap = x0 - s.maxX;
+      if (gap < -BOX_TOL) continue;
+      const lim = -Math.max(0, gap - SKIN);
+      if (lim > best) { best = lim; blocked = true; }
+    }
+  }
+  if (circles) {
+    for (let i = 0; i < circles.length; i++) {
+      const c = circles[i];
+      if (!c) continue;
+      const cx = +c[0], cz = +c[1], r = +c[2];
+      if (!(r > 0) || !Number.isFinite(cx) || !Number.isFinite(cz)) continue;
+      const dzc = cz < z0 ? z0 - cz : cz > z1 ? cz - z1 : 0;
+      if (dzc >= r) continue;
+      const w = dzc === 0 ? r : Math.sqrt(r * r - dzc * dzc);         // 圆 ⊕ 盒 = 圆角盒：这一行上圆占 [cx-w, cx+w]
+      if (sx > 0) {
+        const gap = (cx - w) - x1;
+        if (gap < -BOX_TOL) continue;
+        const lim = Math.max(0, gap - SKIN);
+        if (lim < best) { best = lim; blocked = true; }
+      } else {
+        const gap = x0 - (cx + w);
+        if (gap < -BOX_TOL) continue;
+        const lim = -Math.max(0, gap - SKIN);
+        if (lim > best) { best = lim; blocked = true; }
+      }
+    }
+  }
+  return best;
+}
+// sweepBoxX 的 Z 轴镜像（交换 X/Z）
+function sweepBoxZ(x0, z0, x1, z1, sz, list, circles) {
+  blocked = false;
+  if (sz === 0) return 0;
+  let best = sz;
+  for (let i = 0; i < list.length; i++) {
+    const s = list[i];
+    if (s.maxX <= x0 + BOX_TOL || s.minX >= x1 - BOX_TOL) continue;
+    if (sz > 0) {
+      const gap = s.minZ - z1;
+      if (gap < -BOX_TOL) continue;
+      const lim = Math.max(0, gap - SKIN);
+      if (lim < best) { best = lim; blocked = true; }
+    } else {
+      const gap = z0 - s.maxZ;
+      if (gap < -BOX_TOL) continue;
+      const lim = -Math.max(0, gap - SKIN);
+      if (lim > best) { best = lim; blocked = true; }
+    }
+  }
+  if (circles) {
+    for (let i = 0; i < circles.length; i++) {
+      const c = circles[i];
+      if (!c) continue;
+      const cx = +c[0], cz = +c[1], r = +c[2];
+      if (!(r > 0) || !Number.isFinite(cx) || !Number.isFinite(cz)) continue;
+      const dxc = cx < x0 ? x0 - cx : cx > x1 ? cx - x1 : 0;
+      if (dxc >= r) continue;
+      const w = dxc === 0 ? r : Math.sqrt(r * r - dxc * dxc);
+      if (sz > 0) {
+        const gap = (cz - w) - z1;
+        if (gap < -BOX_TOL) continue;
+        const lim = Math.max(0, gap - SKIN);
+        if (lim < best) { best = lim; blocked = true; }
+      } else {
+        const gap = z0 - (cz + w);
+        if (gap < -BOX_TOL) continue;
+        const lim = -Math.max(0, gap - SKIN);
+        if (lim > best) { best = lim; blocked = true; }
+      }
+    }
+  }
+  return best;
+}
+
+function moveBox(minX, minZ, maxX, maxZ, yFeet, h, dx, dz, opts) {
+  let x0 = Math.min(+minX, +maxX), x1 = Math.max(+minX, +maxX);
+  let z0 = Math.min(+minZ, +maxZ), z1 = Math.max(+minZ, +maxZ);
+  dx = +dx || 0; dz = +dz || 0;
+  const none = { dx: 0, dz: 0, hit: false, hitX: false, hitZ: false };
+  if (!Number.isFinite(x0) || !Number.isFinite(x1) || !Number.isFinite(z0) || !Number.isFinite(z1)) return none;
+  if (!Number.isFinite(dx) || !Number.isFinite(dz)) return none;
+  if (yFeet == null || !Number.isFinite(+yFeet)) yFeet = groundY((x0 + x1) / 2, (z0 + z1) / 2);
+  yFeet = +yFeet;
+  if (!(h > 0)) h = 1;
+  const y0 = yFeet + Y_EPS, y1 = yFeet + Math.max(h, 3 * Y_EPS) - Y_EPS;
+  const circles = opts && Array.isArray(opts.circles) && opts.circles.length ? opts.circles : null;
+  const ign = setIgnore(opts);
+  // 候选：起点盒子按整段位移外扩
+  const ax = Math.abs(dx) + 0.05, az = Math.abs(dz) + 0.05;
+  queryBox(x0 - ax, z0 - az, x1 + ax, z1 + az, y0, y1, candBox);
+  let list = candBox;
+  if (ign) {
+    let w = 0;
+    for (let i = 0; i < list.length; i++) if (!ignored(list[i])) list[w++] = list[i];
+    list.length = w;
+  }
+  ignA = ignB = ignList = null;
+  if (!list.length && !circles) return { dx, dz, hit: false, hitX: false, hitZ: false };
+
+  const len = Math.sqrt(dx * dx + dz * dz);
+  const half = Math.max(0.05, Math.min(x1 - x0, z1 - z0) * 0.5);
+  let n = Math.ceil(len / half);
+  if (n < 1) n = 1; else if (n > MAX_SUBSTEPS) n = MAX_SUBSTEPS;
+  const sx = dx / n, sz = dz / n;
+  let mx = 0, mz = 0, hitX = false, hitZ = false;
+  for (let i = 0; i < n; i++) {
+    const ex = sweepBoxX(x0 + mx, z0 + mz, x1 + mx, z1 + mz, sx, list, circles);
+    if (blocked) hitX = true;
+    mx += ex;
+    const ez = sweepBoxZ(x0 + mx, z0 + mz, x1 + mx, z1 + mz, sz, list, circles);
+    if (blocked) hitZ = true;
+    mz += ez;
+  }
+  return { dx: mx, dz: mz, hit: hitX || hitZ, hitX, hitZ };
+}
+
+// 轴对齐盒子（脚底 yFeet、高 h）和哪些碰撞体重叠（每个方向都压进去超过 tol 才算，贴着不算）。
+// opts.ignoreKey 同 moveBox；opts.out 给了就把重叠的碰撞体（phys 里的原对象）写进去。返回重叠的个数。
+// 联机房主核对客机放下的道具用（客机自己拖的时候 moveBox 已经挡过；这里防两边不同步）
+const candOverlapBox = [];
+function overlapBox(minX, minZ, maxX, maxZ, yFeet, h, opts) {
+  const x0 = Math.min(+minX, +maxX), x1 = Math.max(+minX, +maxX);
+  const z0 = Math.min(+minZ, +maxZ), z1 = Math.max(+minZ, +maxZ);
+  const out = opts && Array.isArray(opts.out) ? opts.out : null;
+  if (out) out.length = 0;
+  if (!Number.isFinite(x0) || !Number.isFinite(x1) || !Number.isFinite(z0) || !Number.isFinite(z1)) return 0;
+  if (yFeet == null || !Number.isFinite(+yFeet)) yFeet = groundY((x0 + x1) / 2, (z0 + z1) / 2);
+  yFeet = +yFeet;
+  if (!(h > 0)) h = 1;
+  const tol = opts && opts.tol > 0 ? +opts.tol : 0.005;
+  const y0 = yFeet + Y_EPS, y1 = yFeet + Math.max(h, 3 * Y_EPS) - Y_EPS;
+  const ign = setIgnore(opts);
+  const list = queryBox(x0, z0, x1, z1, y0, y1, candOverlapBox);
+  let n = 0;
+  for (let i = 0; i < list.length; i++) {
+    const s = list[i];
+    if (ign && ignored(s)) continue;
+    if (s.maxX <= x0 + tol || s.minX >= x1 - tol || s.maxZ <= z0 + tol || s.minZ >= z1 - tol) continue;
+    n++;
+    if (out) out.push(s);
+  }
+  ignA = ignB = ignList = null;
+  list.length = 0;
+  return n;
+}
+
 // 圆柱是否与任何盒子重叠（出生点校验、重生点检查用；不在第 12 节 API 里，属于附加能力）
 function overlapCircle(x, z, r, yFeet, height) {
   if (!(r > 0)) r = 0.01;
@@ -391,17 +602,19 @@ function slab(ox, oy, oz, dx, dy, dz, s, tEnd, epsT) {
   return t0;
 }
 
-let castAxis = -1, castSign = 0;
+let castAxis = -1, castSign = 0, castKey = null;
+let castIgn = false;   // raycast 带 ignoreKey 时置位（视线 los 永远不带，走原来的快路径）
 
 // 沿线段的 XZ 投影逐格走（Amanatides–Woo 网格 DDA），只测经过格子里的盒子。
 // anyHit=true（视线）碰到第一块就返回；否则找最近命中，并在"最近命中早于当前格出口"时提前停。
 function cast(ox, oy, oz, dx, dy, dz, tEnd, anyHit, epsT) {
   let best = -1;
-  castAxis = -1; castSign = 0;
+  castAxis = -1; castSign = 0; castKey = null;
   for (let i = 0; i < big.length; i++) {
+    if (castIgn && ignored(big[i])) continue;
     const t = slab(ox, oy, oz, dx, dy, dz, big[i], tEnd, epsT);
     if (t >= 0 && (best < 0 || t < best)) {
-      best = t; castAxis = slabAxis; castSign = slabSign;
+      best = t; castAxis = slabAxis; castSign = slabSign; castKey = big[i].key;
       if (anyHit) return best;
     }
   }
@@ -423,9 +636,10 @@ function cast(ox, oy, oz, dx, dy, dz, tEnd, anyHit, epsT) {
         const s = list[i];
         if (s.q === q) continue;
         s.q = q;
+        if (castIgn && ignored(s)) continue;
         const t = slab(ox, oy, oz, dx, dy, dz, s, tEnd, epsT);
         if (t >= 0 && (best < 0 || t < best)) {
-          best = t; castAxis = slabAxis; castSign = slabSign;
+          best = t; castAxis = slabAxis; castSign = slabSign; castKey = s.key;
           if (anyHit) return best;
         }
       }
@@ -446,17 +660,22 @@ function los(ax, ay, az, bx, by, bz) {
   return cast(ax, ay, az, dx, dy, dz, 1, true, 1e-4 / L) < 0;
 }
 
-// 方向不要求归一化；dist 以米计。附带命中面法线 nx/ny/nz（起点在盒内时为 0 向量）
-function raycast(ox, oy, oz, dx, dy, dz, max) {
+// 方向不要求归一化；dist 以米计。附带命中面法线 nx/ny/nz（起点在盒内时为 0 向量）和命中盒子登记时的 key。
+// opts.ignoreKey：字符串或数组，跳过这些 key 的碰撞体（准心对准货架里的箱子时把父道具链传进来，货架整块碰撞盒就不挡了）
+function raycast(ox, oy, oz, dx, dy, dz, max, opts) {
   const L = Math.sqrt(dx * dx + dy * dy + dz * dz);
   if (!(L > 1e-12)) return null;
   const ux = dx / L, uy = dy / L, uz = dz / L;
   if (!(max > 0) || max > RAY_MAX) max = RAY_MAX;
-  const t = cast(ox, oy, oz, ux, uy, uz, max, false, 1e-6);
+  castIgn = setIgnore(opts);
+  let t;
+  try { t = cast(ox, oy, oz, ux, uy, uz, max, false, 1e-6); }
+  finally { castIgn = false; ignA = ignB = ignList = null; }
   if (t < 0) return null;
   return {
     dist: t, x: ox + ux * t, y: oy + uy * t, z: oz + uz * t,
     nx: castAxis === 0 ? castSign : 0, ny: castAxis === 1 ? castSign : 0, nz: castAxis === 2 ? castSign : 0,
+    key: castKey,
   };
 }
 
@@ -476,9 +695,9 @@ function stats() {
 
 BR.phys = {
   addSolids, removeSolids, clear,
-  moveCircle, los, raycast,
+  moveCircle, moveBox, los, raycast,
   groundY, setGroundFn,
-  overlapCircle, stats,
+  overlapCircle, overlapBox, stats,
   CELL,
 };
 })();

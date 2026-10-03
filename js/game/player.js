@@ -23,6 +23,7 @@ const BOB_SPRINT_MUL = 1.6;
 const MOVE_EPS = 0.2;                  // 实际速度低于它视为静止：噪音 0
 const NOISE_WALK = 0.4;
 const NOISE_SPRINT = 1;
+// 下面四个只在没载入 BR.interact 时兜底用（老的「最近物资 + 视线锥」拾取）；正常走准心，见 js/game/interact.js
 const INTERACT_DIST = 2;
 const INTERACT_COS = Math.cos(30 * DEG);   // 视线前方 60° 锥 = 左右各 30°
 const INTERACT_CLOSE = 0.5;            // 物品几乎在脚下时方向角不稳定，不再要求朝向
@@ -59,6 +60,7 @@ let lastCause = null, lastCauseKey = null, lastSource = null;
 // world.js 每次换层都可能调 reset(spawn)。只有新开一局（game:start / game:home 之后）才清背包和数值，
 // 否则走个楼梯背包就没了
 let fullResetPending = true;
+let interactErr = false;               // interact.update 出错只报一次，别每帧刷屏
 
 const player = BR.player = {
   x: 0, y: PC.eyeHeight, z: 0, yaw: 0, pitch: 0, vx: 0, vz: 0, onGround: true,
@@ -68,7 +70,9 @@ const player = BR.player = {
   selected: 0,
   sprinting: false, noise: 0,
   dead: false,
-  // update 内部处理 interact / use / drop / slot1-5；集成层若要自己接管这些按键就置 false，避免一次按键用掉两个
+  // 姿势：'stand'（默认）。坐 / 躺 / 开车由 D2、F1 的模块改写；镜头被 BR.view 接管时 applyCamera 不写相机
+  pose: 'stand',
+  // update 内部处理 use / drop / slot1-5，并驱动 BR.interact（空格 / E）；集成层若要自己接管这些按键就置 false，避免一次按键用掉两个
   handleActions: true,
   slots: SLOTS,
   get feetY() { return feetY; },
@@ -292,6 +296,7 @@ function dropSelected() {
 }
 
 // ---------- 互动 ----------
+// 准心交互（短按拾取、长按拖动）在 js/game/interact.js；这里只剩「把一件物资捡进背包」和兼容别名
 function canInteract(p) {
   if (Math.abs(num(p.y, 0) - feetY) > INTERACT_DY) return false;
   const dx = p.x - player.x, dz = p.z - player.z;
@@ -305,7 +310,23 @@ function canInteract(p) {
   return true;
 }
 
+// 兼容别名：只返回物资（拾取物记录）。有 BR.interact 时就是准心对准的那件物资，没对准物资返回 null
 function interactTarget() {
+  if (player.dead) return null;
+  const I = BR.interact;
+  if (I && typeof I.update === 'function') {
+    const c = I.current;
+    if (!c || c.kind !== 'item') return null;
+    const r = c.ref;
+    if (r && r.id != null) return has(BR.items, 'find') ? BR.items.find(r.id) : r;
+    return has(BR.items, 'find') ? BR.items.find(c.key) : null;
+  }
+  return nearestTarget();
+}
+
+// 老规则：2 m 内、视线前方 60° 锥里最近的物资。只给没载入 interact.js 的环境和不带参数的脚本调用兜底，
+// 游戏里按空格 / E 一律走准心（BR.interact），不会用到它
+function nearestTarget() {
   if (player.dead || !has(BR.items, 'nearest')) return null;
   const near = BR.items.nearest(player.x, player.z, INTERACT_DIST);
   if (!near) return null;
@@ -324,8 +345,23 @@ function interactTarget() {
   return best;
 }
 
-function interact() {
-  const t = interactTarget();
+// target：拾取物记录、物资 id，或 kind 为 'item' 的准心候选（测试和联机客机重放用显式目标）。
+// 不传就用准心对准的物资；准心没对准物资时退回老规则（只有脚本会这样调，游戏里的空格走 BR.interact）
+function itemFromTarget(target) {
+  if (target == null) return interactTarget() || nearestTarget();
+  if (!has(BR.items, 'find')) return typeof target === 'object' && target.type ? target : null;
+  if (typeof target === 'string' || typeof target === 'number') return BR.items.find(target);
+  if (typeof target !== 'object') return null;
+  if (target.kind && target.kind !== 'item') return null;
+  if (target.ref && target.ref.id != null) return BR.items.find(target.ref.id);
+  if (target.id != null) return BR.items.find(target.id);
+  if (target.key != null) return BR.items.find(target.key);
+  return null;
+}
+
+function interact(target) {
+  if (player.dead) return false;
+  const t = itemFromTarget(target);
   if (!t) return false;
   const c = coop();
   if (c && c.role === 'guest') {
@@ -437,11 +473,17 @@ function reset(spawn, opts) {
 }
 
 // ---------- 每帧 ----------
+// 拖着东西时 BR.interact.speedCap() 把人限到拖动速度（越大越慢）：东西跟得上手，人也不会把它甩脱
+function dragCap() {
+  return has(BR.interact, 'speedCap') ? U.clamp(num(BR.interact.speedCap(), 1), 0, 1) : 1;
+}
+function dragging() { return !!(BR.interact && BR.interact.dragging); }
+
 function speed() {
   const base = player.sprinting ? PC.sprint : PC.walk;
   // 物品时效效果的加速/减速不属于饥饿/san 数值，所有模式都生效
   const fx = has(BR.effects, 'speedMul') ? Math.max(0, num(BR.effects.speedMul(), 1)) : 1;
-  return base * (BR.game.statsEnabled ? BR.speedMulFromHunger(player.hunger) : 1) * fx;
+  return base * (BR.game.statsEnabled ? BR.speedMulFromHunger(player.hunger) : 1) * fx * dragCap();
 }
 
 function updateMovement(dt, inp) {
@@ -450,7 +492,7 @@ function updateMovement(dt, inp) {
   const mag = Math.hypot(mx, my);
   if (mag > 1) { mx /= mag; my /= mag; }   // 摇杆推不满就走得慢，键盘斜走不能比直走快
   const wants = mag > 0.05;
-  player.sprinting = wants && !!(inp && inp.sprint);
+  player.sprinting = wants && !!(inp && inp.sprint) && !dragging();   // 拖东西不能冲刺
 
   const sp = speed();
   const s = Math.sin(player.yaw), c = Math.cos(player.yaw);
@@ -561,9 +603,16 @@ function updateSanityFeedback(dt) {
   if (has(BR.audio, 'setSanity')) BR.audio.setSanity(on ? player.sanity / 100 : 1);
 }
 
+// 镜头被别的模块接管（BR.view：监控画面、坐下、开车……，D2 实现）时不写相机；听者位置仍由 update 留在人身上
+function viewOwned() {
+  const v = BR.view;
+  if (!v) return false;
+  try { return typeof v.owner === 'function' ? !!v.owner() : !!v.owner; } catch (err) { return false; }
+}
+
 function applyCamera() {
   const cam = BR.gfx && BR.gfx.camera;
-  if (!cam) return;
+  if (!cam || viewOwned()) return;
   const c = Math.cos(player.yaw), s = Math.sin(player.yaw);
   cam.rotation.order = 'YXZ';   // 先 yaw 后俯仰，第一人称不会出现滚转
   cam.rotation.set(player.pitch, player.yaw, 0);
@@ -571,10 +620,11 @@ function applyCamera() {
   cam.position.set(player.x + c * bobX, player.y + bobY, player.z - s * bobX);
 }
 
+// 空格 / E 不在这里处理：BR.interact.update 统一判短按、长按、拖动
 function handleActions(inp) {
   if (!has(inp, 'pressed')) return;
   for (let i = 0; i < SLOTS; i++) if (inp.pressed('slot' + (i + 1))) select(i);
-  if (inp.pressed('interact')) interact();
+  if (!has(BR.interact, 'update') && inp.pressed('interact')) interact();   // 没载入 interact.js 时的兜底
   if (inp.pressed('use')) useSelected();
   if (inp.pressed('drop')) dropSelected();
 }
@@ -592,6 +642,13 @@ function update(dt) {
   if (active && look) {
     player.yaw = wrapAngle(player.yaw - num(look.dx, 0));
     player.pitch = U.clamp(player.pitch - num(look.dy, 0), -PITCH_LIMIT, PITCH_LIMIT);
+  }
+
+  // 准心交互：用这一帧的朝向瞄准、判空格短按 / 长按、推着拖动的东西走；放在走路之前，speed() 才拿得到这一帧的拖动限速。
+  // 输入关着（暂停、菜单）或 handleActions=false 时传 null：手里拖着的东西原地放下
+  if (has(BR.interact, 'update')) {
+    try { BR.interact.update(dt, active && player.handleActions ? inp : null); }
+    catch (err) { if (!interactErr) { interactErr = true; console.error('[player] interact.update 出错', err); } }
   }
 
   const moved = updateMovement(dt, active ? inp : null);

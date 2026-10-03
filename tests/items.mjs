@@ -362,7 +362,10 @@ async function nightmare(page) {
     await ev(page, () => __it.reset({ hp: 100, hunger: 50, sanity: 50 }));
     const prompt = await ev(page, () => {
       const p = BR.player;
-      BR.items.spawn('liquid_pain', p.x - Math.sin(p.yaw) * 0.3, undefined, p.z - Math.cos(p.yaw) * 0.3, { id: 'test/lp' });
+      const it = BR.items.spawn('liquid_pain', p.x - Math.sin(p.yaw) * 0.8, undefined, p.z - Math.cos(p.yaw) * 0.8, { id: 'test/lp' });
+      __br.step(0.05);
+      // 提示只给准心对准的东西（交互 A1）：先把准心对到瓶子中心
+      if (it && BR.interact) BR.interact.aimAt(it.obj.position.x, it.obj.position.y + (it.hh || 0.1), it.obj.position.z);
       __br.step(0.4);
       const el = document.querySelector('.hud-prompt-text');
       return el ? el.textContent : '';

@@ -9,6 +9,9 @@
 //   弹出后 ARM_MS 内按钮不响应：死的那一下玩家往往正在连点，免得误触直接重生或丢掉整局
 //   game:start / game:home 时自动收起；player:respawn（别的路径复活）时收起并恢复 screen 和输入
 //   联机时在按钮组下面补一个开关麦（.death-mic，惰性创建，不带 death-btn 类），同样受 ARM_MS 保护
+//   空格是游戏里的「互动」，死前常在连按：结算显示期间拦掉空格的 keydown / keypress / keyup（按钮在 keyup 合成 click），
+//     万一还是合成了 click，空格后 SPACE_CLICK_MS 内键盘来的 click（detail 为 0）也不认（按下 Enter 时清掉这个时刻：Enter 合成的照认）。只认 Enter 和点击：
+//     焦点不在结算按钮上（点过面板空白处）时按 Enter 也等于「继续」。input.js 在 screen 为 'dead' 时也拦空格，两层都拦
 //   额外只读：visible
 (function () {
 'use strict';
@@ -16,6 +19,8 @@ const BR = window.BR;
 
 // ---------- 常量 ----------
 const ARM_MS = 800;
+// 空格按下 / 松开后这么久内、由键盘合成的 click 一律不认
+const SPACE_CLICK_MS = 400;
 const STYLE_RE = /(^|\/)css\/game\.css([?#]|$)/;
 const SELF_RE = /js\/game\/death\.js([?#].*)?$/;
 // currentScript 只在脚本同步执行期间有值，必须在顶层取
@@ -23,7 +28,7 @@ const SCRIPT_SRC = (document.currentScript && document.currentScript.src) || '';
 
 // ---------- 状态 ----------
 const dom = { ready: false };
-const S = { visible: false, armAt: 0, armTimer: 0, pending: null, waiting: false };
+const S = { visible: false, armAt: 0, armTimer: 0, pending: null, waiting: false, spaceAt: -1e9, keysOn: false };
 
 // ---------- 小工具 ----------
 function nowMs() { return window.performance && performance.now ? performance.now() : Date.now(); }
@@ -174,9 +179,9 @@ function syncMic() {
   dom.mic.setAttribute('aria-label', busy ? '正在申请麦克风，点击取消' : on ? '麦克风已打开，点击闭麦' : '麦克风已关闭，点击开麦');
 }
 
-function onMic() {
-  // 和主按钮一样等 ARM_MS：死的那一下连点不能顺手把麦开了
-  if (!S.visible || nowMs() < S.armAt) return;
+function onMic(e) {
+  // 和主按钮一样等 ARM_MS：死的那一下连点不能顺手把麦开了；空格点出来的也不认
+  if (!S.visible || nowMs() < S.armAt || spaceClick(e)) return;
   const c = micCoop();
   if (!c) return;
   // 申请途中再点 = 取消，和 coop.js 的麦克风按钮一致
@@ -191,8 +196,56 @@ function ensureDom() {
     ensureStylesheet();
     build();
     dom.ready = true;
+    installKeys();
   }
   return true;
+}
+
+// ---------- 键盘：拦空格，只认 Enter ----------
+function isSpaceKey(e) {
+  return e.code === 'Space' || e.key === ' ' || e.key === 'Spacebar' || e.keyCode === 32;
+}
+function isEnterKey(e) {
+  return e.key === 'Enter' || e.code === 'Enter' || e.code === 'NumpadEnter';
+}
+
+function isTyping(el) {
+  if (!el || el.nodeType !== 1) return false;
+  if (el.isContentEditable) return true;
+  const tag = el.tagName;
+  if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (tag !== 'INPUT') return false;
+  return !/^(button|checkbox|radio|range|color|file|image|reset|submit)$/i.test(el.type || '');
+}
+
+// 键盘合成的 click（detail 为 0）紧跟在空格后面：是空格点出来的，不认。脚本 el.click() 也是 0，但不会刚按过空格
+function spaceClick(e) {
+  return !!e && e.type === 'click' && e.detail === 0 && nowMs() - S.spaceAt < SPACE_CLICK_MS;
+}
+
+function onKey(e) {
+  if (!S.visible || isTyping(e.target)) return;
+  if (isSpaceKey(e)) {
+    S.spaceAt = nowMs();
+    if (e.cancelable) e.preventDefault();
+    return;
+  }
+  if (e.type !== 'keydown' || !isEnterKey(e) || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+  // Enter 是真想点：它合成的 click 哪怕紧跟在空格后面也要认（2026-10-02 返修：空格松开 150 ms 内按 Enter，第一下被当成空格点的拦掉了）
+  S.spaceAt = -1e9;
+  // 焦点在结算里的按钮上：按钮自己合成 click，走 tap 的 click 分支
+  const a = document.activeElement;
+  if (a && a !== dom.root && dom.root.contains(a)) return;
+  // 焦点丢了（点过面板空白处）或在结算外面：Enter 照样是「继续」，也不让外面拿着焦点的按钮被回车点到
+  if (e.cancelable) e.preventDefault();
+  onContinue();
+}
+
+function installKeys() {
+  if (S.keysOn) return;
+  S.keysOn = true;
+  // 捕获阶段，赶在按钮自己处理之前；keypress 是老内核合成 click 的时机
+  ['keydown', 'keypress', 'keyup'].forEach(n => document.addEventListener(n, onKey, true));
 }
 
 // ---------- 显示 / 收起 ----------
@@ -276,8 +329,8 @@ function release() {
 }
 
 // ---------- 按钮 ----------
-function onContinue() {
-  if (!S.visible || nowMs() < S.armAt) return;
+function onContinue(e) {
+  if (!S.visible || nowMs() < S.armAt || spaceClick(e)) return;
   release();
   BR.bus.emit('death:continue');
   // 必须留在这次点击的同步调用栈里；触屏设备 input.lock 自己会跳过。监听方若改回主页就不锁
@@ -285,8 +338,8 @@ function onContinue() {
   if (inp && typeof inp.lock === 'function' && BR.game.screen !== 'home') inp.lock();
 }
 
-function onHome() {
-  if (!S.visible || nowMs() < S.armAt) return;
+function onHome(e) {
+  if (!S.visible || nowMs() < S.armAt || spaceClick(e)) return;
   hide();
   BR.bus.emit('game:home');
 }

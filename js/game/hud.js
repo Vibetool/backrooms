@@ -3,7 +3,14 @@
 // 补充约定：
 //   pause(true/false) 同时切 BR.game.screen（只在 'playing' ↔ 'paused' 之间）和 BR.input.enabled，
 //     并 emit 'game:pause' { paused }。菜单里点「继续」时顺手请求指针锁定（只有点击手势里才锁得上）
-//   prompt(text) 是手动提示，优先于自动的拾取提示；传 null 交还给自动提示
+//   prompt(text) 是手动提示（层级风味文字、world 的「尚未开放」）：准心没对准东西时占第一行；
+//     准心对准目标时准心提示优先，手动提示降到最后一行（.hud-prompt-note），不再整条盖掉。传 null 收起
+//   准心提示（A1）：每帧读 BR.interact.current / state / holdProgress()。
+//     第一行永远是「空格 + 动词 + 名字」（动词自带宾语的短语不再接名字，见 VERB_PHRASE）；只能拖的写「按住 空格 拖动 X」，
+//     门写「按住 空格 往外拉」；short.ok=false 时只用灰字写原因、不出键帽。能拖的加第二行「· 长按拖动」（拖的是父道具时带上它的名字）。
+//     触屏统一写「点「互动」…」，「互动」跟着 BR.input.buttonLabel('interact')。界面文字里不出现 E（E 只是隐藏别名）
+//   准星：.hud-cross-on 圈（短按有用）、.hud-cross-grab 四角框（只能拖）、.hud-cross-drag 拖动中、.hud-cross-dim 只有原因、
+//     .hud-cross-hold 进度环（CSS 变量 --hold 0..1，按下 ringDelayMs 后才出现，短按不闪）、.hud-cross-hide（view 情境）
 //   自动订阅 level:enter 播层级大标题（同一层短时间内只播一次，集成层再手动调也不会重复）
 //   暂停、死亡时 toast 整组藏起来（.hud-toasts-modal），不清掉；联机暂停时面板右上角有开关麦（.hud-pause-mic）
 //   额外只读：visible、paused
@@ -14,7 +21,24 @@ const U = BR.util;
 
 // ---------- 常量 ----------
 const SLOTS = 5;
-const PROMPT_SAMPLE_SEC = 0.1;   // interactTarget 每次都做视线检测，10Hz 足够跟手
+const PROMPT_SAMPLE_SEC = 0.1;   // 没载入 interact.js 时的兜底：interactTarget 每次都做视线检测，10Hz 足够跟手
+const KEY_CAP = '空格';           // 桌面键帽。E 只是隐藏别名，任何文案里都不写
+const HEAVY_VOL = 1.5;           // 体积超过这个（m³，含放在上面的东西）的拖动提示加「很重」
+const HOLD_EPS = 0.004;          // --hold 变化小于这个不写 style
+// 动词表（方案 A1-hud）里自带宾语的短语：后面不再接名字（「空格 坐下」，不写「空格 坐下 椅子」）。
+// 不在这里的动词（拾取、打开、开始……以及没见过的）照「空格 + 动词 + 名字」接上候选的 label。
+// 候选也可以在 short / hold 里给 name（字符串，'' = 不接名字）强行指定
+const VERB_PHRASE = new Set([
+  '拉开抽屉', '打开柜门', '打开冰箱', '打开集装箱', '打开电台', '取货', '开机', '关机', '换画面', '看屏幕',
+  '启动发电机', '关闭发电机', '坐下', '躺下', '起身', '起来', '上车', '下车', '按喇叭',
+  '喝水', '接水喝', '喝杏仁水', '开灯', '关灯', '换台', '戳破', '喷灭火器', '看看', '放录像带', '玩街机',
+  '往外拉', '放下', '滑下去', '荡秋千', '扶起来', '推车',
+]);
+// short 没写动词时按种类补一个（候选本该自己写，这里只是不让第一行空着）
+const KIND_VERB = { item: '拾取', container: '打开', seat: '坐下', vehicle: '上车', door: '往外拉' };
+// 第一行开头的说法：桌面「按住 [空格] 往外拉」，触屏「按住「互动」往外拉」
+const LEAD_DESK = { tap: '', hold: '按住', long: '长按', release: '松开' };
+const LEAD_TOUCH = { tap: '点', hold: '按住', long: '长按', release: '松开' };
 const SAN_BLINK_BELOW = 30;
 const LOW_HP_RATIO = 0.25;
 const TOAST_MS = 2200;
@@ -45,10 +69,12 @@ const S = {
   infoSig: null,
   recSec: -1,
   promptTimer: 0,
-  target: null,
+  target: null,                    // 兜底路径（没有 BR.interact）采样到的物资
   manualPrompt: null,
-  promptSig: null,
-  crossOn: null,
+  promptSig: null,                 // 已写进 DOM 的提示签名，null = 下一帧强制重写
+  crossSig: null,                  // 已写进 DOM 的准星类名组合
+  holdShown: -1,                   // 已写进 --hold 的进度
+  warnedVerb: new Set(),
   slotSig: new Array(SLOTS).fill(null),
   sel: -1,
   nameSig: null,
@@ -59,6 +85,8 @@ const S = {
   titleId: null, titleAt: 0, titleTimer: 0,
   pauseArmAt: 0, homeConfirmUntil: 0, homeTimer: 0,
   warnedTarget: false,
+  layoutDirty: true,               // 提示框内容 / 显隐 / 窗口尺寸变了：下一帧量一次提示框底边，toast 排在它下面
+  toastDy: -1,                     // 已写进 --hud-toast-dy 的值（px）
 };
 
 // ---------- 小工具 ----------
@@ -159,6 +187,8 @@ function ensureDom() {
     buildToasts();
     buildPause();
     dom.ready = true;
+    // 窗口尺寸、横竖屏变了：提示框折行跟着变，toast 的位置重量一次
+    window.addEventListener('resize', () => { S.layoutDirty = true; }, { passive: true });
   }
   // 别的模块清空 #ui 时会把节点一起带走，补挂回去
   const h = host();
@@ -240,10 +270,21 @@ function buildHud() {
   dom.recCoop.hidden = true;
 
   dom.cross = mk('div', 'hud-cross', root);
+  // 提示三行：第一行「[按住] [空格] 动词 名字 ×2」；第二行「· 长按拖动 货架」；最后一行是降下来的手动提示。
+  // .hud-prompt-text 里装第一行的文字部分（测试按它取文字）：动词不能被省略号截掉，只截名字
   dom.prompt = mk('div', 'hud-prompt', root);
   dom.prompt.hidden = true;
-  dom.promptKey = mk('span', 'hud-key', dom.prompt);
-  dom.promptText = mk('span', 'hud-prompt-text', dom.prompt);
+  const main = mk('div', 'hud-prompt-main', dom.prompt);
+  dom.promptLead = mk('span', 'hud-key-lead', main);
+  dom.promptKey = mk('span', 'hud-key', main);
+  dom.promptText = mk('span', 'hud-prompt-text', main);
+  dom.promptVerb = mk('span', 'hud-prompt-verb', dom.promptText);
+  dom.promptName = mk('span', 'hud-prompt-name', dom.promptText);
+  dom.promptTag = mk('span', 'hud-prompt-tag', dom.promptText);
+  dom.promptSub = mk('div', 'hud-prompt-sub', dom.prompt);
+  dom.promptNote = mk('div', 'hud-prompt-note', dom.prompt);
+  dom.promptLead.hidden = dom.promptKey.hidden = dom.promptVerb.hidden = dom.promptTag.hidden = true;
+  dom.promptSub.hidden = dom.promptNote.hidden = true;
 
   dom.title = mk('div', 'hud-title', root);
   dom.title.hidden = true;
@@ -413,7 +454,146 @@ function updateInfo(g) {
 }
 
 // ---------- 准星与互动提示 ----------
-function updatePrompt(dt, p, dead) {
+// 本帧要显示的东西（复用对象，每帧原地改）。cross：'on' 圈 | 'dim' 灰圈（只有原因）| 'grab' 四角框 | 'drag' 拖动中 | ''
+// ring：长按有实际动作（能拖、或有能做的 hold），按住时才画进度环
+const PM = { lead: '', key: '', verb: '', name: '', tag: '', why: false, sub: '', note: '', cross: '', ring: false };
+// 已写进 DOM 的值，逐项比较，没变的不碰 DOM
+const SHOWN = { lead: null, key: null, verb: null, name: null, tag: null, why: null, sub: null, note: null, show: null };
+// 兜底路径（没载入 interact.js）用的物资候选
+const LEGACY = { kind: 'item', key: null, label: '', short: { verb: '拾取', ok: true, why: null }, hold: null, canDrag: false, vol: 0, ref: null };
+
+function clearPM() {
+  PM.lead = PM.key = PM.verb = PM.name = PM.tag = PM.sub = PM.note = PM.cross = '';
+  PM.why = false;
+  PM.ring = false;
+}
+
+function touchBtnLabel() {
+  const inp = BR.input;
+  let l = '';
+  if (has(inp, 'buttonLabel')) {
+    try { l = String(inp.buttonLabel('interact') || ''); } catch (err) { l = ''; }
+  }
+  return l || '互动';
+}
+
+// 第一行。how：'tap' 短按 | 'hold' 按住（拖动、拉门）| 'long' 长按（hold 动作）| 'release' 松开
+function lead(how, verb, name) {
+  if (S.touch) {
+    const b = touchBtnLabel();
+    // 触屏键已经被改成这个动作的名字（例如开车时「下车」）：只写「点「下车」」，不写成「点「下车」下车」
+    PM.verb = LEAD_TOUCH[how] + '「' + b + '」' + (verb === b ? '' : verb);
+    PM.lead = '';
+    PM.key = '';
+  } else {
+    PM.lead = LEAD_DESK[how];
+    PM.key = KEY_CAP;
+    PM.verb = verb;
+  }
+  PM.name = name || '';
+}
+
+// 做不了：灰字写原因，不出键帽
+function why(text) {
+  PM.lead = PM.key = PM.verb = '';
+  PM.name = text ? String(text) : '';
+  PM.why = true;
+}
+
+function verbOf(act, kind) {
+  const v = act && act.verb != null ? String(act.verb) : '';
+  if (v) {
+    if (!VERB_PHRASE.has(v) && v !== '拾取' && v !== '打开' && v !== '拖动' && v !== '开始' && !S.warnedVerb.has(v)) {
+      S.warnedVerb.add(v);
+      console.warn('[hud] 动词「' + v + '」不在动词表里，按「动词 + 名字」显示；自带宾语的短语请加进 hud.js 的 VERB_PHRASE');
+    }
+    return v;
+  }
+  return KIND_VERB[kind] || '使用';
+}
+
+// 动词后面接不接名字：候选给了 name 就用它；自带宾语的短语、动词里已经有这个名字的都不接
+function nameFor(act, verb, label) {
+  if (act && typeof act.name === 'string') return act.name;
+  if (!label || VERB_PHRASE.has(verb) || verb.indexOf(label) >= 0) return '';
+  return label;
+}
+
+function countTag(c) {
+  const r = c.ref;
+  const n = r && typeof r === 'object' ? r.count | 0 : 0;
+  return n > 1 ? '×' + n : '';
+}
+
+function isDoor(c) { return c.kind === 'door' || c.dragKind === 'door'; }
+function doorVerb(c) { return (c.hold && c.hold.verb) || KIND_VERB.door; }
+
+// 候选 + 状态 → PM
+function describe(c, st) {
+  const sh = c.short, hd = c.hold;
+  const holdOk = !!(hd && hd.ok !== false);
+  const label = c.label ? String(c.label) : '';
+  const dragName = c.dragLabel ? String(c.dragLabel) : label;
+  const heavy = !!c.canDrag && num(c.vol, 0) > HEAVY_VOL;
+
+  if (st === 'drag') {
+    // 门是按住一直往外拉，松手停在那个角度：拉的时候提示不变；别的东西松手就放下
+    if (isDoor(c)) lead('hold', doorVerb(c), '');
+    else lead('release', '放下', '');
+    PM.cross = 'drag';
+    return;
+  }
+  if (st === 'hold' && hd) {
+    const v = verbOf(hd, c.kind);
+    lead('hold', v, nameFor(hd, v, label));
+    PM.cross = 'on';
+    PM.ring = true;
+    return;
+  }
+  if (sh) {
+    if (sh.ok !== false) {
+      const v = verbOf(sh, c.kind);
+      lead('tap', v, nameFor(sh, v, label));
+      if (c.kind === 'item') PM.tag = countTag(c);
+      PM.cross = 'on';
+    } else {
+      why(sh.why || c.dragWhy || label);
+      PM.cross = c.canDrag ? 'grab' : 'dim';
+    }
+    // 第二行：长按做什么。拖的是父道具（货架里的箱子 → 货架）时带上父道具的名字，免得以为拖的是箱子
+    if (c.canDrag) PM.sub = '· 长按拖动' + (dragName && dragName !== label ? ' ' + dragName : '') + (heavy ? ' · 很重' : '');
+    else if (holdOk) {
+      const v = verbOf(hd, c.kind);
+      const n = nameFor(hd, v, label);
+      PM.sub = '· 长按' + v + (n ? ' ' + n : '');
+    }
+    PM.ring = !!c.canDrag || holdOk;
+    return;
+  }
+  // 没有短按动作
+  if (c.canDrag) {
+    // 只能拖的一按就拖（interact.js），所以写「按住」，也不画进度环
+    if (isDoor(c)) lead('hold', doorVerb(c), '');
+    else {
+      lead('hold', '拖动', dragName);
+      if (heavy) PM.tag = '· 很重';
+    }
+    PM.cross = 'grab';
+    return;
+  }
+  if (holdOk) {
+    const v = verbOf(hd, c.kind);
+    lead('long', v, nameFor(hd, v, label));
+    PM.cross = 'on';
+    PM.ring = true;
+    return;
+  }
+  why((hd && hd.why) || c.dragWhy || label);
+  PM.cross = 'dim';
+}
+
+// 没载入 interact.js（单独的 HUD 自测页）：照旧 10Hz 问 player.interactTarget()，只认物资
+function legacyCand(dt, p, dead) {
   S.promptTimer -= dt;
   if (S.promptTimer <= 0) {
     S.promptTimer = PROMPT_SAMPLE_SEC;
@@ -425,29 +605,127 @@ function updatePrompt(dt, p, dead) {
       }
     }
   }
-
   const t = dead ? null : S.target;
-  let key = '', text = '';
+  if (!t) return null;
+  LEGACY.key = t.id;
+  LEGACY.label = itemName(t.type);
+  LEGACY.ref = t;
+  const full = has(p, 'canAdd') && !p.canAdd(t.type);
+  LEGACY.short.ok = !full;
+  LEGACY.short.why = full ? '背包已满' : null;
+  return LEGACY;
+}
+
+function put(node, field, v) {
+  if (SHOWN[field] === v) return;
+  SHOWN[field] = v;
+  node.textContent = v;
+  node.hidden = !v;
+  S.layoutDirty = true;
+}
+
+// 灰字原因按「，」「、」「· 」分段，每段不在中间断行（2026-10-02 返修：手机竖屏上「插着电，三百多公斤，拖」/「不动」）。
+// 超过 WHY_NB_MAX 个字的段照常折行，免得一段比框还宽被截掉
+const WHY_NB_MAX = 10;
+function whySegments(v) {
+  const out = [];
+  let a = 0;
+  for (let i = 0; i < v.length; i++) {
+    const ch = v[i];
+    if (ch === '，' || ch === '、' || (ch === ' ' && i > 0 && v[i - 1] === '·')) { out.push(v.slice(a, i + 1)); a = i + 1; }
+  }
+  if (a < v.length) out.push(v.slice(a));
+  return out;
+}
+function putName(v, whyMode) {
+  const k = (whyMode ? '\u0001' : '') + v;
+  if (SHOWN.name === k) return;
+  SHOWN.name = k;
+  const node = dom.promptName;
+  node.hidden = !v;
+  S.layoutDirty = true;
+  const segs = whyMode ? whySegments(v) : null;
+  if (!segs || segs.length < 2) { node.textContent = v; return; }
+  node.textContent = '';
+  for (const seg of segs) {
+    if (seg.length > WHY_NB_MAX) { node.appendChild(document.createTextNode(seg)); continue; }
+    const sp = document.createElement('span');
+    sp.className = 'hud-nb';
+    sp.textContent = seg;
+    node.appendChild(sp);
+  }
+}
+
+// toast 排在提示框下面（2026-10-02 返修：灰字原因折行 + 「· 长按拖动」、手动提示 + 目标时，toast 压住了下面几行）。
+// 只在提示内容、显隐、窗口尺寸变了的那一帧量一次；横屏 toast 挪到右上角时 CSS 把 margin-top 定死成 0，这个值不起作用
+const TOAST_DY_MIN = 84;           // 和 css 里 .hud-toasts 原来的 margin-top 一致：单行提示时位置不变
+function placeToasts() {
+  if (!S.layoutDirty || !dom.toasts) return;
+  S.layoutDirty = false;
+  let dy = TOAST_DY_MIN;
+  if (!dom.prompt.hidden) {
+    const r = dom.prompt.getBoundingClientRect();
+    const mid = (window.innerHeight || document.documentElement.clientHeight || 0) / 2;
+    if (r.height > 0) dy = Math.max(TOAST_DY_MIN, Math.ceil(r.bottom - mid + 6));
+  }
+  if (dy !== S.toastDy) { S.toastDy = dy; dom.toasts.style.setProperty('--hud-toast-dy', dy + 'px'); }
+}
+
+function updatePrompt(dt, p, dead) {
+  const I = BR.interact;
+  const live = !!I && has(I, 'update');
+  let c = null, st = 'idle', prog = 0, hide = false;
+  if (live) {
+    if (!dead) {
+      c = I.current;
+      st = I.state || 'idle';
+      if ((st === 'pressed' || st === 'hold') && has(I, 'holdProgress')) prog = num(+I.holdProgress(), 0);
+      hide = !!I.crossHidden;
+    }
+  } else {
+    c = legacyCand(dt, p, dead);
+  }
+
+  clearPM();
+  if (c) describe(c, st);
   if (!dead && S.manualPrompt) {
-    text = S.manualPrompt;
-  } else if (t) {
-    const cnt = t.count > 1 ? ' ×' + t.count : '';
-    if (S.touch) text = '点「互动」拾取 ' + itemName(t.type) + cnt;
-    else { key = 'E'; text = '拾取 ' + itemName(t.type) + cnt; }
-    if (has(p, 'canAdd') && !p.canAdd(t.type)) text += '（背包已满）';
+    // 准心提示优先：有目标时手动提示降到最后一行；没目标时它就是第一行（不是灰字）
+    if (PM.verb || PM.name || PM.key) PM.note = S.manualPrompt;
+    else PM.name = S.manualPrompt;
   }
-  const sig = key + '\n' + text;
-  if (sig !== S.promptSig) {
-    S.promptSig = sig;
-    dom.prompt.hidden = !text;
-    dom.promptKey.hidden = !key;
-    dom.promptKey.textContent = key;
-    dom.promptText.textContent = text;
+
+  if (S.promptSig === null) {
+    for (const k in SHOWN) SHOWN[k] = null;
+    S.promptSig = 1;
   }
-  const crossOn = !!t;
-  if (crossOn !== S.crossOn) {
-    S.crossOn = crossOn;
-    toggle(dom.cross, 'hud-cross-on', crossOn);
+  const show = !!(PM.verb || PM.name || PM.key || PM.sub || PM.note);
+  if (SHOWN.show !== show) { SHOWN.show = show; dom.prompt.hidden = !show; S.layoutDirty = true; }
+  put(dom.promptLead, 'lead', PM.lead);
+  put(dom.promptKey, 'key', PM.key);
+  put(dom.promptVerb, 'verb', PM.verb);
+  putName(PM.name, PM.why);
+  put(dom.promptTag, 'tag', PM.tag);
+  put(dom.promptSub, 'sub', PM.sub);
+  put(dom.promptNote, 'note', PM.note);
+  if (SHOWN.why !== PM.why) { SHOWN.why = PM.why; toggle(dom.prompt, 'hud-prompt-why', PM.why); S.layoutDirty = true; }
+  placeToasts();
+
+  // 准星。进度环：按下 ringDelayMs 后 holdProgress() 才大于 0，短按不会闪一下
+  const ring = (st === 'hold' || (st === 'pressed' && PM.ring)) && prog > 0;
+  if (ring && Math.abs(prog - S.holdShown) >= HOLD_EPS) {
+    S.holdShown = prog;
+    dom.cross.style.setProperty('--hold', prog.toFixed(3));
+  }
+  const cross = PM.cross + (hide ? '|hide' : '') + (ring ? '|ring' : '');
+  if (cross !== S.crossSig) {
+    S.crossSig = cross;
+    const k = PM.cross;
+    toggle(dom.cross, 'hud-cross-on', k === 'on' || k === 'dim');
+    toggle(dom.cross, 'hud-cross-dim', k === 'dim');
+    toggle(dom.cross, 'hud-cross-grab', k === 'grab' || k === 'drag');
+    toggle(dom.cross, 'hud-cross-drag', k === 'drag');
+    toggle(dom.cross, 'hud-cross-hide', hide);
+    toggle(dom.cross, 'hud-cross-hold', ring);
   }
 }
 
@@ -540,6 +818,7 @@ function syncTouch() {
   toggle(dom.root, 'hud-touch', t);
   S.promptSig = null;
   S.nameSig = null;
+  S.layoutDirty = true;
 }
 
 function update(dt) {
@@ -623,7 +902,7 @@ function toast(text, ms) {
   for (let i = 0; i < S.toasts.length; i++) {
     const t = S.toasts[i];
     if (t.text !== text || t.leaving) continue;
-    // 同一句话连着来（对着满背包反复按 E）只续时间、闪一下边框，不刷屏
+    // 同一句话连着来（对着满背包反复按空格）只续时间、闪一下边框，不刷屏
     armToast(t, dur);
     t.node.classList.remove('hud-toast-bump');
     void t.node.offsetWidth;

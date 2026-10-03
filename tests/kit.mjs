@@ -21,6 +21,12 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(ROOT, 'tests', 'output');
 fs.mkdirSync(OUT, { recursive: true });
 const SEED = 20260913;
+// --only pure,fallback,world,reg,levels：只跑其中几段（缺省全跑）；--levels 0,1,dev：道具登记一致性只查这几层（缺省 LEVEL_ORDER 全部 26 层）
+const argv = process.argv.slice(2);
+const argOf = n => { const i = argv.indexOf('--' + n); return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : null; };
+const ONLY = argOf('only') ? new Set(argOf('only').split(',').map(s => s.trim())) : null;
+const want = s => !ONLY || ONLY.has(s);
+const LEVELS_ARG = argOf('levels');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -93,9 +99,11 @@ async function main() {
     args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'],
   });
   try {
-    await pureKit(browser, base);
-    await fallbackTexture(browser, base);
-    await inWorld(browser, base);
+    if (want('pure')) await pureKit(browser, base);
+    if (want('fallback')) await fallbackTexture(browser, base);
+    if (want('world')) await inWorld(browser, base);
+    if (want('reg')) await registry(browser, base);
+    if (want('levels')) await levelRegistry(browser, base);
   } catch (err) {
     check('测试流程未中断', false, String(err && err.stack || err));
   } finally {
@@ -507,6 +515,351 @@ async function inWorld(browser, base) {
   const gi = await ev(page, () => { __br.step(0.1); const i = BR.gfx.renderer.info; return { calls: i.render.calls, triangles: i.render.triangles, geometries: i.memory.geometries, textures: i.memory.textures, programs: i.programs ? i.programs.length : null }; });
   console.log('     出生点北望一帧：' + JSON.stringify(gi));
   check('出生点一帧 draw call ≤ 120（25 块载入、雾内可见约 1/3）', gi.calls <= 120, gi);
+  await ctx.close();
+}
+
+// =====================================================================
+// 7. 道具登记（A1）：作用域、key、spans、碰撞体拆分、能不能拖、moveProp / settleProp / toWorld
+// =====================================================================
+async function registry(browser, base) {
+  const ctx = await browser.newContext({ viewport: { width: 960, height: 540 } });
+  const page = await ctx.newPage();
+  watch(page, 'reg');
+  await boot(page, base);
+
+  // ---------- 7a. 合成场景：嵌套道具、容器、部件、设备、出口圈、显式 on ----------
+  const syn = await ev(page, () => {
+    const kit = BR.kit, lv = BR.levels.get('dev'), U = BR.util;
+    const b = kit.builder({ level: lv, levelSeed: 7 }, 3, 4, U.rng(7, 3, 4));
+    const pcs = {};
+    b.box(1, 0, 1, 4, 2.8, 0.2, 'kit:prop', { color: 0x888888 });           // 墙：不登记
+    const A = b.prop({ kind: 'rack', label: '货架', pivot: [6, 6, 0.5] }, () => {
+      pcs.A = [b.box(6, 0, 6, 1.2, 2, 0.6, 'kit:prop', { color: 0x777777 })];
+      pcs.A.push(b.box(6, 2, 6, 1.2, 0.05, 0.6, 'kit:glow', { solid: false, uv: 'solid', color: [1, 1, 1] }));
+      b.prop({ kind: 'crateOnRack', label: '木箱', draggable: false, strapped: true }, () => {
+        pcs.A1 = [b.box(6, 1, 6, 0.5, 0.5, 0.5, 'kit:prop', {})];
+        b.container({ kind: 'crate', dims: [0.5, 0.5, 0.5], slots: [[0, 0.05, 0]], loot: 'crate' }, () => {
+          pcs.A1c = [b.box(6, 1.5, 6, 0.5, 0.01, 0.5, 'kit:prop', { solid: false })];
+          pcs.A1.push(pcs.A1c[0]);
+        });
+      });
+      pcs.A.push(b.box(6.4, 0, 6, 0.2, 0.2, 0.2, 'kit:prop', { solid: false }));
+      b.part({ type: 'slide', name: 'drawer', pivot: [6, 0.3, 6.3], locked: true }, () => { pcs.Ap = [b.box(6, 0.2, 6.3, 0.4, 0.2, 0.02, 'kit:prop', { solid: false })]; pcs.A.push(pcs.Ap[0]); });
+      b.part({ type: 'slide', name: 'drawer' }, () => { const p = b.box(6, 0.5, 6.3, 0.4, 0.2, 0.02, 'kit:glow', { solid: false, uv: 'solid' }); pcs.Ap.push(p); pcs.A.push(p); });   // 同名合并
+    });
+    const F = b.fixture({ kind: 'vend', label: '售货机', plugged: true }, () => {
+      pcs.F = [b.box(10, 0, 10, 0.9, 1.8, 0.8, 'kit:prop', {})];
+      b.part({ type: 'button', name: 'btn' }, () => { pcs.F.push(b.box(10.2, 1, 10.41, 0.05, 0.05, 0.01, 'kit:glow', { solid: false, uv: 'solid' })); });
+    });
+    const C = b.prop({ kind: 'chair', label: '椅子', pivot: [15, 15, 1.0], seats: [{ x: 0, z: 0, yaw: Math.PI, h: 0.5, swivel: true }] }, () => {
+      b.push(15, 15, 1.0); pcs.C = [b.box(0, 0, 0, 0.5, 1, 0.5, 'kit:prop', {})]; b.pop();
+    });
+    kit.exit(b, { to: '1', kind: 'zone', x: 16.1, z: 15, radius: 0.5 });   // 出口圈 +0.4 压到椅子的碰撞体
+    const E = b.prop({ kind: 'hatch' }, () => { kit.exit(b, { to: '2', kind: 'zone', x: 20, z: 3 }); pcs.E = [b.box(20, 0, 3, 0.5, 0.1, 0.5, 'kit:prop', { solid: false })]; });
+    const B2 = b.prop({ kind: 'load', on: A.key + '#s1' }, () => { pcs.B2 = [b.box(7, 2.05, 6, 0.4, 0.3, 0.4, 'kit:prop', {})]; });
+    const orphan = b.part({ type: 'button', name: 'x' }, () => { pcs.orphan = [b.box(22, 0, 22, 0.1, 0.1, 0.1, 'kit:prop', { solid: false })]; });
+    const res = b.finish();
+    const K = res.kit;
+    const A1 = K.props.find(r => r.kind === 'crateOnRack');
+    const cont = K.containers[0];
+    const inSpans = (rec, pc) => {
+      const mat = pc.mesh.name;
+      return rec.spans.some(s => s.mat === mat && pc.start >= s.v0 && pc.start + pc.count <= s.v1);
+    };
+    const out = {};
+    out.keys = { A: A.key, A1: A1 && A1.key, F: F.key, C: C.key, E: E.key, B2: B2.key, cont: cont && cont.key, part: A.parts.map(p => p.key), skeyA: A.skey, orphan };
+    out.counts = { props: K.props.length, fixtures: K.fixtures.length, containers: K.containers.length, Aparts: A.parts.length, Fparts: F.parts.length };
+    out.tree = { Achildren: A.children, A1on: A1.on, B2on: B2.on, contParent: cont.parentKey, contParts: cont.parts, partContainer: A.parts[0].container };
+    out.cover = {
+      A: pcs.A.every(p => inSpans(A, p)), Anot1: pcs.A1.every(p => !inSpans(A, p)), A1: pcs.A1.every(p => inSpans(A1, p)),
+      cont: pcs.A1c.every(p => inSpans(cont, p)), part: pcs.Ap.every(p => inSpans(A.parts[0], p)),
+      F: pcs.F.every(p => inSpans(F, p)), C: pcs.C.every(p => inSpans(C, p)), B2: pcs.B2.every(p => inSpans(B2, p)),
+      spanAlias: cont.span === cont.spans && !Object.keys(cont).includes('span'),
+    };
+    // 每条记录自己的段互不重叠（道具/设备之间独占顶点）
+    const segs = [];
+    for (const r of K.props.concat(K.fixtures)) for (const s of r.spans) segs.push([s.mat, s.v0, s.v1, r.key]);
+    let overlap = 0;
+    for (let i = 0; i < segs.length; i++) for (let j = i + 1; j < segs.length; j++) if (segs[i][0] === segs[j][0] && segs[i][1] < segs[j][2] && segs[j][1] < segs[i][2]) overlap++;
+    out.segOverlap = overlap;
+    const sp = kit.splitSolids(res);
+    out.split = { statics: sp.statics.length, owners: sp.owners.map(o => [o.key, o.solids.length]), total: res.solids.length };
+    out.drag = { A: A.draggable, A1: A1.draggable, C: [C.draggable, C.exitOverlap], E: E.draggable, B2: B2.draggable, Fwhy: F.why, Fplug: F.plugged };
+    out.volume = A.volume;
+    out.obbA = A.obb;
+    out.seat = C.seats[0];
+    out.seatWorld = kit.toWorld(C, C.seats[0]);
+    out.pivotC = C.pivot;
+    out.part = A.parts[0];
+    out.json = JSON.stringify(K.props).length > 0;
+    // ---------- moveProp / settleProp ----------
+    const meshes = {};
+    for (const m of res.group.children) meshes[m.name] = m;
+    const P = meshes['kit:prop'].geometry.attributes.position, G = meshes['kit:glow'].geometry.attributes.position;
+    const snapP = Float32Array.from(P.array), snapG = Float32Array.from(G.array);
+    const deltaOf = (pc, snap) => {
+      const a = pc.mesh.geometry.attributes.position.array;
+      let dx = 0, dy = 0, dz = 0, n = 0, spread = 0;
+      for (let i = pc.start; i < pc.start + pc.count; i++) {
+        const ex = a[i * 3] - snap[i * 3], ey = a[i * 3 + 1] - snap[i * 3 + 1], ez = a[i * 3 + 2] - snap[i * 3 + 2];
+        if (n) spread = Math.max(spread, Math.abs(ex - dx / n), Math.abs(ey - dy / n), Math.abs(ez - dz / n));
+        dx += ex; dy += ey; dz += ez; n++;
+      }
+      return [+(dx / n).toFixed(4), +(dy / n).toFixed(4), +(dz / n).toFixed(4), +spread.toFixed(5)];
+    };
+    const snapOf = pc => (pc.mesh.name === 'kit:glow' ? snapG : snapP);
+    const hiddenPc = pcs.A[2];
+    hiddenPc.setVisible(false);                                      // 藏起来的件：基准要从 _saved 取
+    const solidsBefore = JSON.stringify(res.solids);
+    out.moveOk = kit.moveProp(res, A, { dx: 1, dz: -2 });
+    out.mv1 = {
+      A: pcs.A.filter(p => p !== hiddenPc).map(p => deltaOf(p, snapOf(p))), A1: pcs.A1.map(p => deltaOf(p, snapP)), B2: pcs.B2.map(p => deltaOf(p, snapP)),
+      F: pcs.F.map(p => deltaOf(p, snapOf(p))), C: pcs.C.map(p => deltaOf(p, snapP)),
+      culled: [meshes['kit:prop'].frustumCulled, meshes['kit:glow'].frustumCulled],
+    };
+    hiddenPc.setVisible(true);
+    out.hiddenAfterShow = deltaOf(hiddenPc, snapP);
+    kit.moveProp(res, A1, { dx: 0.5, dz: 0 });
+    out.mv2 = { A: deltaOf(pcs.A[0], snapP), A1: deltaOf(pcs.A1[0], snapP), B2: deltaOf(pcs.B2[0], snapP) };
+    pcs.A[0].setVisible(false);
+    kit.moveProp(res, A, 0, 0);                                      // 旧写法 (res, rec, dx, dz)
+    pcs.A[0].setVisible(true);
+    out.mv3 = { A: deltaOf(pcs.A[0], snapP), A1: deltaOf(pcs.A1[0], snapP), B2: deltaOf(pcs.B2[0], snapP) };
+    kit.moveProp(res, A, { dx: 3, dz: 1 });
+    out.solidsSame = JSON.stringify(res.solids) === solidsBefore;
+    out.propSolids = kit.propSolids(res, A).map(s => [s.minX, s.minZ, s.maxX, s.maxZ].map(v => +v.toFixed(4)));
+    out.propSolidsT = kit.propSolids(res, A, { dx: 0, dz: 0 }).map(s => [s.minX, s.minZ].map(v => +v.toFixed(4)));
+    out.rackSolid = [res.solids[A.solids[0]].minX, res.solids[A.solids[0]].minZ].map(v => +v.toFixed(4));
+    out.childWorld = kit.toWorld(K.containers[0], K.containers[0].slots[0]);
+    out.childPivot = K.containers[0].pivot;
+    kit.settleProp(A);
+    kit.settleProp(A1);
+    const sph = meshes['kit:prop'].geometry.boundingSphere;
+    let outside = 0;
+    for (let i = 0; i < P.count; i++) {
+      const d = Math.hypot(P.array[i * 3] - sph.center.x, P.array[i * 3 + 1] - sph.center.y, P.array[i * 3 + 2] - sph.center.z);
+      if (d > sph.radius + 1e-4) outside++;
+    }
+    out.settle = { culled: [meshes['kit:prop'].frustumCulled, meshes['kit:glow'].frustumCulled], outside };
+    out.dyWarn = true;
+    res.group.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+    return out;
+  });
+  const k = syn.keys;
+  check('登记 key：顶层道具 #p、嵌套 #p1.1、设备 #f、容器 #c、部件 #k；碰撞 key 去掉层级前缀',
+    k.A === 'dev@3,4#p1' && k.A1 === 'dev@3,4#p1.1' && k.F === 'dev@3,4#f1' && k.C === 'dev@3,4#p2' && k.E === 'dev@3,4#p3' && k.B2 === 'dev@3,4#p4' &&
+    k.cont === 'dev@3,4#c1' && k.part.join() === 'dev@3,4#p1#k1' && k.skeyA === '3,4#p1' && k.orphan === null, k);
+  check('登记条数：道具 5、设备 1、容器 1；同名 part 合并成 1 条；没有所属道具的 part 不登记', syn.counts.props === 5 && syn.counts.fixtures === 1 && syn.counts.containers === 1 && syn.counts.Aparts === 1 && syn.counts.Fparts === 1, syn.counts);
+  check('父子链：嵌套道具 on = 父 key；显式 on = "父 key#格号" 也挂成子道具；容器 parentKey 是最内层道具；部件记所在容器',
+    JSON.stringify(syn.tree.Achildren) === JSON.stringify([k.A1, k.B2]) && syn.tree.A1on === k.A && syn.tree.B2on === k.A + '#s1' &&
+    syn.tree.contParent === k.A1 && syn.tree.contParts.length === 0 && syn.tree.partContainer === null, syn.tree);
+  check('spans：作用域里画的每个 Piece 都落在本记录的段里；嵌套道具的件不算外层的；容器、部件（含合并的第二段）、span 别名不进 JSON', Object.values(syn.cover).every(Boolean), syn.cover);
+  check('道具/设备之间的顶点段互不重叠', syn.segOverlap === 0, { overlap: syn.segOverlap });
+  check('splitSolids：墙留在静态；每件道具/设备一个碰撞 key（嵌套子道具单独一个）',
+    syn.split.statics === 1 && JSON.stringify(syn.split.owners) === JSON.stringify([['3,4#p1', 1], ['3,4#p1.1', 1], ['3,4#p2', 1], ['3,4#p4', 1], ['3,4#f1', 1]]), syn.split);
+  check('能不能拖：普通道具能；meta.draggable=false 不能；压着出口圈（+0.4）不能且 exitOverlap；作用域里有出口不能；插着电的设备给原因',
+    syn.drag.A === true && syn.drag.A1 === false && syn.drag.C[0] === false && syn.drag.C[1] === true && syn.drag.E === false && syn.drag.B2 === true &&
+    syn.drag.Fwhy === '插着电，拖不动' && syn.drag.Fplug === true, syn.drag);
+  check('体积 = 自己 + 子道具的碰撞体体积之和（1.44 + 0.125 + 0.048）', Math.abs(syn.volume - 1.613) < 1e-3, { volume: syn.volume });
+  const o = syn.obbA;
+  // 货架枢轴转了 0.5 rad，轴对齐的 1.2×0.6 盒子在本地坐标系里是斜的：本地 x 宽 = 1.2·cos0.5 + 0.6·sin0.5 ≈ 1.3408；y 0..2.05（顶上的发光条）
+  check('OBB 在枢轴坐标系里（只算自己的顶点段）', !!o && Math.abs(o.max[0] - o.min[0] - (1.2 * Math.cos(0.5) + 0.6 * Math.sin(0.5))) < 2e-3 && Math.abs(o.min[1]) < 1e-4 && Math.abs(o.max[1] - 2.05) < 1e-3, o);
+  const sw = syn.seatWorld, pc = syn.pivotC;
+  check('座位锚点存在枢轴坐标系，toWorld 换回世界：位置 = 枢轴、yaw = 枢轴 rot + π',
+    syn.seat.swivel === true && syn.seat.h === 0.5 && Math.abs(sw.x - pc.x) < 1e-6 && Math.abs(sw.z - pc.z) < 1e-6 && Math.abs(sw.yaw - (1 + Math.PI)) < 1e-5, { seat: syn.seat, world: sw, pivot: pc });
+  check('部件：枢轴、轴向换到所属道具的枢轴坐标系，带 locked 等附加字段', syn.part.type === 'slide' && syn.part.locked === true && syn.part.axis.length === 3 && Math.abs(Math.hypot(...syn.part.axis) - 1) < 1e-5, syn.part);
+  const same = (a, b) => a.length === 4 && Math.abs(a[0] - b[0]) < 1e-4 && Math.abs(a[1] - b[1]) < 1e-4 && Math.abs(a[2] - b[2]) < 1e-4 && a[3] < 1e-4;
+  const m1 = syn.mv1;
+  check('moveProp {dx:1,dz:-2}：道具自己、嵌套子道具、显式 on 的子道具整体平移，别的不动；拖动中关视锥裁剪',
+    syn.moveOk && m1.A.every(d => same(d, [1, 0, -2])) && m1.A1.every(d => same(d, [1, 0, -2])) && m1.B2.every(d => same(d, [1, 0, -2])) &&
+    m1.F.every(d => same(d, [0, 0, 0])) && m1.C.every(d => same(d, [0, 0, 0])) && m1.culled[0] === false && m1.culled[1] === false, m1);
+  check('moveProp：挪之前藏起来的件，显示出来在挪过的位置', same(syn.hiddenAfterShow, [1, 0, -2]), syn.hiddenAfterShow);
+  check('moveProp 是绝对量、子道具叠加父道具：子道具再挪 0.5 → 子在 (1.5,-2)，父不变', same(syn.mv2.A, [1, 0, -2]) && same(syn.mv2.A1, [1.5, 0, -2]) && same(syn.mv2.B2, [1, 0, -2]), syn.mv2);
+  check('moveProp 旧写法 (res, rec, 0, 0) 归位；挪的时候藏着的件显示后也归位；子道具保留自己的 0.5', same(syn.mv3.A, [0, 0, 0]) && same(syn.mv3.A1, [0.5, 0, 0]) && same(syn.mv3.B2, [0, 0, 0]), syn.mv3);
+  check('propSolids：按当前位移（或给定 t）平移副本，不改 res.solids',
+    syn.solidsSame && Math.abs(syn.propSolids[0][0] - (syn.rackSolid[0] + 3)) < 1e-4 && Math.abs(syn.propSolids[0][1] - (syn.rackSolid[1] + 1)) < 1e-4 &&
+    Math.abs(syn.propSolidsT[0][0] - syn.rackSolid[0]) < 1e-4, { ps: syn.propSolids, t0: syn.propSolidsT, raw: syn.rackSolid });
+  check('toWorld：容器格位跟着父链位移（父 +3,+1，子 +0.5）', Math.abs(syn.childWorld.x - (syn.childPivot.x + 3.5)) < 1e-4 && Math.abs(syn.childWorld.z - (syn.childPivot.z + 1)) < 1e-4, { w: syn.childWorld, p: syn.childPivot });
+  check('settleProp：恢复视锥裁剪，包围球包住挪过的全部顶点', syn.settle.culled[0] === true && syn.settle.culled[1] === true && syn.settle.outside === 0, syn.settle);
+
+  // ---------- 7b. kit 构件：登记内容、高低画质一致、结构件不登记、晚画的磨损贴花记进道具 ----------
+  const comps = await ev(page, () => {
+    const kit = BR.kit, lv = BR.levels.get('dev'), U = BR.util, P = kit.prop;
+    const build = q => {
+      BR.game.settings.quality = q;
+      const b = kit.builder({ level: lv, levelSeed: 11 }, -1, 0, U.rng(11, -1, 0));
+      const out = {};
+      // 家具（每样多摆几件：磨损贴花按位置哈希抽，件多才能抽到）
+      for (let i = 0; i < 4; i++) {
+        P.box(b, 1 + i, 2, 0.2 * i, { stack: 1 + (i % 3) });
+        P.crate(b, 1 + i, 4, 0.3 * i, {});
+        P.chair(b, 1 + i, 6, i, {});
+        P.cabinet(b, 6 + i, 2, 0, { kind: ['file', 'wardrobe', 'locker', 'file'][i] });
+      }
+      P.desk(b, 8, 6, 0, {});
+      P.desk(b, 8, 8, 0, { monitor: true });
+      P.cubicle(b, 12, 6, 0, {});
+      P.vending(b, 16, 4, 0, {});
+      P.bed(b, 20, 4, 0, {});
+      const r = b.finish();
+      const K = r.kit;
+      out.props = K.props.map(p => [p.key, p.kind, p.label, p.draggable, p.parts.map(q => q.type + ':' + q.name + (q.locked ? ':L' : '')).join(','), p.seats.length, p.beds.length, p.pivot.x, p.pivot.z, p.pivot.rot]);
+      out.fixtures = K.fixtures.map(p => [p.key, p.kind, p.label, p.plugged, p.why, p.parts.map(q => q.type + ':' + q.name).join(',')]);
+      out.containers = K.containers.map(c => [c.key, c.kind, c.parentKey, c.on, c.loot, c.slots.length, c.parts.length]);
+      out.partText = K.props.concat(K.fixtures).filter(p => p.kind === 'desk').map(p => p.parts.map(q => q.label + '/' + (q.why || '')).join(','));
+      // 晚画的磨损贴花（finish 时才画）全部记进了某件道具/设备
+      const dm = r.group.children.find(m => m.name === 'kit:decal');
+      const decalVerts = dm ? dm.geometry.attributes.position.count : 0;
+      let decalSpan = 0;
+      for (const p of K.props.concat(K.fixtures)) for (const s of p.spans) if (s.mat === 'kit:decal') decalSpan += s.v1 - s.v0;
+      out.decal = { verts: decalVerts, inSpans: decalSpan };
+      // 段不越界
+      const cnt = {};
+      for (const m of r.group.children) cnt[m.name] = m.geometry.attributes.position.count;
+      let bad = 0;
+      for (const p of K.props.concat(K.fixtures, K.containers)) for (const s of p.spans) if (!(s.v0 < s.v1 && s.v1 <= (cnt[s.mat] || 0))) bad++;
+      out.badSpans = bad;
+      r.group.traverse(o2 => { if (o2.geometry) o2.geometry.dispose(); });
+      return out;
+    };
+    const q0 = BR.game.settings.quality;
+    const hi = build('high'), low = build('low');
+    // 结构件、出口：一条都不登记
+    const b = kit.builder({ level: lv, levelSeed: 3 }, 2, 2, U.rng(3, 2, 2));
+    P.lightPanel(b, 2, 2, 0, {}); P.ceiling(b, null, null, 0, {}); P.floor(b, null, null, 0, {}); P.baseboard(b, 3, 1, 0, { length: 2 });
+    P.door(b, 5, 1, 0, { style: 'metal' }); P.stairwell(b, 8, 4, 0, {}); P.elevator(b, 12, 1, 0, {}); P.vent(b, 14, 1, 0, {});
+    P.pipe(b, 16, 2, 0, { axis: 'x' }); P.puddle(b, 18, 3, 0, {}); P.window(b, 20, 1, 0, {}); P.sign(b, 2, 10, 0, {}); P.hole(b, 6, 10, 0, {});
+    P.pillar(b, 10, 10, 0, {}); P.fence(b, 14, 10, 0, {}); P.streetlight(b, 18, 10, 0, {}); P.wallWithOpening(b, 2, 16, 0, {});
+    P.cubicle(b, 8, 16, 0, { desk: false, chair: false });
+    kit.exit(b, { to: '1', kind: 'door', x: 14, z: 16 }); kit.exit(b, { to: '2', kind: 'stairs', x: 18, z: 18 });
+    kit.exit(b, { to: '3', kind: 'elevator', x: 22, z: 16 }); kit.exit(b, { to: '4', kind: 'hole', x: 4, z: 21 });
+    const rs = b.finish();
+    const structural = { props: rs.kit.props.length, fixtures: rs.kit.fixtures.length, containers: rs.kit.containers.length };
+    rs.group.traverse(o2 => { if (o2.geometry) o2.geometry.dispose(); });
+    BR.game.settings.quality = q0;
+    return { hi, low, structural };
+  });
+  const H = comps.hi, L = comps.low;
+  const kinds = H.props.map(p => p[1]).join(',');
+  check('kit 构件登记：纸箱/木箱/椅子/柜子/办公桌/床是道具，带显示器的桌和售货机是插电设备，隔间隔板不登记',
+    kinds === 'box,crate,chair,cabinet,box,crate,chair,cabinet,box,crate,chair,cabinet,box,crate,chair,cabinet,desk,chair,bed' &&
+    H.fixtures.map(f => f[1]).join(',') === 'desk,desk,vending' && H.fixtures.every(f => f[3] === true) &&
+    H.fixtures[2][4] === '插着电，三百多公斤，拖不动', { kinds, fixtures: H.fixtures });
+  const byKind = k2 => H.props.filter(p => p[1] === k2);
+  check('kit 构件部件：桌 3 个锁着的抽屉、文件柜 4 抽屉、衣柜两扇门、储物柜一扇门、椅子 swivel 座面和一个座位、床一个躺位、电脑桌显示器、售货机选货键+翻板',
+    byKind('desk').every(p => p[4] === 'slide:drawer0:L,slide:drawer1:L,slide:drawer2:L') &&
+    byKind('cabinet').map(p => p[4]).join('|') === 'slide:drawer0,slide:drawer1,slide:drawer2,slide:drawer3|hinge:doorL,hinge:doorR|hinge:door|slide:drawer0,slide:drawer1,slide:drawer2,slide:drawer3' &&
+    byKind('chair').every(p => p[4] === 'swivel:seat' && p[5] === 1) && byKind('bed').every(p => p[6] === 1) &&
+    H.fixtures[0][5] === 'slide:drawer0,slide:drawer1,slide:drawer2,button:monitor' && H.fixtures[2][5] === 'button:select,hinge:flap',
+    { desk: byKind('desk').map(p => p[4]), cab: byKind('cabinet').map(p => p[4]), fx: H.fixtures.map(f => f[5]) });
+  check('部件带中文名和原因（桌子抽屉「抽屉 / 锁着」、显示器）', H.partText.length === 3 && H.partText.every(t => t.startsWith('抽屉/锁着,抽屉/锁着,抽屉/锁着')) && H.partText.some(t => t.endsWith('显示器/')), H.partText);
+  const ck = H.containers.map(c => c[1]).join(',');
+  check('kit 构件容器：每只纸箱一个 carton（摞起来的 on = 下面那只）、木箱 crate、柜子 fileCab/wardrobe/locker（loot one）',
+    ck === 'carton,crate,fileCab,carton,carton,crate,wardrobe,carton,carton,carton,crate,locker,carton,crate,fileCab' &&
+    H.containers[4][3] === H.containers[3][0] && H.containers.filter(c => c[1] === 'fileCab').every(c => c[4] === 'one' && c[5] === 4), { ck, sample: H.containers.slice(3, 5) });
+  check('kit 构件：高低画质登记内容逐项一致（key、kind、能不能拖、部件、座位、枢轴、容器）',
+    JSON.stringify(H.props) === JSON.stringify(L.props) && JSON.stringify(H.fixtures) === JSON.stringify(L.fixtures) && JSON.stringify(H.containers) === JSON.stringify(L.containers),
+    { hiProps: H.props.length, lowProps: L.props.length });
+  check('晚画的磨损贴花全部记进所属道具/设备（高画质有贴花，低画质没有）', H.decal.verts > 0 && H.decal.verts === H.decal.inSpans && L.decal.verts === 0 && L.decal.inSpans === 0, { hi: H.decal, low: L.decal });
+  check('spans 都在对应网格的顶点范围内', H.badSpans === 0 && L.badSpans === 0, { hi: H.badSpans, low: L.badSpans });
+  check('墙、柱子、门、楼梯、电梯、窗、路灯、栅栏、隔板、出口这类结构件不登记', comps.structural.props === 0 && comps.structural.fixtures === 0 && comps.structural.containers === 0, comps.structural);
+  await ctx.close();
+}
+
+// =====================================================================
+// 8. 26 层出生点 3×3 块：高低画质的道具登记逐项一致（联机两边画质可以不同，只靠 key 对上）
+// =====================================================================
+function pageEnterLv({ id, seed, quality }) {
+  const lv = BR.levels.get(id);
+  if (!lv) return { ok: false, error: '没有注册层级 ' + id };
+  const G = window.__kitLv || (window.__kitLv = {});
+  G.ctx = null;
+  G.orig = lv.buildChunk;
+  lv.buildChunk = function (c) { if (!G.ctx) G.ctx = c; return G.orig.apply(this, arguments); };
+  __br.setAuto(false);
+  __br.start({ mode: 'test', levelId: id, seed, settings: { quality, visibility: 1 } });
+  return { ok: true };
+}
+function pageLvRecords({ id, quality }) {
+  const G = window.__kitLv, lv = BR.levels.get(id), U = BR.util;
+  if (G.orig) { lv.buildChunk = G.orig; G.orig = null; }
+  if (BR.game.levelId !== id || !BR.world.current) return { ok: false, error: '没能进入层级 ' + id };
+  if (BR.game.settings.quality !== quality) return { ok: false, error: '画质不对 ' + BR.game.settings.quality };
+  const levelSeed = BR.world.levelSeed, S = BR.world.chunkSize;
+  const ctx = G.ctx || { THREE, BR, level: BR.world.current, levelSeed, assets: BR.assets, game: BR.game, scene: BR.gfx && BR.gfx.scene };
+  const sp = typeof lv.spawn === 'function' ? lv.spawn(ctx) : null;
+  const px = sp && Number.isFinite(sp.x) ? sp.x : BR.player.x, pz = sp && Number.isFinite(sp.z) ? sp.z : BR.player.z;
+  const ccx = Math.floor(px / S), ccz = Math.floor(pz / S);
+  const STRUCT = new Set(['wall', 'pillar', 'door', 'stairwell', 'elevator', 'window', 'streetlight', 'fence', 'lightPanel', 'ceiling', 'floor', 'baseboard', 'vent', 'pipe', 'puddle', 'sign', 'hole', 'cubicle', 'exit']);
+  const out = { ok: true, chunk: [ccx, ccz], props: [], fixtures: [], containers: [], parts: [], issues: [], n: { props: 0, drag: 0, fixtures: 0, containers: 0, parts: 0, seats: 0, beds: 0 } };
+  const r4 = v => Math.round(v * 1e4) / 1e4;
+  for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+    const cx = ccx + dx, cz = ccz + dz;
+    let res = null;
+    try { res = lv.buildChunk(ctx, cx, cz, U.rng(levelSeed, cx, cz)); } catch (err) { out.issues.push(cx + ',' + cz + ' 生成异常 ' + String(err && err.message || err)); continue; }
+    const K = (res && res.kit) || {};
+    const cnt = {};
+    if (res && res.group) res.group.traverse(m => { if (m.geometry && m.geometry.attributes.position) cnt[m.name] = (cnt[m.name] || 0) + m.geometry.attributes.position.count; });
+    const own = [];
+    for (const r of K.props || []) {
+      out.props.push([r.key, r.kind, r.draggable, r.exitOverlap, r.children.length, r.seats.length, r.beds.length, r4(r.pivot.x), r4(r.pivot.z), r4(r.pivot.rot)]);
+      out.n.props++; if (r.draggable) out.n.drag++;
+      out.n.seats += r.seats.length; out.n.beds += r.beds.length;
+      if (STRUCT.has(r.kind)) out.issues.push('结构件被登记成道具 ' + r.key + ' ' + r.kind);
+      if (r.exitOverlap && r.draggable) out.issues.push('压着出口圈却能拖 ' + r.key);
+      for (const p of r.parts) { out.parts.push([r.key, p.key, p.type, p.name]); out.n.parts++; }
+      for (const s of r.spans) own.push([s.mat, s.v0, s.v1, r.key]);
+    }
+    for (const r of K.fixtures || []) {
+      out.fixtures.push([r.key, r.kind, r.plugged, r.inert, r.why]); out.n.fixtures++;
+      for (const p of r.parts) { out.parts.push([r.key, p.key, p.type, p.name]); out.n.parts++; }
+      for (const s of r.spans) own.push([s.mat, s.v0, s.v1, r.key]);
+    }
+    for (const c of K.containers || []) { out.containers.push([c.key, c.kind, c.parentKey, c.on, c.slots.length]); out.n.containers++; }
+    for (const s of own) if (!(s[1] < s[2] && s[2] <= (cnt[s[0]] || 0))) out.issues.push('span 越界 ' + s.join(' '));
+    own.sort((a, b2) => (a[0] < b2[0] ? -1 : a[0] > b2[0] ? 1 : a[1] - b2[1]));
+    for (let i = 1; i < own.length; i++) if (own[i][0] === own[i - 1][0] && own[i][1] < own[i - 1][2]) out.issues.push('两件道具的顶点段重叠 ' + own[i - 1][3] + ' / ' + own[i][3]);
+    if (res && res.group) res.group.traverse(m => { if (m.geometry && !(m.geometry.userData && m.geometry.userData.shared)) m.geometry.dispose(); });
+    if (res && typeof res.dispose === 'function') { try { res.dispose(); } catch (e) { /* 不影响数据 */ } }
+  }
+  return out;
+}
+async function levelRegistry(browser, base) {
+  const ctx = await browser.newContext({ viewport: { width: 640, height: 360 } });
+  const page = await ctx.newPage();
+  watch(page, 'levels');
+  await boot(page, base);
+  const order = await ev(page, () => (BR.LEVEL_ORDER || []).map(String));
+  const levels = LEVELS_ARG ? LEVELS_ARG.split(',').map(s => s.trim()).filter(Boolean) : order;
+  const summary = [];
+  for (const id of levels) {
+    const per = {};
+    for (const quality of ['high', 'low']) {
+      if (await ev(page, () => BR.game.screen !== 'home')) {
+        await ev(page, () => BR.bus.emit('game:home'));
+        await page.waitForFunction(() => BR.game.screen === 'home', null, { timeout: 15000 });
+      }
+      const en = await ev(page, pageEnterLv, { id, seed: SEED, quality });
+      if (!en.ok) { per[quality] = { ok: false, error: en.error }; break; }
+      try {
+        await page.waitForFunction(lid => BR.game.screen === 'playing' && BR.game.levelId === lid && BR.world && BR.world.current, id, { timeout: 60000 });
+      } catch (err) { per[quality] = { ok: false, error: String(err.message || err) }; break; }
+      per[quality] = await ev(page, pageLvRecords, { id, quality });
+    }
+    const h = per.high, l = per.low;
+    if (!h || !h.ok || !l || !l.ok) { check('L' + id + '：进层并生成出生点 3×3 块', false, { high: h && h.error, low: l && l.error }); continue; }
+    const same = k2 => JSON.stringify(h[k2]) === JSON.stringify(l[k2]);
+    const firstDiff = k2 => { const a = h[k2], b2 = l[k2]; for (let i = 0; i < Math.max(a.length, b2.length); i++) if (JSON.stringify(a[i]) !== JSON.stringify(b2[i])) return { i, high: a[i], low: b2[i] }; return null; };
+    const ok = same('props') && same('fixtures') && same('containers') && same('parts');
+    check('L' + id + '：出生点 3×3 块高低画质的道具/设备/容器/部件 [key, kind, …] 逐项一致', ok,
+      ok ? h.n : { props: firstDiff('props'), fixtures: firstDiff('fixtures'), containers: firstDiff('containers'), parts: firstDiff('parts') });
+    const issues = h.issues.concat(l.issues);
+    check('L' + id + '：登记自检（结构件不登记、压出口不能拖、span 不越界不重叠、生成无异常）', issues.length === 0, issues.slice(0, 5));
+    summary.push([id, h.chunk.join(','), h.n.props, h.n.drag, h.n.fixtures, h.n.containers, h.n.parts, h.n.seats, h.n.beds]);
+  }
+  if (await ev(page, () => BR.game.screen !== 'home')) await ev(page, () => BR.bus.emit('game:home'));
+  console.log('     层  出生块  道具 能拖 设备 容器 部件 座位 躺位');
+  for (const s of summary) console.log('     ' + s.map(v => String(v).padStart(4)).join(' '));
   await ctx.close();
 }
 

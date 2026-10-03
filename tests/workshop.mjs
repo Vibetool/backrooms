@@ -487,7 +487,8 @@ async function checkCoopSync(browser, base, seed) {
       BR.coop.openLobby();
       return { id: m.id, walls: m.walls, added: m.exits.added, entities: m.entities };
     }, seed);
-    await A.waitForSelector('.coop-lobby', { state: 'visible', timeout: 5000 });
+    // 大厅在开局后的第一帧才显示：机器负载高（SwiftShader、两个页面）时首帧要 3 s 左右，5 s 太紧，给 15 s
+    await A.waitForSelector('.coop-lobby', { state: 'visible', timeout: 15000 });
     await A.fill('.coop-lobby .coop-field .coop-input', '房主');
     await btnText(A, '创建房间').click();
     const hosted = await waitFor(A, () => BR.coop.phase === 'hosting' && /^[A-Z0-9]{6}$/.test(document.querySelector('.coop-code').textContent), null, 15000);

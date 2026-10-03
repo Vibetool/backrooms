@@ -655,22 +655,27 @@ async function run(browser, base) {
     info('物品：A ' + ia.length + ' 件、B ' + ib.length + ' 件，两边都有且周围 2.5 m 无其他物品的 ' + lonely.length + ' 件');
     if (lonely.length < 2) { check('7 找到两件可拾取的物品', false, lonely.length); return; }
     const [it1, it2] = lonely;
-    // 站到物品 0.3 m 处（互动距离内）并面朝它，按 E
+    // 站到物品 1 m 处（互动距离内），准心对准它（交互 A1：只认准心对准的东西），A 按空格、B 按 E（隐藏别名）
     const approach = (page, it) => ev(page, t => {
       const P = BR.player;
-      P.x = t.x + 0.3; P.z = t.z; P.vx = 0; P.vz = 0;
+      P.x = t.x + 1.0; P.z = t.z; P.vx = 0; P.vz = 0;
       P.yaw = Math.atan2(-(t.x - P.x), -(t.z - P.z)); P.pitch = -0.6;
+      const r = BR.items.find(t.id);
+      if (r && BR.interact && BR.interact.aimAt) {
+        const o = r.obj ? r.obj.position : r;
+        BR.interact.aimAt(o.x, o.y + (r.hh || 0.1), o.z);
+      }
     }, it);
     const count = (page, type) => ev(page, t => BR.player.countOf(t), type);
 
     const before1 = { A: await count(A, it1.type), B: await count(B, it1.type) };
     await approach(A, it1);
     await sleep(400);
-    await A.keyboard.press('KeyE');
+    await A.keyboard.press('Space');
     const goneA = await waitFor(A, id => !BR.items.find(id), it1.id, 3000);
     const goneB = await waitFor(B, id => !BR.items.find(id), it1.id, 4000);
     const after1 = { A: await count(A, it1.type), B: await count(B, it1.type) };
-    check('7 A 按 E 拾取 → A 背包 +1、B 上该物品消失', goneA && goneB && after1.A === before1.A + 1 && after1.B === before1.B, { it: it1.id + ':' + it1.type, goneA, goneB, before1, after1 });
+    check('7 A 按空格拾取 → A 背包 +1、B 上该物品消失', goneA && goneB && after1.A === before1.A + 1 && after1.B === before1.B, { it: it1.id + ':' + it1.type, goneA, goneB, before1, after1 });
 
     const before2 = { A: await count(A, it2.type), B: await count(B, it2.type) };
     await approach(B, it2);

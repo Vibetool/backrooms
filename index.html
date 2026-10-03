@@ -33,6 +33,10 @@
 <script src="js/core/gfx.js"></script>
 <script src="js/core/input.js"></script>
 <script src="js/core/phys.js"></script>
+<!-- 准心交互排在 items / world / entities 之前：它们加载时就要 BR.interact.addSource。
+     interact 也排在 levelstate 之前：回主页 / 换层时 bus 先通知 interact 放下手里的东西，再轮到 levelState 清空 -->
+<script src="js/game/interact.js"></script>
+<script src="js/game/levelstate.js"></script>
 <script src="js/game/items.js"></script>
 <script src="js/game/player.js"></script>
 <script src="js/game/world.js"></script>
