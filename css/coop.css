@@ -1,4 +1,4 @@
-/* 后室 · 联机：大厅弹窗（z 80）、麦克风按钮与说话角标（z 35）、兜底 toast（z 90）。z-index 规则见 ARCHITECTURE.md 第 11 节 */
+/* 后室 · 联机：联机面板（z 80）、主页「回去？」卡片（z 78）、麦克风按钮与说话角标（z 35）、兜底 toast（z 90）。z-index 规则见 ARCHITECTURE.md 第 11 节 */
 
 /* ---------- 大厅弹窗 ---------- */
 .coop-lobby {
@@ -36,8 +36,6 @@
 .coop-input:focus { border-color: #e8d67f; }
 .coop-input:disabled { opacity: .5; }
 .coop-code-input { text-transform: uppercase; letter-spacing: 4px; font-family: ui-monospace, Menlo, Consolas, monospace; }
-.coop-section { margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(232, 214, 127, .16); }
-.coop-section-title { margin: 0 0 8px; font-size: 13px; color: #cfc38c; }
 .coop-row { display: flex; align-items: center; gap: 8px; }
 .coop-row .coop-input { flex: 1; min-width: 0; }
 .coop-row-end { justify-content: flex-end; flex-wrap: wrap; }
@@ -52,31 +50,107 @@
 .coop-btn-danger { background: transparent; border-color: #b0553f; color: #f0b3a3; }
 .coop-wide { width: 100%; }
 .coop-close { padding: 0; border: none; background: transparent; font-size: 26px; color: #cfc38c; }
-.coop-hostbox { margin-top: 4px; }
+.coop-close.is-armed { color: #ff9f86; }
+.coop-head .coop-title { flex: 1; min-width: 0; }
+.coop-back { min-width: 0; padding: 0 10px 0 4px; border: none; background: transparent; color: #cfc38c; font-weight: 600; }
+.coop-armed {
+  margin: 0 0 10px; padding: 8px 10px; border-radius: 8px; font-size: 14px; font-weight: 600;
+  background: rgba(200, 80, 55, .18); border: 1px solid rgba(220, 110, 85, .6); color: #ffc2b0;
+}
+
+/* ---------- 第一屏：昵称 + 两个大按钮 ---------- */
+.coop-view { margin-top: 12px; }
+.coop-view-start { display: flex; flex-direction: column; gap: 10px; }
+.coop-big-btn { width: 100%; min-height: 56px; font-size: 17px; letter-spacing: 1px; }
+.coop-btn-join { background: #2b2714; border-color: #e8c547; color: #f1d467; }
+
+/* ---------- 房号页 ---------- */
+.coop-host-label { margin: 0 0 2px; text-align: center; }
+.coop-share-row { flex-wrap: wrap; justify-content: center; }
+.coop-share-row .coop-btn { flex: 1 1 auto; }
+.coop-host-hint { margin: 10px 0 12px; font-size: 13px; line-height: 1.6; color: #e3d6a0; text-wrap: pretty; }
+.coop-btn-enter { min-height: 52px; font-size: 16px; }
+
+/* ---------- 加入朋友的营地 ---------- */
+.coop-code-input { text-align: center; font-size: 22px; height: 52px; }
+.coop-code-err { margin: 6px 0 0; font-size: 13px; color: #ff9f86; font-weight: 600; }
+.coop-camp-card {
+  margin-top: 12px; padding: 12px 14px; border-radius: 10px;
+  background: rgba(217, 195, 92, .1); border: 1px solid rgba(217, 195, 92, .45);
+}
+.coop-camp-card.is-bad { background: rgba(200, 80, 55, .12); border-color: rgba(220, 110, 85, .55); }
+.coop-card-title { margin: 0 0 10px; font-size: 17px; font-weight: 700; color: #fff1a8; overflow-wrap: anywhere; }
+.coop-card-why { margin: 0; font-size: 13px; line-height: 1.6; color: #ffc2b0; }
+.coop-camp-card .coop-card-why:not([hidden]) + .coop-btn { margin-top: 10px; }
+.coop-privacy { margin-top: 8px; }
+.coop-steps { margin: 12px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.coop-steps li { font-size: 14px; color: #7f7752; padding-left: 18px; position: relative; }
+.coop-steps li::before {
+  content: ''; position: absolute; left: 2px; top: .55em; width: 8px; height: 8px; border-radius: 50%;
+  background: currentColor; opacity: .7;
+}
+.coop-steps li.is-done { color: #b5e39c; }
+.coop-steps li.is-on { color: #fff1a8; font-weight: 600; }
+
+/* ---------- 局内：只看联机状态 ---------- */
+.coop-btn-leave { margin-top: 12px; width: 100%; }
+.coop-btn-leave.is-armed { background: rgba(176, 85, 63, .35); color: #fff; }
+/* 房号：等宽大字，分组写成 K7M 2QX */
 .coop-code {
-  flex: 1; font: 700 30px/1.2 ui-monospace, Menlo, Consolas, monospace; letter-spacing: 6px; color: #fff1a8;
+  margin: 2px 0 10px; text-align: center; white-space: nowrap;
+  font: 700 40px/1.15 ui-monospace, Menlo, Consolas, monospace; letter-spacing: 6px; color: #fff1a8;
   -webkit-user-select: text; user-select: text;
 }
-.coop-hint { margin: 6px 0 0; font-size: 12px; color: #a99f70; }
-.coop-confirm {
-  margin-top: 10px; padding: 12px; border-radius: 10px;
-  background: rgba(217, 195, 92, .1); border: 1px solid rgba(217, 195, 92, .4);
-}
-.coop-confirm p { margin: 0 0 10px; font-size: 13px; line-height: 1.6; white-space: pre-line; }
+.coop-code.is-wait { color: #8d8459; letter-spacing: 2px; }
+.coop-code-small { margin: 8px 0 0; text-align: left; font-size: 22px; letter-spacing: 3px; }
+.coop-hint { margin: 6px 0 0; font-size: 12px; color: #a99f70; text-wrap: pretty; }
 .coop-peer-line { margin: 0; font-size: 15px; color: #fff1a8; }
 .coop-status { margin: 12px 0 0; min-height: 20px; font-size: 13px; color: #d8cd99; white-space: pre-line; }
+.coop-status:empty { min-height: 0; margin-top: 0; }
 .coop-status.coop-err { color: #ff9f86; }
 .coop-status.coop-ok { color: #b5e39c; }
-.coop-foot { display: flex; justify-content: flex-end; margin-top: 12px; }
 .coop-lobby-mic { margin-top: 8px; }
 
 /* 矮横屏（640×360、874×402）：压缩间距、去掉空状态行的占位，「加入」和确认框尽量留在首屏。副标题写着「语音默认闭麦」，不隐藏 */
 @media (max-height: 460px) {
   .coop-card { padding: 12px 16px; }
   .coop-sub { margin: 0 0 8px; }
-  .coop-section { margin-top: 8px; padding-top: 8px; }
-  .coop-section-title { margin-bottom: 4px; }
+  .coop-view { margin-top: 8px; }
+  .coop-big-btn { min-height: 48px; }
+  .coop-code { font-size: 32px; margin-bottom: 6px; }
+  .coop-host-hint { margin: 6px 0 8px; }
+  .coop-camp-card { margin-top: 8px; padding: 10px 12px; }
   .coop-status:empty { min-height: 0; margin-top: 0; }
+}
+/* 窄屏（竖屏手机）：房号不能撑出卡片 */
+@media (max-width: 380px) {
+  .coop-code { font-size: 34px; letter-spacing: 4px; }
+}
+
+/* ---------- 主页「「X」的营地还开着，回去？」卡片（客机页面被关掉重开，3 分钟内） ---------- */
+.coop-rejoin {
+  position: fixed; z-index: 78; left: 50%; transform: translateX(-50%);
+  top: 16px; top: calc(16px + env(safe-area-inset-top, 0px));
+  width: 380px; max-width: calc(100vw - 32px); box-sizing: border-box;
+  padding: 12px 14px; border-radius: 12px; background: #1d1a0c; border: 2px solid #e8c547;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .55); color: #f3e9b5; pointer-events: auto;
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  -webkit-user-select: none; user-select: none;
+}
+.coop-rejoin[hidden], .coop-rejoin [hidden] { display: none !important; }
+.coop-rejoin-text { margin: 0 0 8px; font-size: 15px; font-weight: 700; color: #fff1a8; overflow-wrap: anywhere; }
+.coop-rejoin-why { margin: 0 0 8px; font-size: 13px; color: #d8cd99; }
+.coop-rejoin-why.coop-err { color: #ff9f86; }
+/* 横屏手机、窄横屏：主页右上那一列是「联机 / 创意工坊 / 设置」（css/home.css .home-secondary-actions，宽 130 + 右边距），
+   居中放的卡片会压住前两个（640×360 时卡片右缘到 510，那一列从 480 起）。这时卡片靠左放，右边给那一列留 210px；
+   左上的「后室」标题被盖住没关系（竖屏手机本来也盖着），卡片关掉就露出来。宽横屏（> 1000）居中照旧碰不到 */
+@media (min-aspect-ratio: 17/20) and (max-width: 1000px) {
+  .coop-rejoin {
+    left: 16px; left: calc(16px + env(safe-area-inset-left, 0px));
+    transform: none;
+    max-width: calc(100vw - 226px);
+    max-width: calc(100vw - 226px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+  }
 }
 
 /* ---------- 麦克风按钮与说话角标 ---------- */

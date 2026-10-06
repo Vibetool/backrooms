@@ -407,46 +407,58 @@ async function checkSettingsEffects(page, base) {
 }
 
 // =====================================================================
-// 7) 联机：客机拿到房主的工坊地图（墙/出口/放置实体一致）
-// 复用 tests/coop.mjs 的信令模拟（房间状态放在本文件里，双方 context 指向同一份）
+// 7) 联机：从帐篷选「我的地图」，两人进同一张工坊地图（墙 / 出口 / 放置实体一致）
+// 联机营地（N1）起，工坊地图不再从地图信息卡联机：房主从主页「联机」开营地，客机从主页「联机」加入，
+// 房主在帐篷里选「我的地图」，两人准备、一起出发。信令照 tests/coop.mjs 的 room.php 模拟（照真服务器写，房间状态放在本文件里）
 // =====================================================================
 const rooms = new Map();
+const signals = [];
+let sigSeq = 0;
 function newCode() {
   const CH = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let s; do { s = ''; for (let i = 0; i < 6; i++) s += CH[Math.floor(Math.random() * CH.length)]; } while (rooms.has(s));
   return s;
 }
+// 名字照 PHP：trim 只剥 ASCII 空白（营地暗标 U+2063 留着）、空了写「匿名工程师」、按码点截 16 个字
+function nameOf(body) {
+  let n = String(body && body.name != null ? body.name : '').replace(/^[ \t\n\r\0\x0B]+|[ \t\n\r\0\x0B]+$/g, '');
+  if (n === '') n = '匿名工程师';
+  return Array.from(n).slice(0, 16).join('');
+}
 function roomApi(q, body) {
-  const room = q.code ? rooms.get(String(q.code).toUpperCase()) : null;
+  if (q.action === 'create') {
+    const code = newCode();
+    rooms.set(code, { state: 'waiting', host_name: nameOf(body), guest_name: null });
+    return [200, { ok: true, code }];
+  }
+  const code = String(q.code || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
+  if (code.length !== 6) return [400, { ok: false, error: 'bad_code' }];
+  const room = rooms.get(code) || null;
   switch (q.action) {
-    case 'create': {
-      const code = newCode();
-      rooms.set(code, { state: 'waiting', host_name: String(body.name || ''), guest_name: '', q: { host: [], guest: [] }, seq: 0 });
-      return { ok: true, code };
-    }
     case 'join':
-      if (!room) return { ok: false, error: 'room_not_found' };
-      if (room.state === 'joined') return { ok: false, error: 'room_full' };
-      room.state = 'joined'; room.guest_name = String(body.name || '');
-      return { ok: true, host: room.host_name };
+      if (!room) return [404, { ok: false, error: 'room_not_found' }];
+      if (room.state === 'joined') return [409, { ok: false, error: 'room_full' }];
+      room.state = 'joined'; room.guest_name = nameOf(body);
+      return [200, { ok: true, host: room.host_name }];
     case 'status':
-      if (!room) return { ok: false, error: 'room_not_found' };
-      return { ok: true, state: room.state, host_name: room.host_name, guest_name: room.guest_name };
-    case 'signal':
-      if (!room) return { ok: false, error: 'room_not_found' };
-      room.q[q.to].push({ id: ++room.seq, payload: body.payload });
-      return { ok: true };
+      if (!room) return [404, { ok: false, error: 'room_not_found' }];
+      return [200, { ok: true, state: room.state, host_name: room.host_name, guest_name: room.guest_name }];
+    case 'signal': {
+      const payload = body && body.payload !== undefined ? body.payload : null;
+      if (payload === null) return [400, { ok: false, error: 'no_payload' }];
+      signals.push({ id: ++sigSeq, room: code, to: q.to === 'host' ? 'host' : 'guest', payload });
+      return [200, { ok: true }];
+    }
     case 'poll': {
-      if (!room) return { ok: false, error: 'room_not_found' };
-      const since = +q.since || 0;
-      const msgs = room.q[q.me].filter(m => m.id > since);
-      return { ok: true, last: msgs.length ? msgs[msgs.length - 1].id : since, msgs: msgs.map(m => m.payload) };
+      const me = q.me === 'host' ? 'host' : 'guest', since = parseInt(q.since, 10) || 0;
+      const msgs = signals.filter(m => m.room === code && m.to === me && m.id > since).slice(0, 40);
+      return [200, { ok: true, msgs: msgs.map(m => m.payload), last: msgs.length ? msgs[msgs.length - 1].id : since }];
     }
     case 'close':
       if (room) room.state = 'closed';
-      return { ok: true };
+      return [200, { ok: true }];
   }
-  return { ok: false, error: 'bad_action' };
+  return [400, { ok: false, error: 'unknown_action' }];
 }
 async function onRoute(route) {
   const req = route.request();
@@ -457,12 +469,50 @@ async function onRoute(route) {
     if (!/\/room\.php$/.test(u.pathname)) { await route.fulfill({ status: 404, headers: cors, contentType: 'application/json', body: '{"ok":false}' }); return; }
     const q = Object.fromEntries(u.searchParams.entries());
     let body = {}; const raw = req.postData();
-    if (raw) { try { body = JSON.parse(raw); } catch (e) { body = {}; } }
-    const r = roomApi(q, body);
-    await route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify(r) });
+    if (raw) { try { body = JSON.parse(raw) || {}; } catch (e) { body = {}; } }
+    const [status, r] = roomApi(q, body);
+    await route.fulfill({ status, headers: cors, contentType: 'application/json', body: JSON.stringify(r) });
   } catch (err) { /* 页面关闭时 close 请求可能 fulfill 失败，忽略 */ }
 }
-const btnText = (page, text) => page.locator('.coop-lobby button', { hasText: new RegExp('^' + text + '$') }).first();
+
+// 进营地的几步（和 tests/coop.mjs 的 hostCamp / joinCamp / readyBoth 同一套做法）
+async function openCoopFromHome(page) {
+  await page.click('.home-secondary-btn.is-coop');
+  await page.waitForSelector('.coop-lobby', { state: 'visible', timeout: 25000 });   // 并行跑时 8 s 误报过
+}
+const inCamp = page => waitFor(page, () => BR.game.levelId === 'coopcamp' && BR.game.screen === 'playing' && !BR.world.transitioning && !!(BR.coopCamp && BR.coopCamp.inCamp), null, 30000);
+async function hostCamp(page, name) {
+  await openCoopFromHome(page);
+  await page.fill('.coop-lobby .coop-name-field .coop-input', name);
+  await page.click('.coop-lobby .coop-btn-host');
+  const ok = await waitFor(page, () => BR.coop.phase === 'hosting' && /^[A-Z2-9]{3} [A-Z2-9]{3}$/.test(document.querySelector('.coop-lobby .coop-view-host .coop-code').textContent), null, 15000);
+  if (!ok) return null;
+  const code = (await page.textContent('.coop-lobby .coop-view-host .coop-code')).replace(/\s+/g, '');
+  await page.click('.coop-lobby .coop-btn-enter');
+  return (await inCamp(page)) ? code : null;
+}
+async function joinCamp(page, code, name) {
+  await openCoopFromHome(page);
+  await page.fill('.coop-lobby .coop-name-field .coop-input', name);
+  await page.click('.coop-lobby .coop-btn-join');
+  await page.fill('.coop-code-input', code);
+  const card = await waitFor(page, () => { const b = document.querySelector('.coop-btn-joincamp'); return b && b.getClientRects().length > 0 && !b.disabled; }, null, 15000);
+  if (!card) return false;
+  await page.click('.coop-lobby .coop-btn-joincamp');
+  return (await waitFor(page, () => BR.coop.active && BR.coop.phase === 'active', null, 60000)) && inCamp(page);
+}
+async function readyBoth(pages) {
+  for (const p of pages) {
+    await ev(p, () => { if (!BR.coopCamp.panelOpen) BR.coopCamp.enter({ force: true }); });
+    await waitFor(p, () => BR.coopCamp.panelOpen, null, 8000);
+  }
+  for (const p of pages) {
+    await waitFor(p, () => { const b = document.querySelector('.tent-menu .tent-ready'); return b && !b.disabled && /^准备$/.test(b.textContent.trim()); }, null, 8000);
+    await p.click('.tent-menu .tent-ready');
+    await new Promise(r => setTimeout(r, 250));
+  }
+  return (await Promise.all(pages.map(p => waitFor(p, () => { const s = BR.coopCamp.state; return !!(s && s.goAt > 0); }, null, 8000)))).every(Boolean);
+}
 
 async function checkCoopSync(browser, base, seed) {
   const ctxA = await browser.newContext({ viewport: { width: 800, height: 450 } });
@@ -475,7 +525,7 @@ async function checkCoopSync(browser, base, seed) {
     await boot(A, base, false);
     await boot(B, base, false);
 
-    // 房主：直接用一张带墙改动/新增出口/放置实体的工坊地图开局（casual 才支持联机），再打开联机大厅创建房间
+    // 房主：先存一张带墙改动 / 新增出口 / 放置实体的工坊地图（帐篷「我的地图」列的是房主存下的地图）
     const hostMap = await ev(A, (seed) => {
       const m = BR.workshop.create('0', 'coop-map');
       m.seed = seed; m.radius = 1;
@@ -483,45 +533,47 @@ async function checkCoopSync(browser, base, seed) {
       m.walls = [{ k: 'v@1.00,2.00', on: false }];
       m.exits.added = [{ id: 'coopExit1', to: '1', kind: 'zone', x: 10, z: 10, rot: 0 }];
       m.entities = [{ id: 'coopEnt1', type: 'hound', x: 15, z: 13.5, yaw: 0, radius: 20 }];
-      BR.bus.emit('game:start', { mode: 'casual', difficulty: null, settings: {}, seed, levelId: '0', coop: null, workshop: m });
-      BR.coop.openLobby();
-      return { id: m.id, walls: m.walls, added: m.exits.added, entities: m.entities };
+      BR.workshop.save(m);
+      const saved = BR.workshop.get(m.id);
+      return { id: m.id, name: m.name, walls: saved.walls, added: saved.exits.added, entities: saved.entities };
     }, seed);
-    // 大厅在开局后的第一帧才显示：机器负载高（SwiftShader、两个页面）时首帧要 3 s 左右，5 s 太紧，给 15 s
-    await A.waitForSelector('.coop-lobby', { state: 'visible', timeout: 15000 });
-    await A.fill('.coop-lobby .coop-field .coop-input', '房主');
-    await btnText(A, '创建房间').click();
-    const hosted = await waitFor(A, () => BR.coop.phase === 'hosting' && /^[A-Z0-9]{6}$/.test(document.querySelector('.coop-code').textContent), null, 15000);
-    check('联机：房主（工坊地图局内）创建房间成功', hosted);
-    if (!hosted) return;
-    const code = (await A.textContent('.coop-code')).trim();
+    const code = await hostCamp(A, '房主');
+    check('联机：房主从主页「联机」开营地、进了营地', !!code, code);
+    if (!code) return;
+    // 客机从主页「联机」输房号加入
+    const joined = await joinCamp(B, code, '客机');
+    check('联机：客机从主页「联机」加入，两人都在营地', joined);
+    if (!joined) return;
 
-    // 客机：正常主页 → 休闲 → 联机 → 输入房号加入
-    await B.click('.home-play');
-    await B.click('.home-menu-btn.is-casual');
-    await B.locator('.home-dialog-casual .home-actions .home-btn', { hasText: /^联机$/ }).first().click();
-    await B.waitForSelector('.coop-lobby', { state: 'visible', timeout: 5000 });
-    await B.fill('.coop-lobby .coop-field .coop-input', '客机');
-    await B.fill('.coop-code-input', code);
-    await btnText(B, '加入').click();
-    const confirmShown = await waitFor(B, () => { const c = document.querySelector('.coop-confirm'); return c && !c.hidden && c.getBoundingClientRect().height > 0; }, null, 15000);
-    check('联机：客机能看到加入确认弹窗', confirmShown);
-    if (confirmShown) await btnText(B, '同意加入').click();
+    // 房主在帐篷里选「我的地图」：选单里有这一栏，客机那边同步到同一张图
+    await ev(A, () => { BR.coopCamp.enter({ force: true }); });
+    // 选单打开、「我的地图」那一栏渲染出来再读（2026-10-05 返修 r2：机器忙时 8 s 没等到也照读，误报「没有这一栏」）
+    let open = await waitFor(A, () => BR.coopCamp.panelOpen && !!document.querySelector('.tent-menu .tent-maps:not([hidden])'), null, 20000);
+    if (!open) { await ev(A, () => { if (!BR.coopCamp.panelOpen) BR.coopCamp.enter({ force: true }); }); open = await waitFor(A, () => BR.coopCamp.panelOpen && !!document.querySelector('.tent-menu .tent-maps:not([hidden])'), null, 20000); }
+    const list = await ev(A, () => {
+      const box = document.querySelector('.tent-menu .tent-maps');
+      return { shown: !!box && !box.hidden && box.getClientRects().length > 0, names: Array.from(document.querySelectorAll('.tent-menu .tent-map-name')).map(e => e.textContent), maps: (BR.coopCamp.state.maps || []).map(m => m.id) };
+    });
+    check('联机：帐篷选单里有「我的地图」一栏，列着房主存下的地图', open && list.shown && list.maps.includes(hostMap.id) && list.names.includes(hostMap.name), { open, ...list });
+    await ev(A, id => BR.coopCamp._debugSet({ ws: id }), hostMap.id);
+    const synced = await waitFor(B, id => { const s = BR.coopCamp.state; return !!s && s.ws === id; }, hostMap.id, 5000);
+    check('联机：房主选了「我的地图」，客机的帐篷状态同步到同一张图', synced, await ev(B, () => BR.coopCamp.state && { ws: BR.coopCamp.state.ws, lv: BR.coopCamp.state.lv }));
+    await shot(A, 'coop-tent-mymap');
 
-    const active = await Promise.all([
-      waitFor(A, () => BR.coop.active && BR.coop.phase === 'active', null, 45000),
-      waitFor(B, () => BR.coop.active && BR.coop.phase === 'active', null, 45000),
-    ]);
-    check('联机：双方 BR.coop.active 都变为 true', active[0] && active[1], active);
-    if (!active[1]) return;
+    const ready = await readyBoth([A, B]);
+    const arrived = ready && (await Promise.all([A, B].map(p => waitFor(p, () => BR.game.levelId === '0' && BR.game.screen === 'playing' && !BR.world.transitioning && BR.coopCamp.transit === 'idle', null, 45000)))).every(Boolean);
+    check('联机：两人准备、一起出发，到了地图的底层 Level 0', ready && arrived, { ready, arrived });
+    if (!arrived) return;
 
+    const hostActive = await ev(A, () => BR.workshop.active && { id: BR.workshop.active.id, seed: BR.game.seed >>> 0, editing: BR.workshop.editing });
+    check('联机：房主那边激活的就是这张地图（种子用地图自己的）', !!hostActive && hostActive.id === hostMap.id && hostActive.seed === (seed >>> 0) && hostActive.editing === false, hostActive);
     const guestGotMap = await waitFor(B, () => BR.workshop.active && BR.workshop.active.id, null, 15000);
     check('联机：客机收到 game:start 后 BR.workshop.active 被激活', guestGotMap);
     const guestMap = await ev(B, () => {
       const m = BR.workshop.active;
-      return m ? { id: m.id, walls: m.walls, added: m.exits && m.exits.added, entities: m.entities, editing: BR.workshop.editing } : null;
+      return m ? { id: m.id, walls: m.walls, added: m.exits && m.exits.added, entities: m.entities, editing: BR.workshop.editing, seed: BR.game.seed >>> 0 } : null;
     });
-    check('联机：客机拿到同一张地图 id', !!guestMap && guestMap.id === hostMap.id, { host: hostMap.id, guest: guestMap && guestMap.id });
+    check('联机：客机拿到同一张地图 id、同一个种子', !!guestMap && guestMap.id === hostMap.id && guestMap.seed === (seed >>> 0), { host: hostMap.id, guest: guestMap && guestMap.id, seed: guestMap && guestMap.seed });
     check('联机：客机地图的墙改动一致', !!guestMap && JSON.stringify(guestMap.walls) === JSON.stringify(hostMap.walls), { host: hostMap.walls, guest: guestMap && guestMap.walls });
     check('联机：客机地图的新增出口一致', !!guestMap && JSON.stringify(guestMap.added) === JSON.stringify(hostMap.added), { host: hostMap.added, guest: guestMap && guestMap.added });
     check('联机：客机地图的放置实体一致', !!guestMap && JSON.stringify(guestMap.entities) === JSON.stringify(hostMap.entities), { host: hostMap.entities, guest: guestMap && guestMap.entities });
@@ -535,7 +587,6 @@ async function checkCoopSync(browser, base, seed) {
     await ctxB.close();
   }
 }
-
 // =====================================================================
 async function main() {
   const srv = await startServer();

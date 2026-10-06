@@ -993,7 +993,69 @@ function nearExit(x, z, r) {
       if (U.dist2(e.x, e.z, x, z) < R * R) hit = true;
     }
   });
+  // 层级的 keepClear（联机营地的门前通道、帐篷过道）：被推开的瓶子也不落进去
+  if (!hit) {
+    const ks = keepList(S.level);
+    for (let i = 0; !hit && i < ks.length; i++) { const k = normKeep(ks[i]); if (k && blockHit(k, x, z, r)) hit = true; }
+  }
   return hit;
+}
+
+// ---- 拖动禁区（N1）：出口圈 + 层级 keepClear。interact 拖东西、kit 判断生成时能不能拖、coop.propPlaceOk 共用这一份 ----
+// blockers(opts?) → [{ kind:'exit', x, z, r, y? } | { kind:'keep', x, z, r, why } | { kind:'keep', x0, z0, x1, z1, why }]，世界坐标。
+//   出口圈：已载入区块里 active 不为 false 的出口，r = radius + margin（默认 BR.config.interact.exitMargin，0.4）；y 是出口所在高度
+//     （拖东西的人按它跳过楼上楼下的出口）。
+//   keepClear：层级定义上的 keepClear（世界坐标，圆形 {x, z, r} 或矩形 {x0, z0, x1, z1}，可带 why = 拖到边上时说的话），原样给出、不外扩。
+//     所有层都能写；没写的层只有出口圈，和以前完全一样。
+//   opts.exits：用这组出口描述代替已载入区块的（kit 建块时传本块自己的；不过滤 active——事件出口以后会开）
+//   opts.level：读这一层定义的 keepClear（默认当前层；显式传 null 就不读）；opts.margin：出口圈外扩
+//   opts.x / z / r：只要离 (x, z) 水平距离 r 以内的（矩形按最近点算）
+function keepList(level) {
+  const k = level && level.keepClear;
+  return Array.isArray(k) ? k : [];
+}
+function normKeep(k) {
+  if (!k || typeof k !== 'object') return null;
+  const why = k.why ? String(k.why) : '';
+  if (num(k.r, -1) > 0 && validPoint(k)) return { kind: 'keep', x: k.x, z: k.z, r: k.r, why };
+  const x0 = num(k.x0, NaN), z0 = num(k.z0, NaN), x1 = num(k.x1, NaN), z1 = num(k.z1, NaN);
+  if (!(x0 === x0 && z0 === z0 && x1 === x1 && z1 === z1)) return null;
+  return { kind: 'keep', x0: Math.min(x0, x1), z0: Math.min(z0, z1), x1: Math.max(x0, x1), z1: Math.max(z0, z1), why };
+}
+// 半径 r 的圆（圆心 x, z）碰不碰得到这块禁区
+function blockHit(b, x, z, r) {
+  if (b.x0 != null) {
+    const qx = U.clamp(x, b.x0, b.x1), qz = U.clamp(z, b.z0, b.z1);
+    return U.dist2(qx, qz, x, z) < r * r;
+  }
+  const R = b.r + r;
+  return U.dist2(b.x, b.z, x, z) < R * R;
+}
+function exitMarginCfg() {
+  const c = BR.config && BR.config.interact;
+  return c ? num(c.exitMargin, 0.4) : 0.4;
+}
+function blockers(opts) {
+  const o = opts || {};
+  const m = num(o.margin, exitMarginCfg());
+  const near = num(o.r, -1) >= 0 && validPoint(o) ? o : null;
+  const out = [];
+  const add = b => { if (!near || blockHit(b, near.x, near.z, Math.max(near.r, 1e-6))) out.push(b); };
+  const addExit = e => {
+    if (!validPoint(e)) return;
+    const b = { kind: 'exit', x: e.x, z: e.z, r: num(e.radius, 1) + m };
+    if (typeof e.y === 'number' && isFinite(e.y)) b.y = e.y;
+    add(b);
+  };
+  if (Array.isArray(o.exits)) {
+    for (let i = 0; i < o.exits.length; i++) if (o.exits[i]) addExit(o.exits[i]);
+  } else {
+    chunks.forEach(c => { for (let i = 0; i < c.exits.length; i++) if (c.exits[i].active !== false) addExit(c.exits[i]); });
+  }
+  const lv = Object.prototype.hasOwnProperty.call(o, 'level') ? o.level : S.level;
+  const ks = keepList(lv);
+  for (let i = 0; i < ks.length; i++) { const b = normKeep(ks[i]); if (b) add(b); }
+  return out;
 }
 // (fx, fz)：道具这次拖动的总位移。拖得够远（> 5 cm）时先试前进方向那一侧——联机客机拖木箱压过瓶子，房主在松手时才挪，
 // 以前挑「挪得最少」的一侧，瓶子常从箱子来的方向冒出来；单机是边拖边往前推（2026-10-02 返修）
@@ -1739,6 +1801,7 @@ BR.world = {
   chunkAt,
   chunks: loadedChunks,
   exits: loadedExits,
+  blockers,     // (opts?) → [{kind:'exit', x, z, r, y?} | {kind:'keep', x, z, r, why} | {kind:'keep', x0, z0, x1, z1, why}]：拖动禁区（出口圈 + keepClear），见「拖动禁区」
   debugInfo,
   decal,        // (x, z, { color, radius, ttl, y }?) → bool：贴地斑块，纯表现、不同步（ENGINE_PLAN M1 AA）
   decalInfo,    // () → { count, cap, byChunk, inScene, visible, instances }

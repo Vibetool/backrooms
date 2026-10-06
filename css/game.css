@@ -3,6 +3,14 @@
    视觉：发黄的 VHS / 监控录像 OSD —— 等宽数字、半透明深色底、轻微红蓝色散描边，不用渐变
    兼容：带 env() / min() / clamp() 的声明前面先写一条普通值，老内核（旧 X5 等）不认后一条时保留前一条
    z-index（ARCHITECTURE 第 11 节）：HUD 30，暂停 / 结算 60，toast 90
+   联机营地（N1）那几层，从下往上：
+     54 帐篷选单（css/tent.css）
+     55 gfx 淡入淡出（js/core/gfx.js 的 .gfx-fade）
+     56 黑幕（.hud-curtain，BR.hud.curtain：出发 / 回营地时全黑，中间一行字）
+     58 设置 / 创意工坊编辑器（css/settings.css、css/workshop.css）
+     60 暂停菜单 / 死亡结算（.hud-pause / .death-root）
+     65 横幅（.hud-notices，BR.hud.notice：「想回营地」「正在重连」，暂停、结算、黑幕时也看得见）
+     70 皮肤色板（css/home.css）
    触屏避让（input.js 的控件位置）：右上 48px 暂停键 → 顶部状态条左右各留 72px；
    右下动作按钮最左到 right:174px、最高到 bottom:178px → 背包栏右缘留 190px */
 
@@ -10,6 +18,8 @@
 .hud-root,
 .hud-toasts,
 .hud-pause,
+.hud-notices,
+.hud-curtain,
 .death-root {
   --hud-fg: #f2e7b4;
   --hud-dim: rgba(242, 231, 180, 0.68);
@@ -41,6 +51,8 @@
 .hud-root, .hud-root *,
 .hud-toasts, .hud-toasts *,
 .hud-pause, .hud-pause *,
+.hud-notices, .hud-notices *,
+.hud-curtain, .hud-curtain *,
 .death-root, .death-root * {
   box-sizing: border-box;
 }
@@ -49,6 +61,8 @@
 .hud-root[hidden], .hud-root [hidden],
 .hud-toasts [hidden],
 .hud-pause[hidden], .hud-pause [hidden],
+.hud-notices [hidden],
+.hud-curtain[hidden], .hud-curtain [hidden],
 .death-root[hidden], .death-root [hidden] {
   display: none !important;
 }
@@ -275,6 +289,29 @@
   color: var(--hud-accent);
   border: 1px solid var(--hud-line);
 }
+
+/* 开着营地等朋友时的房号角标（hud.js：BR.coop.hosting 且还没人连上）。信息块里的最后一行，
+   跟着信息块排，压不到层级名；房号等宽、分两段（K7M 2QX），间隔用 margin 画，文字里不带空格 */
+.hud-info-code {
+  margin-top: 3px;
+  padding-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--hud-dim);
+  border-top: 1px solid var(--hud-line);
+}
+
+.hud-code {
+  font-family: var(--hud-mono);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--hud-accent-hi);
+}
+
+.hud-code-b { margin-left: 0.45em; }
 
 /* 窄屏开着状态条时左上角会和居中的状态条撞上，挪到状态条 + 饥饿警告下面 */
 @media (max-width: 1179px) {
@@ -825,6 +862,10 @@
   }
 }
 
+/* 同一布局下开着横幅（hud.js placeToastsBelowNotices 量横幅底边写 --hud-toast-top）：toast 排到横幅下面，不叠在一起。
+   只有矮横屏、竖屏帐篷选单开着（toast 都在上半屏）时 hud.js 才加这个类 */
+.hud-toasts.hud-toasts-below { top: var(--hud-toast-top, 140px); margin-top: 0; }
+
 /* 横屏测试面板开着（testmode.js 给 <html> 加 br-test-open）：右侧抽屉会盖住右上的 toast，改到左侧，
    宽度限到抽屉（400px）左边再留 16px */
 @media (max-height: 520px) {
@@ -932,19 +973,48 @@
   border-color: var(--hud-accent);
 }
 
-/* 「返回主页」第一次点只进入确认态：变红闪烁，提醒会丢掉整局 */
-.hud-btn-home.hud-btn-confirm {
+/* 「返回主页」「离开联机」第一次点只进入确认态：变红闪烁，提醒会丢掉整局 / 断开联机 */
+.hud-btn-home.hud-btn-confirm,
+.hud-btn-leave.hud-btn-confirm {
   color: #fff;
   background: rgba(170, 34, 18, 0.9);
   border-color: var(--hud-bad);
   animation: hud-pulse 0.9s steps(1, end) infinite;
 }
 
+/* 确认文案比「离开联机」长：窄屏上允许折行，按钮跟着长高，不截字（「复制邀请链接」闪的结果文字同理） */
+.hud-btn-invite,
+.hud-btn-leave {
+  white-space: normal;
+  text-align: center;
+  line-height: 1.3;
+}
+
+.hud-btn-leave.hud-btn-confirm { letter-spacing: 0.04em; }
+
+/* 「回营地」「离开联机」的外壳：平时就是两行按钮；横屏手机（下面 max-height 520px）两个都在时并排，省一行高度 */
+.hud-pause-pair { display: block; }
+
 @media (hover: hover) {
   .hud-btn:hover { background-color: rgba(242, 231, 180, 0.14); }
   .hud-btn-primary:hover { background-color: var(--hud-accent-hi); }
-  .hud-btn-home.hud-btn-confirm:hover { background-color: rgba(196, 40, 22, 0.95); }
+  .hud-btn-home.hud-btn-confirm:hover,
+  .hud-btn-leave.hud-btn-confirm:hover { background-color: rgba(196, 40, 22, 0.95); }
 }
+
+/* 联机时顶上一行小字「联机时暂停，世界不会停」：在 PAUSE 标签上面，右边让出开关麦按钮 */
+.hud-pause-coop {
+  margin: -4px 0 6px;
+  padding-right: 120px;
+  font-size: 12px;
+  line-height: 18px;
+  letter-spacing: 0.04em;
+  color: #ffd28a;
+}
+
+/* 暂停副标题里的房号一行，和左上角角标同一种写法 */
+.hud-pause-code { margin-top: 2px; }
+.hud-pause-sub > .hud-pause-code { color: var(--hud-fg); }
 
 .hud-vis {
   display: block;
@@ -1089,6 +1159,278 @@
   .hud-pause-sub { margin-bottom: 6px; }
   .hud-btn { min-height: 44px; margin-top: 8px; }
   .hud-vis { margin-top: 8px; }
+  /* 联机局多一行小字、多一个按钮：「回营地」「离开联机」并排，640×360 一屏放下不用滚 */
+  .hud-pause-pair.hud-pause-pair-two {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .hud-pause-pair.hud-pause-pair-two .hud-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    font-size: 15px;
+    letter-spacing: 0.06em;
+  }
+  .hud-pause-pair.hud-pause-pair-two .hud-btn-leave.hud-btn-confirm {
+    padding: 4px 8px;
+    font-size: 13px;
+    line-height: 1.15;
+    letter-spacing: 0.02em;
+  }
+}
+
+/* 更矮的横屏（640×360 带地址栏只剩 304、534×300）：联机局多了小字和一个按钮，压一压边距，
+   「❚❚ PAUSE」和「已暂停」排成一行，一屏放下不用滚 */
+@media (max-height: 400px) {
+  .hud-pause {
+    padding-top: 6px;
+    padding-top: calc(6px + env(safe-area-inset-top, 0px));
+    padding-bottom: 6px;
+    padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+  }
+  .hud-pause-panel { padding-top: 10px; padding-bottom: 10px; }
+  .hud-pause-coop { margin: -2px 0 2px; }
+  .hud-pause-tag,
+  .hud-pause-title { display: inline-block; vertical-align: baseline; }
+  .hud-pause-tag { margin-right: 10px; }
+  .hud-pause-title { margin-top: 0; }
+  .hud-pause-sub { margin: 2px 0 4px; }
+}
+
+/* ========== 横幅（BR.hud.notice，z 65） ==========
+   屏幕上半部中间，在暂停 / 结算（60）和黑幕（56）之上、皮肤色板（70）之下。挂在 #ui 下，HUD 隐藏时也在。
+   桌面：信息块下方 14vh；竖屏手机：躲开右上的暂停键和麦克风（到 116px）；横屏手机：文字和按钮排成一行，压不到准心 */
+.hud-notices {
+  position: fixed;
+  z-index: 65;
+  left: 50%;
+  top: 96px;
+  top: calc(max(96px, 14vh) + env(safe-area-inset-top, 0px));
+  transform: translateX(-50%);
+  width: 520px;
+  max-width: calc(100vw - 32px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.hud-notice {
+  width: 100%;
+  padding: 10px 14px 12px;
+  text-align: center;
+  background: rgba(22, 18, 7, 0.94);
+  border: 1px solid var(--hud-line);
+  border-top: 3px solid var(--hud-accent);
+  border-radius: 3px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+  pointer-events: auto;
+  animation: hud-notice-in 0.2s ease-out;
+}
+
+/* 「点一下画面继续 / 开始」：横幅不接点击，点在它上面也落到画面上（input.js 在画布上按下时锁指针），不然点横幅只把它关了 */
+.hud-notice.hud-notice-pass { pointer-events: none; }
+
+@keyframes hud-notice-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: none; }
+}
+
+.hud-notice-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.hud-notice-text {
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: 0.04em;
+  overflow-wrap: anywhere;
+}
+
+/* 倒数秒数：等宽方块，数字变的时候宽度不跳 */
+.hud-notice-count {
+  flex: none;
+  min-width: 30px;
+  padding: 1px 6px;
+  font-family: var(--hud-mono);
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--hud-ink);
+  text-shadow: none;
+  background: var(--hud-accent);
+  border-radius: 2px;
+}
+
+.hud-notice-acts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.hud-notice-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex: 1 1 0;
+  min-width: 96px;
+  max-width: 240px;
+  min-height: 46px;
+  margin: 0;
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--hud-fg);
+  text-shadow: none;
+  background: rgba(242, 231, 180, 0.06);
+  border: 1px solid rgba(242, 231, 180, 0.5);
+  border-radius: 3px;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  touch-action: manipulation;
+  transition: background-color 0.12s;
+}
+
+.hud-notice-btn.hud-notice-btn-first {
+  color: var(--hud-ink);
+  background: var(--hud-accent);
+  border-color: var(--hud-accent);
+}
+
+/* 桌面键帽：hud.js 写在 data-key 上，这里画在按钮文字前面；指针锁着点不到时按这个键 */
+.hud-notice-btn[data-key]::before {
+  content: attr(data-key);
+  display: inline-block;
+  min-width: 20px;
+  padding: 1px 4px;
+  font-family: var(--hud-mono);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 16px;
+  letter-spacing: 0;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  opacity: 0.8;
+}
+
+.hud-notices-touch .hud-notice-btn[data-key]::before { display: none; }
+
+.hud-notice-btn:active { transform: translateY(1px); }
+.hud-notice-btn:focus:not(:focus-visible) { outline: none; }
+.hud-notice-btn:focus-visible { outline: 2px solid var(--hud-accent); outline-offset: 2px; }
+
+@media (hover: hover) {
+  .hud-notice-btn:hover { background-color: rgba(242, 231, 180, 0.14); }
+  .hud-notice-btn.hud-notice-btn-first:hover { background-color: var(--hud-accent-hi); }
+}
+
+/* 竖屏手机：右上角暂停键（48px）下面是麦克风（top 72px、高 44px），横幅放到 128px 以下 */
+.hud-notices.hud-notices-touch {
+  top: 128px;
+  top: calc(128px + env(safe-area-inset-top, 0px));
+}
+
+/* 左上角多了「房号 … · 等朋友来」那一行（信息块四行，底边约 100px）：桌面再往下让一点，别贴着它 */
+.hud-notices.hud-notices-code {
+  top: 116px;
+  top: calc(max(116px, 14vh) + env(safe-area-inset-top, 0px));
+}
+
+/* 竖屏手机：右上角暂停键、麦克风已经把横幅压到 128px，四行信息块（约 100px）在它上面，不用再让 */
+.hud-notices.hud-notices-touch.hud-notices-code {
+  top: 128px;
+  top: calc(128px + env(safe-area-inset-top, 0px));
+}
+
+/* 暂停菜单 / 结算盖着时（hud.js 加 .hud-notices-modal，同时去掉 -stats / -code）：信息块、暂停键、麦克风都在遮罩下面，
+   横幅贴着顶部（让过结算左上角的 STOP 时间码），不压面板顶上的标题。横屏手机面板占满一屏，仍按下面 max-height 520px 的位置 */
+.hud-notices.hud-notices-modal {
+  top: 36px;
+  top: calc(36px + env(safe-area-inset-top, 0px));
+}
+
+/* 窄屏开着状态条时左上信息块被挪到 80px（三行到约 150px）：再往下让 */
+@media (max-width: 1179px) {
+  .hud-notices.hud-notices-stats {
+    top: 160px;
+    top: calc(160px + env(safe-area-inset-top, 0px));
+  }
+}
+
+/* 横屏手机：高度不够，文字、倒数、按钮排成一行，放在左上信息块（约 73px）下面，底边离准心远远的 */
+@media (max-height: 520px) {
+  .hud-notices,
+  .hud-notices.hud-notices-touch,
+  .hud-notices.hud-notices-stats {
+    top: 80px;
+    top: calc(80px + env(safe-area-inset-top, 0px));
+    width: 560px;
+    max-width: calc(100vw - 48px);
+  }
+  /* 信息块多了房号那一行（底边约 100px） */
+  .hud-notices.hud-notices-code,
+  .hud-notices.hud-notices-touch.hud-notices-code {
+    top: 106px;
+    top: calc(106px + env(safe-area-inset-top, 0px));
+  }
+  .hud-notice {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 6px 12px;
+    padding: 6px 10px;
+  }
+  .hud-notice-text { font-size: 15px; }
+  .hud-notice-acts { flex: 0 1 auto; margin-top: 0; gap: 8px; }
+  .hud-notice-btn { flex: 0 1 auto; min-width: 84px; min-height: 44px; padding: 4px 12px; font-size: 15px; }
+}
+
+/* ========== 黑幕（BR.hud.curtain，z 56） ==========
+   出发 / 回营地：全黑、中间一行字。淡入淡出的时长和起点由 hud.js 写在行内 style 上 */
+.hud-curtain {
+  position: fixed;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 56;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  padding: 24px calc(24px + env(safe-area-inset-right, 0px)) 24px calc(24px + env(safe-area-inset-left, 0px));
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 淡入和全黑时挡住点击（底下是画布和触屏键）；淡出时放行 */
+.hud-curtain.hud-curtain-on { pointer-events: auto; }
+
+.hud-curtain-text {
+  max-width: 100%;
+  font-family: var(--hud-mono);
+  font-size: 22px;
+  font-size: clamp(18px, 4.2vw, 30px);
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: 0.12em;
+  text-align: center;
+  color: var(--hud-fg);
+  overflow-wrap: anywhere;
 }
 
 /* ========== 死亡结算（death.js） ========== */
@@ -1318,9 +1660,63 @@
 .death-btn:focus:not(:focus-visible) { outline: none; }
 .death-btn:focus-visible { outline: 2px solid var(--hud-fg); outline-offset: 3px; }
 
+/* 联机局（death.js syncCoop）：「返回主页」换成「回营地」（和它一样的次要按钮）+ 下面小号的「离开联机」。
+   「离开联机」和开关麦都是 inline-flex，面板 text-align:center，两个排在同一行居中，放不下自己折到下一行 */
+.death-leave {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: top;
+  min-width: 44px;
+  min-height: 44px;
+  max-width: 100%;
+  margin: 12px 4px 0;
+  padding: 4px 16px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: 0.08em;
+  color: var(--hud-dim);
+  text-shadow: none;
+  background: transparent;
+  border: 1px solid rgba(242, 231, 180, 0.3);
+  border-radius: 22px;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  touch-action: manipulation;
+}
+
+/* 确认文案分段（death.js putSegs）：每段是一个不折行的 flex 项，放不下时整段换行 */
+.death-leave { flex-wrap: wrap; align-content: center; }
+.death-nb { white-space: nowrap; }
+
+/* 第一次点只进确认态：和暂停菜单的「离开联机」一样变红闪烁 */
+.death-leave.death-leave-confirm {
+  color: #fff;
+  background: rgba(170, 34, 18, 0.9);
+  border-color: var(--hud-bad);
+  letter-spacing: 0.02em;
+  animation: hud-pulse 0.9s steps(1, end) infinite;
+}
+
+.death-leave:active { transform: translateY(1px); }
+.death-leave:focus:not(:focus-visible) { outline: none; }
+.death-leave:focus-visible { outline: 2px solid var(--hud-accent); outline-offset: 2px; }
+
+.death-root:not(.death-armed) .death-leave {
+  opacity: 0.4;
+  pointer-events: none;
+  cursor: default;
+}
+
 @media (hover: hover) {
   .death-btn-continue:hover { background-color: var(--hud-accent-hi); }
-  .death-btn-home:hover { background-color: rgba(242, 231, 180, 0.14); }
+  .death-btn-home:hover,
+  .death-btn-camp:hover { background-color: rgba(242, 231, 180, 0.14); }
+  .death-leave:hover { color: var(--hud-fg); border-color: rgba(242, 231, 180, 0.6); }
+  .death-leave.death-leave-confirm:hover { background-color: rgba(196, 40, 22, 0.95); }
 }
 
 /* 刚弹出的保护期：按钮压暗且不接收点击（death.js 里还有一道时间判断兜底） */
@@ -1336,8 +1732,12 @@
   color: var(--hud-dim);
 }
 
-/* 联机开关麦：按钮组下方居中的小按钮，和主按钮一样有弹出保护期 */
-.death-mic { margin: 12px auto 0; }
+/* 联机开关麦：按钮组下方居中的小按钮，和主按钮一样有弹出保护期；联机局里和「离开联机」排在同一行 */
+.death-mic {
+  display: inline-flex;
+  vertical-align: top;
+  margin: 12px 4px 0;
+}
 
 .death-root:not(.death-armed) .death-mic {
   opacity: 0.4;
@@ -1386,6 +1786,19 @@
     right: 0;
     margin: 0;
   }
+  /* 「离开联机」同理放到面板左上角，和右上角的开关麦对称，不占按钮组下面那一行；
+     居中的 SIGNAL LOST 标签约 240px 宽，左边让出它的一半，确认文案长了就在这块里折行 */
+  .death-leave {
+    position: absolute;
+    top: 0;
+    left: 0;
+    max-width: calc(50% - 126px);
+    margin: 0;
+    padding: 4px 12px;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    border-radius: 14px;
+  }
 }
 
 /* ========== 减弱动效 ========== */
@@ -1402,6 +1815,9 @@
   .hud-rec-dot,
   .hud-pause-tag,
   .hud-btn-home.hud-btn-confirm,
+  .hud-btn-leave.hud-btn-confirm,
+  .hud-notice,
+  .death-leave.death-leave-confirm,
   .death-root::before,
   .death-osd-stop,
   .death-root.death-in .death-panel,

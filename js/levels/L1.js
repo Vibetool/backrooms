@@ -3065,6 +3065,350 @@ BR.levels.register({
     BR.hud.prompt(null);
   },
 });
+
+// =====================================================================
+// BR.L1room：给联机营地（js/levels/Lcoopcamp.js）用的窄接口 —— 拿 L1 自己的构件建一间四面封死的仓库间、和窗外看得见的那几块
+// =====================================================================
+// 2026-10-03 N1（孩子原话「两人会在一个营地，周围是 level1，被彻底围在一个房间里」）：营地要一眼看出就是 Level 1，
+// 所以这里只调上面现成的私有函数（buildShell / buildPillar / buildLamp / buildPipes / wallBay / rackBay / stackBay / pallet /
+// kitPuddle / kitCall / decorateFreeSlots），一个都不改；L1 自己的 buildChunk 一个字不动（golden --levels 1 逐字节不变）。
+// 调用方的 builder 必须带固定的 levelSeed（Lcoopcamp 的 CAMP_SEED）：私有函数照用 b.seed，布局就和游戏种子无关。
+//
+// build(b, spec) → { lamps: [这次建的吊灯的灯描述], clear: [{ x0, z0, x1, z1 }] 留空的矩形（keep 柱间 + spec.keep，区块本地坐标） }
+// spec（坐标一律区块本地，柱网和 L1 一样是 8 m）：
+//   x0, z0, nx, nz  柱网矩形：左上角柱线 (x0, z0)，nx × nz 个 8 m 柱间（营地 4, 4, 3, 3 = 24×24 的房间）
+//   sector          STYLE 里的区段（柱子粗细、刷漆、货堆颜色、灯亮度）；不能是 tianying / garden，给了就退回 yuejin
+//   orient          'x' | 'z'：吊灯挂哪个方向的梁、柱间缺省的货架方向（缺省 'x'）
+//   walls           'ring' = 沿矩形四周 12 段承重墙（12 个预设 type/edge/rot 的假柱间喂 wallBay，四个角各两面，墙顶到梁底 3.55；
+//                   挂在墙线上的吊灯往里挪 2.0 m）；
+//                   'none' = 窗外带：只建地面、楼板、梁、柱、吊灯、天花板管道、货架，没有墙、没有刷新点
+//   windows         [{ side: 'n'|'e'|'s'|'w', at: 沿墙坐标, w = 1.6, y0 = 2.3, y1 = 3.3 }]：在墙上开铁丝玻璃窗（看得穿；b.solid 仍是整面墙高）。
+//                   同一段墙上的几扇窗用同一个 y0/y1；窗离柱子中心 ≥ 0.6 m（落在洞里的对拉螺栓孔不画）
+//   bays            [{ i, j, kind: 'rack'|'stack'|'open'|'keep', orient }]：没列到的柱间按 keep。'open' 不走 openBay（停车位线、叉车、杂物），
+//                   只放两块空托盘和一摊水；'keep' 什么都不放
+//   noLoot          营地里的箱子打开是空的：这次登记进 res.kit.containers 的容器一律标 loot: 0（L1 的货架货现在还没登记容器，
+//                   以后 D1/A2 给 crate/cartonBlock 加登记时自动生效），另记 b.data.noLoot = true
+//   keep            [{ x0, z0, x1, z1 }]：这些矩形里什么都不放（墙面挂件跳过；柱间本身用 kind 'keep' 留空）
+//   pre(b)          调用方自己的家具（帐篷、睡垫、椅子……）：墙建完、货架上货之前建；按 preNominal 这个固定面数入账（kitCall），
+//                   所以货架分到多少面只由种子决定，和画质、pre 里实际多少面都无关
+//   preNominal      pre 的账面面数（缺省 = 实际面数）；实际面数超过它会 console.warn
+//   budget          账面面数上限（缺省 TRI_BUDGET 7600；低画质实际面数 ≈ 账面）
+//   extra           高画质细节档（倒角、贴花）多出来的面数上限（缺省 EXTRA_CAP 1350）：高画质实际面数 ≲ budget + extra + 贴花
+// 不调 sectorInfra / sectorExtras / addSpawns / tireTracks，不放叉车、小屋、电视、出口；吊灯全是 'on'（buildLamp 的 hs 传 () => 0.5），
+// 没有 update，所以也没有 L1 的断电、闪灯。
+const ROOM_BAD_SECTOR = { tianying: 1, garden: 1 };   // 天鹰段的空地会画停车位线、花园段有藤蔓和植物化：营地都不要
+const ROOM_SIDE = { n: 0, e: 1, s: 2, w: 3 };         // 和 EDGE_ROT 的下标一致：北、东、南、西
+const ROOM_KINDS = { rack: 1, stack: 1, open: 1, keep: 1 };
+function roomNum(v, d) { return typeof v === 'number' && Number.isFinite(v) ? v : d; }
+function roomWarn(msg) { if (typeof console !== 'undefined') console.warn('[L1room] ' + msg); }
+function roomRect(k) {
+  if (!k) return null;
+  const a = roomNum(k.x0, NaN), c = roomNum(k.z0, NaN), e = roomNum(k.x1, NaN), f = roomNum(k.z1, NaN);
+  if (!(a === a && c === c && e === e && f === f)) return null;
+  return { x0: Math.min(a, e), z0: Math.min(c, f), x1: Math.max(a, e), z1: Math.max(c, f) };
+}
+
+function roomBuild(b, spec) {
+  const sp = spec || {};
+  defineMaterials();
+  let sector = String(sp.sector || 'yuejin');
+  if (!STYLE[sector] || ROOM_BAD_SECTOR[sector]) { roomWarn('sector 不能是 ' + sector + '，改用 yuejin'); sector = 'yuejin'; }
+  const st = STYLE[sector];
+  const nx = Math.max(1, sp.nx | 0 || 3), nz = Math.max(1, sp.nz | 0 || 3);
+  const x0 = roomNum(sp.x0, LINES[0]), z0 = roomNum(sp.z0, LINES[0]);
+  const x1 = x0 + 8 * nx, z1 = z0 + 8 * nz;
+  const orient = sp.orient === 'z' ? 'z' : 'x';
+  const ring = sp.walls === 'ring';
+  const budget = roomNum(sp.budget, TRI_BUDGET);
+  const extraCap = Math.max(0, Math.min(EXTRA_CAP, roomNum(sp.extra, EXTRA_CAP)));
+  const keep = (sp.keep || []).map(roomRect).filter(Boolean);
+  const c0 = b._kitContainers.length, L0 = b._lights.length;
+
+  // ---------- 柱间 ----------
+  const bays = [];
+  for (let j = 0; j < nz; j++) {
+    for (let i = 0; i < nx; i++) {
+      bays.push({ i, j, k: j * nx + i, x: x0 + 4 + 8 * i, z: z0 + 4 + 8 * j, type: 'keep', orient, rot: 0, exits: [], noclip: null, roll: 0, vroll: 0, order: 0 });
+    }
+  }
+  for (const d of sp.bays || []) {
+    const i = d && d.i | 0, j = d && d.j | 0;
+    if (!d || i < 0 || i >= nx || j < 0 || j >= nz) { roomWarn('bays 里的柱间不在矩形里：' + JSON.stringify(d)); continue; }
+    const bb = bays[j * nx + i];
+    bb.type = ROOM_KINDS[d.kind] ? d.kind : 'keep';
+    if (d.orient === 'x' || d.orient === 'z') bb.orient = d.orient;
+  }
+  const env = { st, sector, orient, bays, slots: [], huts: [], walls: [], portalNear: null };
+  env.lampOnBeam = (x, z) => LINES.indexOf(x) >= 0 || LINES.indexOf(z) >= 0;
+
+  // ---------- 四面墙：12 个假柱间（每段墙一个），buildPillar 之前把 env.walls 填好 ----------
+  const wallBays = [];
+  if (ring) {
+    const add = (bay, edge) => {
+      wallBays.push({ i: bay.i, j: bay.j, k: 100 + wallBays.length, x: bay.x, z: bay.z, type: 'wall', edge, rot: EDGE_ROT[edge],
+        noclip: null, exits: [], wins: [] });
+      const horiz = edge === 0 || edge === 2;
+      const line = horiz ? (edge === 0 ? bay.z - 4 : bay.z + 4) : (edge === 3 ? bay.x - 4 : bay.x + 4);
+      const a0 = horiz ? bay.x - 4 : bay.z - 4;
+      env.walls.push({ horiz, line, a0, a1: a0 + 8, side: (edge === 0 || edge === 3) ? 1 : -1 });
+    };
+    for (let i = 0; i < nx; i++) add(bays[i], 0);
+    for (let j = 0; j < nz; j++) add(bays[j * nx + nx - 1], 1);
+    for (let i = nx - 1; i >= 0; i--) add(bays[(nz - 1) * nx + i], 2);
+    for (let j = nz - 1; j >= 0; j--) add(bays[j * nx], 3);
+    for (const w of sp.windows || []) {
+      const edge = w ? ROOM_SIDE[w.side] : undefined;
+      const at = w ? roomNum(w.at, NaN) : NaN;
+      if (edge === undefined || !(at === at)) { roomWarn('windows 写错了：' + JSON.stringify(w)); continue; }
+      const horiz = edge === 0 || edge === 2;
+      const wb = wallBays.find(q => q.edge === edge && Math.abs(at - (horiz ? q.x : q.z)) < 4);
+      if (!wb) { roomWarn('窗不在墙上：' + JSON.stringify(w)); continue; }
+      // 换到 wallBay 的坐标系（墙在本地 z = −4、x ∈ [−4, 4]）：Builder.point 的逆
+      const px = horiz ? at : (edge === 1 ? x1 : x0), pz = horiz ? (edge === 0 ? z0 : z1) : at;
+      const c = Math.cos(wb.rot), s = Math.sin(wb.rot), dx = px - wb.x, dz = pz - wb.z;
+      const ww = Math.max(0.4, Math.min(3, roomNum(w.w, 1.6)));
+      const lx = Math.max(-3.4 + ww / 2, Math.min(3.4 - ww / 2, c * dx - s * dz));
+      const wy0 = Math.max(0.3, roomNum(w.y0, 2.3)), wy1 = Math.min(WALL_H - 0.1, roomNum(w.y1, 3.3));
+      if (wy1 - wy0 < 0.3) { roomWarn('窗太矮：' + JSON.stringify(w)); continue; }
+      const prev = wb.wins[0];
+      wb.wins.push({ lx, w: ww, y0: prev ? prev.y0 : wy0, y1: prev ? prev.y1 : wy1 });
+    }
+  }
+
+  const ex = ext(b);
+  if (extraCap < EXTRA_CAP) ex.lim = extraCap;
+  ex.keep = keepFor(bays.concat(wallBays));
+  ex.cat = 'shell';
+  buildShell(b, env);
+  ex.cat = 'pillar';
+  const xs = [], zs = [];
+  for (let i = 0; i <= nx; i++) xs.push(x0 + 8 * i);
+  for (let j = 0; j <= nz; j++) zs.push(z0 + 8 * j);
+  for (const px of xs) for (const pz of zs) buildPillar(b, px, pz, env);
+  // 靠墙柱子的柱号牌：buildPillar 把牌子钉在朝主通道那面（房间外面），房间里面那面也钉一块
+  if (ring && !st.round) roomPlates(b, env, xs, zs);
+  ex.cat = 'misc';
+
+  // ---------- 吊灯：挂在梁下柱间中点；撞上墙往墙里侧挪（buildChunk 挪 1.4 m；这里挪 2.0 m：靠墙那排灯罩
+  // 正好挡在墙上那排窗的视线里，多挪 0.6 m，从房间另一头抬头看窗，灯罩在视线上面）。全是 'on' ----------
+  const SHIFT = 2.0;
+  const hs = () => 0.5;
+  const spots = [];
+  if (orient === 'x') { for (let i = 0; i < nx; i++) for (const lz of zs) spots.push([x0 + 4 + 8 * i, lz]); }
+  else { for (const lx of xs) for (let j = 0; j < nz; j++) spots.push([lx, z0 + 4 + 8 * j]); }
+  for (const p of spots) {
+    let x = p[0], z = p[1];
+    for (const w of env.walls) {
+      if (w.horiz && Math.abs(z - w.line) < 0.01 && x > w.a0 && x < w.a1) z += w.side * SHIFT;
+      if (!w.horiz && Math.abs(x - w.line) < 0.01 && z > w.a0 && z < w.a1) x += w.side * SHIFT;
+    }
+    buildLamp(b, x, z, orient, env, hs);
+  }
+  const lamps = b._lights.slice(L0);
+  buildPipes(b, env);
+
+  // ---------- 墙（开窗的那几段临时接管 b.aabb，见 roomWall）----------
+  ex.cat = 'core';
+  for (const wb of wallBays) { roomWall(b, wb, env); keepCore(ex, wb); }
+
+  // ---------- 调用方的家具：按固定面数入账 ----------
+  const pre = { nominal: 0, actual: 0 };
+  if (typeof sp.pre === 'function') {
+    ex.cat = 'pre';
+    const t0 = rawTri(b);
+    if (sp.preNominal != null) kitCall(b, roomNum(sp.preNominal, 0), () => sp.pre(b));
+    else sp.pre(b);
+    pre.actual = rawTri(b) - t0;
+    pre.nominal = sp.preNominal != null ? roomNum(sp.preNominal, 0) : pre.actual;
+    if (pre.actual > pre.nominal) roomWarn('pre 实际 ' + pre.actual + ' 面，超过 preNominal ' + pre.nominal);
+  }
+
+  // ---------- 上货（照 fillBays 的分法，只是每个柱间按自己的 orient、上限用 spec.budget）----------
+  ex.cat = 'fill';
+  roomFill(b, bays, env, budget, extraCap);
+  if (ring) { ex.cat = 'deco'; roomDeco(b, env, keep, { x0, z0, x1, z1 }, budget); }
+  if (sp.noLoot) {
+    for (let i = c0; i < b._kitContainers.length; i++) b._kitContainers[i].loot = 0;
+    b.data.noLoot = true;
+  }
+  b.data.sector = sector;
+  b.data.bays = bays.map(bb => bb.type[0]).join('');
+  b.data.tri = { nominal: Math.round(triCount(b)), extra: ex.tris, decals: ex.decals, by: ex.by, lost: ex.lost, pre };
+  const clear = bays.filter(bb => bb.type === 'keep').map(bb => ({ x0: bb.x - 4, z0: bb.z - 4, x1: bb.x + 4, z1: bb.z + 4 })).concat(keep);
+  return { lamps, clear };
+}
+
+function roomPlates(b, env, xs, zs) {
+  const h2 = env.st.pillar / 2;
+  const put = (px, pz, rot) => {
+    b.push(px, pz, rot);
+    sheet(b, 0, 2.05, h2 + 0.007, 0.34, 0.24, '+z', [0.92, 0.91, 0.86]);
+    sheet(b, -0.06, 2.09, h2 + 0.01, 0.07, 0.16, '+z', C.black);
+    sheet(b, 0.06, 2.09, h2 + 0.01, 0.07, 0.16, '+z', C.black);
+    b.pop();
+  };
+  for (let i = 1; i < xs.length - 1; i++) { put(xs[i], zs[0], 0); put(xs[i], zs[zs.length - 1], Math.PI); }
+  for (let j = 1; j < zs.length - 1; j++) { put(xs[0], zs[j], HALF_PI); put(xs[xs.length - 1], zs[j], -HALF_PI); }
+}
+
+// 一段墙：没窗的直接 wallBay。有窗的：
+//   ① 柱间 rng 包一层，把两面水渍的位置（wallBay 第 2、5 次取数）挪到离窗 ≥ 0.75 m 的地方，水痕不会挂在窗洞上；
+//   ② wallBay 里画整面墙的那一次 b.aabb（x 从 −4 到 4）换成「整面墙高的碰撞体 + 窗洞四周的几块墙」；
+//   ③ wallBay 往墙面上贴的小片（对拉螺栓孔）落在窗洞里的不画，所以窗可以开在墙段上任何地方；
+//   ④ wallBay 画完以后在洞里装钢窗框、夹丝玻璃。
+// 只在这次 wallBay 调用期间接管这个 builder 实例的 aabb / plane，调完马上还原；wallBay 本身一行不改
+function roomWall(b, wb, env) {
+  const base = bayRng(b, wb);
+  if (!wb.wins.length) { wallBay(b, wb, base, env); return; }
+  let n = 0;
+  const r = () => {
+    const v = base(), i = n++;
+    return i === 1 || i === 4 ? roomStainU(wb.wins, i === 1 ? 1 : -1, v) / 5 + 0.5 : v;
+  };
+  const ownA = Object.prototype.hasOwnProperty.call(b, 'aabb'), ownP = Object.prototype.hasOwnProperty.call(b, 'plane');
+  const prevA = b.aabb, prevP = b.plane;
+  const c = Math.cos(wb.rot), s = Math.sin(wb.rot);
+  let sash = null;
+  b.aabb = function (minX, minY, minZ, maxX, maxY, maxZ, K, o) {
+    if (sash || minX !== -4 || maxX !== 4) return prevA.apply(this, arguments);
+    sash = roomWindowWall(this, prevA, wb.wins, minZ, maxZ, maxY, K, o || {});
+    return null;
+  };
+  b.plane = function (x, y, z, w, h, K, o) {
+    const f = o && o.facing;
+    if (f && f !== 'up' && f !== 'down') {
+      const p = this.point(x, z), lx = c * (p.x - wb.x) - s * (p.z - wb.z), yb = this._T.y + y;
+      if (wb.wins.some(q => lx + w / 2 > q.lx - q.w / 2 - 0.02 && lx - w / 2 < q.lx + q.w / 2 + 0.02 && yb + h > q.y0 - 0.02 && yb < q.y1 + 0.02)) return null;
+    }
+    return prevP.apply(this, arguments);
+  };
+  try { wallBay(b, wb, r, env); } finally {
+    if (ownA) b.aabb = prevA; else delete b.aabb;
+    if (ownP) b.plane = prevP; else delete b.plane;
+  }
+  if (sash) {
+    b.push(wb.x, wb.z, wb.rot);
+    for (const w of wb.wins) roomSash(b, w, sash.y0, sash.y1, sash.zc);
+    b.pop();
+  }
+}
+// 水渍的位置 u（这一面的本地 x；背面 sgn = −1，墙的本地 x = −u）：挑一个离所有窗 ≥ 0.75 m 的
+function roomStainU(wins, sgn, v) {
+  const pref = v < 0.5 ? -1 : 1;
+  for (const m of [2.3, 1.7, 2.9]) {
+    for (const s of [pref, -pref]) {
+      const u = s * m, wx = sgn * u;
+      if (wins.every(w => Math.abs(wx - w.lx) > w.w / 2 + 0.75)) return u;
+    }
+  }
+  return pref * 2.3;
+}
+function roomWindowWall(b, aabb, wins, zA, zB, top, K, o) {
+  b.solid(-4, 0, zA, 4, top, zB);   // 碰撞照整面墙：看得穿，过不去
+  const vis = faces => Object.assign({}, o, { solid: false, faces });
+  const ws = wins.slice().sort((a, c) => a.lx - c.lx);
+  const y0 = ws[0].y0, y1 = ws[0].y1;
+  aabb.call(b, -4, 0, zA, 4, y0, zB, K, vis(['pz', 'nz', 'py']));       // 窗台以下（顶面就是窗台）
+  aabb.call(b, -4, y1, zA, 4, top, zB, K, vis(['pz', 'nz', 'ny']));     // 窗顶以上（底面就是窗过梁）
+  let xa = -4;
+  for (const w of ws) {
+    const h0 = w.lx - w.w / 2;
+    if (h0 > xa + 0.001) aabb.call(b, xa, y0, zA, h0, y1, zB, K, vis(xa > -4 ? ['pz', 'nz', 'px', 'nx'] : ['pz', 'nz', 'px']));
+    xa = w.lx + w.w / 2;
+  }
+  if (xa < 4 - 0.001) aabb.call(b, xa, y0, zA, 4, y1, zB, K, vis(['pz', 'nz', 'nx']));
+  return { y0, y1, zc: (zA + zB) / 2 };
+}
+// 钢窗框（贴着洞口一圈方管 + 中挺）+ 玻璃 + 两面的夹丝。框贴混凝土的那面不画（和洞口内壁同一平面）；
+// 竖丝离玻璃 1.5 mm、横丝 2 mm：交叉处不共面
+function roomSash(b, w, y0, y1, zc) {
+  const steel = [0.34, 0.36, 0.38], wire = [0.16, 0.16, 0.16];
+  const fw = 0.05, fd = 0.08, H = y1 - y0, xL = w.lx - w.w / 2, xR = w.lx + w.w / 2;
+  dbox(b, w.lx, y1 - fw, zc, w.w, fw, fd, steel, ['ny', 'pz', 'nz']);
+  dbox(b, w.lx, y0, zc, w.w, fw, fd, steel, ['py', 'pz', 'nz']);
+  dbox(b, xL + fw / 2, y0 + fw, zc, fw, H - 2 * fw, fd, steel, ['px', 'pz', 'nz']);
+  dbox(b, xR - fw / 2, y0 + fw, zc, fw, H - 2 * fw, fd, steel, ['nx', 'pz', 'nz']);
+  dbox(b, w.lx, y0 + fw, zc, 0.04, H - 2 * fw, fd * 0.8, steel, ['px', 'nx', 'pz', 'nz']);
+  const ga = xL + fw, gb = xR - fw, gy0 = y0 + fw, gy1 = y1 - fw;
+  b.quad([ga, gy0, zc], [gb, gy0, zc], [gb, gy1, zc], [ga, gy1, zc], 'kit:glass', { color: [0.6, 0.7, 0.72], uv: 'stretch' });
+  const step = 0.25;
+  const nv = Math.max(1, Math.round((gb - ga) / step)), nh = Math.max(1, Math.round((gy1 - gy0) / step));
+  for (let k = 1; k < nv; k++) {
+    const x = ga + (gb - ga) * k / nv;
+    if (Math.abs(x - w.lx) < 0.04) continue;   // 中挺挡着
+    sheet(b, x, gy0, zc + 0.0015, 0.006, gy1 - gy0, '+z', wire);
+    sheet(b, x, gy0, zc - 0.0015, 0.006, gy1 - gy0, '-z', wire);
+  }
+  for (let k = 1; k < nh; k++) {
+    const y = gy0 + (gy1 - gy0) * k / nh - 0.003;
+    sheet(b, (ga + gb) / 2, y, zc + 0.002, gb - ga, 0.006, '+z', wire);
+    sheet(b, (ga + gb) / 2, y, zc - 0.002, gb - ga, 0.006, '-z', wire);
+  }
+}
+
+// fillBays 的同一套分法（保底、按胃口分剩余额度、倒角份额），只是：上限用 budget；每个柱间上货前按它自己的 orient 临时改 env.orient，
+// 调完改回去；'open' 柱间只放两块空托盘和一摊水；'keep' 不进分配
+function roomFill(b, bays, env, budget, extraCap) {
+  const list = bays.filter(bb => bb.type !== 'keep' && FILL_WEIGHT[bb.type]).sort((a, c) => FILL_ORDER[a.type] - FILL_ORDER[c.type] || a.k - c.k);
+  let wLeft = 0, minLeft = 0;
+  for (const bb of list) { wLeft += FILL_WEIGHT[bb.type]; minLeft += FILL_MIN[bb.type] || 0; }
+  const e = ext(b);
+  for (const bay of list) {
+    const w = FILL_WEIGHT[bay.type], mn = FILL_MIN[bay.type] || 0;
+    const D = overD(b);
+    e.lim = D + Math.max(0, extraCap - D) * w / wLeft;
+    wLeft -= w; minLeft -= mn;
+    const used = triCount(b);
+    const left = budget - 300 - used - minLeft;
+    const share = left > 0 ? left * w / (wLeft + w) : 0;
+    const cap = Math.min(budget - 200, used + Math.max(Math.min(mn, Math.max(0, budget - used - minLeft)), share));
+    const keepOrient = env.orient;
+    env.orient = bay.orient;
+    const r = bayRng(b, bay);
+    if (bay.type === 'rack') rackBay(b, bay, r, env, cap);
+    else if (bay.type === 'stack') stackBay(b, bay, r, env, cap);
+    else if (bay.type === 'open') roomOpen(b, bay, r);
+    env.orient = keepOrient;
+    keepFill(e, bay);
+  }
+  e.lim = extraCap < EXTRA_CAP ? extraCap : Infinity;
+}
+// 空柱间：一块空托盘在西北、一块转 90° 在东南，东北一摊水（kit 水坑自带软边水渍圈）
+function roomOpen(b, bay, r) {
+  b.push(bay.x, bay.z, 0);
+  const P = [[-1.7 + (r() - 0.5) * 0.4, -1.5 + (r() - 0.5) * 0.4, (r() - 0.5) * 0.3],
+    [1.5 + (r() - 0.5) * 0.4, 1.6 + (r() - 0.5) * 0.4, HALF_PI + (r() - 0.5) * 0.3]];
+  for (const [px, pz, rot] of P) {
+    pallet(b, px, 0, pz, 1.2, 1.0, rot, true);
+    b.push(px, pz, rot);
+    b.solid(-0.6, 0, -0.5, 0.6, 0.13, 0.5);
+    b.pop();
+  }
+  kitPuddle(b, 1.4 + (r() - 0.5) * 0.6, -1.5 + (r() - 0.5) * 0.6, { rx: 0.85, rz: 0.5, y: 0.009 });
+  b.pop();
+}
+// 墙面挂件（配电柜、消火栓箱、旧告示）：只挂房间里面那一面，keep 矩形附近不挂
+function roomDeco(b, env, keep, room, budget) {
+  for (const s of env.slots) {
+    const ix = s.x + Math.sin(s.rot) * 0.6, iz = s.z + Math.cos(s.rot) * 0.6;
+    const inward = ix > room.x0 && ix < room.x1 && iz > room.z0 && iz < room.z1;
+    if (!inward || keep.some(k => s.x > k.x0 - 0.5 && s.x < k.x1 + 0.5 && s.z > k.z0 - 0.5 && s.z < k.z1 + 0.5)) s.used = true;
+  }
+  const over = TRI_BUDGET - budget;   // decorateFreeSlots 按 TRI_BUDGET 判断还有没有额度：先把差额记上、挂完再退掉
+  if (over) charge(b, over);
+  decorateFreeSlots(b, env);
+  if (over) charge(b, -over);
+}
+
+BR.L1room = Object.freeze({
+  build: roomBuild,
+  // 环境（雾、环境光、音效 'pipes'）：调用方拷一份再改（营地把 sanityDrainMul / hungerDrainMul 设成 0）
+  env: Object.assign({}, LEVEL_ENV, { ambient: Object.assign({}, LEVEL_ENV.ambient) }),
+  // 材质：L1 只有这两种（家具、货物、灯具全走 kit:prop / kit:glow 顶点色）；define() 注册它们（build 里自己会调）
+  mats: Object.freeze({ wall: 'L1:wall', floor: 'L1:floor', define: defineMaterials }),
+  height: H,                                                   // 楼板底标高 4.0（kit.builder 的 height）；梁底 3.55
+  pillarW: sector => (STYLE[sector] || STYLE.yuejin).pillar,   // 柱子边长（营地往柱面上钉挂钩要用）
+});
 })();
 
 // ============================================================

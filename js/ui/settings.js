@@ -96,7 +96,7 @@ const APPLIERS = {
   masterVolume() { safeCall(BR.audio, 'setMaster', state.masterVolume); },
   ambientVolume() { safeCall(BR.audio, 'setAmbientVolume', state.ambientVolume); },
   sfxVolume() { safeCall(BR.audio, 'setSfxVolume', state.sfxVolume); },
-  // BR.coop.setVoiceVolume 由工坊核心代理加，这里只做存在性判断，不缓存"是否存在"，避免它后来才挂上就再也调不到
+  // 只做存在性判断、不缓存"是否存在"：BR.coop 后来才挂上也调得到；联机连上 / 重连回来时还会再推一次（见文件末尾）
   voiceVolume() { safeCall(BR.coop, 'setVoiceVolume', state.voiceVolume); },
   sensitivity() { if (BR.input) BR.input.sensitivity = state.sensitivity; },
   quality() {
@@ -325,6 +325,8 @@ window.addEventListener('popstate', e => {
 
 // ---------- 启动即应用（不需要打开面板），改动都是实时生效 ----------
 applyAll();
+// 联机会话连上 / 掉线重连回来：再推一次语音音量（coop 和 net 自己也记着；这里兜底 BR.coop 晚于设置才挂上的情况）
+if (BR.bus) ['coop:connected', 'coop:reconnected'].forEach(n => BR.bus.on(n, () => applyOne('voiceVolume')));
 
 BR.settingsUI = {
   open, close,

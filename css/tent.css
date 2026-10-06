@@ -1,0 +1,284 @@
+/* 后室 · 帐篷选单（js/ui/tentmenu.js）。z-index 54：在 gfx 淡入淡出 55、黑幕 56 下面，HUD 30 上面；
+   暂停 / 结算 60、横幅 65、色板 70、toast 90 都盖得住它（层次见 css/game.css 顶部注释、ARCHITECTURE.md 第 11 节）。
+   横屏是右侧卡片（宽 min(560px, 62vw)，左栏模式卡、右栏设置 / 层级 / 我的地图）；竖屏是底部抽屉（最高 62vh、一栏、内部滚动，
+   上面露出帐篷里面和马灯）。底栏（队友状态 +「准备」）一直钉在卡片底部，留出 safe-area。按钮都 ≥ 44 px。
+   模式表单（滑条、难度卡、层级下拉）是 BR.home.modeFields 画的，沿用 css/home.css 的 .home-field / .home-card / .home-select，这里只微调。 */
+
+.tent-menu {
+  position: fixed;
+  z-index: 54;
+  top: max(12px, env(safe-area-inset-top, 0px));
+  bottom: max(12px, env(safe-area-inset-bottom, 0px));
+  right: max(12px, env(safe-area-inset-right, 0px));
+  width: min(560px, 62vw);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  pointer-events: none;   /* 卡片外面不挡：看得到帐篷里面 */
+  color: #f3e9b5;
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.tent-menu[hidden], .tent-menu [hidden] { display: none !important; }
+
+.tent-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  pointer-events: auto;
+  border-radius: 14px;
+  background: #1d1a0c;   /* 不透明：后面层级大标题的大字、右上角麦克风按钮的「已闭」都不能透出来 */
+  border: 1px solid rgba(232, 197, 71, .45);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .55);
+}
+.tent-card.is-flash { animation: tent-flash .7s ease-out; }
+@keyframes tent-flash {
+  0% { box-shadow: 0 0 0 3px rgba(255, 236, 140, .95), 0 12px 40px rgba(0, 0, 0, .55); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 236, 140, 0), 0 12px 40px rgba(0, 0, 0, .55); }
+}
+
+/* ---------- 标题行 ---------- */
+.tent-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px 8px 16px;
+  border-bottom: 1px solid rgba(232, 214, 127, .16);
+}
+.tent-title { margin: 0; font-size: 19px; font-weight: 800; letter-spacing: 2px; color: #f6e27a; }
+
+/* ---------- 按钮 ---------- */
+.tent-btn {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 14px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  border: 1px solid #c9b86a;
+  background: #2b2714;
+  color: #f3e9b5;
+  font: 600 15px/1.2 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.tent-btn:hover:not(:disabled) { background: #3a3319; }
+.tent-btn:disabled { opacity: .45; cursor: default; }
+.tent-btn.is-locked { opacity: .6; }
+.tent-menu :focus-visible { outline: 2px solid #e8c547; outline-offset: 2px; }
+.tent-menu :focus:not(:focus-visible) { outline: none; }
+.tent-exit { flex: none; }
+
+/* ---------- 内容（滚动） ---------- */
+.tent-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px 14px;
+  padding: 12px 16px;
+}
+.tent-col { min-width: 0; }
+.tent-sub { margin: 0 0 6px; font-size: 13px; font-weight: 700; color: #cfc38c; letter-spacing: 1px; }
+
+.tent-modes { display: flex; flex-direction: column; gap: 8px; }
+.tent-mode {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  width: 100%;
+  min-height: 56px;
+  padding: 8px 12px;
+  text-align: left;
+  background: rgba(255, 240, 190, .05);
+  border-color: rgba(232, 197, 71, .35);
+}
+.tent-mode-name { font-size: 17px; font-weight: 800; letter-spacing: 1px; color: #f4ecd0; }
+.tent-mode-desc { font-size: 12px; font-weight: 400; line-height: 1.35; color: rgba(244, 236, 208, .72); }
+.tent-mode-why { font-size: 12px; font-weight: 600; line-height: 1.35; color: #f0b98c; }
+/* 选中模式的说明（竖屏手机三张卡并排、卡里放不下时整行写在卡片下面；电脑上、矮横屏上卡里自己有，这行藏起来） */
+.tent-mode-line { display: none; margin: 6px 0 0; font-size: 12px; line-height: 1.4; color: rgba(244, 236, 208, .78); }
+.tent-mode.is-on { background: rgba(232, 197, 71, .22); border: 2px solid #e8c547; padding: 7px 11px; }
+.tent-mode.is-on .tent-mode-name { color: #ffe680; }
+.tent-mode.is-off { opacity: .6; border-style: dashed; cursor: default; }
+.tent-mode.is-off .tent-mode-name { color: rgba(244, 236, 208, .7); }
+
+/* modeFields（css/home.css 的样式）在窄栏里收紧一点 */
+.tent-fields .home-field { margin-bottom: 10px; }
+.tent-fields .home-field-row { font-size: 14px; flex-wrap: wrap; row-gap: 0; }
+.tent-fields .home-field-label { white-space: nowrap; }
+.tent-fields .home-field-value { font-size: 12px; }
+.tent-fields .home-cards { gap: 8px; }
+.tent-fields .home-card { min-height: 64px; padding: 8px 10px; gap: 2px; }
+.tent-fields .home-card.is-on { padding: 7px 9px; }
+.tent-fields .home-card-name { font-size: 16px; }
+.tent-fields .home-select:disabled { opacity: .5; }
+
+.tent-note { margin: 6px 0 0; font-size: 12px; line-height: 1.4; color: #b9ad78; }
+.tent-lv-why, .tent-note-lv { color: #f0b98c; }
+.tent-note-fresh { margin-top: 10px; }
+
+.tent-maps { margin-top: 10px; }
+.tent-map-list { display: flex; flex-direction: column; gap: 6px; }
+.tent-map {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  width: 100%;
+  padding: 6px 12px;
+  text-align: left;
+  background: rgba(255, 240, 190, .05);
+  border-color: rgba(232, 197, 71, .35);
+}
+.tent-map-name { font-size: 15px; font-weight: 700; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tent-map-lv { font-size: 12px; font-weight: 400; color: rgba(244, 236, 208, .7); }
+.tent-map.is-on { background: rgba(232, 197, 71, .22); border: 2px solid #e8c547; padding: 5px 11px; }
+/* 选中的卡片在鼠标底下也保持选中的底色（.tent-btn 的 hover 底更具体，会把它盖成未选中的样子） */
+.tent-mode.is-on:hover:not(:disabled), .tent-map.is-on:hover:not(:disabled) { background: rgba(232, 197, 71, .28); }
+
+/* ---------- 底栏：队友状态 +「准备」（一直钉在卡片底部） ---------- */
+.tent-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px 8px 16px;
+  padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid rgba(232, 214, 127, .2);
+  background: rgba(20, 18, 8, .97);
+}
+.tent-peer { flex: 1 1 auto; min-width: 0; font-size: 13px; line-height: 1.35; color: #e6dcae; }
+.tent-peer.is-ready { color: #bfe7a4; }
+.tent-peer.is-gone { color: #b9ad78; }
+.tent-acts { flex: none; display: flex; align-items: center; gap: 8px; }
+.tent-why { max-width: 8em; font-size: 12px; line-height: 1.3; text-align: right; color: #b9ad78; }
+.tent-ready {
+  min-width: 112px;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: #1d1705;
+  background: linear-gradient(#f3d65e, #dcb434);
+  border-color: #e8c547;
+}
+.tent-ready:hover:not(:disabled) { background: linear-gradient(#f7de74, #e2bc40); }
+.tent-ready.is-on { color: #f3e9b5; background: #2b2714; border-color: #c9b86a; }
+.tent-ready.is-cancel { color: #f0b3a3; background: rgba(60, 22, 14, .9); border-color: #b0553f; }
+/* 点完「准备」鼠标还停在按钮上：上面那条黄色 hover 底比这两种状态的选择器更具体，会把「取消准备」「取消」盖成黄底浅字，看不清 */
+.tent-ready.is-on:hover:not(:disabled) { background: #3a3319; }
+.tent-ready.is-cancel:hover:not(:disabled) { background: rgba(84, 32, 20, .95); }
+
+/* ---------- 倒数大字 ---------- */
+.tent-count {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 30%;
+  text-align: center;
+  font: 900 120px/1 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  color: #fff3b0;
+  text-shadow: 0 4px 24px rgba(0, 0, 0, .85), 0 0 2px rgba(0, 0, 0, .9);
+  pointer-events: none;
+}
+.tent-count.is-beat { animation: tent-beat .9s ease-out; }
+@keyframes tent-beat {
+  0% { transform: scale(1.35); opacity: .25; }
+  30% { opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* 选单开着：准心和准心提示藏起来（选单盖着，「空格 看地图」没意义） */
+html.br-tent-open .hud-cross, html.br-tent-open .hud-prompt { visibility: hidden; }
+/* 横屏的右侧卡片（宽 min(560px, 62vw)，右边距 12）：左上信息块（最宽 320）在窄横屏会伸到卡片底下，层级名被切掉半截。
+   选单开着时信息块收窄到卡片左边，放不下的字按信息块自己的省略号截 */
+@media (min-aspect-ratio: 1/1) {
+  html.br-tent-open .hud-info {
+    max-width: min(320px, calc(100vw - min(560px, 62vw) - 36px));
+    max-width: min(320px, calc(100vw - min(560px, 62vw) - 36px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
+  }
+}
+
+/* ---------- 选单开着：toast（z 90）不压选单 ----------
+   N1 整合时手机横屏截图里「「队友」来到了营地」正好盖在「实体生成量」那一行上；桌面的 toast 也会伸进右侧卡片 */
+/* 横屏 / 桌面：选单是右侧卡片（宽 min(560px, 62vw)、右边距 12）：toast 挪到卡片左边那块的正中 */
+@media (min-aspect-ratio: 1/1) {
+  html.br-tent-open .hud-toasts {
+    left: calc((100vw - min(560px, 62vw) - 12px) / 2);
+    width: auto;
+    max-width: calc(100vw - min(560px, 62vw) - 44px);
+  }
+}
+/* 矮横屏：toast 原来在右上角（正好被卡片盖着），改到左上信息块（带房号那一行时约 100px）下面 */
+@media (min-aspect-ratio: 1/1) and (max-height: 520px) {
+  html.br-tent-open .hud-toasts {
+    top: 108px;
+    top: calc(108px + env(safe-area-inset-top, 0px));
+    left: 16px;
+    left: calc(16px + env(safe-area-inset-left, 0px));
+    right: auto;
+    transform: none;
+    align-items: flex-start;
+  }
+}
+/* 竖屏：选单是底部抽屉（≤ 62vh），toast 挪到上半屏（右上暂停键、麦克风下面） */
+@media (max-aspect-ratio: 1/1) {
+  html.br-tent-open .hud-toasts {
+    top: 132px;
+    top: calc(132px + env(safe-area-inset-top, 0px));
+    margin-top: 0;
+  }
+}
+/* 上面几条比 game.css 的 .hud-toasts-below 更具体：横幅开着时照样排到横幅下面 */
+html.br-tent-open .hud-toasts.hud-toasts-below { top: var(--hud-toast-top, 140px); margin-top: 0; }
+
+/* ---------- 竖屏：底部抽屉 ---------- */
+@media (max-aspect-ratio: 1/1) {
+  .tent-menu { left: 0; right: 0; top: auto; bottom: 0; width: auto; justify-content: flex-end; }
+  .tent-card {
+    max-height: 62vh;
+    border-radius: 16px 16px 0 0;
+    border-bottom: none;
+  }
+  .tent-head { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(10px, env(safe-area-inset-right, 0px)); }
+  .tent-body {
+    grid-template-columns: minmax(0, 1fr);
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  .tent-bar { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(10px, env(safe-area-inset-right, 0px)); }
+  .tent-modes { flex-direction: row; }
+  .tent-mode { flex: 1 1 0; min-width: 0; padding: 8px; }
+  .tent-mode.is-on { padding: 7px; }
+  .tent-mode-name { font-size: 15px; letter-spacing: 0; }
+  .tent-mode-desc { display: none; }   /* 三张卡并排太窄，卡里的说明藏起来（选中那张的说明在下面整行写），不能选的原因照样写 */
+  .tent-mode-line { display: block; }
+  .tent-count { top: 20%; font-size: 96px; }
+}
+
+/* 很矮的横屏（手机横着拿）：标题行和卡片说明收一收。
+   选中模式的说明写在选中的那张卡里当第二行小字（2026-10-05 返修 r2：原来整行写在三张卡下面，640×360 上正好落在底栏后面看不到） */
+@media (min-aspect-ratio: 1/1) and (max-height: 430px) {
+  .tent-head { padding-top: 4px; padding-bottom: 4px; }
+  .tent-title { font-size: 17px; }
+  .tent-body { padding-top: 8px; padding-bottom: 8px; }
+  .tent-mode { min-height: 48px; padding-top: 6px; padding-bottom: 6px; }
+  .tent-mode-desc { display: none; }
+  .tent-mode.is-on .tent-mode-desc { display: block; font-size: 11px; line-height: 1.3; }
+  .tent-mode-line { display: none; }
+  .tent-count { font-size: 88px; top: 24%; }
+}

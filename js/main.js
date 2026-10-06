@@ -38,6 +38,18 @@ function safe(mod, fn, a, b) {
 
 function setInput(on) { if (BR.input) BR.input.enabled = !!on; }
 
+// 联机局（连着，或掉线后在原地等重连）：暂停、结算时世界不停
+function coopRuns() {
+  const c = BR.coop;
+  return !!(c && (c.active || c.phase === 'reconnecting'));
+}
+
+// 帐篷选单（js/game/coopcamp.js）开着时，Esc / 返回键先交给它：返回 true 表示它已经关了选单、走出帐篷，这次不进暂停。
+// 和测试面板一样由这里统一问，选单自己不压历史记录
+function campBack() {
+  return !!(BR.coopCamp && has(BR.coopCamp, 'onBack')) && safe('coopCamp', 'onBack') === true;
+}
+
 // ---------- 启动失败提示 ----------
 function fatal(title, err) {
   console.error('[main] ' + title, err);
@@ -122,9 +134,9 @@ function onPopState(e) {
   H.armed = false;
   if (live()) pushGameEntry();
   if (BR.game.screen !== 'playing') return;
-  // 测试面板开着时和 Esc 一样先关面板；否则暂停，免得面板和暂停菜单叠在一起、继续后面板还开着就能走动
+  // 测试面板开着时和 Esc 一样先关面板；帐篷选单开着时先走出帐篷；否则暂停，免得面板和暂停菜单叠在一起、继续后面板还开着就能走动
   if (BR.test && BR.test.isOpen) safe('test', 'close');
-  else safe('hud', 'pause', true);
+  else if (!campBack()) safe('hud', 'pause', true);
 }
 
 // 竖屏开局提示一次（本次会话内）：竖屏水平视野窄，gfx 已把竖直视野放大，但横屏仍然看得更开
@@ -204,9 +216,17 @@ function onContextRestored() {
 }
 
 // ---------- 状态切换 ----------
+// 隐藏层（联机营地 coopcamp 之类，def.hidden / def.lobby）只能由 payload.levelId 点名开；
+// 主页记下的 startLevel 万一是它（客机进营地时被改过），单人开局不能掉进营地，按没选处理
+function hiddenLevel(id) {
+  const def = BR.levels.get(id);
+  return !!(def && (def.hidden || def.lobby));
+}
 function pickLevel(p, settings) {
+  if (p.levelId != null && BR.levels.has(String(p.levelId))) return String(p.levelId);
   const want = p.levelId != null ? String(p.levelId) : String(settings.startLevel);
-  if (BR.levels.has(want)) return want;
+  if (BR.levels.has(want) && !hiddenLevel(want)) return want;
+  if (hiddenLevel(want) && BR.levels.has('0')) return '0';
   if (BR.levels.has('dev')) return 'dev';
   const order = BR.LEVEL_ORDER || [];
   for (let i = 0; i < order.length; i++) if (BR.levels.has(order[i])) return String(order[i]);
@@ -342,15 +362,16 @@ function tick(dt, render) {
   const inp = BR.input;
   S.frames++;
 
-  // Esc：游玩中打开暂停；暂停中再按一次继续。测试面板开着时 Esc 由 testmode 自己关面板
+  // Esc：游玩中打开暂停；暂停中再按一次继续。测试面板开着时 Esc 由 testmode 自己关面板；
+  // 帐篷选单开着时（输入是关着的，但 Esc 的 'pause' 边沿照样有）先走出帐篷，不进暂停
   if (inp && has(inp, 'pressed') && inp.pressed('pause')) {
-    if (g.screen === 'playing' && !(BR.test && BR.test.isOpen)) safe('hud', 'pause', true);
+    if (g.screen === 'playing' && !(BR.test && BR.test.isOpen)) { if (!campBack()) safe('hud', 'pause', true); }
     else if (g.screen === 'paused') safe('hud', 'pause', false);
   }
 
   const screen = g.screen;
-  const coopLive = !!(BR.coop && BR.coop.active);
-  // 联机时暂停/结算不停世界：房主那边还在跑，客机要继续收实体快照、看得到队友
+  const coopLive = coopRuns();
+  // 联机时暂停/结算不停世界：房主那边还在跑，客机要继续收实体快照、看得到队友；掉线重连途中两边原地等，也照联机算
   const simulate = screen === 'playing' || (coopLive && (screen === 'paused' || screen === 'dead'));
 
   if (screen === 'playing') g.time += dt;
@@ -365,6 +386,8 @@ function tick(dt, render) {
   safe('coop', 'update', dt);
   if (screen === 'playing' || screen === 'paused' || screen === 'dead') {
     safe('test', 'update', dt);
+    // 联机营地：倒数、自动走进帐篷、马灯、等人计时都靠它；暂停时也跑（联机暂停不停世界）。不在营地时它只缓存帐篷状态
+    safe('coopCamp', 'update', dt);
     safe('hud', 'update', dt);
   } else if (screen === 'home') {
     safe('home', 'update', dt);   // 目前 home 自带 rAF，没导出 update；以后导出了就由这里驱动
@@ -380,7 +403,7 @@ function loop(now) {
   // 只降渲染不降逻辑：tick 照常每帧跑（Esc 继续、测试面板、input.endFrame 都靠它）。
   // 联机时暂停/结算不停世界，照常满帧
   const g = BR.game;
-  const stat = (g.screen === 'paused' || g.screen === 'dead') && !(BR.coop && BR.coop.active);
+  const stat = (g.screen === 'paused' || g.screen === 'dead') && !coopRuns();
   const doRender = !stat || now - (S.lastRender || 0) >= PAUSED_RENDER_MS;
   if (S.auto) tick(dt, doRender);
   else if (doRender) safe('gfx', 'render', 0);
@@ -423,6 +446,7 @@ function boot() {
   window.addEventListener('pointerdown', unlockAudio, true);
   window.addEventListener('keydown', unlockAudio, true);
   window.addEventListener('touchend', unlockAudio, true);
+  document.addEventListener('pointerlockchange', onLateLock);
   // 游戏中刷新页面：历史里残留的开局哨兵清掉，免得回到主页后返回键行为错乱
   try { if (history.state && history.state.brGame) history.replaceState(null, ''); } catch (err) { /* 忽略 */ }
 
@@ -430,6 +454,17 @@ function boot() {
   setInput(false);
   safe('home', 'show');
   S.raf = requestAnimationFrame(loop);
+}
+
+// 指针锁在暂停 / 结算之后才生效（点画面那一下请求的锁，浏览器晚一拍才给，这期间已经按了 Esc 或者弹出了「想回营地」暂停）：
+// 锁着时点击都落在画布上，菜单和横幅的按钮点不到。这时马上放掉（input 那边输入关着，不会当成意外丢失再暂停一次）。
+// 只认暂停和结算：主页点「进营地」、帐篷里点「出帐篷」时也是先请求锁、输入还关着，那几次的锁要留着（2026-10-05 返修 r2，
+// 验收 j_askpause G1；本该在 input.js onLockChange 里做，input.js 不在这一轮能改的文件里）
+function onLateLock() {
+  const s = BR.game.screen;
+  if (!document.pointerLockElement || (s !== 'paused' && s !== 'dead')) return;
+  if (BR.input && BR.input.enabled) return;
+  try { document.exitPointerLock(); } catch (err) { /* 已经放了 */ }
 }
 
 // ---------- 调试钩子 ----------

@@ -15,6 +15,9 @@
 //   声音：抓起一声闷响，道具每拖 0.35 m 一声摩擦，放下「咚」一声；转身太快手里的东西掉了，提示「手滑了」。
 //   被台阶边、坑沿、门廊外、架子边挡住超过 0.3 s 说一次真正的原因（「再往前就掉下去了」「搬不下来，只能在上面推」）；
 //   挡住后人接着走、东西脱手时也说这个原因，不说「手滑了」。
+//   拖动禁区（N1）：出口圈和层级的 keepClear（联机营地的门前通道、帐篷过道）都从 BR.world.blockers() 取，规则一样——
+//   东西停在区外，松手不会跳回去；圆形的交给 phys.moveBox 当圆形障碍，矩形的每一步核对（贴着边滑）。两种挡住超过 0.3 s 都说 why
+//   （矩形默认「这条过道得留出来」，出口圈「门口得留出来」，营地出生格「出生的地方得空着」；圆形的按「想走的那一步会压进圈」认）。
 //
 // 候选（来源 out.push 的对象）：
 //   { kind:'item'|'prop'|'entity'|'door'|'button'|'container'|'fixture'|'seat'|'vehicle', key, label, t, small,
@@ -39,6 +42,8 @@
 //     t 相同按 物资 > 按钮 > 容器 > 门 > 设备 > 座位 > 载具 > 实体 > 道具
 //   bus：'interact:short' {kind,key,ok}、'interact:hold' {kind,key,ok}、'interact:deny' {kind,key,why}、'interact:pick' {id}、
 //     'interact:grab' {kind,key}、'interact:release' {kind,key,x,z}、'interact:cancel' {reason}、'interact:mode' {mode,key}
+//     'interact:itemGone' {key,id}（按下空格时对准的物资在这一下里没了，或者按下前 1 s 内还对准着、按下时已经不在了，
+//     coop 用它说「「X」先拿到了」）
 //   联机：拖动前 BR.coop.requestGrab('i:'|'p:'|'e:'|'d:' + key, kind, cb(ok, why))（客机先动手，被拒再退回），
 //     拖动中每帧 BR.coop.hand(k, x, y, z, 0)，松手 BR.coop.release(k, [x,y,z])；coop 收回租约时调 cancel('peer')
 (function () {
@@ -107,6 +112,7 @@ const S = {
   has: false,                        // cur 是否有效
   simMs: 0,                          // 按下后累计的模拟时间（毫秒）
   realMs: 0,
+  seenAt: 0,                         // 这一次按下被状态机看到的时刻（performance.now）：还按着时真实时长只从这里起算
   longDone: false,                   // PRESSED 里已经过了 holdMs、给过原因（之后松手什么都不做）
   mode: 'walk',
   owner: null,                       // 情境的接管者 { key, kind, label, short, hold, onShort, onHold, accept }
@@ -134,7 +140,7 @@ const D = {
   moved: 0, grabDist: 1.5, offR: 0, offF: 0,
   v: DEF.dragV0,
   hx0: 0, hx1: 0, hz0: 0, hz1: 0, yFoot: 0, h: 1, r: 0.15,
-  ignore: [], exits: [], exitCircles: [],
+  ignore: [], exits: [], exitCircles: [], keeps: [],   // exits：圆形禁区 {x, z, r（已含外扩）, y?, kind, why?}；keeps：矩形禁区 {x0, z0, x1, z1, why}
   ent: null, localHold: null,
   gRef: 0, gDev: new Float64Array(9), onFloor: false,   // 地面：道具抓起时占地中心的地面高度和此刻 9 个采样点的偏差；物资是否放在地上
   elev: false, sup0: false,                              // 不在地上（架子上、桌上）：抓起时底面下有没有东西托着
@@ -472,6 +478,7 @@ function aim() {
     copyCand(cur, best);
     resolveDrag(cur);
     S.has = true;
+    if (best.kind === 'item') { lastAim.key = best.key; lastAim.ref = best.ref != null ? best.ref : null; lastAim.at = performance.now(); }
   } else if (S.mode !== 'walk' && S.owner) {
     copyCand(cur, modeCand);
     S.has = true;
@@ -489,6 +496,7 @@ function onPress(inp) {
   copyCand(locked, cur);
   S.simMs = 0;
   S.realMs = 0;
+  S.seenAt = performance.now();
   S.longDone = false;
   const c = locked;
   const usey = !!(c.short || c.hold || USE_KINDS[c.kind] || c.mode);
@@ -506,7 +514,13 @@ function heldMsNow(inp, up) {
   if (inp && realTimeOk()) {
     let r = 0;
     if (up && has(inp, 'lastHoldMs')) r = num(+inp.lastHoldMs('interact'), 0);
-    else if (!up && has(inp, 'heldMs')) r = num(+inp.heldMs('interact'), 0);
+    else if (!up && has(inp, 'heldMs')) {
+      r = num(+inp.heldMs('interact'), 0);
+      // 还按着：只算状态机看到按下以后真过去的时间。主线程卡了一下（手机上建区块、慢机器一帧几百毫秒）时，按下事件排队到
+      // 处理时 event.timeStamp 已经是几百毫秒前，紧跟着的松手还排在下一帧后面；照时间戳算，一次轻点会被当成长按
+      // （N1 整合时两台浏览器真玩实测：轻点「互动」进帐篷变成了「帐篷是营地的出口，拖不动」）。松手时仍按两个时间戳算真时长
+      if (S.seenAt > 0) r = Math.min(r, Math.max(0, performance.now() - S.seenAt));
+    }
     if (r > ms) ms = r;
   }
   S.realMs = ms;
@@ -533,7 +547,7 @@ function holdTargetMs(c) {
 function stepPressed(dt, inp, up, cancelled) {
   const c = locked;
   if (cancelled) { cancel('input'); return; }
-  if (!targetAlive(c)) { cancel('gone'); return; }
+  if (!targetAlive(c)) { cancel('gone'); itemGone(c); return; }
   const ms = heldMsNow(inp, up);
   if (up) {
     setState('idle');
@@ -551,13 +565,30 @@ function stepPressed(dt, inp, up, cancelled) {
 function stepHold(dt, inp, up, cancelled) {
   const c = locked;
   if (cancelled) { cancel('input'); return; }
-  if (!targetAlive(c)) { cancel('gone'); return; }
+  if (!targetAlive(c)) { cancel('gone'); itemGone(c); return; }
   const ms = heldMsNow(inp, up);
   if (ms >= holdTargetMs(c)) { setState('idle'); fireHold(c); return; }
   if (up) { setState('idle'); emit('interact:cancel', { reason: 'early' }); }
 }
 
 function setState(s) { S.state = s; }
+// 对准、按下了空格，那件物资却在这一下里没了（联机时多半是队友先拿走了）：发 'interact:itemGone'，coop 据此说「「X」先拿到了」
+function itemGone(c) {
+  if (!c || c.kind !== 'item') return;
+  emit('interact:itemGone', { key: c.key, id: c.ref && c.ref.id != null ? c.ref.id : c.key });
+}
+// 最近一次对准的物资：两人同时按、队友那边先拿到，这边按下去的那一刻它已经从准心上没了（准心上什么都没有，或者换成了后面的货架），
+// 也要说一声「「X」先拿到了」（2026-10-05 返修 r2）。只在 AIM_GONE_MS 内、那件确实已经不在了时发；是不是队友拿的由 coop 判断
+// （3 s 内队友确实拿走了这件才说，所以窗口放宽不会乱说）。两台浏览器联机实测（客机触屏）：东西在这边消失后 0.3–0.7 s 才按到的都有，取 1 s
+const AIM_GONE_MS = 1000;
+const lastAim = { key: null, ref: null, at: -1e9 };
+function aimGone() {
+  if (lastAim.key == null || performance.now() - lastAim.at > AIM_GONE_MS) return;
+  const c = { kind: 'item', key: lastAim.key, ref: lastAim.ref };
+  lastAim.key = null; lastAim.ref = null;
+  if (itemRec(c)) return;
+  itemGone(c);
+}
 
 function targetAlive(c) {
   if (c.mode) return true;
@@ -579,7 +610,7 @@ function fireShort(c) {
   try {
     if (c.mode) ok = modeShort(c);
     else if (c.onShort) ok = c.onShort(c) !== false;
-    else if (c.kind === 'item') ok = pickItem(c);
+    else if (c.kind === 'item') { ok = pickItem(c); if (!ok && !itemRec(c)) itemGone(c); }
     else {
       const h = handlers.get(c.kind);
       if (h && typeof h.short === 'function') ok = h.short(c) !== false;
@@ -701,6 +732,7 @@ function startDrag(c) {
   D.ignore.length = 0;
   D.exits.length = 0;
   D.exitCircles.length = 0;
+  D.keeps.length = 0;
   D.pushed.length = 0;
   D.scrape = 0;
   D.t = 0; D.edgeSince = -1; D.edgeAt = -1; D.edgeWhy = ''; D.edgeSaid = false;
@@ -894,28 +926,52 @@ function propExtents(R) {
   D.r = Math.max(x1 - x0, z1 - z0) / 2;
 }
 
+// 抓起时收集附近的拖动禁区（BR.world.blockers：出口圈 + 层级 keepClear）。圆形的进 D.exits（拖道具时再当圆形障碍交给
+// phys.moveBox，东西停在圈外；不同高度的出口不算），矩形的进 D.keeps（moveBox 不认矩形，每一步在 filterStep 里核对）
 function collectExits() {
   D.exits.length = 0;
   D.exitCircles.length = 0;
-  if (!has(BR.world, 'exits')) return;
-  let list = null;
-  try { list = BR.world.exits(); } catch (err) { list = null; }
-  if (!Array.isArray(list)) return;
+  D.keeps.length = 0;
   const m = cv('exitMargin');
+  let list = null;
+  if (has(BR.world, 'blockers')) {
+    try { list = BR.world.blockers({ x: D.x, z: D.z, r: EXIT_SCAN + Math.max(0, D.r), margin: m }); } catch (err) { list = null; }
+  }
+  if (!Array.isArray(list)) {
+    // 老 world 没有 blockers：只有出口圈
+    list = [];
+    let ex = null;
+    try { ex = has(BR.world, 'exits') ? BR.world.exits() : null; } catch (err) { ex = null; }
+    if (Array.isArray(ex)) {
+      for (let i = 0; i < ex.length; i++) {
+        const e = ex[i];
+        if (!e || e.active === false || !(num(e.x, NaN) === e.x)) continue;
+        const R = num(e.radius, 1) + EXIT_SCAN;
+        if (U.dist2(e.x, e.z, D.x, D.z) > R * R) continue;
+        const b = { kind: 'exit', x: e.x, z: e.z, r: num(e.radius, 1) + m };
+        if (typeof e.y === 'number') b.y = e.y;
+        list.push(b);
+      }
+    }
+  }
   for (let i = 0; i < list.length; i++) {
-    const ex = list[i];
-    if (!ex || ex.active === false || !(num(ex.x, NaN) === ex.x)) continue;
-    const R = num(ex.radius, 1) + EXIT_SCAN;
-    if (U.dist2(ex.x, ex.z, D.x, D.z) > R * R) continue;
-    D.exits.push(ex);
-    // 拖道具时出口圈（+exitMargin）当成圆形障碍交给 phys.moveBox，东西停在圈外（不同高度的不算）
-    if (!(typeof ex.y === 'number' && Math.abs(ex.y - D.y) > 2.5)) D.exitCircles.push([ex.x, ex.z, num(ex.radius, 1) + m]);
+    const b = list[i];
+    if (!b) continue;
+    if (b.x0 != null) {
+      if ([b.x0, b.z0, b.x1, b.z1].every(v => num(v, NaN) === v)) D.keeps.push(b);
+      continue;
+    }
+    if (!(num(b.x, NaN) === b.x) || !(num(b.z, NaN) === b.z) || !(num(b.r, -1) > 0)) continue;
+    D.exits.push(b);
+    if (!(typeof b.y === 'number' && Math.abs(b.y - D.y) > 2.5)) D.exitCircles.push([b.x, b.z, b.r]);
   }
 }
 
-// 被拖物体在 (x, z) 时压没压在出口圈（+exitMargin）或玩家上：0 没压着，1 压着出口圈，2 压着人
+// 被拖物体在 (x, z) 时压没压在禁区（出口圈 + exitMargin、keepClear）或玩家上：0 没压着，1 压着禁区（ovHit 记下是哪一块），2 压着人
+let ovHit = null;
 function overlapsAt(x, z) {
-  if (exitHitAt(x, z)) return 1;
+  ovHit = exitHitAt(x, z);
+  if (ovHit) return 1;
   const PR = num(BR.config && BR.config.player && BR.config.player.radius, 0.3);
   const P = BR.player;
   if (P && circleHits(x, z, P.x, P.z, PR - 0.02)) return 2;
@@ -923,15 +979,36 @@ function overlapsAt(x, z) {
   if (peer && circleHits(x, z, peer.x, peer.z, PR - 0.02)) return 2;
   return 0;
 }
+// 被拖物体在 (x, z) 时压着的那块禁区（圆形 / 矩形），没压着返回 null
 function exitHitAt(x, z) {
-  const m = cv('exitMargin');
   for (let i = 0; i < D.exits.length; i++) {
     const ex = D.exits[i];
     if (typeof ex.y === 'number' && Math.abs(ex.y - D.y) > 2.5) continue;
-    const R = num(ex.radius, 1) + m;
-    if (circleHits(x, z, ex.x, ex.z, R)) return true;
+    if (circleHits(x, z, ex.x, ex.z, ex.r)) return ex;
   }
-  return false;
+  for (let i = 0; i < D.keeps.length; i++) if (rectHits(x, z, D.keeps[i])) return D.keeps[i];
+  return null;
+}
+// 被拖物体挪到 (x, z) 会新压进的那个圆形禁区（现在已经压着的不算：生成时就在门口的让它出来），没有返回 null
+function circleBlockAt(x, z) {
+  for (let i = 0; i < D.exits.length; i++) {
+    const ex = D.exits[i];
+    if (typeof ex.y === 'number' && Math.abs(ex.y - D.y) > 2.5) continue;
+    if (circleHits(x, z, ex.x, ex.z, ex.r) && !circleHits(D.x, D.z, ex.x, ex.z, ex.r)) return ex;
+  }
+  return null;
+}
+// 被拖物体在 (x, z) 时和矩形禁区有没有重叠（道具按占地盒，物资按圆；贴着边不算）
+function rectHits(x, z, k) {
+  if (D.kind === 'prop') return x + D.hx1 > k.x0 && x + D.hx0 < k.x1 && z + D.hz1 > k.z0 && z + D.hz0 < k.z1;
+  const qx = U.clamp(x, k.x0, k.x1), qz = U.clamp(z, k.z0, k.z1);
+  return U.dist2(qx, qz, x, z) < D.r * D.r;
+}
+// 禁区挡住时给玩家说的话：出口圈「门口得留出来」，keepClear 用它自己的 why
+function blockText(b) {
+  if (!b) return '';
+  if (b.kind === 'keep') return b.why || EDGE_WHY.keep;
+  return EDGE_WHY.exit;
 }
 
 // ---------- 地面（拖动不悬空） ----------
@@ -968,7 +1045,8 @@ function propSupported(x, z) {
 // 道具挪到 (x, z) 时脚下还是不是抓起时那块地：每个采样点都在 5 cm 以内，或者至少没比现在更糟；
 // 不在地上的看重心下面有没有托着（抓起时就悬空的，不更糟就让挪）。挡住时 blockWhy 记下是哪一种（给玩家说原因）
 let blockWhy = '';
-const EDGE_WHY = { edge: '再往前就掉下去了', elev: '搬不下来，只能在上面推', exit: '门口得留出来' };
+let blockSay = '';   // 挡住的是带 why 的禁区时，具体说什么
+const EDGE_WHY = { edge: '再往前就掉下去了', elev: '搬不下来，只能在上面推', exit: '门口得留出来', keep: '这条过道得留出来' };
 function propGroundOk(x, z) {
   if (D.elev) {
     if (!D.sup0 || propSupported(x, z)) return true;
@@ -989,7 +1067,17 @@ function itemStepOk(x, z) {
     if (Math.abs(gY(x, z) - g0) > ITEM_STEP || Math.abs(gY(x + h, z) - g0) > ITEM_STEP || Math.abs(gY(x - h, z) - g0) > ITEM_STEP ||
         Math.abs(gY(x, z + h) - g0) > ITEM_STEP || Math.abs(gY(x, z - h) - g0) > ITEM_STEP) { blockWhy = 'edge'; return false; }
   }
-  if (exitHitAt(x, z) && !exitHitAt(D.x, D.z)) { blockWhy = 'exit'; return false; }   // 本来就压在圈里的（生成时就在门口）让它出来
+  const b = exitHitAt(x, z);
+  if (b && !exitHitAt(D.x, D.z)) { blockWhy = b.kind === 'keep' ? 'keep' : 'exit'; blockSay = blockText(b); return false; }   // 本来就压在圈里的（生成时就在门口）让它出来
+  return true;
+}
+// 道具这一步：脚下（propGroundOk）+ 矩形禁区（moveBox 不认矩形，这里挡：新压进去的不让走，本来就压着的让它出来）
+function propStepOk(x, z) {
+  if (!propGroundOk(x, z)) return false;
+  for (let i = 0; i < D.keeps.length; i++) {
+    const k = D.keeps[i];
+    if (rectHits(x, z, k) && !rectHits(D.x, D.z, k)) { blockWhy = 'keep'; blockSay = blockText(k); return false; }
+  }
   return true;
 }
 // 这一步 (mx, mz) 走不了就试试只走 X 或只走 Z（贴着坑沿 / 出口圈滑），都不行就不动；结果写回 stepOut
@@ -997,6 +1085,7 @@ const stepOut = { x: 0, z: 0 };
 function filterStep(mx, mz, ok) {
   stepOut.x = 0; stepOut.z = 0;
   blockWhy = '';
+  blockSay = '';
   if (ok(D.x + mx, D.z + mz)) { stepOut.x = mx; stepOut.z = mz; return stepOut; }
   if (Math.abs(mx) > MOVE_EPS && ok(D.x + mx, D.z)) { stepOut.x = mx; return stepOut; }
   if (Math.abs(mz) > MOVE_EPS && ok(D.x, D.z + mz)) { stepOut.z = mz; return stepOut; }
@@ -1073,7 +1162,7 @@ function noteEdge(mx, mz) {
   if (!blockWhy || want < MOVE_EPS || Math.hypot(stepOut.x, stepOut.z) > want * 0.5) { D.edgeSince = -1; return; }
   if (D.edgeSince < 0) D.edgeSince = D.t;
   D.edgeAt = D.t;
-  D.edgeWhy = EDGE_WHY[blockWhy] || '';
+  D.edgeWhy = blockSay || EDGE_WHY[blockWhy] || '';
   if (!D.edgeSaid && D.edgeWhy && D.t - D.edgeSince >= EDGE_SAY_S) { D.edgeSaid = true; toast(D.edgeWhy, 1500); }
 }
 function edgeRecent() { return !!D.edgeWhy && D.edgeAt >= 0 && D.t - D.edgeAt <= EDGE_RECENT_S; }
@@ -1147,9 +1236,16 @@ function stepDrag(dt, inp, up, cancelled) {
         const r = BR.phys.moveBox(D.x + D.hx0, D.z + D.hz0, D.x + D.hx1, D.z + D.hz1, D.yFoot, D.h, sx, sz,
           { ignoreKey: D.ignore, circles });
         if (r) { mx = num(r.dx, 0); mz = num(r.dz, 0); }
-        // 脚下：占地要一直落在抓起时那块地上（坑、楼板洞、台阶、门廊外都当墙）
-        filterStep(mx, mz, propGroundOk);
-        noteEdge(mx, mz);
+        // 脚下：占地要一直落在抓起时那块地上（坑、楼板洞、台阶、门廊外都当墙）；矩形禁区（keepClear）也在这里挡
+        filterStep(mx, mz, propStepOk);
+        // 圆形禁区（出口圈、营地出生格）由 moveBox 静悄悄截短：想走的那一步会压进某个圈、moveBox 只让走了不到一半时，
+        // 也记下原因，挡住 0.3 s 后照样说「出生的地方得空着」「门口得留出来」（2026-10-05 返修 r2：原来只有矩形禁区会说）
+        let wx = mx, wz = mz;
+        if (!blockWhy && Math.hypot(mx, mz) < Math.hypot(sx, sz) * 0.5) {
+          const cb = circleBlockAt(D.x + sx, D.z + sz);
+          if (cb) { blockWhy = cb.kind === 'keep' ? 'keep' : 'exit'; blockSay = blockText(cb); wx = sx; wz = sz; }
+        }
+        noteEdge(wx, wz);
         mx = stepOut.x; mz = stepOut.z;
         // 占地里的地上物资顺着推开；推不开（卡墙、前面是坑）道具这一步也不走
         if (Math.abs(mx) + Math.abs(mz) > MOVE_EPS && coopRole() !== 'guest' && !pushItems(mx, mz)) { mx = 0; mz = 0; }
@@ -1205,7 +1301,7 @@ function release(reason) {
     D.x = D.validX; D.z = D.validZ;
     if (D.kind === 'item' && D.onFloor) D.y = gY(D.x, D.z);
     applyPos();
-    if (ov === 1 && reason === 'release') toast('门口得留出来', 1500);
+    if (ov === 1 && reason === 'release') toast(blockText(ovHit) || EDGE_WHY.exit, 1500);
   }
   releasePushed();
   dropSound(reason);
@@ -1275,6 +1371,7 @@ function update(dt, inp) {
     if (S.state === 'drag') release('release'); else setState('idle');
   }
   if (pressed) {
+    if (!S.has || cur.kind !== 'item') aimGone();
     onPress(inp);
     // 同一帧里按下又松开（keyboard.press）：下面按松手处理
   } else if (S.state !== 'idle') {

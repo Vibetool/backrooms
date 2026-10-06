@@ -131,13 +131,13 @@
    用和描边、吊绳同色的深色圈：吊绳穿过它看着还是连着的，对浅黄墙纸 / 地毯对比度约 10:1 */
 .home-play:focus-visible { outline: 3px solid #2c2208; outline-offset: 3px; }
 
-/* ---------- 挂牌正上方：创意工坊 / 设置（次要按钮，WORKSHOP.md 第 9 节；竖屏手机放挂牌左边，见文件末尾） ---------- */
+/* ---------- 挂牌正上方：联机 / 创意工坊 / 设置（次要按钮，WORKSHOP.md 第 9 节；竖屏手机放挂牌左边、「联机」排最下，见文件末尾） ---------- */
 .home-secondary-actions {
   position: absolute;
   right: calc(var(--home-edge-r) + env(safe-area-inset-right));   /* 和牌子右边对齐 */
   /* 底边 24 + 牌子高 + 吊绳 + 棍子 + 间距 18（720 高的桌面：24 + 62 + 52 + 14 + 18 = 170），跟着上面的变量走，断点里只改变量 */
   bottom: calc(var(--home-edge) + var(--home-play-h) + var(--home-rope) + var(--home-rod) + var(--home-sec-gap) + env(safe-area-inset-bottom));
-  /* 容器本身不吃事件，只有两个按钮吃：按钮之间那 10px 空隙点下去照样穿到画布 */
+  /* 容器本身不吃事件，只有三个按钮吃：按钮之间那 10px 空隙点下去照样穿到画布 */
   pointer-events: none;
   display: flex; flex-direction: column; align-items: stretch; gap: 10px;
 }
@@ -158,10 +158,34 @@
 }
 /* 手机点按后会残留 :hover，只给真能悬停的设备加 */
 @media (hover: hover) {
-  .home-secondary-btn:hover { background: rgba(48, 40, 16, .82); border-color: #e8c547; }
+  .home-secondary-btn:hover:not(:disabled) { background: rgba(48, 40, 16, .82); border-color: #e8c547; }
 }
-.home-secondary-btn:active { background: rgba(72, 60, 22, .9); }
+.home-secondary-btn:active:not(:disabled) { background: rgba(72, 60, 22, .9); }
 .home-secondary-btn:focus-visible { outline: 2px solid #e8c547; outline-offset: 2px; }
+.home-secondary-btn:disabled { opacity: .45; filter: grayscale(1); cursor: not-allowed; }
+
+/* 「联机」：和另外两个同样的深色底，2px 金黄描边、金黄字、字重大一档，左边一个 CSS 画的两人小图标。
+   不用实心金黄：一眼和「游玩」牌子分得开，也不会被看成牌子的一部分 */
+.home-secondary-btn.is-coop {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  font-size: 15px; font-weight: 800;
+  color: #f1d467;
+  border: 2px solid #e8c547;
+}
+@media (hover: hover) {
+  .home-secondary-btn.is-coop:hover:not(:disabled) { border-color: #f6dc6e; }
+}
+.home-coop-label { line-height: 1; }
+/* 两人小图标 21×16：后面一个人在右上（暗一点），前面一个人在左下；头是圆，身子是上圆下平的半截胶囊。
+   前面那个人带一圈深色描边，压在后面那个人身上时两个人分得开 */
+.home-coop-icon { position: relative; flex: none; width: 21px; height: 16px; }
+.home-coop-icon i { position: absolute; display: block; width: 12px; height: 16px; }
+.home-coop-icon i::before, .home-coop-icon i::after { content: ""; position: absolute; box-sizing: border-box; background: currentColor; }
+.home-coop-icon i::before { left: 3px; top: 0; width: 6px; height: 6px; border-radius: 50%; }
+.home-coop-icon i::after { left: 0; top: 7px; width: 12px; height: 9px; border-radius: 6px 6px 1.5px 1.5px; }
+.home-coop-icon .is-back { right: 0; top: -1px; opacity: .62; }
+.home-coop-icon .is-front { left: 0; top: 1px; }
+.home-coop-icon .is-front::before, .home-coop-icon .is-front::after { box-shadow: 0 0 0 1.5px #1c1709; }
 /* 和挂牌一样：主页自己的弹层开着时收起，别跟弹窗叠在一起 */
 .home-root.is-open .home-secondary-actions { opacity: 0; visibility: hidden; }
 
@@ -272,8 +296,6 @@
 .home-btn[hidden] { display: none; }
 .home-btn-primary { flex-grow: 2; color: #1d1705; background: linear-gradient(#f3d65e, #dcb434); border-color: #e8c547; }
 .home-btn-primary:hover { background: linear-gradient(#f7de74, #e2bc40); }
-.home-coop-status { width: 100%; font-size: 12px; color: #9fe3a6; }
-.home-coop-status:empty { display: none; }
 
 /* 噩梦难度卡片 */
 .home-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -286,6 +308,8 @@
   color: #f4ecd0; text-align: left; cursor: pointer;
 }
 .home-card:hover, .home-card:focus-visible { background: rgba(232, 197, 71, .15); border-color: #e8c547; outline: none; }
+/* modeFields 里选中的那张（帐篷选单用；主页点了就开局，看不到这个状态） */
+.home-card.is-on { background: rgba(232, 197, 71, .22); border: 2px solid #e8c547; padding: 11px 13px; }
 .home-card-name { font-size: 20px; font-weight: 800; letter-spacing: .1em; }
 .home-card-desc { font-size: 12px; line-height: 1.4; color: rgba(244, 236, 208, .75); }
 .home-card-hard .home-card-name { color: #ffb070; }
@@ -381,7 +405,8 @@
 
 /* 竖屏手机（宽 ≤559）：人物站在屏幕正中，靴底在约 0.7 倍屏高处，触屏还有一圈放大的碰撞体（宽约 0.22 倍屏高，镜头还会左右漂移）。
    按钮组叠在挂牌正上方时顶边离屏幕底约 255–260px，会压住右靴：看着挡脚，点靴子还会开「创意工坊」而不是换制服。
-   所以这一档把两个按钮挪到挂牌左边，仍然竖排，底边和牌子底边对齐（离屏幕底 24 + 安全区）：
+   所以这一档把三个按钮挪到挂牌左边，仍然竖排，底边和牌子底边对齐（离屏幕底 24 + 安全区），「联机」排最下面一格；
+   三格 44×3 + 8×2 = 148 高，顶边离屏幕底 172（390×844 在 y≈672，靴底在 y≈570）：
    右边 = 牌子右边距 + 牌子宽 × (1 + --home-rod-l)（横棍往左再伸出 5%）+ 12px，跟横棍左端留 12px
    （横棍右端伸到屏幕右边，在按钮组的另一侧，碰不到）；
    宽最多 130，屏幕太窄（320）时按剩下的地方缩，左边至少留 16px，最窄 96 也放得下「创意工坊」四个字 */
@@ -391,8 +416,11 @@
     right: calc(var(--home-edge-r) + var(--home-play-w) * (1 + var(--home-rod-l)) + var(--home-side-gap) + env(safe-area-inset-right));
     bottom: calc(var(--home-edge) + env(safe-area-inset-bottom));
     width: clamp(96px, calc(100vw - var(--home-edge-r) - var(--home-play-w) * (1 + var(--home-rod-l)) - var(--home-side-gap) - 16px - env(safe-area-inset-left) - env(safe-area-inset-right)), 130px);
+    gap: 8px;
   }
   .home-secondary-btn { min-width: 0; padding: 0 10px; }
+  /* 这一档「联机」排到最下面一格：底边和牌子底边齐平，离拇指最近；另外两个往上排 */
+  .home-secondary-btn.is-coop { order: 1; }
 }
 
 /* 矮横屏手机：卡片挤一点，标题缩小 */
@@ -401,7 +429,8 @@
   .home-menu-btn { min-height: 58px; }
   .home-card { min-height: 70px; }
   /* 牌子 142×54（≈ 2.63:1），吊绳 45（≈ 0.32 倍宽）、棍子 12。次要按钮组 bottom = 24 + 54 + 45 + 12 + 18 = 153，
-     两个按钮 44 + 8 + 44 叠上去顶边离屏幕底 249：640×360 时在 y≈111，标题底只到 y≈69（标题在左、按钮在右，横向不重叠）。
+     三个按钮 44×3 + 8×2 叠上去顶边离屏幕底 301：640×360 时在 y≈59，标题底到 y≈69（标题在左、按钮在右，横向不重叠）；
+     再矮（高 ≤308）就放不下了，见文件末尾那一档。
      间距沿用默认的 18：横屏手机也是触屏，间距小了点棍子上沿会被吸去开「设置」 */
   .home-root { --home-play-h: 54px; --home-rope: 45px; --home-rod: 12px; }
   .home-play { min-width: 142px; padding: 0 36px; }
@@ -410,11 +439,24 @@
   .home-field { margin-bottom: 6px; }
 }
 
-/* 极矮的横屏兜底（高 ≤260）：上面那档按钮组顶边离屏幕底 249，640×304、568×320、667×331 都还放得下（标题在左、按钮在右，横向不重叠），
-   比例照整理稿不动；只有再矮到 260 以下才把吊绳、棍子收一档（吊绳 ≈ 0.21 倍宽），还是一根棍两根绳挂一块牌。
-   bottom = 24 + 54 + 30 + 10 + 10 = 128，按钮组顶边离屏幕底 224 */
+/* 极矮的横屏兜底（高 ≤260）：比例照整理稿不动；只有再矮到 260 以下才把吊绳、棍子收一档（吊绳 ≈ 0.21 倍宽），还是一根棍两根绳挂一块牌 */
 @media (max-height: 260px) and (min-aspect-ratio: 17/20) {
   .home-root { --home-rope: 30px; --home-rod: 10px; --home-sec-gap: 10px; }
+}
+
+/* 矮横屏（高 ≤308，例如安卓横屏带地址栏的 640×304、568×280）：三格竖排叠在挂牌上方放不下了
+   （上面那档按钮组底边离屏幕底 153，三格 44×3 + 8×2 = 148，顶边离屏幕上边要 ≥ 8 得高 309），
+   改成和竖屏手机一样挪到挂牌左边、底边和牌子底边对齐。仍是横屏，「联机」留在最上面一格。
+   宽 112（「创意工坊」四个字放得下）：人物在屏幕左 36% 处，568 宽时按钮组左边离人物触屏碰撞体还有十几 px；
+   提示条这时候由 home.js 挪到按钮组上方（同一高度往左让会压到人物） */
+@media (max-height: 308px) and (min-aspect-ratio: 17/20) {
+  .home-root { --home-play-w: 142px; --home-side-gap: 12px; }
+  .home-secondary-actions {
+    right: calc(var(--home-edge-r) + var(--home-play-w) * (1 + var(--home-rod-l)) + var(--home-side-gap) + env(safe-area-inset-right));
+    bottom: calc(var(--home-edge) + env(safe-area-inset-bottom));
+    width: 112px;
+  }
+  .home-secondary-btn { min-width: 0; padding: 0 10px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -12,6 +12,13 @@
 //   空格是游戏里的「互动」，死前常在连按：结算显示期间拦掉空格的 keydown / keypress / keyup（按钮在 keyup 合成 click），
 //     万一还是合成了 click，空格后 SPACE_CLICK_MS 内键盘来的 click（detail 为 0）也不认（按下 Enter 时清掉这个时刻：Enter 合成的照认）。只认 Enter 和点击：
 //     焦点不在结算按钮上（点过面板空白处）时按 Enter 也等于「继续」。input.js 在 screen 为 'dead' 时也拦空格，两层都拦
+//   联机局（N1，判断和 hud.js 的暂停菜单一致：BR.coop.active、hosting、phase 'reconnecting'，或人在营地里）：
+//     按钮换成「继续」（不变）/「回营地」（.death-btn-camp，第一次要用时才建，单机结算里始终只有两个 .death-btn；
+//     只在不在营地、队友连着、有 BR.coopCamp.back 时出现，
+//     点了调 BR.coopCamp.back()，要队友同意，问的横幅由 coopCamp 弹；结算页留着，同意以后 game:start 自己收起）/
+//     小号的「离开联机」（.death-leave，不带 death-btn 类；点两次：第一次变成「再点一次：会断开联机，回到主页」，
+//     LEAVE_CONFIRM_MS 内再点才算，确认后先 BR.coop.leave() 再 emit 'game:home'）。单机时完全不变。
+//     结算开着时联机状态会变（队友掉线、连回来）：显示期间每 COOP_POLL_MS 按签名刷新这一组
 //   额外只读：visible
 (function () {
 'use strict';
@@ -21,6 +28,12 @@ const BR = window.BR;
 const ARM_MS = 800;
 // 空格按下 / 松开后这么久内、由键盘合成的 click 一律不认
 const SPACE_CLICK_MS = 400;
+// 联机局（N1）
+const LEAVE_TEXT = '离开联机';
+const LEAVE_CONFIRM_TEXT = '再点一次：会断开联机，回到主页';
+const LEAVE_CONFIRM_MS = 2500;   // 和 hud.js 的 HOME_CONFIRM_MS 一致
+const CAMP_AGAIN_MS = 1000;      // 「回营地」连点只问一次
+const COOP_POLL_MS = 500;
 const STYLE_RE = /(^|\/)css\/game\.css([?#]|$)/;
 const SELF_RE = /js\/game\/death\.js([?#].*)?$/;
 // currentScript 只在脚本同步执行期间有值，必须在顶层取
@@ -28,7 +41,10 @@ const SCRIPT_SRC = (document.currentScript && document.currentScript.src) || '';
 
 // ---------- 状态 ----------
 const dom = { ready: false };
-const S = { visible: false, armAt: 0, armTimer: 0, pending: null, waiting: false, spaceAt: -1e9, keysOn: false };
+const S = {
+  visible: false, armAt: 0, armTimer: 0, pending: null, waiting: false, spaceAt: -1e9, keysOn: false,
+  coopSig: null, coopTimer: 0, leaveUntil: 0, leaveTimer: 0, campAt: -1e9,
+};
 
 // ---------- 小工具 ----------
 function nowMs() { return window.performance && performance.now ? performance.now() : Date.now(); }
@@ -72,6 +88,20 @@ function levelLabel(id) {
   const def = BR.levels.get(id);
   const name = (def && def.name) || ('Level ' + id);
   return def && def.title ? name + ' · ' + def.title : name;
+}
+
+// ---------- 联机局的判断（和 hud.js 同样的写法） ----------
+function inCamp() {
+  const def = BR.levels.get(BR.game.levelId);
+  return !!(def && def.lobby);
+}
+function coopSession() {
+  const c = BR.coop;
+  if (!c) return false;
+  return !!(c.active || c.hosting || c.phase === 'reconnecting' || inCamp());
+}
+function canGoCamp() {
+  return !inCamp() && !!(BR.coop && BR.coop.active) && !!BR.coopCamp && typeof BR.coopCamp.back === 'function';
 }
 
 // 调用方给的 deepest 可能比当前层还浅（刚换层还没来得及更新），按 LEVEL_ORDER 取更深的；
@@ -144,10 +174,75 @@ function build() {
   const actions = mk('div', 'death-actions', panel);
   dom.btnContinue = buildBtn(actions, 'death-btn-continue', '继续', '原地重生，保留背包');
   dom.btnHome = buildBtn(actions, 'death-btn-home', '返回主页', '');
+  dom.actions = actions;
+  // 联机局：「返回主页」换成「回营地」（第一次要用时才建，见 ensureCampBtn，单机的结算里始终只有两个 .death-btn）
+  // + 小号「离开联机」（不带 death-btn 类，syncCoop 切显隐）
+  dom.btnCamp = null;
+  const leave = dom.leave = mk('button', 'death-leave', panel, LEAVE_TEXT);
+  leave.type = 'button';
+  leave.hidden = true;
   dom.hint = mk('div', 'death-hint', panel, '按 Enter 继续');
 
   tap(dom.btnContinue, onContinue);
   tap(dom.btnHome, onHome);
+  tap(leave, onLeave);
+}
+
+function ensureCampBtn() {
+  if (dom.btnCamp) return dom.btnCamp;
+  const b = dom.btnCamp = buildBtn(dom.actions, 'death-btn-camp', '回营地', '要队友同意，背包带不回去');
+  tap(b, onCamp);
+  return b;
+}
+
+// ---------- 联机局：回营地 / 离开联机 ----------
+// 确认文案按「：」「，」分段，每段不在中间断行：矮横屏上按钮挤在面板左上角，折行时不会剩一个「页」字掉到第三行。
+// 段之间不加空格，textContent 和原文一字不差
+function putSegs(node, text) {
+  node.textContent = '';
+  let a = 0;
+  for (let i = 0; i <= text.length; i++) {
+    if (i < text.length && text[i] !== '：' && text[i] !== '，') continue;
+    const seg = text.slice(a, i + 1);
+    if (seg) mk('span', 'death-nb', node, seg);
+    a = i + 1;
+  }
+}
+
+function setLeaveConfirm(on) {
+  clearTimeout(S.leaveTimer);
+  S.leaveUntil = on ? nowMs() + LEAVE_CONFIRM_MS : 0;
+  if (!dom.ready) return;
+  dom.leave.classList.toggle('death-leave-confirm', on);
+  if (on) putSegs(dom.leave, LEAVE_CONFIRM_TEXT);
+  else dom.leave.textContent = LEAVE_TEXT;
+  if (on) S.leaveTimer = setTimeout(() => setLeaveConfirm(false), LEAVE_CONFIRM_MS);
+}
+
+// force：刚弹出；否则按签名比较，没变不碰 DOM
+function syncCoop(force) {
+  if (!dom.ready) return;
+  const sess = coopSession(), camp = sess && canGoCamp();
+  const sig = (sess ? '1' : '0') + (camp ? '1' : '0');
+  if (!force && sig === S.coopSig) return;
+  const changed = S.coopSig !== null && sig !== S.coopSig;
+  S.coopSig = sig;
+  dom.btnHome.hidden = sess;
+  if (camp) ensureCampBtn();
+  if (dom.btnCamp) dom.btnCamp.hidden = !camp;
+  dom.leave.hidden = !sess;
+  dom.panel.classList.toggle('death-coop', sess);
+  if (force || changed) setLeaveConfirm(false);
+}
+
+function startCoopPoll() {
+  clearInterval(S.coopTimer);
+  S.coopTimer = setInterval(() => { if (S.visible) syncCoop(false); }, COOP_POLL_MS);
+}
+
+function stopCoopPoll() {
+  clearInterval(S.coopTimer);
+  S.coopTimer = 0;
 }
 
 // ---------- 联机开关麦 ----------
@@ -288,6 +383,7 @@ function show(info) {
   dom.level.textContent = levelLabel(levelId);
   dom.deepest.textContent = levelLabel(deepest);
   dom.hint.hidden = isTouch();
+  syncCoop(true);
   syncMic();
 
   // 挪到 #ui 最后：和暂停菜单同为 z-index 60，后挂的盖在上面
@@ -303,6 +399,7 @@ function show(info) {
   clearTimeout(S.armTimer);
   S.armAt = nowMs() + ARM_MS;
   S.armTimer = setTimeout(arm, ARM_MS);
+  startCoopPoll();
 
   if (g.screen === 'playing' || g.screen === 'paused') g.screen = 'dead';
   if (BR.input) BR.input.enabled = false;
@@ -310,8 +407,10 @@ function show(info) {
 
 function hide() {
   clearTimeout(S.armTimer);
+  stopCoopPoll();
   S.pending = null;
   S.visible = false;
+  setLeaveConfirm(false);
   if (!dom.ready) return;
   dom.root.hidden = true;
   dom.root.classList.remove('death-in', 'death-armed');
@@ -344,12 +443,36 @@ function onHome(e) {
   BR.bus.emit('game:home');
 }
 
+// 「回营地」：只是问队友，结算页留着（人还躺着）；队友同意后开局，game:start 收起结算
+function onCamp(e) {
+  if (!S.visible || nowMs() < S.armAt || spaceClick(e) || !dom.btnCamp || dom.btnCamp.hidden) return;
+  if (nowMs() - S.campAt < CAMP_AGAIN_MS) return;
+  S.campAt = nowMs();
+  const cc = BR.coopCamp;
+  if (!cc || typeof cc.back !== 'function') return;
+  try { cc.back(); } catch (err) { console.error('[death] coopCamp.back 出错', err); }
+}
+
+// 「离开联机」：点两次。先断开联机再回主页
+function onLeave(e) {
+  if (!S.visible || nowMs() < S.armAt || spaceClick(e) || dom.leave.hidden) return;
+  if (nowMs() > S.leaveUntil) { setLeaveConfirm(true); return; }
+  hide();
+  const c = BR.coop;
+  if (c && typeof c.leave === 'function') {
+    try { c.leave(); } catch (err) { console.error('[death] coop.leave 出错', err); }
+  }
+  BR.bus.emit('game:home');
+}
+
 // ---------- 事件 ----------
 BR.bus.on('game:start', hide);
 BR.bus.on('game:home', hide);
 BR.bus.on('player:respawn', () => { if (S.visible) release(); });
 // 麦克风状态变了（coop.js 发）；没有这个事件时，点击后等 setMic 的结果回来再刷新一次
 BR.bus.on('coop:mic', () => { if (S.visible) syncMic(); });
+// 队友走了（关卡里变回单人）：不等轮询，立刻换回「返回主页」
+BR.bus.on('coop:peerGone', () => { if (S.visible) { syncCoop(false); syncMic(); } });
 
 // ---------- 导出 ----------
 function init() {

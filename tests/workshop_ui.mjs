@@ -78,7 +78,7 @@ async function run(page) {
   check('工坊打开、地图列表为空', await ev(page, () => !!document.querySelector('.ws-empty')));
 
   await page.locator('.ws-actions-row .ws-btn-primary:visible').click();   // ＋ 新建地图
-  await page.waitForSelector('input.ws-input[type=text]:visible', { timeout: 5000 });
+  await page.waitForSelector('input.ws-input[type=text]:visible', { timeout: 25000 });   // SwiftShader 高负载时主线程会卡几秒，5 s 误报过
   await page.locator('input.ws-input[type=text]:visible').fill('自测的后室');
   await page.locator('.ws-panel-narrow .ws-btn-primary:visible').click();   // 创建 → 进编辑器
 
@@ -180,7 +180,7 @@ async function run(page) {
   await page.setViewportSize({ width: 390, height: 844 });
   await ev(page, () => BR.workshopUI.open());
   await page.locator('.ws-actions-row .ws-btn-primary:visible').click();
-  await page.waitForSelector('input.ws-input[type=text]:visible', { timeout: 5000 });
+  await page.waitForSelector('input.ws-input[type=text]:visible', { timeout: 25000 });   // SwiftShader 高负载时主线程会卡几秒，5 s 误报过
   await page.locator('input.ws-input[type=text]:visible').fill('手机测试');
   await page.locator('.ws-panel-narrow .ws-btn-primary:visible').click();
   await page.waitForFunction(() => BR.workshop.active && BR.workshop.editing, null, { timeout: 10000 });
@@ -211,7 +211,8 @@ async function main() {
   } catch (err) {
     check('测试流程未中断', false, String(err && err.stack || err));
   } finally {
-    await browser.close();
+    // browser.close() 偶尔在 Chrome 进程已经退出后仍不返回（playwright 等不到收尾），最多等 15 s，结尾 process.exit 照常退出
+    await Promise.race([browser.close().catch(() => {}), new Promise(r => setTimeout(r, 15000))]);
     srv.close();
   }
   const fail = results.filter(r => !r.ok);

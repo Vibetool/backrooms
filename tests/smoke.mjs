@@ -49,9 +49,17 @@ function watch(page, tag) {
 let shotN = 0;
 async function shot(page, name) {
   const f = path.join(OUT, String(++shotN).padStart(2, '0') + '-' + name + '.png');
-  await page.screenshot({ path: f });
-  shots.push(f);
-  console.log('     shot ' + path.relative(ROOT, f));
+  // 机器忙时 SwiftShader 一帧很慢，截图偶尔超过默认 30 s（2026-10-05 返修 r2）：放宽到 60 s 再试一次，还不行只记一笔，不中断流程
+  for (let i = 0; i < 2; i++) {
+    try {
+      await page.screenshot({ path: f, timeout: 60000 });
+      shots.push(f);
+      console.log('     shot ' + path.relative(ROOT, f));
+      return;
+    } catch (err) {
+      console.log('     shot ' + name + ' 第 ' + (i + 1) + ' 次超时：' + String(err && err.message || err).slice(0, 120));
+    }
+  }
 }
 
 async function newPage(ctx, tag) {
@@ -69,6 +77,43 @@ async function boot(page, base) {
 }
 const ev = (page, fn, arg) => page.evaluate(fn, arg);
 async function visible(page, sel) { return page.locator(sel).first().isVisible().catch(() => false); }
+
+// 联机面板（N1）：开没开、第一屏有哪些看得见的按钮、有没有模式 / 层级 / 难度这类选项
+function lobbyState() {
+  const vis = el => {
+    if (!el || !el.isConnected) return false;
+    for (let n = el; n && n.nodeType === 1; n = n.parentNode) {
+      if (n.hidden) return false;
+      const cs = getComputedStyle(n);
+      if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+    }
+    const r = el.getBoundingClientRect();
+    return r.width > 0.5 && r.height > 0.5;
+  };
+  const l = document.querySelector('.coop-lobby');
+  const open = vis(l);
+  const t = l && l.querySelector('.coop-title'), sub = l && l.querySelector('.coop-sub');
+  return {
+    open,
+    title: t ? t.textContent.trim() : null,
+    sub: sub && vis(sub) ? sub.textContent.trim() : null,
+    btns: open ? Array.from(l.querySelectorAll('button')).filter(vis).map(b => b.textContent.trim()) : [],
+    inputs: open ? Array.from(l.querySelectorAll('input, select')).filter(vis).map(i => i.type || i.tagName) : [],
+    view: BR.coop && BR.coop.debugInfo ? BR.coop.debugInfo().lobby.view : null,
+    modal: !!document.querySelector('.home-modal:not([hidden])'),
+    state: history.state,
+  };
+}
+// 记下 BR.hud.toast 发出的文字（只装一次）
+function hookToasts() {
+  if (!window.__smokeToasts) {
+    window.__smokeToasts = [];
+    const o = BR.hud.toast;
+    BR.hud.toast = function (t) { window.__smokeToasts.push(String(t)); return o.apply(this, arguments); };
+  }
+  window.__smokeToasts.length = 0;
+  return 0;
+}
 
 // ---------- 页面内工具 ----------
 function suitColors() {
@@ -177,6 +222,50 @@ async function desktop(browser, base) {
   await page.click('.home-skin .home-close');
   await page.waitForTimeout(150);
 
+  // ---------- 主页「联机」（N1）：点了出联机面板，第一屏只有昵称框和两个大按钮 ----------
+  const net0 = await ev(page, () => {
+    const b = document.querySelector('.home-secondary-btn.is-coop');
+    return b ? { text: b.textContent.trim(), disabled: b.disabled, title: b.title } : null;
+  });
+  check('主页有「联机」按钮（可点、不灰）', !!net0 && net0.text === '联机' && !net0.disabled && !net0.title, net0);
+  await page.click('.home-secondary-btn.is-coop');
+  await page.waitForFunction(() => { const l = document.querySelector('.coop-lobby'); return !!l && !l.hidden; }, null, { timeout: 5000 }).catch(() => {});
+  await page.waitForTimeout(200);
+  const lob = await ev(page, lobbyState);
+  check('点「联机」打开联机面板：标题「联机」、副标题「2 人 · 语音默认闭麦」，第一屏是「开一个营地」「加入朋友的营地」',
+    lob.open && lob.title === '联机' && lob.sub === '2 人 · 语音默认闭麦' && lob.view === 'start' &&
+    lob.btns.includes('开一个营地') && lob.btns.includes('加入朋友的营地'), lob);
+  check('联机面板第一屏只有昵称框，没有模式、层级、难度', JSON.stringify(lob.inputs) === '["text"]' && !lob.btns.some(t => /游玩|噩梦|测试|Level|难度/.test(t)), lob);
+  await shot(page, 'coop-lobby');
+  await page.click('.coop-lobby .coop-close');
+  await page.waitForTimeout(400);
+  const lob1 = await ev(page, lobbyState);
+  check('关掉联机面板回到没有弹层的主页', !lob1.open && !lob1.modal && !(lob1.state && lob1.state.brPanel) && await ev(page, () => BR.home.shown && BR.game.screen === 'home'), lob1);
+
+  // 新旧文件混着用（缓存里还是旧 coop.js）：BR.coop 在、缺营地那一套 → toast「页面没更新完整，请刷新」，不开面板
+  await ev(page, hookToasts);
+  await ev(page, () => { window.__smokeStartRun = BR.coop.startRun; delete BR.coop.startRun; return 0; });
+  let stale;
+  try {
+    await page.click('.home-secondary-btn.is-coop');
+    await page.waitForTimeout(300);
+    stale = await ev(page, () => Object.assign({ toasts: window.__smokeToasts.slice(), startRun: typeof BR.coop.startRun }, (() => { const l = document.querySelector('.coop-lobby'); return { lobby: !!l && !l.hidden }; })()));
+  } finally {
+    await ev(page, () => { if (window.__smokeStartRun) BR.coop.startRun = window.__smokeStartRun; window.__smokeStartRun = null; return 0; });
+  }
+  check('删掉 BR.coop.startRun 后点「联机」：toast「页面没更新完整，请刷新」，不开联机面板', stale.startRun === 'undefined' && stale.toasts.includes('页面没更新完整，请刷新') && !stale.lobby, stale);
+  // 联机模块根本没加载：按钮灰掉，title「联机模块未加载」，点了不报错（随后的 reload 复原）
+  await ev(page, () => { window.__smokeCoop = BR.coop; BR.coop = undefined; return 0; });
+  let missing;
+  try {
+    await page.click('.home-secondary-btn.is-coop');
+    await page.waitForTimeout(200);
+    missing = await ev(page, () => { const b = document.querySelector('.home-secondary-btn.is-coop'); const l = document.querySelector('.coop-lobby'); return { disabled: b.disabled, title: b.title, lobby: !!l && !l.hidden }; });
+  } finally {
+    await ev(page, () => { BR.coop = window.__smokeCoop; window.__smokeCoop = null; return 0; });
+  }
+  check('BR.coop 没加载时点「联机」：按钮灰掉、title「联机模块未加载」，不开面板', missing.disabled && missing.title === '联机模块未加载' && !missing.lobby, missing);
+
   await page.reload();
   await page.waitForFunction(() => window.BR && window.__br && BR.home && BR.home.shown, null, { timeout: 30000 });
   await page.evaluate(() => BR.assets.init());
@@ -195,10 +284,20 @@ async function desktop(browser, base) {
   check('弹窗按钮自上而下：游玩 / 噩梦生存 / 测试模式', JSON.stringify(menu) === JSON.stringify(['游玩', '噩梦生存', '测试模式']), menu);
   const tops = await page.$$eval('.home-menu-btn', els => els.map(e => e.getBoundingClientRect().top));
   check('三个按钮纵向排列', tops.length === 3 && tops[0] < tops[1] && tops[1] < tops[2], tops);
+  const subs = await page.$$eval('.home-menu-btn .home-menu-sub', els => els.map(e => e.textContent.trim()));
+  check('菜单说明里不再写「可联机」：游玩写「实体不攻击你，可调能见度和实体数量」', subs[0] === '实体不攻击你，可调能见度和实体数量' && !subs.some(t => /联机/.test(t)), subs);
   await shot(page, 'menu');
 
   await page.click('.home-menu-btn.is-casual');
   await page.waitForTimeout(200);
+  // 两人一起玩只走主页「联机」→ 营地 → 帐篷：「游玩」弹窗里的联机按钮、开麦按钮、联机状态行都拿掉了
+  const casCoop = await ev(page, () => {
+    const d = document.querySelector('.home-dialog-casual');
+    const texts = Array.from(d.querySelectorAll('button')).map(b => b.textContent.trim());
+    // 按 class 片段找（mic / coop），不写死旧的类名：旧入口的类名在 tests/ 里一处不留
+    return { texts, coopEls: Array.from(d.querySelectorAll('[class*="mic"], [class*="coop"]')).map(e => e.className), text: d.textContent.replace(/\s+/g, '') };
+  });
+  check('「游玩」弹窗里没有「联机」和开麦按钮，也没有联机状态行', casCoop.coopEls.length === 0 && !casCoop.texts.some(t => /联机|开麦|闭麦/.test(t)) && !/联机/.test(casCoop.text), casCoop);
   await ev(page, () => {
     const r = document.querySelectorAll('.home-dialog-casual .home-range')[1];
     r.value = '100';
@@ -273,15 +372,21 @@ async function desktop(browser, base) {
   await page.waitForTimeout(150);
   const cards = await page.$$eval('.home-card .home-card-desc', els => els.map(e => e.textContent));
   check('噩梦难度卡片 0/20/40/60%', / 0%$/.test(cards[0]) && / 20%$/.test(cards[1]) && / 40%$/.test(cards[2]) && / 60%$/.test(cards[3]), cards);
+  // 主页一个人玩噩梦照旧从 Level 0 开始（孩子没提要改；帐篷里两个人玩才能选层），弹窗里没有起始层级下拉
+  const nmDlg = await ev(page, () => {
+    const d = document.querySelector('.home-dialog-nightmare');
+    return { notes: Array.from(d.querySelectorAll('.home-note')).map(e => e.textContent.trim()), select: !!d.querySelector('select'), coop: /联机/.test(d.textContent) };
+  });
+  check('噩梦弹窗照旧写「从 Level 0 … 开始」，没有起始层级下拉、没有联机', nmDlg.notes.some(t => /从 Level 0[^0-9].*开始/.test(t)) && !nmDlg.select && !nmDlg.coop, nmDlg);
   await shot(page, 'nightmare-cards');
   await page.click('.home-card-hell');
   await page.waitForFunction(() => BR.game.screen === 'playing', null, { timeout: 20000 });
   await ev(page, () => __br.step(0.5));
   const nm = await ev(page, () => ({
     mode: BR.game.mode, diff: BR.game.difficulty, sf: BR.game.spawnFactor, atk: BR.game.attackPlayers, stats: BR.game.statsEnabled,
-    hp: BR.player.hp, hunger: BR.player.hunger, inv: BR.player.inventory.filter(Boolean).length,
+    hp: BR.player.hp, hunger: BR.player.hunger, inv: BR.player.inventory.filter(Boolean).length, lv: String(BR.game.levelId), coop: !!(BR.coop && BR.coop.active),
   }));
-  check('噩梦地狱：spawnFactor 0.6、实体攻击玩家、有饥饿 san', nm.mode === 'nightmare' && nm.diff === 'hell' && nm.sf === 0.6 && nm.atk && nm.stats, nm);
+  check('噩梦地狱：spawnFactor 0.6、实体攻击玩家、有饥饿 san，从 Level 0 开始、单人', nm.mode === 'nightmare' && nm.diff === 'hell' && nm.sf === 0.6 && nm.atk && nm.stats && nm.lv === '0' && !nm.coop, nm);
   check('噩梦开局：新一局满血、背包清空', nm.hp === 100 && nm.inv === 0, nm);
   const statBar = await ev(page, () => {
     const el = document.querySelector('.hud-stats');
@@ -511,7 +616,22 @@ async function mobile(browser, base) {
     return { w: r.width, h: r.height, right: innerWidth - r.right, bottom: innerHeight - r.bottom, inView: r.right <= innerWidth && r.bottom <= innerHeight };
   });
   check('手机：「游玩」按钮在右下且点击目标 ≥ 44px', play.inView && play.h >= 44 && play.w >= 44 && play.right < 120 && play.bottom < 160, play);
+  const mNet = await ev(page, () => {
+    const b = document.querySelector('.home-secondary-btn.is-coop');
+    if (!b) return null;
+    const r = b.getBoundingClientRect();
+    return { w: r.width, h: r.height, inView: r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight };
+  });
+  check('手机：主页有「联机」按钮，在视口内且点击目标 ≥ 44px', !!mNet && mNet.inView && mNet.w >= 44 && mNet.h >= 44, mNet);
   await shot(page, 'mobile-home');
+  await page.tap('.home-secondary-btn.is-coop');
+  await page.waitForTimeout(400);
+  const mLob = await ev(page, lobbyState);
+  check('手机：点「联机」打开联机面板第一屏，不自动聚焦输入框（不弹键盘）', mLob.open && mLob.view === 'start' && mLob.btns.includes('开一个营地') &&
+    await ev(page, () => { const a = document.activeElement; return !a || !/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName); }), mLob);
+  await shot(page, 'mobile-coop-lobby');
+  await page.tap('.coop-lobby .coop-close');
+  await page.waitForTimeout(400);
   await page.tap('.home-play');
   await page.waitForTimeout(250);
   const menu = await page.$$eval('.home-menu-btn .home-menu-name', els => els.map(e => e.textContent.trim()));

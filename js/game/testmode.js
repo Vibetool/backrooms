@@ -1,5 +1,11 @@
 // 后室 · 测试模式面板：手动放出实体、召唤测试人、清除全部
 // 接口见 ARCHITECTURE.md 第 2、12 节 BR.test。DOM 在 #ui 里自建（class 前缀 test-），样式由本文件注入 <style class="test-style">
+// 联机（N1，孩子 2026-10-02：测试模式也能两人一起玩）：实体只在房主上真正生成，客机靠快照看到。
+//   客机放实体：本机先算好准星前方的落点，BR.coop.use('t:'+计数, 'test:spawn', 客机眼睛坐标, cb, {type, x, y, z, skin}) 交给房主；
+//     房主在 onUse('test:spawn') 里核对（落点离客机 ≤12 m、freeSpot 再找一次、场上没满），放出后把 id 回给客机，客机再 toast。
+//   清除全部：客机走 use('test:clear')；房主清完 BR.coop.emit('testClear', {by:名字})，两边都提示是谁清的。
+//   测试人一律用 id 'dummy~<皮肤>~<h|g>~<uid>'（h 房主或单机、g 客机），test_dummy.js 从 id 前缀取召唤者的制服颜色，两边看到的一样。
+//   数量上限 BR.config.world.maxActiveEntities 两人合用，面板上「场上 X/28」两边读同一份实体表（客机是快照里的）
 (function () {
 'use strict';
 const BR = window.BR;
@@ -23,6 +29,13 @@ const OPEN_GUARD_MS = 400;    // 触屏按下就开面板，同一下手指抬�
 const EDGE_DEDUP_MS = 200;    // 自己的 T 键监听和 input 的 'testmenu' 边沿是同一次按键，别开了又关
 const DUMMY = 'test_dummy';
 const DEV_PREFIX = '_dev_';
+// 联机
+const PEER_MAX = 12;          // 客机请求的落点离客机最远 12 m（本机找落点最远约 6 + 3 m，留出走动延迟）
+const USE_SPAWN = 'test:spawn';
+const USE_CLEAR = 'test:clear';
+const EV_CLEAR = 'testClear';
+// 房主核对不过时的原因（客机原样显示）；别的原因是联机通道给的，前面加「没放出来：」
+const HOST_WHY_RE = /^(场上已满|那里放不下|那里离你太远|那里有人站着|房主)/;
 
 // 阵营 → [标签, 样式后缀]；dummy 不会出现在列表里
 const FACTION = {
@@ -120,7 +133,10 @@ const S = {
   query: '',
   groups: [],             // [{ node, countEl, items: [{ node, hay }] }]
   countText: '',
+  reqSeq: 0,              // 客机 use 请求的计数（key 't:'+计数）
+  peerClearAt: -1e9,      // 客机上次收到房主 testClear 的时刻
 };
+const CS = { coop: null };  // 已经 onUse 过的 BR.coop 对象（coop 晚于本文件载入，用到时再挂）
 const dom = { ready: false };
 
 // ---------- 小工具 ----------
@@ -270,6 +286,197 @@ function counts() {
   return out;
 }
 
+function maxEnts() {
+  const w = BR.config.world;
+  const n = w ? Math.floor(+w.maxActiveEntities) : NaN;
+  return n > 0 ? n : 28;
+}
+
+// ---------- 联机 ----------
+function skinOk(k) { return typeof k === 'string' && Array.isArray(BR.SKINS) && BR.SKINS.some(s => s && s.key === k); }
+function mySkin() {
+  const k = (BR.skin && BR.skin.current) || (BR.game && BR.game.skin);
+  return skinOk(k) ? k : BR.DEFAULT_SKIN;
+}
+// 测试人 id：'dummy~<皮肤>~<h|g>~<uid>'。test_dummy.build 只从这里取召唤者和制服颜色，房主和客机走同一条路
+function dummyId(skin, who) {
+  return ['dummy', skinOk(skin) ? skin : BR.DEFAULT_SKIN, who === 'g' ? 'g' : 'h', U.uid('e')].join('~');
+}
+function coopLive() { return !!(BR.coop && BR.coop.active); }
+// 客机：实体归房主管，本机放出来的会被下一次快照删掉，所以一律交给房主。重连途中也算（use 会说「正在重连」）
+function isGuest() {
+  const C = BR.coop;
+  return !!C && C.role === 'guest' && (C.active || C.phase === 'reconnecting');
+}
+// 昵称：营地暗标 U+2063 是给服务器认营地用的，提示里不出现；没有昵称时两边用同一个叫法
+function cleanNick(s) { return String(s == null ? '' : s).split('\u2063').join('').trim().slice(0, 16); }
+function myNick() { return cleanNick(BR.net && BR.net.myName) || (isGuest() ? '朋友' : '房主'); }
+function peerNick() {
+  const C = BR.coop;
+  return cleanNick(C && C.peerName) || (C && C.role === 'guest' ? '房主' : '朋友');
+}
+function eyePos() {
+  const p = BR.player;
+  if (!p || !isFinite(p.x) || !isFinite(p.y) || !isFinite(p.z)) return null;
+  return [Math.round(p.x * 1000) / 1000, Math.round(p.y * 1000) / 1000, Math.round(p.z * 1000) / 1000];
+}
+function r2(v) { return Math.round(v * 100) / 100; }
+// 房主还在测试模式的世界里：联机时暂停世界不停，暂停菜单开着也照样替客机放
+function hostReady() {
+  const g = BR.game;
+  return !!g && g.mode === 'test' && (g.screen === 'playing' || g.screen === 'paused' || g.screen === 'dead');
+}
+function coopHook() {
+  const C = BR.coop;
+  if (!C || CS.coop === C || !has(C, 'onUse')) return;
+  CS.coop = C;
+  try {
+    C.onUse(USE_SPAWN, hostSpawn);
+    C.onUse(USE_CLEAR, hostClear);
+  } catch (err) {
+    console.error('[test] 注册联机请求失败', err);
+  }
+}
+function failText(why, what) {
+  const w = why ? String(why) : '';
+  if (HOST_WHY_RE.test(w)) return w;
+  if (w === '正在重连') return '正在重连，连上了再试';
+  const head = what === 'clear' ? '没清掉' : what === 'dummy' ? '没召唤出来' : '没放出来';
+  return head + '：' + (w && w !== 'bad' ? w : '房主那边没有回应');
+}
+
+// 单机 / 房主真正放出：数量在这里核（两人合用一个上限）。from = 客机眼睛，交给 freeSpot 核"看得见"
+function place(type, def, spot, who, skin, from) {
+  const max = maxEnts(), c = counts();
+  if (c.ents + c.dummies >= max) return { why: '场上已满 ' + max + ' 个' };
+  const opts = { manual: true };
+  if (type === DUMMY) opts.id = dummyId(skin, who);
+  if (from) opts.from = from;
+  let e = null;
+  try {
+    e = BR.entities.spawn(type, spot.x, spot.y, spot.z, opts);
+  } catch (err) {
+    console.error('[test] 放出失败', type, err);
+  }
+  if (!e) return { why: from ? '那里放不下' : '放出失败：' + nameOf(def) };
+  return { e };
+}
+
+// 落点压在某个玩家身上（房主本人，或客机按下时站的地方）
+function onPlayer(x, z, r, from) {
+  const minD = BR.config.player.radius + r + PAD;
+  const p = BR.player;
+  if (p && isFinite(p.x) && isFinite(p.z) && U.dist2(x, z, p.x, p.z) < minD * minD) return true;
+  return !!from && U.dist2(x, z, from.x, from.z) < minD * minD;
+}
+
+// 房主（单机也能调）处理 'test:spawn'：req = { k, a, p:客机眼睛 [x,y,z], x:{type, x, y, z, skin}, by:'me'|'peer', lv }
+function hostSpawn(req) {
+  if (!req || typeof req !== 'object') return { ok: false, why: 'bad' };
+  if (!hostReady()) return { ok: false, why: '房主不在测试模式里' };
+  if (!has(BR.entities, 'spawn')) return { ok: false, why: '房主那边实体模块还没载入' };
+  const x = req.x && typeof req.x === 'object' ? req.x : {};
+  const type = typeof x.type === 'string' ? x.type.slice(0, 64) : '';
+  const def = type ? BR.entityTypes.get(type) : null;
+  if (!def) return { ok: false, why: '房主那边没有这种实体' };
+  const p = Array.isArray(req.p) ? req.p : null;
+  const from = p && isFinite(p[0]) && isFinite(p[2]) ? { x: +p[0], y: isFinite(p[1]) ? +p[1] : undefined, z: +p[2] } : null;
+  const sx = +x.x, sz = +x.z;
+  if (!from || !isFinite(sx) || !isFinite(sz)) return { ok: false, why: '那里放不下' };
+  if (U.dist2(sx, sz, from.x, from.z) > PEER_MAX * PEER_MAX) return { ok: false, why: '那里离你太远了' };
+  const size = sizeOf(def, type);
+  if (onPlayer(sx, sz, size.r, from)) return { ok: false, why: '那里有人站着' };
+  const peer = req.by === 'peer';
+  const C = BR.coop;
+  const skin = peer ? (skinOk(x.skin) ? x.skin : (C && skinOk(C.peerSkin) ? C.peerSkin : BR.DEFAULT_SKIN)) : mySkin();
+  const res = place(type, def, { x: sx, y: groundAt(sx, sz), z: sz }, peer ? 'g' : 'h', skin, from);
+  if (!res.e) return { ok: false, why: res.why };
+  BR.bus.emit('test:spawned', { kind: type === DUMMY ? 'dummy' : 'entity', id: res.e.id, type, by: peer ? 'peer' : 'me' });
+  S.countText = '';
+  refreshCount();
+  return { ok: true, r: { id: String(res.e.id), type } };
+}
+
+// 房主处理 'test:clear'
+function hostClear(req) {
+  if (!hostReady()) return { ok: false, why: '房主不在测试模式里' };
+  if (!has(BR.entities, 'clear')) return { ok: false, why: '房主那边实体模块还没载入' };
+  return doClear(req && req.by === 'peer' ? peerNick() : myNick()) ? { ok: true } : { ok: false, why: '出错了' };
+}
+
+// 客机：把本机算好的落点交给房主
+function askSpawn(type, kind, def, spot) {
+  coopHook();
+  const C = BR.coop, eye = eyePos();
+  if (!has(C, 'use') || !eye) { notify('联机还没准备好，等一下再试'); return; }
+  const name = nameOf(def);
+  const x = { type, x: r2(spot.x), y: r2(spot.y), z: r2(spot.z), skin: mySkin() };
+  C.use('t:' + (++S.reqSeq), USE_SPAWN, eye, (res) => {
+    if (!S.session) return;   // 已经回主页 / 换了模式
+    if (res && res.ok) {
+      const r = res.r && typeof res.r === 'object' ? res.r : {};
+      BR.bus.emit('test:spawned', { kind, id: r.id != null ? String(r.id) : null, type, by: 'me' });
+      notify(kind === 'dummy' ? '已召唤测试人' : '已放出 ' + name);
+      sfx('click');
+    } else {
+      notify(failText(res && res.why, kind));
+    }
+    S.countText = '';
+    refreshCount();
+  }, x);
+}
+
+function askClear() {
+  coopHook();
+  const C = BR.coop, eye = eyePos();
+  if (!has(C, 'use') || !eye) { notify('联机还没准备好，等一下再试'); return; }
+  const t0 = nowMs();
+  C.use('t:' + (++S.reqSeq), USE_CLEAR, eye, (res) => {
+    if (!S.session) return;
+    if (!res || !res.ok) { notify(failText(res && res.why, 'clear')); return; }
+    // 房主的 testClear 排在 ack 前面、同一批到；万一没到（对方没走事件通道），自己补一句
+    if (S.peerClearAt < t0) notify('「' + myNick() + '」清除了全部实体');
+    sfx('click');
+  }, {});
+}
+
+// 客机收到房主的 testClear
+function onPeerClear(p) {
+  if (!S.session || !isGuest()) return;
+  S.peerClearAt = nowMs();
+  const by = cleanNick(p && p.by) || peerNick();
+  notify('「' + by + '」清除了全部实体');
+  S.countText = '';
+  refreshCount();
+}
+
+// 清场。by = 联机时谁清的（两边都提示这个名字）；单机为 null
+function doClear(by) {
+  const c = counts();
+  try {
+    BR.entities.clear();
+  } catch (err) {
+    console.error('[test] 清除失败', err);
+    notify('清除失败');
+    return false;
+  }
+  if (by != null && coopLive()) {
+    const C = BR.coop;
+    if (has(C, 'emit')) {
+      try { C.emit(EV_CLEAR, { by }); } catch (err) { console.error('[test] 通知对方清场失败', err); }
+    }
+    notify('「' + by + '」清除了全部实体');
+  } else {
+    notify(c.ents + c.dummies > 0 ? '已清除全部实体和测试人' : '场上本来就没有实体');
+  }
+  sfx('click');
+  S.countText = '';
+  refreshCount();
+  return true;
+}
+
+// ---------- 放出 / 清除（对外） ----------
+// 单机 / 房主返回放出的实体（失败 null）；客机返回 null，结果到了再 toast（bus 'test:spawned' 带 by:'me'）
 function spawnOf(type, kind) {
   type = String(type || '');
   if (!usable()) { console.warn('[test] 只有测试模式游玩中才能放出实体'); return null; }
@@ -282,17 +489,10 @@ function spawnOf(type, kind) {
   const size = sizeOf(def, type);
   const spot = findSpot(size.r, size.h);
   if (!spot) { notify('附近没有能落脚的空位，换个开阔的地方再试'); return null; }
-  let e = null;
-  try {
-    e = BR.entities.spawn(type, spot.x, spot.y, spot.z, { manual: true });
-  } catch (err) {
-    console.error('[test] 放出失败', type, err);
-  }
-  if (!e) {
-    const c = counts(), max = BR.config.world.maxActiveEntities;
-    notify(c.ents + c.dummies >= max ? '场上实体已达上限 ' + max : '放出失败：' + nameOf(def));
-    return null;
-  }
+  if (isGuest()) { askSpawn(type, kind, def, spot); return null; }
+  const res = place(type, def, spot, 'h', mySkin(), null);
+  if (!res.e) { notify(res.why); return null; }
+  const e = res.e;
   BR.bus.emit('test:spawned', { kind, id: e.id, type });
   notify(kind === 'dummy' ? '已召唤测试人' : '已放出 ' + nameOf(def));
   sfx('click');
@@ -303,21 +503,12 @@ function spawnOf(type, kind) {
 function spawnEntity(type) { return spawnOf(type, type === DUMMY ? 'dummy' : 'entity'); }
 function spawnDummy() { return spawnOf(DUMMY, 'dummy'); }
 
+// 单机 / 房主返回是否清掉了；客机返回 null（交给房主，提示等对方回来）
 function clearAll() {
   if (!BR.game || BR.game.mode !== 'test') { console.warn('[test] 只有测试模式能清除全部实体'); return false; }
+  if (isGuest()) { askClear(); return null; }
   if (!has(BR.entities, 'clear')) { notify('实体模块还没载入'); return false; }
-  const c = counts();
-  try {
-    BR.entities.clear();
-  } catch (err) {
-    console.error('[test] 清除失败', err);
-    notify('清除失败');
-    return false;
-  }
-  notify(c.ents + c.dummies > 0 ? '已清除全部实体和测试人' : '场上本来就没有实体');
-  sfx('click');
-  refreshCount();
-  return true;
+  return doClear(coopLive() ? myNick() : null);
 }
 
 // ---------- 列表 ----------
@@ -329,8 +520,8 @@ function levelLabel(lv) {
 function sortedLevels() {
   const order = BR.LEVEL_ORDER || [];
   const rank = (lv) => { const i = order.indexOf(String(lv.id)); return i < 0 ? order.length : i; };
-  // 按 LEVEL_ORDER 排；不在顺序表里的（dev 等）按注册顺序排在后面
-  return BR.levels.all().map((lv, i) => ({ lv, i }))
+  // 按 LEVEL_ORDER 排；不在顺序表里的（dev 等）按注册顺序排在后面。隐藏层（联机营地 coopcamp）不列
+  return BR.levels.all().filter(lv => lv && !lv.hidden).map((lv, i) => ({ lv, i }))
     .sort((a, b) => rank(a.lv) - rank(b.lv) || a.i - b.i)
     .map(x => x.lv);
 }
@@ -439,8 +630,9 @@ function applyFilter() {
 
 function refreshCount() {
   if (!dom.ready) return;
-  const c = counts();
-  const text = '场上实体 ' + c.ents + ' · 测试人 ' + c.dummies;
+  // 两人合用一个上限：客机数的是快照里的实体，和房主那边是同一份
+  const c = counts(), max = maxEnts();
+  const text = '场上 ' + (c.ents + c.dummies) + '/' + max + (c.dummies ? ' · 其中测试人 ' + c.dummies : '');
   if (text !== S.countText) { S.countText = text; dom.count.textContent = text; }
 }
 
@@ -690,6 +882,7 @@ function onStart(p) {
   S.query = '';
   S.listSig = '';
   if (dom.search) dom.search.value = '';
+  coopHook();
   if (S.session) startPoll(); else stopPoll();
   syncChrome();
 }
@@ -710,6 +903,9 @@ function init() {
   BR.bus.on('game:start', onStart);
   BR.bus.on('game:home', onHome);
   BR.bus.on('player:death', () => { if (S.open) close({ silent: true }); });
+  // 联机：房主替客机放实体 / 清场；客机听房主的清场通知（BR.coop.on 就是 bus 'net:'+kind，coop 晚载入也不耽误）
+  BR.bus.on('net:' + EV_CLEAR, onPeerClear);
+  coopHook();
   // init 晚于开局也能用
   if (BR.game && BR.game.mode === 'test' && BR.game.screen !== 'home') {
     S.session = true;
@@ -719,6 +915,7 @@ function init() {
 
 function update(dt) {
   if (!S.inited) init();
+  if (CS.coop !== BR.coop) coopHook();
   // 以后 input 若给触屏或别的键位也发 'testmenu'，这里接住；同一次 T 键已由 onKeyDown 处理过就跳过
   if (!S.open && uiUsable() && has(BR.input, 'pressed') && BR.input.pressed('testmenu') &&
       nowMs() - S.lastToggle > EDGE_DEDUP_MS) {

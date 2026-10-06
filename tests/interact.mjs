@@ -1,4 +1,4 @@
-// 后室 · 准心交互回归（交互方案 A1）：node tests/interact.mjs [--only desk,touch]
+// 后室 · 准心交互回归（交互方案 A1）：node tests/interact.mjs [--only desk,touch,camp]
 // 起本地静态服务（随机端口）+ 无头 Chrome（SwiftShader），拦截 api.ovobot.ai 和一切外部请求。
 // 测试模式、__br.setAuto(false) 用 step 精确推进模拟时间（interact.js 这时只看模拟时间判短按 / 长按）。
 //
@@ -16,6 +16,13 @@
 //   - 返修 r1：拖动不悬空（L7 门廊推不出去、人工坑推不进去）、出口圈拖动中就挡住、木箱把地上的瓶子推开、
 //     拖动有声音、甩头掉了提示「手滑了」、售货机给出拖不动的原因、座位候选长按拖的是椅子
 // touch（手机横屏 844×390，CDP 触摸）：点「互动」拾取；按住「互动」拖木箱、另一指推摇杆后退；drive 里多出「升」「降」、点「互动」下车
+// camp（桌面 1280×720，联机营地 N1，一个人在营地 = 自己说了算）：
+//   - 帐篷门候选：站在门前通道里对准门，提示「空格 进帐篷」；短按 100 ms 自己走进去、打开「选下一站」；Esc 先走出帐篷、不进暂停
+//   - 长按 500 ms 只出「帐篷是营地的出口，拖不动」，不进拖动、不走进去、帐篷不动
+//   - 站在通道外、去门口的路被挡着：短按只提示「走到门口」，不穿过东西走进去
+//   - 桌上的层级地图「空格 看地图」直接开选单；柱子上的制服挂钩「空格 换制服」短按换下一种颜色、长按只给原因
+//   - 客机（BR.coop 换成客机身份的替身）短按也能进帐篷，进 / 出都走 BR.coop.use('coopcamp:tent', 'tent', …)
+//   - 一路上 HUD 没有「动词不在动词表里」的 console.warn，提示里不出现 E
 // 截图写 tests/output/interact-*.png。任一检查失败或页面出现 console.error / 未捕获异常时退出码为 1
 import http from 'node:http';
 import fs from 'node:fs';
@@ -155,12 +162,23 @@ async function startLevel(page, lv, seed) {
   await page.waitForFunction(() => BR.game.screen === 'playing' && !BR.world.transitioning, null, { timeout: 30000 });
   await ev(page, () => { __br.setAuto(false); __br.step(0.5); });
 }
+// 联机营地按营地模式（BR.config.coop.campMode，游玩）开局：和 coop.js 房主「进营地等朋友」一样
+async function startCamp(page) {
+  await ev(page, () => {
+    __br.setAuto(true);
+    const mode = (BR.config.coop && BR.config.coop.campMode) || 'casual';
+    __br.start({ mode, levelId: (BR.config.coop && BR.config.coop.campLevel) || 'coopcamp', seed: 4242 });
+  });
+  await page.waitForFunction(() => BR.game.screen === 'playing' && !BR.world.transitioning, null, { timeout: 30000 });
+  await ev(page, () => { __br.setAuto(false); __br.step(0.5); });
+}
 async function goTo(page, lv) {
   await ev(page, () => __br.setAuto(true));
   await ev(page, lv => BR.world.goTo(lv), lv);
   await page.waitForFunction(lv => BR.game.levelId === lv && !BR.world.transitioning, lv, { timeout: 30000 });
   await ev(page, () => { __br.setAuto(false); __br.step(0.5); });
 }
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function tap(page, key, sec) { await page.keyboard.down(key); await step(page, sec); await page.keyboard.up(key); await step(page, 0.05); }
 
 const CRATE = 'dev@-1,0#p2';      // Ldev 陈列块（-1,0）的木箱：(-20, 4)，0.8 m³
@@ -584,6 +602,264 @@ async function desk(browser) {
 }
 
 // =====================================================================
+// 营地数据（b.data.coopcamp，世界坐标）和帐篷状态
+function campInfo() {
+  let d = null;
+  for (const c of BR.world.chunks()) if (c.res && c.res.data && c.res.data.coopcamp) { d = c.res.data.coopcamp; break; }
+  const cc = BR.coopCamp, m = document.querySelector('.tent-menu');
+  return {
+    d, lv: BR.game.levelId, screen: BR.game.screen, inputOn: !!BR.input.enabled,
+    panel: !!(cc && cc.panelOpen), menu: !!m && !m.hidden && getComputedStyle(m).display !== 'none',
+    walking: !!(cc && cc.debugInfo && cc.debugInfo().walking),
+    p: { x: +BR.player.x.toFixed(3), z: +BR.player.z.toFixed(3), yaw: +BR.player.yaw.toFixed(3) },
+    skin: BR.skin.current, state: BR.interact.state,
+  };
+}
+const inRect = (p, r) => !!r && p.x >= Math.min(r.x0, r.x1) && p.x <= Math.max(r.x0, r.x1) && p.z >= Math.min(r.z0, r.z1) && p.z <= Math.max(r.z0, r.z1);
+
+async function camp(browser) {
+  const { ctx, page } = await boot(browser, { viewport: { width: 1280, height: 720 } }, 'camp');
+  // HUD 遇到不在动词表里的动词会 console.warn 一次（按「动词 + 名字」显示）：营地四个动词都得在表里
+  const verbWarns = [];
+  page.on('console', m => { if (m.type() === 'warning' && /\[hud\] 动词/.test(m.text())) verbWarns.push(m.text()); });
+  const prompts = [];
+  // 站到门前通道里、面朝帐篷门，准心对准门洞中间
+  const aimDoor = (x, z) => ev(page, ([x, z]) => {
+    const d = campInfo().d, door = d.tent.door;
+    __ti.stand(x, z, door.x, door.z);
+    __br.step(0.1);
+    BR.interact.aimAt(door.x, 1.0, door.z);
+    __br.step(0.05);
+    __ti.clear();
+    return { cur: __ti.cur(), p: __ti.prompt() };
+  }, [x, z]);
+  try {
+    // campInfo 在页面里也要用（aimDoor 等回调里）：挂到 window 上
+    await page.evaluate('window.campInfo = ' + campInfo.toString());
+    await startCamp(page);
+    const c0 = await ev(page, () => { const i = campInfo(); return { lv: i.lv, has: !!i.d, src: BR.interact.debugInfo().sources, cc: !!BR.coopCamp, tm: !!BR.tentMenu }; });
+    check('C1 进了联机营地，interact 来源里有 coopTent，BR.coopCamp / BR.tentMenu 都在', c0.lv === 'coopcamp' && c0.has && c0.src.includes('coopTent') && c0.cc && c0.tm, c0);
+    const d = await ev(page, () => campInfo().d);
+    const door = d.tent.door, corr = d.corridor;
+    const cx = (corr.x0 + corr.x1) / 2, cz = door.z + 2.0;
+
+    // ---------- 帐篷门：提示、短按走进去开选单 ----------
+    let a = await aimDoor(cx, cz);
+    prompts.push(a.p);
+    check('C2 站在门前通道里对准帐篷门：候选「帐篷」，短按「进帐篷」、不能拖、长按原因写着', !!a.cur && a.cur.key === 'coopcamp:tent' && a.cur.kind === 'fixture' && a.cur.short && a.cur.short.verb === '进帐篷' && !a.cur.canDrag, a);
+    check('C3 提示「空格 进帐篷」（动词自带宾语，后面不接「帐篷」），没有 E', /^空格 ?进帐篷$/.test(a.p) && NO_E(a.p), a.p);
+    await shot(page, 'camp-door');
+    const before = await ev(page, campInfo);
+    await page.keyboard.down('Space'); await step(page, 0.1); await page.keyboard.up('Space'); await step(page, 0.05);
+    const walking = await ev(page, campInfo);
+    for (let i = 0; i < 8; i++) await step(page, 0.15);
+    let r = await ev(page, campInfo);
+    check('C4 短按 100 ms：自己走进帐篷（关输入、0.9 s 走到地图桌前），打开「选下一站」', walking.walking && !walking.inputOn && r.panel && r.menu && !r.inputOn && inRect(r.p, d.tent.inside) && r.screen === 'playing', { walking: { walking: walking.walking, p: walking.p }, r: { panel: r.panel, menu: r.menu, p: r.p, inside: d.tent.inside } });
+    const titleTxt = await ev(page, () => { const t = document.querySelector('.tent-menu .tent-title'); return t ? t.textContent.trim() : null; });
+    check('C5 选单标题「选下一站」', titleTxt === '选下一站', titleTxt);
+    await shot(page, 'camp-tent-menu');
+    await page.keyboard.press('Escape'); await step(page, 0.05);
+    for (let i = 0; i < 6; i++) await step(page, 0.15);
+    r = await ev(page, campInfo);
+    check('C6 选单开着按 Esc：先走出帐篷（关选单、停在门外、还回输入），不进暂停', !r.panel && !r.menu && r.screen === 'playing' && r.inputOn && r.p.z > door.z + 0.6, { panel: r.panel, screen: r.screen, inputOn: r.inputOn, p: r.p });
+    // Esc 不是点击，锁不上指针：走出来以后提示「点一下画面继续」。横幅不接点击（hud-notice-pass），照字面点在它正中，
+    // 这一下落到画面上、锁住指针，横幅收起（2026-10-05 返修 r2：原来点横幅只把它关了，之后转不了视角）
+    const hint = await ev(page, () => {
+      const n = Array.from(document.querySelectorAll('.hud-notice')).find(x => x.getClientRects().length && /点一下画面继续/.test(x.textContent));
+      if (!n) return { shown: false, locked: !!document.pointerLockElement };
+      const b = n.getBoundingClientRect(), cx = Math.round(b.x + b.width / 2), cy = Math.round(b.y + b.height / 2);
+      const under = document.elementFromPoint(cx, cy);
+      return { shown: true, cx, cy, pe: getComputedStyle(n).pointerEvents, under: under ? (under.tagName + '.' + under.className) : null, canvas: !!under && under.tagName === 'CANVAS', locked: !!document.pointerLockElement };
+    });
+    check('C6b Esc 出帐篷后提示「点一下画面继续」，横幅不接点击：它正中底下就是画面（canvas）', hint.shown && hint.pe === 'none' && hint.canvas, hint);
+    if (hint.shown) {
+      await page.mouse.click(hint.cx, hint.cy);
+      await page.waitForTimeout(400);
+      const h2 = await ev(page, () => ({ locked: !!document.pointerLockElement, still: Array.from(document.querySelectorAll('.hud-notice')).some(x => x.getClientRects().length && /点一下画面继续/.test(x.textContent)), screen: BR.game.screen }));
+      check('C6c 点在横幅正中：指针锁上、横幅收起、还在玩', h2.locked && !h2.still && h2.screen === 'playing', h2);
+      // 放掉指针锁（关一下输入再打开：input 自己退锁，不当成意外丢失、不暂停），后面的检查不受影响
+      await ev(page, () => { if (document.pointerLockElement) { BR.input.enabled = false; BR.input.enabled = true; } return 0; });
+      await page.waitForTimeout(200);
+    }
+
+    // ---------- 长按 500 ms：只给原因，帐篷不动 ----------
+    a = await aimDoor(cx, cz);
+    const d0 = await ev(page, () => JSON.stringify(campInfo().d.tent));
+    await page.keyboard.down('Space'); await step(page, 0.3);
+    const mid = await ev(page, campInfo);
+    await step(page, 0.3);
+    const hold = await ev(page, () => ({ st: BR.interact.state, deny: __ti.evs('interact:deny'), toasts: __ti.toasts.slice(), grabs: __ti.evs('interact:grab').length }));
+    await page.keyboard.up('Space'); await step(page, 0.1);
+    r = await ev(page, campInfo);
+    const d1 = await ev(page, () => JSON.stringify(campInfo().d.tent));
+    check('C7 长按 500 ms：只出「帐篷是营地的出口，拖不动」，不进拖动、不走进去、帐篷不动',
+      mid.state !== 'drag' && hold.st !== 'drag' && hold.grabs === 0 && hold.deny.length === 1 && hold.deny[0].why === '帐篷是营地的出口，拖不动' &&
+      hold.toasts.includes('帐篷是营地的出口，拖不动') && !r.panel && !r.walking && d0 === d1 && Math.hypot(r.p.x - cx, r.p.z - cz) < 0.01,
+      { mid: mid.state, hold, r: { panel: r.panel, walking: r.walking, p: r.p }, moved: d0 !== d1 });
+
+    // ---------- 通道外、路被挡着：只提示「走到门口」 ----------
+    // 站在通道西边（不在 corridor 里），离门 2.3 m；在去门口那条路上放一块齐膝高的箱子（只挡路、不挡视线）
+    const ox = corr.x0 - 1.3, oz = door.z + 1.2;
+    const bx = (ox + door.x) / 2;
+    await ev(page, ([bx, bz]) => { BR.phys.addSolids('ti|block', [{ minX: bx - 0.2, minY: 0, minZ: bz - 0.2, maxX: bx + 0.2, maxY: 0.45, maxZ: bz + 0.2 }]); }, [bx, oz - 0.3]);
+    try {
+      a = await aimDoor(ox, oz);
+      prompts.push(a.p);
+      await page.keyboard.down('Space'); await step(page, 0.1); await page.keyboard.up('Space'); await step(page, 0.05);
+      await step(page, 0.5);
+      r = await ev(page, campInfo);
+      const t = await ev(page, () => __ti.toasts.slice());
+      check('C8 站在通道外、去门口的路被挡着：短按只提示「走到门口」，不自己穿过去', !!a.cur && a.cur.key === 'coopcamp:tent' && !inRect({ x: ox, z: oz }, corr) &&
+        t.includes('走到门口') && !r.panel && !r.walking && Math.hypot(r.p.x - ox, r.p.z - oz) < 0.01 && r.inputOn, { a, toasts: t, p: r.p, panel: r.panel });
+    } finally {
+      await ev(page, () => { BR.phys.removeSolids('ti|block'); __br.step(0.05); });
+    }
+
+    // ---------- 桌上的层级地图：自己走进去对准地图按空格 ----------
+    const st0 = d.tent.stand[0], map = d.tent.map;
+    a = await ev(page, ([s, m]) => {
+      __ti.stand(s.x, s.z, m.x, m.z);
+      __br.step(0.1);
+      BR.interact.aimAt(m.x, m.y + 0.02, m.z);
+      __br.step(0.05);
+      __ti.clear();
+      return { cur: __ti.cur(), p: __ti.prompt() };
+    }, [st0, map]);
+    prompts.push(a.p);
+    check('C9 站在帐篷里对准桌上的层级地图：「空格 看地图」，不能拖', !!a.cur && a.cur.key === 'coopcamp:map' && a.cur.short.verb === '看地图' && !a.cur.canDrag && /^空格 ?看地图$/.test(a.p), a);
+    await page.keyboard.down('Space'); await step(page, 0.6);
+    const mapHold = await ev(page, () => ({ deny: __ti.evs('interact:deny').map(x => x.why), st: BR.interact.state }));
+    await page.keyboard.up('Space'); await step(page, 0.1);
+    check('C10 对准地图长按：只给原因「地图桌绑在帐篷杆上，拖不动」', mapHold.deny.includes('地图桌绑在帐篷杆上，拖不动') && mapHold.st !== 'drag', mapHold);
+    a = await ev(page, ([s, m]) => { __ti.stand(s.x, s.z, m.x, m.z); __br.step(0.05); BR.interact.aimAt(m.x, m.y + 0.02, m.z); __br.step(0.05); return { cur: __ti.cur() }; }, [st0, map]);
+    await page.keyboard.down('Space'); await step(page, 0.1); await page.keyboard.up('Space'); await step(page, 0.1);
+    r = await ev(page, campInfo);
+    check('C11 对准地图短按：直接打开选单（不用再走）', r.panel && r.menu && !r.walking, { panel: r.panel, menu: r.menu });
+    await ev(page, () => { BR.coopCamp.onBack(); for (let i = 0; i < 8; i++) __br.step(0.15); });
+    r = await ev(page, campInfo);
+    check('C12 BR.coopCamp.onBack()（安卓返回键 / Esc 走的那条）关掉选单、走出帐篷', !r.panel && !r.menu && r.screen === 'playing' && r.inputOn, { panel: r.panel, p: r.p });
+
+    // ---------- 柱子上的制服挂钩：对准哪件换哪件，身上那件（钩上空着）只说原因，长按只给原因 ----------
+    // 2026-10-05 返修 r2：原来不管对准哪件都按 BR.SKINS 顺序换「下一种」，联机时会换上队友身上那件（挂钩上根本没有）
+    const hk = d.hooks;
+    const nx = Math.abs(Math.sin(hk.yaw)) > 0.5 ? 1 : 0, nz = 1 - nx;   // 挂钩那一面的法线沿 x 还是沿 z（一排挂钩沿另一个方向排开）
+    const aimHooks = (i) => ev(page, ([h, nx, nz, i]) => {
+      // 对准第 i 件（层级 hooks.at：每件制服中心沿这一排的坐标）；站在挂钩那一面外 1.1 m，面朝它：站得下、准心打得到挂钩的那一边才算
+      const t = Array.isArray(h.at) && i >= 0 ? h.at[i] : (nx ? h.z : h.x);
+      const tx = nx ? h.x : t, tz = nx ? t : h.z;
+      for (const sgn of [1, -1]) {
+        const x = tx + nx * 1.1 * sgn, z = tz + nz * 1.1 * sgn;
+        if (BR.phys.overlapCircle(x, z, 0.3, 0.05, 1.6)) continue;
+        __ti.stand(x, z, tx, tz);
+        __br.step(0.05);
+        BR.interact.aimAt(tx, h.y - 0.2, tz);
+        __br.step(0.05);
+        const cur = __ti.cur();
+        const c = BR.interact.current;
+        if (cur && cur.key === 'coopcamp:hooks') { __ti.clear(); return { cur, name: c.short && c.short.name, p: __ti.prompt(), sgn }; }
+      }
+      return { cur: __ti.cur(), p: __ti.prompt(), sgn: 0 };
+    }, [hk, nx, nz, i]);
+    const sk = await ev(page, () => ({ cur: BR.skin.current, order: BR.SKINS.map(x => x.key), zh: BR.SKINS.map(x => x.zh) }));
+    const want = sk.order[(sk.order.indexOf(sk.cur) + 1) % sk.order.length];
+    const wantZh = sk.zh[sk.order.indexOf(want)];
+    check('C13a 营地数据给了每件制服沿挂钩排列的位置（hooks.at，和 skins 一一对应）', Array.isArray(hk.at) && hk.at.length === d.skins.length && d.skins.includes(want), { at: hk.at, skins: d.skins });
+    a = await aimHooks(d.skins.indexOf(want));
+    prompts.push(a.p);
+    check('C13 对准挂钩上的' + wantZh + '那件：「空格 换制服 ' + wantZh + '那件」，不能拖', !!a.cur && a.cur.key === 'coopcamp:hooks' && a.cur.short.verb === '换制服' && a.name === wantZh + '那件' && !a.cur.canDrag &&
+      new RegExp('^空格 ?换制服 ?' + wantZh + '那件$').test(a.p), a);
+    await shot(page, 'camp-hooks');
+    await page.keyboard.down('Space'); await step(page, 0.1); await page.keyboard.up('Space'); await step(page, 0.05);
+    const sk1 = await ev(page, () => ({ cur: BR.skin.current, game: BR.game.skin, toasts: __ti.toasts.slice() }));
+    check('C14 挂钩短按：换成对准的那件（' + want + '），toast「换上了' + wantZh + '制服」', sk1.cur === want && sk1.game === want && sk1.toasts.some(t => t === '换上了' + wantZh + '制服'), { from: sk.cur, want, sk1 });
+    // 换上的那件从挂钩上没了，换下来的那件挂回去（2026-10-05 返修：六件一直都在）。每件的几何件在层级 b.data._uniforms
+    await step(page, 0.3);
+    const hv = await ev(page, () => {
+      const c = BR.world.chunks().find(x => x.res && x.res.data && x.res.data._uniforms);
+      const u = c && c.res.data._uniforms;
+      if (!u) return null;
+      const out = {};
+      for (const k of Object.keys(u)) out[k] = u[k].length > 0 && u[k].every(p => p.visible);
+      return out;
+    });
+    check('C14b 挂钩上：身上穿的那件（' + want + '）藏起来了，换下来的那件（' + sk.cur + '）和其余几件都挂着', !!hv && hv[want] === false &&
+      Object.keys(hv).filter(k => k !== want).every(k => hv[k] === true) && Object.keys(hv).length === sk.order.length, hv);
+    // 对准自己正穿着的那件（钩上空着那一格）：灰字「这件就穿在你身上」，按了不换
+    a = await aimHooks(d.skins.indexOf(want));
+    await page.keyboard.down('Space'); await step(page, 0.1); await page.keyboard.up('Space'); await step(page, 0.05);
+    const sk2 = await ev(page, () => ({ cur: BR.skin.current, toasts: __ti.toasts.slice(), deny: __ti.evs('interact:deny').map(x => x.why) }));
+    check('C14c 对准钩上空着的那一格（' + want + ' 穿在身上）：灰字「这件就穿在你身上」，按了不换', !!a.cur && a.cur.short && a.cur.short.ok === false && a.cur.short.why === '这件就穿在你身上' &&
+      /这件就穿在你身上/.test(a.p) && sk2.cur === want && sk2.toasts.includes('这件就穿在你身上'), { a, sk2 });
+    a = await aimHooks(d.skins.indexOf(sk.cur));
+    await page.keyboard.down('Space'); await step(page, 0.6);
+    const hkHold = await ev(page, () => ({ deny: __ti.evs('interact:deny').map(x => x.why), st: BR.interact.state, skin: BR.skin.current }));
+    await page.keyboard.up('Space'); await step(page, 0.1);
+    check('C15 挂钩长按：只给原因「挂钩钉在柱子上，拖不动」，颜色不变', hkHold.deny.includes('挂钩钉在柱子上，拖不动') && hkHold.st !== 'drag' && hkHold.skin === want, hkHold);
+    await ev(page, k => { BR.skin.set(k); }, sk.cur);
+
+    // ---------- 客机：短按也能进帐篷，进 / 出都向房主申请 ----------
+    await ev(page, () => {
+      const real = window.__tiRealCoop = BR.coop;
+      const uses = window.__tiUses = [];
+      BR.coop = new Proxy(real, {
+        get(t, k) {
+          if (k === 'active') return true;
+          if (k === 'role') return 'guest';
+          if (k === 'peerName') return '房主';
+          if (k === 'peer') return null;
+          if (k === 'use') return (key, act, p, cb, x) => { uses.push({ key, act, op: x && x.op, p }); setTimeout(() => cb && cb({ ok: true }), 0); return null; };
+          if (k === 'emit') return () => true;
+          return Reflect.get(t, k);
+        },
+      });
+      __br.step(0.05);
+    });
+    try {
+      a = await aimDoor(cx, cz);
+      prompts.push(a.p);
+      await page.keyboard.down('Space'); await step(page, 0.1); await page.keyboard.up('Space'); await step(page, 0.05);
+      for (let i = 0; i < 8; i++) await step(page, 0.15);
+      r = await ev(page, campInfo);
+      const uses1 = await ev(page, () => window.__tiUses.slice());
+      check('C16 客机对准帐篷门短按：也能自己走进帐篷、打开选单，并向房主申请 op:in', !!a.cur && a.cur.key === 'coopcamp:tent' && /^空格 ?进帐篷$/.test(a.p) && r.panel && r.menu &&
+        uses1.some(u => u.key === 'coopcamp:tent' && u.act === 'tent' && u.op === 'in'), { a, panel: r.panel, uses: uses1.map(u => u.key + ' ' + u.act + ' ' + u.op) });
+      await page.keyboard.press('Escape'); await step(page, 0.05);
+      for (let i = 0; i < 6; i++) await step(page, 0.15);
+      r = await ev(page, campInfo);
+      const uses2 = await ev(page, () => window.__tiUses.slice());
+      check('C17 客机按 Esc 出帐篷：关选单、不进暂停，并向房主申请 op:out', !r.panel && r.screen === 'playing' && uses2.some(u => u.op === 'out'), { panel: r.panel, screen: r.screen, uses: uses2.map(u => u.op) });
+    } finally {
+      await ev(page, () => { if (window.__tiRealCoop) BR.coop = window.__tiRealCoop; window.__tiRealCoop = null; __br.step(0.05); });
+    }
+
+    // ---------- 主线程卡顿时的轻点（N1 整合真玩时发现）：真实时间跑，主线程先卡 450 ms，期间按下空格、120 ms 后松开 ----------
+    // 按下事件排到处理时 event.timeStamp 已经是几百毫秒前、松手还排在下一帧后面：照时间戳算会被判成长按（「帐篷是营地的出口，拖不动」）
+    a = await aimDoor(cx, cz);
+    await ev(page, () => { __ti.clear(); __br.setAuto(true); setTimeout(() => { const t = performance.now(); while (performance.now() - t < 450) { /* 卡住主线程 */ } }, 30); });
+    await sleep(60);
+    // 真手指的时间：按下、120 ms 后抬起，两条事件的 timestamp 就是这两个时刻（page.keyboard.down 要等主线程回 ack 才返回，
+    // 用它会把卡住的 450 ms 也算进按住时长）；CDP 发出去不等 ack，主线程忙时两条事件照样排队，和真机一样
+    const cdp = await page.context().newCDPSession(page);
+    const kT = Date.now() / 1000, key = { code: 'Space', key: ' ', windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32 };
+    await Promise.all([
+      cdp.send('Input.dispatchKeyEvent', Object.assign({ type: 'keyDown', text: ' ', timestamp: kT }, key)),
+      sleep(120).then(() => cdp.send('Input.dispatchKeyEvent', Object.assign({ type: 'keyUp', timestamp: kT + 0.12 }, key))),
+    ]);
+    await cdp.detach().catch(() => {});
+    const lagOk = await page.waitForFunction(() => BR.coopCamp.panelOpen, null, { timeout: 8000, polling: 100 }).then(() => true, () => false);
+    const lag = await ev(page, () => ({ deny: __ti.evs('interact:deny').map(x => x.why), panel: BR.coopCamp.panelOpen }));
+    await ev(page, () => { __br.setAuto(false); BR.coopCamp.onBack(); for (let i = 0; i < 8; i++) __br.step(0.15); });
+    check('C20 主线程卡 450 ms 时轻点空格：照样算短按、走进帐篷，不被当成长按', lagOk && lag.panel && lag.deny.length === 0, lag);
+
+    const bad = prompts.filter(p => !NO_E(p));
+    check('C18 营地一路上的提示文字里没有出现 E', bad.length === 0 && prompts.length >= 4, { n: prompts.length, bad });
+    check('C19 HUD 没有「动词不在动词表里」的 console.warn（进帐篷 / 看地图 / 换制服 / 出帐篷都在表里）', verbWarns.length === 0, verbWarns);
+  } finally {
+    await ctx.close();
+  }
+}
+
+// =====================================================================
 function btnRects() {
   return Array.from(document.querySelectorAll('.touch-root .touch-btn')).map(b => {
     const r = b.getBoundingClientRect();
@@ -662,7 +938,7 @@ const browser = await chromium.launch({
   args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'],
 });
 try {
-  for (const [name, fn] of [['desk', desk], ['touch', touch]]) {
+  for (const [name, fn] of [['desk', desk], ['touch', touch], ['camp', camp]]) {
     if (!want(name)) continue;
     try { await fn(browser); }
     catch (err) { check(name + ' 流程没有中断', false, String(err && err.stack || err).slice(0, 1500)); }

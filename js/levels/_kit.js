@@ -1417,6 +1417,23 @@ function circleHitsBox(cx, cz, r, minX, minZ, maxX, maxZ) {
   const qx = cx < minX ? minX : cx > maxX ? maxX : cx, qz = cz < minZ ? minZ : cz > maxZ ? maxZ : cz;
   return (cx - qx) * (cx - qx) + (cz - qz) * (cz - qz) < r * r;
 }
+// 拖动禁区（N1）：本块的出口圈（+ EXIT_MARGIN）加上层级的 keepClear，和 interact 拖动、coop 落点核对用同一份 BR.world.blockers。
+// 出口传本块自己的（不看已载入的别的块、也不过滤 active），所以结果只取决于这一块和层级定义，两种画质、联机两边一样；
+// world 没载入（单独测 kit）时只算本块出口圈，和以前一样
+function kitBlockers(b, exits) {
+  if (BR.world && typeof BR.world.blockers === 'function') {
+    try {
+      const l = BR.world.blockers({ exits, level: b.level || null, margin: EXIT_MARGIN });
+      if (Array.isArray(l)) return l;
+    } catch (err) { /* 退回只算出口圈 */ }
+  }
+  return exits.map(e => ({ kind: 'exit', x: e.x, z: e.z, r: num(e.radius, 1) + EXIT_MARGIN }));
+}
+// 禁区（圆形 {x, z, r} 已含外扩 / 矩形 {x0, z0, x1, z1}）和轴对齐盒有没有重叠
+function blockHitsBox(e, minX, minZ, maxX, maxZ) {
+  if (e.x0 != null) return e.x0 < maxX && e.x1 > minX && e.z0 < maxZ && e.z1 > minZ;
+  return circleHitsBox(e.x, e.z, e.r, minX, minZ, maxX, maxZ);
+}
 // 道具连同子道具（嵌套的、on 挂上来的）
 function subtree(rec, out) {
   out.push(rec);
@@ -1444,9 +1461,9 @@ function kitFinalize(b) {
   }
   // ② 包围盒：各自枢轴坐标系里，只算自己的顶点段（子道具各有各的）
   for (const list of [props, fixtures, containers]) for (const r of list) { const I = INT.get(r); r.obb = boundsIn(I.segs, I.frame); }
-  // ③ 体积、压没压出口圈、能不能拖（道具）。都按碰撞体算 —— 碰撞体两种画质完全一样，联机两边结论一致；
-  //    没有碰撞体的才退回顶点包围盒（体积 ×0.5）
-  const solids = b._solids, exits = b._exits.map(h => h.desc);
+  // ③ 体积、压没压出口圈 / keepClear（拖动禁区，BR.world.blockers）、能不能拖（道具）。都按碰撞体算 —— 碰撞体两种画质完全一样，
+  //    联机两边结论一致；没有碰撞体的才退回顶点包围盒（体积 ×0.5）
+  const solids = b._solids, exits = kitBlockers(b, b._exits.map(h => h.desc));
   const ownVol = new Map();
   for (const r of props) {
     let v = 0;
@@ -1464,7 +1481,7 @@ function kitFinalize(b) {
       for (const rg of I.ownSolids) for (let i = rg[0]; i < rg[1]; i++) {
         const s = solids[i];
         hasSolid = true;
-        for (const e of exits) if (!overlap && circleHitsBox(e.x, e.z, num(e.radius, 1) + EXIT_MARGIN, s.minX, s.minZ, s.maxX, s.maxZ)) overlap = true;
+        for (const e of exits) if (!overlap && blockHitsBox(e, s.minX, s.minZ, s.maxX, s.maxZ)) overlap = true;
       }
     }
     if (!hasSolid) {
@@ -1476,7 +1493,7 @@ function kitFinalize(b) {
           const X = b.ox + F.x + F.c * lx + F.s * lz, Z = b.oz + F.z - F.s * lx + F.c * lz;
           if (X < x0) x0 = X; if (X > x1) x1 = X; if (Z < z0) z0 = Z; if (Z > z1) z1 = Z;
         }
-        for (const e of exits) if (!overlap && circleHitsBox(e.x, e.z, num(e.radius, 1) + EXIT_MARGIN, x0, z0, x1, z1)) overlap = true;
+        for (const e of exits) if (!overlap && blockHitsBox(e, x0, z0, x1, z1)) overlap = true;
       }
       const o = r.obb;
       if (o) vol = (o.max[0] - o.min[0]) * (o.max[1] - o.min[1]) * (o.max[2] - o.min[2]) * 0.5;

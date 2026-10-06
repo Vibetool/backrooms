@@ -107,6 +107,17 @@ BR.config = {
   },
   // 调研里的密度描述 → "正常后室"每 1000 m² 的实体数
   densityWords: { none: 0, rare: 0.04, low: 0.12, moderate: 0.35, high: 0.9, extreme: 2.2 },
+  // 联机营地（主页「联机」→ 营地 → 帐篷；ARCHITECTURE 第 9 节）。js/net/coop.js、js/net/net.js、js/game/coopcamp.js 共用
+  coop: {
+    campLevel: 'coopcamp',   // 营地层 id（隐藏层，不在 LEVEL_ORDER 里）
+    campMode: 'casual',      // 营地按这个模式开局：实体不打人、没有饥饿和 san；营地层自己不刷实体
+    countdown: 3,            // 帐篷里两人都准备好后倒数几秒出发
+    arriveWait: 5,           // 出发后房主最多等客机进层这么多秒，再一起亮起来
+    askSec: 15,              // 「回营地」等对方回答这么多秒；对方这段时间完全没输入才按同意处理
+    reconnectSec: 90,        // 掉线后两边原地等重连的上限（秒）
+    renewMin: 110,           // 房主一直没等到人：建房后第这么多分钟换一个新房号（服务器上房间 2 小时过期）
+    spareMin: 100,           // 连通后的备用房号（掉线重连用）每这么多分钟换一个
+  },
 };
 
 // ---------- 层级顺序 ----------
@@ -126,14 +137,14 @@ BR.MODES = {
     key: 'test', zh: '测试模式',
     attackPlayers: false,       // 和游玩一样实体不打玩家，但会打测试人
     statsEnabled: false,
-    coop: false,
+    coop: true,                 // 孩子 2026-10-02：联机在营地帐篷里选模式，测试模式也能两人一起玩（N1）
     autoSpawn: false,           // 不自动生成实体，靠测试面板手动放出
   },
   nightmare: {
     key: 'nightmare', zh: '噩梦生存',
     attackPlayers: true,
     statsEnabled: true,
-    coop: false,
+    coop: false,                // 两人一起玩噩梦在 N2 打开；N1 期间帐篷里这张卡灰着写实话
     autoSpawn: true,
     difficulties: [
       // 用户 2026-09-13 调整：简单/中等/困难/地狱 = 正常后室实体数量的 0% / 20% / 40% / 60%（原为 20/40/60/90）

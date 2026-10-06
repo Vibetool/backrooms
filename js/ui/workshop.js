@@ -1248,10 +1248,11 @@ function refreshOpenPanel() {
 
 function isDevEntityType(type) { return type === 'test_dummy' || String(type).charAt(0) === '_'; }
 function levelLabelFor(lv) { return (lv.name ? lv.name : 'Level ' + lv.id) + (lv.title ? ' · ' + lv.title : ''); }
+// 隐藏层（def.hidden，例如联机营地 coopcamp）不列：它不是玩家能去的层，实体面板里也不该冒出一组「联机营地」
 function sortedLevelDefs() {
   const order = BR.LEVEL_ORDER || [];
   const rank = lv => { const i = order.indexOf(String(lv.id)); return i < 0 ? order.length : i; };
-  return (BR.levels ? BR.levels.all() : []).slice().sort((a, b) => rank(a) - rank(b));
+  return (BR.levels ? BR.levels.all() : []).filter(lv => lv && !lv.hidden).sort((a, b) => rank(a) - rank(b));
 }
 function entityGroups() {
   const byType = new Map();
@@ -1742,7 +1743,7 @@ function openInfoCard(map, stats) {
   const casualBtn = mk('button', 'ws-mode-btn', modeList);
   casualBtn.type = 'button';
   mk('div', 'ws-mode-btn-title', casualBtn, '游玩');
-  mk('div', 'ws-mode-btn-sub', casualBtn, '实体不攻击玩家，可联机');
+  mk('div', 'ws-mode-btn-sub', casualBtn, '实体不攻击玩家');
   casualBtn.addEventListener('click', () => launchMap('casual', null));
 
   const nightmareBtn = mk('button', 'ws-mode-btn', modeList);
@@ -1765,13 +1766,9 @@ function openInfoCard(map, stats) {
   mk('div', 'ws-mode-btn-sub', testBtn, '不自动生成实体，放置实体依旧会刷');
   testBtn.addEventListener('click', () => launchMap('test', null));
 
+  // 工坊地图不在这里联机：两人一起玩走主页「联机」→ 营地 → 帐篷「我的地图」（房主的地图经 world.workshopMap 发给朋友）
   coopRow.hidden = false;
-  const coopBtn = button('ws-btn', coopRow, '联机');
-  const coopStatus = mk('span', 'ws-coop-status', coopRow);
-  const ok = !!(BR.coop && has(BR.coop, 'openLobby'));
-  coopBtn.disabled = !ok;
-  coopBtn.addEventListener('click', () => { if (ok) BR.coop.openLobby(); });
-  coopStatus.textContent = ok && BR.coop.active ? ('已联机 · ' + (BR.coop.role === 'host' ? '你是房主' : '你是客机')) : '';
+  mk('span', 'ws-coop-status', coopRow, '想和朋友一起玩这张图：主页「联机」→ 帐篷里选「我的地图」');
 
   switchView('info');
 }
@@ -1779,11 +1776,11 @@ function openInfoCard(map, stats) {
 function launchMap(mode, difficulty) {
   if (has(BR.input, 'lock')) { try { BR.input.lock(); } catch (err) { /* 锁不上就退化成拖动视角，不阻塞开局 */ } }
   const settings = BR.game.settings || (BR.game.settings = {});
-  const coop = mode === 'casual' && BR.coop && BR.coop.active ? { role: BR.coop.role } : null;
+  // 从工坊开局一律单人（不带 coop）；营地开着时 coop.js 看到 coop 为空会先关掉营地
   const payload = {
     mode, difficulty: difficulty || null,
     settings: Object.assign({}, settings),
-    seed: S.map.seed, workshop: S.map.id, coop,
+    seed: S.map.seed, workshop: S.map.id,
   };
   if (S.root) S.root.hidden = true;
   BR.bus.emit('game:start', payload);

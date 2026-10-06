@@ -4,6 +4,9 @@
 // 规则（交互方案 A1，2026-10-02 修订）：
 //   - 本局有效：game:start、game:home 时整份清空；换层（world.clear）不清，离开一层再回来，拖过的东西还在原处、
 //     捡过的物资也不复活。回主页重新开局才全部复原。不写 localStorage，也不写进工坊地图。
+//   - 联机营地（N1）：营地层（BR.config.coop.campLevel 和 lobby 为真的层）的记录按「一次联机」保存——从帐篷出发、回营地
+//     （game:start 带 coop.role、模式能联机）都不清，挪过的椅子、睡垫还在原处；只有离开联机（game:home）或主页单人开局
+//     （game:start 不带 coop）才清。客机加入时照现有的中途加入回放（房主 st 整层发过去）。
 //   - 每层一份记录，每写一次 v + 1，并发 bus 'levelstate:set' { lv, kind, key, v: 新值（删除为 null）, ver, src }。
 //   - 联机房主权威：客机收到 st 用 import(lv, data) 整层替换（发 'levelstate:import'），收到 set 用
 //     set(lv, kind, key, v, { ver, src: 'net' }) 写一条；src 原样带进事件，coop 据此不回发。
@@ -354,6 +357,36 @@ function importLevel(lv, data, meta) {
   return r.v;
 }
 
+// 联机营地层的 id（隐藏层，不在 LEVEL_ORDER 里）
+function campLevels() {
+  const out = new Set();
+  const c = BR.config && BR.config.coop;
+  if (c && c.campLevel != null) out.add(String(c.campLevel));
+  if (BR.levels && typeof BR.levels.all === 'function') {
+    for (const d of BR.levels.all()) if (d && d.lobby && d.id != null) out.add(String(d.id));
+  }
+  return out;
+}
+// 这次开局还在同一次联机里（帐篷出发、回营地、客机跟进房主）：带 coop.role，模式能联机（main 也按这条判断 game.coop）
+function coopRun(p) {
+  if (!p || !p.coop || !p.coop.role) return false;
+  const M = BR.MODES && (BR.MODES[p.mode] || BR.MODES.casual);
+  return !!(M && M.coop);
+}
+// 清掉除 keep 以外的层
+function clearExcept(keep) {
+  if (!levels.size) return;
+  const drop = [];
+  levels.forEach((r, id) => { if (!keep.has(id)) drop.push(id); });
+  if (!drop.length) return;
+  if (drop.length === levels.size) { clear(); return; }
+  for (const id of drop) clear(id);
+}
+function onGameStart(p) {
+  if (coopRun(p)) clearExcept(campLevels());
+  else clear();
+}
+
 function clear(lv) {
   if (lv != null) {
     const id = String(lv);
@@ -378,9 +411,10 @@ function info() {
   return out;
 }
 
-// 新开一局、回主页：上一局记下的全部作废（本文件比 main.js 先注册，world.start 建区块时读到的已经是空表）
+// 新开一局、回主页：上一局记下的全部作废（本文件比 main.js 先注册，world.start 建区块时读到的已经是空表）。
+// 联机里的开局（帐篷出发、回营地）留着营地层那一份，见文件头
 if (BR.bus) {
-  BR.bus.on('game:start', () => clear());
+  BR.bus.on('game:start', onGameStart);
   BR.bus.on('game:home', () => clear());
 }
 
@@ -412,5 +446,6 @@ BR.levelState = {
   import: importLevel,
   clear,
   info,
+  campLevels: () => Array.from(campLevels()),   // 按「一次联机」保存的营地层 id
 };
 })();

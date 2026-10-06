@@ -21,12 +21,16 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(ROOT, 'tests', 'output');
 fs.mkdirSync(OUT, { recursive: true });
 const SEED = 20260913;
-// --only pure,fallback,world,reg,levels：只跑其中几段（缺省全跑）；--levels 0,1,dev：道具登记一致性只查这几层（缺省 LEVEL_ORDER 全部 26 层）
+// --only pure,fallback,world,reg,levels：只跑其中几段（缺省全跑）；--levels 0,1,dev：道具登记一致性只查这几层
+// （缺省 LEVEL_ORDER 全部 26 层，再加不在 LEVEL_ORDER 里的隐藏层 HIDDEN_LEVELS，例如联机营地 coopcamp）
 const argv = process.argv.slice(2);
 const argOf = n => { const i = argv.indexOf('--' + n); return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : null; };
 const ONLY = argOf('only') ? new Set(argOf('only').split(',').map(s => s.trim())) : null;
 const want = s => !ONLY || ONLY.has(s);
 const LEVELS_ARG = argOf('levels');
+// 隐藏层：不在 LEVEL_ORDER、主页和测试模式的层级列表里都没有，但联机两边画质可以不同，道具登记一样要逐项对得上
+// （营地的折叠椅、睡袋靠 key 同步拖动位置；座位 seats、躺位 beds 以后 D2 坐下 / 躺下也只靠它们对上）
+const HIDDEN_LEVELS = ['coopcamp'];
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -791,7 +795,7 @@ function pageLvRecords({ id, quality }) {
   const px = sp && Number.isFinite(sp.x) ? sp.x : BR.player.x, pz = sp && Number.isFinite(sp.z) ? sp.z : BR.player.z;
   const ccx = Math.floor(px / S), ccz = Math.floor(pz / S);
   const STRUCT = new Set(['wall', 'pillar', 'door', 'stairwell', 'elevator', 'window', 'streetlight', 'fence', 'lightPanel', 'ceiling', 'floor', 'baseboard', 'vent', 'pipe', 'puddle', 'sign', 'hole', 'cubicle', 'exit']);
-  const out = { ok: true, chunk: [ccx, ccz], props: [], fixtures: [], containers: [], parts: [], issues: [], n: { props: 0, drag: 0, fixtures: 0, containers: 0, parts: 0, seats: 0, beds: 0 } };
+  const out = { ok: true, chunk: [ccx, ccz], props: [], fixtures: [], containers: [], parts: [], seats: [], beds: [], issues: [], n: { props: 0, drag: 0, fixtures: 0, containers: 0, parts: 0, seats: 0, beds: 0 } };
   const r4 = v => Math.round(v * 1e4) / 1e4;
   for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
     const cx = ccx + dx, cz = ccz + dz;
@@ -805,6 +809,9 @@ function pageLvRecords({ id, quality }) {
       out.props.push([r.key, r.kind, r.draggable, r.exitOverlap, r.children.length, r.seats.length, r.beds.length, r4(r.pivot.x), r4(r.pivot.z), r4(r.pivot.rot)]);
       out.n.props++; if (r.draggable) out.n.drag++;
       out.n.seats += r.seats.length; out.n.beds += r.beds.length;
+      // 座位、躺位逐个记全（坐标、朝向、高度都已经由 kit 四舍五入过）：高低画质要一模一样，不只是条数一样
+      r.seats.forEach((a, i) => out.seats.push([r.key, i, a]));
+      r.beds.forEach((a, i) => out.beds.push([r.key, i, a]));
       if (STRUCT.has(r.kind)) out.issues.push('结构件被登记成道具 ' + r.key + ' ' + r.kind);
       if (r.exitOverlap && r.draggable) out.issues.push('压着出口圈却能拖 ' + r.key);
       for (const p of r.parts) { out.parts.push([r.key, p.key, p.type, p.name]); out.n.parts++; }
@@ -830,7 +837,10 @@ async function levelRegistry(browser, base) {
   watch(page, 'levels');
   await boot(page, base);
   const order = await ev(page, () => (BR.LEVEL_ORDER || []).map(String));
-  const levels = LEVELS_ARG ? LEVELS_ARG.split(',').map(s => s.trim()).filter(Boolean) : order;
+  // 缺省再加上已注册的隐藏层；没注册（新旧文件混着用、Lcoopcamp.js 没加载）只出警告，营地本身由 tests/camp.mjs 把关
+  const hidden = await ev(page, ids => ids.filter(id => BR.levels.has(id)), HIDDEN_LEVELS);
+  for (const id of HIDDEN_LEVELS) if (!hidden.includes(id) && !LEVELS_ARG) console.log('WARN 隐藏层 ' + id + ' 没注册，道具登记一致性跳过它');
+  const levels = LEVELS_ARG ? LEVELS_ARG.split(',').map(s => s.trim()).filter(Boolean) : order.concat(hidden.filter(id => !order.includes(id)));
   const summary = [];
   for (const id of levels) {
     const per = {};
@@ -850,9 +860,16 @@ async function levelRegistry(browser, base) {
     if (!h || !h.ok || !l || !l.ok) { check('L' + id + '：进层并生成出生点 3×3 块', false, { high: h && h.error, low: l && l.error }); continue; }
     const same = k2 => JSON.stringify(h[k2]) === JSON.stringify(l[k2]);
     const firstDiff = k2 => { const a = h[k2], b2 = l[k2]; for (let i = 0; i < Math.max(a.length, b2.length); i++) if (JSON.stringify(a[i]) !== JSON.stringify(b2[i])) return { i, high: a[i], low: b2[i] }; return null; };
-    const ok = same('props') && same('fixtures') && same('containers') && same('parts');
-    check('L' + id + '：出生点 3×3 块高低画质的道具/设备/容器/部件 [key, kind, …] 逐项一致', ok,
-      ok ? h.n : { props: firstDiff('props'), fixtures: firstDiff('fixtures'), containers: firstDiff('containers'), parts: firstDiff('parts') });
+    const ok = same('props') && same('fixtures') && same('containers') && same('parts') && same('seats') && same('beds');
+    check('L' + id + '：出生点 3×3 块高低画质的道具/设备/容器/部件/座位/躺位 [key, kind, …] 逐项一致', ok,
+      ok ? h.n : { props: firstDiff('props'), fixtures: firstDiff('fixtures'), containers: firstDiff('containers'), parts: firstDiff('parts'), seats: firstDiff('seats'), beds: firstDiff('beds') });
+    if (HIDDEN_LEVELS.includes(id)) {
+      // 营地（N1-camp）：两把折叠椅各带一个座位、两个睡袋各带一个躺位，都能拖；高低画质都一样（上面逐项比过）
+      const kinds = h.props.map(p => p[1]);
+      check('L' + id + '：营地的可拖家具是 2 把折叠椅（各 1 个座位）+ 2 个睡袋（各 1 个躺位），没有别的可拖道具', h.n.drag === 4 && h.n.seats === 2 && h.n.beds === 2 &&
+        kinds.filter(k => k === 'chair').length === 2 && h.props.filter(p => p[2]).every(p => (p[1] === 'chair' && p[5] === 1) || (p[1] !== 'chair' && p[6] === 1)),
+        { n: h.n, drag: h.props.filter(p => p[2]).map(p => p.slice(0, 3).concat(p.slice(5, 7))) });
+    }
     const issues = h.issues.concat(l.issues);
     check('L' + id + '：登记自检（结构件不登记、压出口不能拖、span 不越界不重叠、生成无异常）', issues.length === 0, issues.slice(0, 5));
     summary.push([id, h.chunk.join(','), h.n.props, h.n.drag, h.n.fixtures, h.n.containers, h.n.parts, h.n.seats, h.n.beds]);

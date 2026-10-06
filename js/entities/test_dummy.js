@@ -3,6 +3,9 @@
 // 感染症状（2026-09-14，纯表现）：被悲尸划伤后按 e.infection 的阶段画——胸口划痕渗棕色淤泥 + 间歇抽搐、制服往红褐色变、
 // 冒脓疱、头部乱晃，感染中倒地后尸体抽搐再挣扎着爬起来。计时和转化归 entities.js（只在房主跑），这里只读阶段号，房主和联机客机画法一样。
 // 症状只改本实例自己的材质（ownMaterials 拷的那份），不碰共享材质，别的测试人和玩家皮肤不受影响
+// 联机（N1）：测试人穿召唤者的制服颜色。testmode.js 生成的 id 是 'dummy~<皮肤>~<h|g>~<uid>'（h 房主或单机、g 客机），
+// build 只从 ctx.entity.id 的前缀取颜色和召唤者（前缀不对时照旧用本机皮肤），房主和客机按同一个 id 建模型，看到的颜色一样，快照列数不变。
+// 两个玩家穿同一种颜色时，光看颜色分不出是谁的测试人：头顶挂一个「XX的测试人」小名牌（CanvasTexture 精灵）
 (function () {
 'use strict';
 const BR = window.BR;
@@ -125,6 +128,103 @@ const RISE_KEYS = [[0, Math.PI / 2], [0.3, 1.0], [0.48, 1.32], [0.8, -0.24], [1,
 // 头罩分不出来，只能让面罩这几件绕脖子晃，配合身体抽搐看起来就是在甩头
 const HEAD_RE = /(^|_)(mask|visor|filter)$/i;
 const SUIT_RE = /^Suit(\.\d+)?$/;
+
+// ---------- 召唤者（id 前缀）与名牌 ----------
+const ID_RE = /^dummy~([a-z0-9_-]{1,24})~([hg])~./;
+const TAG_Y = 2.02;              // 兜帽顶在 1.77 m，名牌再高一点，不挡脸
+const TAG_W = 0.6, TAG_H = 0.15; // 世界尺寸（米）：走近了是一块小牌子，不会像 UI 一样糊在屏幕上
+const TAG_NEAR = 4, TAG_GROW_MAX = 2.5;   // 离得比 4 m 远时按距离放大（最多 2.5 倍），8~10 m 外字也认得出；不透墙
+const TAG_CHECK = 0.5;           // 秒：隔这么久看一次要不要挂（换制服、对方掉线都会变）
+const TAG_W_PX = 256, TAG_H_PX = 64;
+
+function skinKnown(k) { return typeof k === 'string' && Array.isArray(BR.SKINS) && BR.SKINS.some(s => s && s.key === k); }
+// { skin, who:'h'|'g' } | null
+function summonerOf(id) {
+  const m = ID_RE.exec(String(id == null ? '' : id));
+  return m && skinKnown(m[1]) ? { skin: m[1], who: m[2] } : null;
+}
+function cleanNick(s) { return String(s == null ? '' : s).split('\u2063').join('').trim().slice(0, 16); }
+// 名牌上写什么；'' = 不挂。只在联机、两个玩家同色时挂，写召唤者的昵称（没有昵称时和 testmode 的提示用同一个叫法）
+function tagTextOf(e, u) {
+  if (!u.who || e.state === 'dead') return '';
+  const C = BR.coop;
+  if (!C || !C.active || (C.role !== 'host' && C.role !== 'guest')) return '';
+  const mine = (BR.skin && BR.skin.current) || (BR.game && BR.game.skin) || BR.DEFAULT_SKIN;
+  if (!skinKnown(C.peerSkin) || C.peerSkin !== mine) return '';
+  const selfMade = (C.role === 'host') === (u.who === 'h');
+  const name = selfMade
+    ? cleanNick(BR.net && BR.net.myName) || (C.role === 'guest' ? '朋友' : '房主')
+    : cleanNick(C.peerName) || (C.role === 'guest' ? '房主' : '朋友');
+  return name + '的测试人';
+}
+// 名牌材质按文字共用（两个人顶多几种写法），不随实体释放；和联机队友头顶的名牌同一种画法
+const tagMats = new Map();
+function tagMat(T, text) {
+  let m = tagMats.get(text);
+  if (m) return m;
+  const c = document.createElement('canvas');
+  c.width = TAG_W_PX;
+  c.height = TAG_H_PX;
+  const g = c.getContext('2d');
+  const W = TAG_W_PX, H = TAG_H_PX;
+  const font = size => '600 ' + size + 'px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
+  let size = 30;
+  g.font = font(size);
+  while (size > 14 && g.measureText(text).width > W - 24) { size -= 2; g.font = font(size); }
+  const w = Math.min(W, g.measureText(text).width + 24), x = (W - w) / 2, y = 8, h = H - 16, r = 12;
+  g.beginPath();
+  g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r);
+  g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r);
+  g.arcTo(x, y, x + w, y, r);
+  g.closePath();
+  g.fillStyle = 'rgba(12,10,4,0.62)';
+  g.fill();
+  g.fillStyle = '#fff5cc';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText(text, W / 2, H / 2 + 1);
+  const tex = new T.CanvasTexture(c);
+  tex.encoding = T.sRGBEncoding;
+  tex.minFilter = T.LinearFilter;
+  tex.generateMipmaps = false;
+  m = new T.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
+  m.name = 'dummy-tag';
+  tagMats.set(text, m);
+  return m;
+}
+// 远处放大：底边始终在兜帽上方同一高度
+function tagScale(s, e) {
+  const p = BR.player;
+  const d = p && Number.isFinite(p.x) ? Math.hypot(p.x - e.x, p.z - e.z) : 0;
+  const k = Math.min(TAG_GROW_MAX, Math.max(1, d / TAG_NEAR));
+  if (Math.abs(s.scale.x - TAG_W * k) < 1e-3) return;
+  s.scale.set(TAG_W * k, TAG_H * k, 1);
+  s.position.y = TAG_Y + TAG_H * (k - 1) * 0.5;
+}
+function syncTag(T, e, u) {
+  const text = tagTextOf(e, u);
+  if (!text) {
+    if (u.tag && u.tag.visible) u.tag.visible = false;
+    u.tagText = '';
+    return;
+  }
+  if (!u.tag) {
+    if (typeof document === 'undefined' || !e.obj) return;
+    const s = new T.Sprite(tagMat(T, text));
+    s.name = 'dummy-tag';
+    s.position.set(0, TAG_Y, 0);
+    s.scale.set(TAG_W, TAG_H, 1);
+    s.renderOrder = 2;
+    e.obj.add(s);   // 挂在根节点上（不随枢轴后仰、倒地），名牌一直立着
+    u.tag = s;
+  } else if (u.tagText !== text) {
+    u.tag.material = tagMat(T, text);
+  }
+  u.tagText = text;
+  u.tag.visible = true;
+}
 
 // ---------- 兜底模型：hazmat.glb 还没加载完 / 加载失败时的程序化防化服 ----------
 // 只有掉到这条路上才用得到（有 GLB 就永远用 GLB，M1 打分员看到的"细节最完整"说的也是 GLB）。
@@ -503,8 +603,14 @@ BR.entityTypes.register({
     const kind = model ? 'glb' : 'fallback';
     if (model) fitModel(T, model);
     else model = fallbackModel(T);
+    const id = ctx.entity && ctx.entity.id != null ? String(ctx.entity.id) : 'dummy';
+    // 召唤者的制服颜色只从 id 前缀取；前缀不对（老 id、自测直接 spawn 的）照旧穿本机玩家的颜色
+    const by = summonerOf(id);
     if (BR.skin && typeof BR.skin.apply === 'function') {
-      try { BR.skin.apply(model); } catch (err) { console.warn('[test_dummy] 皮肤上色失败', err); }
+      try {
+        if (by) BR.skin.apply(model, by.skin);
+        else BR.skin.apply(model);
+      } catch (err) { console.warn('[test_dummy] 皮肤上色失败', err); }
     }
     const mats = ownMaterials(model);
     // 后仰、倒地转的是这个枢轴（原点在脚底），根节点的位置和 yaw 归 entities.js 管
@@ -513,10 +619,11 @@ BR.entityTypes.register({
     const head = makeHead(T, model, pivot);
     const root = new T.Group();
     root.add(pivot);
-    const id = ctx.entity && ctx.entity.id != null ? String(ctx.entity.id) : 'dummy';
     root.userData.dummy = {
       pivot, model, head, kind, mats, flash: 0, deadAt: null, phase: 0, lx: NaN, lz: NaN,
       seed: BR.util.hashStr(id), tint: 0, sores: null, slimeAt: null, pusAt: null,
+      // 召唤者：skin 制服颜色、who 'h' 房主或单机 / 'g' 客机（null = id 前缀不对）；tag 名牌精灵（要挂时才建）
+      skin: by ? by.skin : null, who: by ? by.who : null, tag: null, tagText: '', tagAcc: TAG_CHECK,
     };
     return root;
   },
@@ -618,6 +725,13 @@ BR.entityTypes.register({
     u.pivot.position.y = lift;
     if (u.head) u.head.rotation.set(hx, hy, hz);
     if (!T) return;
+    // 名牌：倒地立刻收；挂不挂隔 0.5 s 看一次（只有联机、召唤者是从 id 认出来的才需要看）
+    if (u.who) {
+      if (u.tag && u.tag.visible && e.state === 'dead') u.tag.visible = false;
+      u.tagAcc += dt > 0 ? dt : 0;
+      if (u.tagAcc >= TAG_CHECK) { u.tagAcc = 0; syncTag(T, e, u); }
+      if (u.tag && u.tag.visible) tagScale(u.tag, e);
+    }
     if (inf || u.tint > 0 || u.sores) symptoms(T, e, u, inf, now);
     // 只在闪烁值变化时改材质
     if (flash > 0 || u.flash > 0) { setFlash(T, u.mats, flash); u.flash = flash; }

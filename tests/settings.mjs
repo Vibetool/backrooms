@@ -1,6 +1,7 @@
 // 后室 · 设置面板自测：node tests/settings.mjs
 // js/ui/settings.js、css/settings.css 还没接进 index.html（只有验收代理能改 index.html），
-// 所以这里用 page.addScriptTag 把它注入到已经跑起来的页面里，跟主页两个新按钮一起测。
+// 所以这里用 page.addScriptTag 把它注入到已经跑起来的页面里，跟主页三个次要按钮（联机 / 创意工坊 / 设置）一起测。
+// 按钮一律按文字找、不按 nth-of-type：N1 加了「联机」以后 DOM 顺序变了，竖屏时 CSS 还会用 order 把「联机」排到最下面。
 // 起本地静态服务（随机端口）+ 无头 Chrome（SwiftShader），拦截 api.ovobot.ai，逐项验证后退出码 1/0。
 import http from 'node:http';
 import fs from 'node:fs';
@@ -70,6 +71,34 @@ async function injectSettings(page, base) {
   await page.waitForFunction(() => !!(window.BR && BR.settingsUI), null, { timeout: 5000 });
 }
 const ev = (page, fn, arg) => page.evaluate(fn, arg);
+// 主页次要按钮按文字找（「联机」按钮里还有画两人小图标的空 span，textContent 只剩「联机」）
+function secBtn(page, text) {
+  return page.locator('.home-secondary-btn').filter({ hasText: new RegExp('^\\s*' + text + '\\s*$') }).first();
+}
+// 三个次要按钮：DOM 顺序的文字、屏幕上从上到下的文字、矩形（按 DOM 顺序）、「联机」的样式
+function secInfo() {
+  const btns = Array.from(document.querySelectorAll('.home-secondary-btn'));
+  const box = b => { const r = b.getBoundingClientRect(); return { text: b.textContent.trim(), x: r.x, y: r.y, w: r.width, h: r.height, bottom: r.bottom, right: r.right, coop: b.classList.contains('is-coop') }; };
+  const rects = btns.map(box);
+  const coop = document.querySelector('.home-secondary-btn.is-coop');
+  const cs = coop ? getComputedStyle(coop) : null;
+  return {
+    texts: rects.map(r => r.text),
+    visual: rects.slice().sort((a, b) => a.y - b.y).map(r => r.text),
+    rects,
+    coopStyle: cs ? { border: cs.borderTopWidth + ' ' + cs.borderTopColor, color: cs.color, weight: cs.fontWeight, bg: cs.backgroundColor, icon: !!coop.querySelector('.home-coop-icon') } : null,
+    otherWeight: (() => { const o = btns.find(b => !b.classList.contains('is-coop')); return o ? getComputedStyle(o).fontWeight : null; })(),
+  };
+}
+// 「联机」：深色底（alpha ≥ 0.6）、2px 金黄描边 #e8c547、金黄字 #f1d467、字重比另外两个大、左边有 CSS 画的两人小图标
+function coopStyleOk(i) {
+  const c = i.coopStyle;
+  if (!c) return false;
+  const m = /rgba?\(([^)]+)\)/.exec(c.bg || '');
+  const parts = m ? m[1].split(',').map(Number) : [];
+  const alpha = parts.length === 4 ? parts[3] : parts.length ? 1 : 0;
+  return c.border === '2px rgb(232, 197, 71)' && c.color === 'rgb(241, 212, 103)' && +c.weight > +i.otherWeight && c.icon && alpha >= 0.6;
+}
 
 // 「游玩」挂牌第二稿（css/home.css「右下角『游玩』」一节）：横棍右端插进屏幕右边缘（右边正好到视口右边、右头不画边框），
 // 左端只伸出牌子宽的约 5%；牌子是改挂牌前的金黄；页面不能因为棍子伸到边而横向可滚
@@ -123,32 +152,33 @@ async function desktop(browser, base) {
   const page = await newPage(ctx, 'desktop');
   await boot(page, base);
 
-  // ---------- 主页两个新按钮：存在、顺序、位置在「游玩」正上方且不挡标题/人物 ----------
+  // ---------- 主页三个次要按钮：存在、顺序、位置在「游玩」正上方且不挡标题/人物 ----------
   const layout = await ev(page, () => {
     const play = document.querySelector('.home-play').getBoundingClientRect();
     // 「游玩」是挂着的牌子：牌子上方还有吊绳和横棍，按钮组要在整块挂牌（棍子上沿）之上
     const rod = document.querySelector('.home-sign-rod');
     const hangTop = Math.min(play.y, rod ? rod.getBoundingClientRect().y : Infinity);
     const title = document.querySelector('.home-title').getBoundingClientRect();
-    const btns = Array.from(document.querySelectorAll('.home-secondary-btn'));
     return {
-      texts: btns.map(b => b.textContent.trim()),
-      rects: btns.map(b => b.getBoundingClientRect()).map(r => ({ x: r.x, y: r.y, w: r.width, h: r.height, bottom: r.bottom, right: r.right })),
       play: { x: play.x, y: play.y, w: play.width, h: play.height, bottom: play.bottom, right: play.right, hangTop },
       title: { bottom: title.bottom, right: title.right },
     };
   });
-  check('主页：两个新按钮存在且顺序为 创意工坊/设置', JSON.stringify(layout.texts) === JSON.stringify(['创意工坊', '设置']), layout.texts);
+  const sec = await ev(page, secInfo);
+  Object.assign(layout, { texts: sec.texts, visual: sec.visual, rects: sec.rects });
+  check('主页：三个次要按钮存在，DOM 顺序为 联机 / 创意工坊 / 设置', JSON.stringify(sec.texts) === JSON.stringify(['联机', '创意工坊', '设置']), sec.texts);
+  check('主页（桌面）：屏幕上从上到下也是 联机 / 创意工坊 / 设置（「联机」在这一列最上面）', JSON.stringify(sec.visual) === JSON.stringify(['联机', '创意工坊', '设置']), sec.visual);
+  check('主页：「联机」深色底、2px 金黄描边、金黄字、字重大一档、带两人小图标', coopStyleOk(sec), { coop: sec.coopStyle, other: sec.otherWeight });
   const allAbovePlay = layout.rects.every(r => r.bottom <= layout.play.hangTop + 1);
-  check('主页：两个按钮都在「游玩」挂牌正上方（不压横棍、吊绳、牌子）', allAbovePlay, { btns: layout.rects, play: layout.play });
+  check('主页：三个按钮都在「游玩」挂牌正上方（不压横棍、吊绳、牌子）', allAbovePlay, { btns: layout.rects, play: layout.play });
   check('主页：不挡标题', layout.rects.every(r => r.y >= layout.title.bottom), { btns: layout.rects, title: layout.title });
-  check('主页：两个按钮点击目标 ≥ 44px', layout.rects.every(r => r.h >= 44 && r.w >= 44), layout.rects);
+  check('主页：三个按钮点击目标 ≥ 44px', layout.rects.every(r => r.h >= 44 && r.w >= 44), layout.rects);
   const geo = await ev(page, signGeometry);
   check('主页：横棍右端插进屏幕右边缘、左端伸出牌子约 5%，牌子金黄，页面不横向滚动', signOk(geo), geo);
   await shot(page, 'desktop-home');
 
   // ---------- 点「创意工坊」打开工坊界面、不报错；关掉回到主页再测「设置」 ----------
-  await page.click('.home-secondary-btn:nth-of-type(1)');
+  await secBtn(page, '创意工坊').click();
   await page.waitForTimeout(150);
   const wsOpen = await ev(page, () => { const r = document.querySelector('.ws-root'); return !!r && !r.hidden; });
   check('点「创意工坊」打开工坊界面，不报页面错误', wsOpen && errors.length === 0, { wsOpen, errors });
@@ -157,7 +187,7 @@ async function desktop(browser, base) {
 
   // ---------- 注入 settings.js，点「设置」打开面板 ----------
   await injectSettings(page, base);
-  await page.click('.home-secondary-btn:nth-of-type(2)');
+  await secBtn(page, '设置').click();
   await page.waitForTimeout(150);
   check('点「设置」打开面板', await ev(page, () => !document.querySelector('.set-root').hidden));
   await shot(page, 'desktop-panel-open');
@@ -170,7 +200,7 @@ async function desktop(browser, base) {
   check('实体上限滑条改动 → BR.config.world.maxActiveEntities 实时生效', await ev(page, () => BR.config.world.maxActiveEntities === 45),
     await ev(page, () => BR.config.world.maxActiveEntities));
 
-  // ---------- 音量四项：monkeypatch 接口，确认被正确调用（含还没实现的 coop.setVoiceVolume） ----------
+  // ---------- 音量四项：monkeypatch 接口，确认被正确调用（含 coop.setVoiceVolume） ----------
   await ev(page, () => {
     window.__spy = { master: [], ambient: [], sfx: [], voice: [] };
     const A = BR.audio;
@@ -178,7 +208,7 @@ async function desktop(browser, base) {
     A.setAmbientVolume = v => __spy.ambient.push(v);
     A.setSfxVolume = v => __spy.sfx.push(v);
     if (!BR.coop) BR.coop = {};
-    BR.coop.setVoiceVolume = v => __spy.voice.push(v);   // 真实接口由工坊核心代理加，这里只验证"存在就调用"的契约
+    BR.coop.setVoiceVolume = v => __spy.voice.push(v);   // 真实接口在 coop.js（对方语音音量），这里只验证"存在就调用"的契约
   });
   // 四个音量滑条紧跟在"实体上限"后面：总音量、环境音量、音效音量、语音音量
   await ev(page, () => {
@@ -267,8 +297,9 @@ async function mobile(browser, base) {
   const page = await newPage(ctx, 'mobile');
   await boot(page, base);
 
-  // 竖屏手机上两个按钮放在「游玩」挂牌左边（放上方会压到人物靴子，见 css/home.css）：
-  // 要求和整块挂牌（牌子 + 吊绳 + 伸出牌子两边的横棍）的外框隔开 ≥ 8px，不挡标题，都在视口内
+  // 竖屏手机上三个按钮放在「游玩」挂牌左边（放上方会压到人物靴子，见 css/home.css）：
+  // 要求和整块挂牌（牌子 + 吊绳 + 伸出牌子两边的横棍）的外框隔开 ≥ 8px，不挡标题，都在视口内；
+  // 「联机」用 order 排到这一列最下面一格，底边和牌子底边齐平（离拇指最近）
   const layout = await ev(page, () => {
     const box = r => ({ x: r.x, y: r.y, w: r.width, h: r.height, bottom: r.bottom, right: r.right });
     const play = box(document.querySelector('.home-play').getBoundingClientRect());
@@ -281,12 +312,17 @@ async function mobile(browser, base) {
     const rodL = document.querySelector('.home-sign-rod').getBoundingClientRect().left;
     return { play, hang, sep, rodL, title: { bottom: title.bottom }, btns, vw: innerWidth, vh: innerHeight };
   });
-  check('手机竖屏：两个按钮点击目标 ≥ 44px', layout.btns.every(r => r.h >= 44 && r.w >= 44), layout.btns);
-  check('手机竖屏：两个按钮不压「游玩」挂牌（横棍、吊绳、牌子外框隔开 ≥ 8px），不挡标题', layout.sep.every(d => d >= 8) && layout.btns.every(r => r.y >= layout.title.bottom), layout);
-  // 钉住位置：按钮在挂牌左边（右边 ≤ 横棍左端 − 8），下面那个按钮底边和牌子底边齐平（±2px），别悄悄漂回挂牌上方压靴子
-  const lowBtn = layout.btns[layout.btns.length - 1];
-  check('手机竖屏：两个按钮在挂牌左边，下面那个和牌子底边齐平', layout.btns.every(r => r.right <= layout.rodL - 8) && Math.abs(lowBtn.bottom - layout.play.bottom) <= 2, layout);
-  check('手机竖屏：两个按钮都在视口内', layout.btns.every(r => r.x >= 0 && r.y >= 0 && r.right <= layout.vw && r.bottom <= layout.vh), layout);
+  const sec = await ev(page, secInfo);
+  check('手机竖屏：三个次要按钮 DOM 顺序仍是 联机 / 创意工坊 / 设置', JSON.stringify(sec.texts) === JSON.stringify(['联机', '创意工坊', '设置']), sec.texts);
+  check('手机竖屏：屏幕上从上到下是 创意工坊 / 设置 / 联机（「联机」在左列最下格）', JSON.stringify(sec.visual) === JSON.stringify(['创意工坊', '设置', '联机']), sec.visual);
+  check('手机竖屏：「联机」深色底、2px 金黄描边、金黄字、字重大一档、带两人小图标', coopStyleOk(sec), { coop: sec.coopStyle, other: sec.otherWeight });
+  check('手机竖屏：三个按钮点击目标 ≥ 44px', layout.btns.length === 3 && layout.btns.every(r => r.h >= 44 && r.w >= 44), layout.btns);
+  check('手机竖屏：三个按钮不压「游玩」挂牌（横棍、吊绳、牌子外框隔开 ≥ 8px），不挡标题', layout.sep.every(d => d >= 8) && layout.btns.every(r => r.y >= layout.title.bottom), layout);
+  // 钉住位置：按钮在挂牌左边（右边 ≤ 横棍左端 − 8），最下面那格是「联机」、底边和牌子底边齐平（±2px），别悄悄漂回挂牌上方压靴子
+  const coopBox = sec.rects.find(r => r.coop);
+  const lowBtn = sec.rects.slice().sort((a, b) => b.bottom - a.bottom)[0];
+  check('手机竖屏：三个按钮在挂牌左边，最下面那格是「联机」且和牌子底边齐平', layout.btns.every(r => r.right <= layout.rodL - 8) && !!coopBox && lowBtn === coopBox && Math.abs(coopBox.bottom - layout.play.bottom) <= 2, { coop: coopBox, low: lowBtn, play: layout.play, rodL: layout.rodL });
+  check('手机竖屏：三个按钮都在视口内', layout.btns.every(r => r.x >= 0 && r.y >= 0 && r.right <= layout.vw && r.bottom <= layout.vh), layout);
   const geo = await ev(page, signGeometry);
   check('手机竖屏：横棍右端插进屏幕右边缘、左端伸出牌子约 5%，牌子金黄，页面不横向滚动', signOk(geo), geo);
   await shot(page, 'mobile-home');

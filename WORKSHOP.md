@@ -4,6 +4,8 @@
 
 已告知用户的默认设计：出生点周围 7×7 区块可编辑、范围外照常生成；俯视编辑 + 3D 预览；放置实体默认 20 m 触发、被打死不复活；本机保存、首期不做上传分享；联机时房主把地图同步给客机。
 
+2026-10-02 起（联机营地 N1）：工坊地图要两人一起玩，走主页「联机」→ 营地 → 帐篷里选「我的地图」，地图信息卡上不再有联机按钮（ARCHITECTURE.md 第 9 节）。
+
 所有规则仍受 ARCHITECTURE.md 约束（经典 script、r147、中文注释、DOM 自建前缀、z-index 表）。
 
 ## 1. 文件归属
@@ -105,11 +107,13 @@ inRadius(x, z) → bool
 ```
 
 `game:start` payload 新增 `workshop: mapId`（或联机客机收到的地图对象）：main 先 `BR.workshop.activate(map, { editing: false })`，再 `world.start(map.baseLevel, map.seed)`；`game:home` 时 `deactivate()`。
-联机：房主 `{ t: 'world', seed, levelId, settings, workshopMap }`，客机收到后激活这份地图对象（不写入本机存储）再开局。
+联机：房主 `{ t: 'world', seed, levelId, mode, difficulty, settings, …, workshopMap }`，客机收到后激活这份地图对象（不写入本机存储）再开局。
+入口（N1 起）：两人在联机营地的帐篷里，选单多一栏「我的地图」，只列开营地那个人（房主）的工坊地图（帐篷共享选择里的 `maps: [{ id, name, lv }]`，选中的写进 `ws`）。
+选了地图以后层级下拉变灰、写「地图自带层级」，模式照常在帐篷里选（游玩 / 测试；噩梦 N2 打开）。出发时房主 `BR.coop.startRun({ mode, difficulty, settings, seed: map.seed, levelId: map.baseLevel, workshop: map.id })`，黑幕上写「「地图名」 · 游玩」这样的字；客机跟着 world 消息里的 `workshopMap` 进同一张图。客机自己的工坊地图不列出来。
 
 ## 8. 编辑器界面（js/ui/workshop.js，class 前缀 ws-，z-index 58）
 
-- **地图列表**：主页「创意工坊」打开。「新建」（选起始层级 + 名称）；每张图一张卡片：名称、起始层级、更新时间、改动统计（墙/实体/出口），按钮「编辑」「游玩」「删除」（二次确认）。
+- **地图列表**：主页「创意工坊」打开。「新建」（选起始层级 + 名称；层级列表跳过 `def.hidden` 的层，联机营地 coopcamp 不能拿来做地图）；每张图一张卡片：名称、起始层级、更新时间、改动统计（墙/实体/出口），按钮「编辑」「游玩」「删除」（二次确认）。
 - **编辑器**：
   - 进入时 `activate(map, { editing: true })`，以 `map.seed` 载入起始层级；编辑态不跑实体 AI、不刷任何实体和物品，把可编辑范围内的区块全部载入。
   - 俯视正交相机；相机放在层级天花板略下方朝下看，天花板被近裁剪面切掉。提供"剖切高度"滑条，适配不同层高。
@@ -117,7 +121,8 @@ inRadius(x, z) → bool
   - 工具栏：选择、删墙、加墙（点格子边切换；非格子区域拖出一段自由墙）、放实体（面板按层级分组，同测试模式列表）、出口（拖动移动、删除、添加并选目标层级）、出生点、基本设置（面板，覆盖第 2 节 settings 全部字段）、3D 预览（第一人称走动，Esc 返回俯视）、撤销、重做、保存、退出（有未保存改动时确认）。
   - 叠加标记：实体（阵营色圆点 + 中文名 + 触发半径圈）、出口（门形图标 + 目标层级，范围外出口标"未开放"）、出生点（旗子）。
   - 出生点所在格被围死时，保存前警告，但允许保存。
-- **保存后的信息卡**：名称、起始层级、改动统计，「游玩」→ 模式选择（游玩 / 噩梦生存四档难度 / 测试模式）→ emit `game:start { mode, difficulty, settings, seed: map.seed, workshop: map.id }`；游玩模式下「联机」按钮沿用 BR.coop。
+- **保存后的信息卡**：名称、起始层级、改动统计，「游玩」→ 模式选择（游玩 / 噩梦生存四档难度 / 测试模式）→ emit `game:start { mode, difficulty, settings, seed: map.seed, workshop: map.id }`（一个人玩，不带 coop）。
+  信息卡上没有「联机」按钮，副标题也不写「可联机」；底部一行灰字「想和朋友一起玩这张图：主页「联机」→ 帐篷里选「我的地图」」。
 - 手机：工具栏底部横排可滚动，按钮 ≥ 44 px，safe-area，面板 overscroll-behavior:contain。
 
 ## 9. 设置（js/ui/settings.js + css/settings.css，class 前缀 set-，z-index 58）
@@ -130,10 +135,14 @@ inRadius(x, z) → bool
 - `localStorage['backrooms_settings_v1']`；启动时应用，改动实时生效：
   - `BR.config.world.maxActiveEntities`
   - `BR.audio.setMaster(v)`，以及新增的 `setAmbientVolume(v)`、`setSfxVolume(v)`：audio.js 里环境层和单次音效各接一个 GainNode 再进主总线；unlock 前调用只记状态。
-  - `BR.coop.setVoiceVolume(v)`：远端语音音量
+  - `BR.coop.setVoiceVolume(v)`：远端语音音量（2026-10-03 核对时发现一直没有这个函数、滑条不起作用，2026-10-05 已补）。coop 和 net 记住这个值，之后每条新的对方语音流、掉线重连后都照用；
+    设置面板启动时推一次，联机连上（bus `coop:connected`）、重连回来（`coop:reconnected`）时再各推一次。桌面 / 安卓设对方语音 `<audio>` 的 `volume`；
+    iOS Safari 不认 `volume`，音量低于 100% 时改走 coop 的 AudioContext 上的 GainNode（`<audio>` 静音），100% 时照旧。
+    注意设置面板目前只能从主页打开，联机时人在营地 / 关卡里改不了，实际是在主页调好、连上时生效
   - `BR.input.sensitivity`
   - `BR.game.settings.quality` / `visibility`
 - 主页两个新按钮加在「游玩」上方，竖排，次要样式（「游玩」后来改成挂着的牌子，按钮在横棍上方；竖屏手机上放上方会压住人物靴子，改放在挂牌左边、底边和牌子对齐，见 css/home.css）；「创意工坊」调 `BR.workshopUI.open()`，「设置」调 `BR.settingsUI.open()`（都做存在性判断）。
+  N1 起这一列是三个次要按钮，DOM 顺序 联机 / 创意工坊 / 设置（「联机」金黄描边、金黄字；竖屏手机上用 order 排到最下面一格，离拇指最近）。
 
 ## 10. 验收（tests/workshop.mjs + 回归）
 
@@ -148,6 +157,6 @@ inRadius(x, z) → bool
   - 游玩模式：实体不打玩家。
   - 噩梦模式：实体会打玩家。
   - 测试模式：放置实体也会刷。
-- 联机（复用 tests/coop.mjs 的信令模拟）：客机拿到同一张地图，墙的改动、出口、放置实体都一致。
+- 联机（复用 tests/coop.mjs 的信令模拟，tests/workshop.mjs 第 7 节）：房主从主页「联机」进营地，客机也从主页联机入口进；房主在帐篷里选「我的地图」，两人一起进那张工坊地图。客机拿到同一张地图，墙的改动、出口、放置实体都一致。
 - 设置：各项生效并持久化；实体上限影响 spawnForChunk 的丢弃数。
 - 回归：smoke、kit、items、coop 全部通过；非工坊地图的层级布局与改动前逐字节一致（kit.mjs 已覆盖）。

@@ -19,6 +19,10 @@
 //   - 实体落点只由这 25 块自己的碰撞体决定：world 围着出生点建的块的碰撞体先摘掉，出生点挪动不会牵连金样
 //   - 实体表用原始层级（不走出生安全区的 safeLevel），每块单独清场再放，块与块之间互不影响、也不撞 28 只上限
 //
+// 层级列表：缺省是 BR.LEVEL_ORDER（26 层）再加不在 LEVEL_ORDER 里的隐藏层 HIDDEN_LEVELS（联机营地 coopcamp，N1 新增）。
+//   隐藏层还没有基线时只出警告、不算失败（孩子看过营地截图后由主会话 --update --levels coopcamp 建基线）；没注册时也只警告
+//   （营地本身由 tests/camp.mjs 把关）。--levels 显式点名时照常处理
+//
 // 模式：
 //   默认     和 <out>/<levelId>.json 比对，逐层 PASS/FAIL + 差异摘要；本次结果另写到 --dump（缺省 tests/output/golden-current/）方便 diff
 //   --update 重写基线（可配 --levels 只写白名单里的层）
@@ -42,6 +46,8 @@ const SEED = 12345;
 const RADIUS = 2;          // 5×5：cx、cz ∈ -2..2
 const SPAWN_FACTOR = 1;    // "正常后室"满额：表里每种实体都尽量刷得出来，落点覆盖面最大
 const QUALITY = 'high';
+// 不在 LEVEL_ORDER 里、但也要守住生成结果的隐藏层（缺省列表追加在 LEVEL_ORDER 后面）
+const HIDDEN_LEVELS = ['coopcamp'];
 
 // ---------- 参数 ----------
 const argv = process.argv.slice(2);
@@ -425,7 +431,16 @@ async function main() {
     });
 
     const order = await page.evaluate(() => (BR.LEVEL_ORDER || []).map(String));
-    let levels = LEVELS_ARG && LEVELS_ARG !== true ? String(LEVELS_ARG).split(',').map(s => s.trim()).filter(Boolean) : order;
+    const explicit = !!(LEVELS_ARG && LEVELS_ARG !== true);
+    let levels = explicit ? String(LEVELS_ARG).split(',').map(s => s.trim()).filter(Boolean) : order.slice();
+    if (!explicit) {
+      const reg = await page.evaluate(ids => ids.filter(id => BR.levels.has(id)), HIDDEN_LEVELS);
+      for (const id of HIDDEN_LEVELS) {
+        if (order.includes(id)) continue;
+        if (reg.includes(id)) levels.push(id);
+        else console.log(`WARN 隐藏层 ${id} 没注册（Lcoopcamp.js 没加载？），本次跳过`);
+      }
+    }
     if (SHARD) levels = levels.filter((_, i) => i % SHARD.n === SHARD.k - 1);
     console.log(`golden ${UPDATE ? '更新基线' : '比对'}：${levels.length} 层 [${levels.join(', ')}]，种子 ${SEED}，画质 ${QUALITY}，区块 ${-RADIUS}..${RADIUS}，基线目录 ${path.relative(ROOT, OUT_DIR) || '.'}`);
     fs.mkdirSync(UPDATE ? OUT_DIR : DUMP_DIR, { recursive: true });
@@ -462,6 +477,7 @@ async function main() {
         const prev = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
         fs.writeFileSync(file, text);
         const what = prev == null ? '新建' : prev === text ? '未变' : '已更新';
+        if (prev == null && HIDDEN_LEVELS.includes(id) && !TAG) console.log(`  注意 L${id}：隐藏层第一次建基线，按约定要孩子先看过营地截图`);
         check('golden ' + id + '：写入基线', true);
         console.log(`UPDATE L${id}  ${what} ${path.relative(ROOT, file)}  hash ${doc.hash.slice(0, 16)}  (${stats(doc)}，${(text.length / 1024).toFixed(0)} KB，${secs}s${newErrs ? '，页面报错 ' + newErrs : ''})`);
         continue;
@@ -471,6 +487,7 @@ async function main() {
       if (!fs.existsSync(file)) {
         noBaseline++;
         console.log(`SKIP L${id}  无基线 ${path.relative(ROOT, file)}  hash ${doc.hash.slice(0, 16)}  (${stats(doc)}，${secs}s)`);
+        if (HIDDEN_LEVELS.includes(id)) console.log(`WARN 隐藏层 ${id} 还没有基线：只出警告、不算失败；孩子看过截图后由主会话 golden --update --levels ${id} 建`);
         continue;
       }
       compared++;

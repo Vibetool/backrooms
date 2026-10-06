@@ -16,6 +16,7 @@
 <link rel="stylesheet" href="css/game.css">
 <link rel="stylesheet" href="css/home.css">
 <link rel="stylesheet" href="css/coop.css">
+<link rel="stylesheet" href="css/tent.css">
 <link rel="stylesheet" href="css/workshop.css">
 <link rel="stylesheet" href="css/settings.css">
 </head>
@@ -89,9 +90,13 @@
 <script src="js/game/skin.js"></script>
 <script src="js/game/testmode.js"></script>
 <script src="js/levels/_kit.js"></script>
+<!-- 营地构件 BR.camp（帐篷、行军床、营地范围）：联机营地和以后 C1 的 NPC 营地共用 -->
+<script src="js/levels/_camp.js"></script>
 <!-- chunk1：按 BR.LEVEL_ORDER 顺序 -->
 <script src="js/levels/L0.js"></script>
 <script src="js/levels/L1.js"></script>
+<!-- 联机营地（隐藏层，不在 LEVEL_ORDER）：借 L1.js 的 BR.L1room 建，必须排在 L1.js 之后 -->
+<script src="js/levels/Lcoopcamp.js"></script>
 <script src="js/levels/L2.js"></script>
 <script src="js/levels/L3.js"></script>
 <script src="js/levels/L4.js"></script>
@@ -150,7 +155,9 @@
 <script src="js/items/water_bottle.js"></script>
 <script src="js/net/net.js"></script>
 <script src="js/net/coop.js"></script>
+<script src="js/game/coopcamp.js"></script>
 <script src="js/ui/home.js"></script>
+<script src="js/ui/tentmenu.js"></script>
 <script src="js/ui/workshop.js"></script>
 <script src="js/ui/settings.js"></script>
 <script src="js/main.js"></script>

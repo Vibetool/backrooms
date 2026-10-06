@@ -1,7 +1,12 @@
-// 后室 · 双人联机端到端测试：node tests/coop.mjs
-// 本地静态服务 + 无头 Chrome 两个独立 context（房主 A / 客机 B）。context.route 拦截 room.php，
-// 在测试进程内存里模拟信令服务（照 js/net/net.js 实际发的 action / 参数 / JSON 格式），WebRTC 走本机真实连接。
-// 每步打印 PASS/FAIL，截图写 tests/output/coop-*.png，两页全部 console 写 tests/output/coop-console.log。
+// 后室 · 两人联机端到端测试：node tests/coop.mjs
+// 联机营地（N1，孩子 2026-10-02）：联机只从主页「联机」进 —— 开营地 / 加入朋友的营地 → 两人在营地（隐藏层 coopcamp）→
+// 帐篷里选模式和层级 → 一起出发；回营地要对方同意；掉线自动重连。
+// 本地静态服务 + 无头 Chrome，每个玩家一个独立 context。context.route 拦截 api.ovobot.ai，在测试进程内存里模拟 room.php
+// （照 rocket-game/backend/room.php 的真实行为写：join 只拦 joined、不拦 closed；名字 trim + mb_substr(0,16)，trim 只剥
+// ASCII 空白、不剥营地暗标 U+2063；signal / poll 不查房间在不在；错误带真实的 HTTP 状态码），WebRTC 走本机真实连接。
+// 测试绝不连真实联机服务器：api.ovobot.ai 的请求全部在这里应答，其余外站请求一律掐掉。
+// 后面各阶段的联机用例都用这几个辅助函数进局：openCoopFromHome / hostCamp / joinCamp / tentPick / readyBoth / departBoth。
+// 每步打印 PASS/FAIL，截图写 tests/output/coop-*.png，所有页面的 console 写 tests/output/coop-console.log。
 // 任一检查失败或页面出现 console.error / 未捕获异常时退出码为 1。
 import http from 'node:http';
 import fs from 'node:fs';
@@ -18,8 +23,12 @@ fs.mkdirSync(OUT, { recursive: true });
 for (const f of fs.readdirSync(OUT)) if (/^coop-.*\.(png|log)$/.test(f)) fs.unlinkSync(path.join(OUT, f));
 
 const VIEW = { width: 800, height: 450 };   // SwiftShader 纯 CPU 渲染，两页同时跑，视口小一点省负载
+const TOUCH_VIEW = { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true };
 const OVOBOT_RE = /^https?:\/\/api\.ovobot\.ai\//;
+const OTHER_HOST_RE = /^https?:\/\/(?!127\.0\.0\.1[:/])(?!api\.ovobot\.ai\/)/;
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const CAMP = 'coopcamp';
+const CAMP_TAG = '\u2063';
 // --disable-audio-output：本机无头 Chrome 的音频输出设备不走时钟（AudioContext.currentTime 1 秒只前进 0.005），
 // WebAudio 整条图不出数据，AnalyserNode 永远是 0、WebRTC 也发不出音频包；改用假输出流后正常（实测 RMS≈0.21）
 const ARGS = ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--use-fake-device-for-media-stream',
@@ -66,6 +75,35 @@ async function realMicWorks(base) {
   }
 }
 
+// 每个 context 页面脚本执行前：记下画到 canvas 上的字（营地小黑板是 CanvasTexture，靠它核对房号）、
+// 记下所有 RTCPeerConnection（「断网」时让本机这条连接报 failed，见 cutPeer）
+function harnessInit() {
+  try {
+    const P = CanvasRenderingContext2D.prototype;
+    const ft = P.fillText, fr = P.fillRect;
+    const texts = new WeakMap();
+    window.__canvasTexts = c => (texts.get(c) || []).slice();
+    P.fillRect = function (x, y, w, h) {
+      if (this.canvas && x <= 0 && y <= 0 && w >= this.canvas.width && h >= this.canvas.height) texts.set(this.canvas, []);
+      return fr.apply(this, arguments);
+    };
+    P.fillText = function (t) {
+      if (this.canvas) {
+        let a = texts.get(this.canvas);
+        if (!a) texts.set(this.canvas, a = []);
+        a.push(String(t));
+        if (a.length > 200) a.shift();
+      }
+      return ft.apply(this, arguments);
+    };
+  } catch (err) { /* 没有 canvas 也不影响联机 */ }
+  const RPC = window.RTCPeerConnection;
+  if (typeof RPC === 'function') {
+    const list = window.__pcs = [];
+    window.RTCPeerConnection = new Proxy(RPC, { construct(T, args, nt) { const pc = Reflect.construct(T, args, nt); list.push(pc); return pc; } });
+  }
+}
+
 // ---------- 静态服务（同 smoke.mjs） ----------
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
@@ -98,17 +136,22 @@ function logLine(line) { try { fs.appendFileSync(LOG_FILE, secs() + line + '\n')
 function check(name, ok, detail) {
   results.push({ name, ok: !!ok, detail });
   const line = (ok ? 'PASS ' : 'FAIL ') + name + (detail !== undefined ? '  ' + (typeof detail === 'string' ? detail : JSON.stringify(detail)) : '');
-  console.log(secs() + line);
-  logLine('==== ' + line.slice(0, 300));
+  console.log(secs() + (ok && line.length > 700 ? line.slice(0, 700) + '…' : line));
+  logLine('==== ' + line.slice(0, 400));
 }
 function info(text, detail) {
   console.log(secs() + 'INFO ' + text + (detail !== undefined ? '  ' + (typeof detail === 'string' ? detail : JSON.stringify(detail)) : ''));
 }
+// 浏览器自己打的「Failed to load resource」：信令请求照真服务器回 404 / 409，或者测试故意断网时，浏览器会记一条网络错误。
+// 这不是游戏代码的 console.error，单独记账、不算页面报错（其余外站请求本来就被掐掉，不会出现在这里）
+const netNoise = [];
 function watch(page, tag) {
   page.on('console', m => {
     const line = '[' + tag + '] ' + m.type() + ': ' + m.text();
     logLine(line);
-    if (m.type() === 'error') errors.push(line + ' @ ' + (m.location().url || ''));
+    const url = (m.location() && m.location().url) || '';
+    if (m.type() === 'error' && /^Failed to load resource/.test(m.text()) && OVOBOT_RE.test(url)) netNoise.push(line + ' @ ' + url);
+    else if (m.type() === 'error') errors.push(line + ' @ ' + url);
     else if (m.type() === 'warning') warnings.push(line);
   });
   page.on('pageerror', e => {
@@ -148,6 +191,7 @@ async function waitFor(page, fn, arg, timeout) {
 }
 async function step(title, fn) {
   console.log('\n----- ' + title + ' -----');
+  logLine('----- ' + title);
   try {
     await fn();
   } catch (err) {
@@ -156,11 +200,22 @@ async function step(title, fn) {
 }
 
 // =====================================================================
-// room.php 模拟（照 net.js：create/join/signal/close 走 POST，status/poll 走 GET；
-// 响应一律 { ok, ... }，失败 { ok:false, error }；poll 返回 { last, msgs:[payload...] }）
+// room.php 模拟：照 rocket-game/backend/room.php 逐条写
+//   create(POST) → {ok, code}；名字 trim（只剥 " \t\n\r\0\x0B"）、空了写「匿名工程师」、mb_substr(0, 16)（按码点）
+//   其余 action 先把 code 规整成大写字母数字，不是 6 位 → 400 bad_code
+//   join(POST)：没有 → 404 room_not_found；joined → 409 room_full；closed 不拦（照样改成 joined）→ {ok, host}
+//   status(GET)：没有 → 404；{ok, state, host_name, guest_name}（guest_name 建房时是 null）
+//   signal(POST)：to 不是 host 就当 guest；payload 为 null → 400 no_payload；JSON 超过 60000 → 413 too_large；不查房间在不在
+//   poll(GET)：me 不是 host 就当 guest；id > since 的最多 40 条；不查房间在不在 → {ok, msgs, last}
+//   close(POST)：改成 closed（房间不存在也回 ok）；别的 action → 400 unknown_action
+//   每次请求先清掉 120 分钟前建的房间和信令（服务器时钟 = 本进程时钟）
 // =====================================================================
 const rooms = new Map();
-const sig = { calls: {}, log: [] };
+const signals = [];           // { id, room, to, payload, at }：全表自增 id，和 MySQL 的 AUTO_INCREMENT 一样跨房间
+let sigSeq = 0;
+const ROOM_TTL_MS = 120 * 60 * 1000;
+const sig = { calls: {}, log: [], joins: {} };
+const netDown = new Set();    // 这些 tag 的 context 现在「断网」：信令请求直接失败
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 function newCode() {
   let s;
@@ -170,45 +225,55 @@ function newCode() {
   } while (rooms.has(s));
   return s;
 }
-function cleanName(v) { return String(v == null ? '' : v).trim().slice(0, 16); }
+const phpTrim = v => String(v).replace(/^[ \t\n\r\0\x0B]+|[ \t\n\r\0\x0B]+$/g, '');
+function nameOf(body) {
+  let n = phpTrim(body && body.name != null ? body.name : '');
+  if (n === '') n = '匿名工程师';
+  return Array.from(n).slice(0, 16).join('');
+}
 function roomApi(q, body) {
-  const room = q.code ? rooms.get(String(q.code).toUpperCase()) : null;
-  switch (q.action) {
-    case 'create': {
-      const code = newCode();
-      rooms.set(code, { state: 'waiting', host_name: cleanName(body.name), guest_name: '', q: { host: [], guest: [] }, seq: 0 });
-      return { ok: true, code };
-    }
+  const now = Date.now();
+  for (const [c, r] of rooms) if (now - r.createdAt > ROOM_TTL_MS) rooms.delete(c);
+  for (let i = signals.length - 1; i >= 0; i--) if (now - signals[i].at > ROOM_TTL_MS) signals.splice(i, 1);
+  const action = q.action || '';
+  if (action === 'create') {
+    const code = newCode();
+    rooms.set(code, { state: 'waiting', host_name: nameOf(body), guest_name: null, createdAt: now });
+    return [200, { ok: true, code }];
+  }
+  const code = String(q.code || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
+  if (code === '' || code.length !== 6) return [400, { ok: false, error: 'bad_code' }];
+  const room = rooms.get(code) || null;
+  switch (action) {
     case 'join':
-      if (!room) return { ok: false, error: 'room_not_found' };
-      if (room.state === 'closed') return { ok: false, error: 'room_closed' };
-      if (room.state === 'joined') return { ok: false, error: 'room_full' };
+      sig.joins[code] = (sig.joins[code] || 0) + 1;
+      if (!room) return [404, { ok: false, error: 'room_not_found' }];
+      if (room.state === 'joined') return [409, { ok: false, error: 'room_full' }];
+      room.guest_name = nameOf(body);
       room.state = 'joined';
-      room.guest_name = cleanName(body.name);
-      return { ok: true, host: room.host_name };
+      return [200, { ok: true, host: room.host_name }];
     case 'status':
-      if (!room) return { ok: false, error: 'room_not_found' };
-      return { ok: true, state: room.state, host_name: room.host_name, guest_name: room.guest_name };
-    case 'signal':
-      if (!room) return { ok: false, error: 'room_not_found' };
-      if (room.state === 'closed') return { ok: false, error: 'room_closed' };
-      if (q.to !== 'host' && q.to !== 'guest') return { ok: false, error: 'bad_to' };
-      if (!body || body.payload == null) return { ok: false, error: 'bad_payload' };
-      room.q[q.to].push({ id: ++room.seq, payload: body.payload });
-      return { ok: true };
+      if (!room) return [404, { ok: false, error: 'room_not_found' }];
+      return [200, { ok: true, state: room.state, host_name: room.host_name, guest_name: room.guest_name }];
+    case 'signal': {
+      const to = q.to === 'host' ? 'host' : 'guest';
+      const payload = body && body.payload !== undefined ? body.payload : null;
+      if (payload === null) return [400, { ok: false, error: 'no_payload' }];
+      if (JSON.stringify(payload).length > 60000) return [413, { ok: false, error: 'too_large' }];
+      signals.push({ id: ++sigSeq, room: code, to, payload, at: now });
+      return [200, { ok: true }];
+    }
     case 'poll': {
-      if (!room) return { ok: false, error: 'room_not_found' };
-      if (room.state === 'closed') return { ok: false, error: 'room_closed' };
-      if (q.me !== 'host' && q.me !== 'guest') return { ok: false, error: 'bad_me' };
-      const since = +q.since || 0;
-      const msgs = room.q[q.me].filter(m => m.id > since);
-      return { ok: true, last: msgs.length ? msgs[msgs.length - 1].id : since, msgs: msgs.map(m => m.payload) };
+      const me = q.me === 'host' ? 'host' : 'guest';
+      const since = parseInt(q.since, 10) || 0;
+      const msgs = signals.filter(m => m.room === code && m.to === me && m.id > since).slice(0, 40);
+      return [200, { ok: true, msgs: msgs.map(m => m.payload), last: msgs.length ? msgs[msgs.length - 1].id : since }];
     }
     case 'close':
       if (room) room.state = 'closed';
-      return { ok: true };
+      return [200, { ok: true }];
   }
-  return { ok: false, error: 'bad_action' };
+  return [400, { ok: false, error: 'unknown_action' }];
 }
 const EXPECT_METHOD = { create: 'POST', join: 'POST', signal: 'POST', close: 'POST', status: 'GET', poll: 'GET' };
 const methodMismatch = [];
@@ -220,6 +285,7 @@ async function onRoute(route, tag) {
     'Access-Control-Allow-Headers': 'Content-Type',
   };
   try {
+    if (netDown.has(tag)) { await route.abort('internetdisconnected'); return; }
     if (req.method() === 'OPTIONS') { await route.fulfill({ status: 204, headers: cors, body: '' }); return; }
     const u = new URL(req.url());
     if (!/\/room\.php$/.test(u.pathname)) {
@@ -229,15 +295,15 @@ async function onRoute(route, tag) {
     const q = Object.fromEntries(u.searchParams.entries());
     let body = {};
     const raw = req.postData();
-    if (raw) { try { body = JSON.parse(raw); } catch (err) { body = {}; } }
+    if (raw) { try { body = JSON.parse(raw) || {}; } catch (err) { body = {}; } }
     if (EXPECT_METHOD[q.action] && EXPECT_METHOD[q.action] !== req.method()) methodMismatch.push(q.action + ' ' + req.method());
-    const r = roomApi(q, body);
+    const [status, r] = roomApi(q, body);
     sig.calls[q.action] = (sig.calls[q.action] || 0) + 1;
     if (q.action !== 'poll' && q.action !== 'status') {
       const t = body && body.payload && body.payload.t;
-      sig.log.push(tag + ' ' + req.method() + ' ' + q.action + (q.code ? ' ' + q.code : '') + (q.to ? ' to=' + q.to : '') + (t ? ' ' + t : '') + ' → ' + JSON.stringify(r).slice(0, 60));
+      sig.log.push(secs() + tag + ' ' + req.method() + ' ' + q.action + (q.code ? ' ' + q.code : '') + (q.to ? ' to=' + q.to : '') + (t ? ' ' + t : '') + ' → ' + status + ' ' + JSON.stringify(r).slice(0, 60));
     }
-    await route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify(r) });
+    await route.fulfill({ status, headers: cors, contentType: 'application/json', body: JSON.stringify(r) });
   } catch (err) {
     // 页面关闭时（pagehide 里发的 close）fulfill 会失败，忽略
   }
@@ -249,6 +315,8 @@ async function onRoute(route, tag) {
 async function newContext(browser, tag, opts) {
   const ctx = await browser.newContext(Object.assign({ viewport: VIEW }, opts || {}));
   await ctx.route(OVOBOT_RE, route => onRoute(route, tag));
+  await ctx.route(OTHER_HOST_RE, route => route.abort());
+  await ctx.addInitScript(harnessInit);
   if (micStub) await ctx.addInitScript(fakeMicInit);
   return ctx;
 }
@@ -257,23 +325,85 @@ async function newPage(ctx, tag) {
   watch(page, tag);
   return page;
 }
-async function boot(page, base) {
-  await page.goto(base + 'index.html');
-  await page.waitForFunction(() => window.BR && window.__br && BR.home && BR.home.shown, null, { timeout: 30000 });
+// 打开页面，等主页显示、装好页面内工具。url 不给就是 index.html?dev：地址栏带 ?dev 时帐篷的层级列表才有开发测试层
+// Level Dev（BR.home.levelOptions({dev:true})），回营地时房主按上一局的选择重填，Level Dev 也认
+async function boot(page, base, url) {
+  // 只差 #hash 的地址 goto 不会重新载入页面：先离开，保证邀请链接是一次真正的打开
+  if (url) await page.goto('about:blank');
+  await page.goto(url || base + 'index.html?dev');
+  await page.waitForFunction(() => window.BR && window.__br && BR.home && BR.home.shown, null, { timeout: 60000 });
   await page.evaluate(() => BR.assets.init());
   await page.waitForTimeout(600);
   await page.evaluate(installHelpers);
+  await page.evaluate(registerDevB);
 }
 
-// 页面内工具：toast 记录、伤害/换层计数、对方人形颜色、实体列表、碰撞采样
+// 页面内工具：toast / 横幅 / 总线事件记录、黑幕与大标题的先后、伤害 / 换层计数、对方人形颜色、实体列表、碰撞采样、小黑板的字
 function installHelpers() {
-  const T = window.__t = { toasts: [], dmg: 0, levelEnters: 0, lastEnter: null };
-  if (BR.hud && typeof BR.hud.toast === 'function') {
-    const orig = BR.hud.toast;
-    BR.hud.toast = function (text) { T.toasts.push(String(text)); return orig.apply(this, arguments); };
+  const now = () => performance.now();
+  const T = window.__t = { toasts: [], notices: [], bus: [], dmg: 0, levelEnters: 0, lastEnter: null, trace: [] };
+  // toast 从 DOM 记（hud 自己内部的 toast 不经 BR.hud.toast）：新出的 .hud-toast，和同一句话连着来时的 hud-toast-bump
+  if (BR.hud && typeof BR.hud.notice === 'function') {
+    const orig = BR.hud.notice;
+    BR.hud.notice = function (text, acts) {
+      T.notices.push({ t: now(), text: String(text), acts: (acts || []).map(a => a && a.label) });
+      return orig.apply(this, arguments);
+    };
   }
+  // 黑幕：调用、到全黑（resolve）的时刻；startRun：调用时刻（房主）
+  if (BR.hud && typeof BR.hud.curtain === 'function') {
+    const orig = BR.hud.curtain;
+    BR.hud.curtain = function (text) {
+      const rec = { k: 'curtain', t: now(), text: text === false ? false : String(text) };
+      // 出发 / 回营地落黑幕的这一刻（灯已经灭了）：记下已载入区块所有灯描述的最大强度（营地 + 窗外带都该是 0）
+      if (text !== false && BR.world && typeof BR.world.chunks === 'function') {
+        let n = 0, max = 0;
+        for (const c of BR.world.chunks()) for (const l of (c.lights || [])) { n++; if (l.intensity > max) max = l.intensity; }
+        rec.lv = BR.game.levelId; rec.lightsN = n; rec.lightsMax = max; rec.transit = BR.coopCamp ? BR.coopCamp.transit : null;
+      }
+      T.trace.push(rec);
+      const p = orig.apply(this, arguments);
+      if (p && typeof p.then === 'function') p.then(v => { T.trace.push({ k: text === false ? 'curtainClear' : 'curtainBlack', t: now(), v }); });
+      return p;
+    };
+  }
+  // 帐篷 state 里的 goAt：房主自己 emit 出去的、客机收到的（收到那一刻离出发还剩多少秒）。4d 判倒数从 3 开始、4e 比两边 goAt 用
+  T.goAts = [];
+  const noteGo = (who, st) => { if (st && st.goAt > 0 && !T.goAts.some(g => g.goAt === st.goAt && g.who === who)) T.goAts.push({ who, t: now(), goAt: st.goAt, left: +(st.goAt - BR.coop.clock()).toFixed(3) }); };
+  if (BR.coop && typeof BR.coop.emit === 'function') {
+    const oe = BR.coop.emit;
+    BR.coop.emit = function (kind, p) { if (kind === 'tent') noteGo('emit', p); return oe.apply(this, arguments); };
+  }
+  BR.bus.on('net:tent', p => noteGo('recv', p));
+  // 本页联机时钟相对墙钟的偏差（两页在同一台机器上，墙钟一样）：两边差 < 100 ms 才算倒数同步
+  T.clkOff = () => BR.coop.clock() - (performance.timeOrigin + performance.now()) / 1000;
+  if (BR.coop && typeof BR.coop.startRun === 'function') {
+    const orig = BR.coop.startRun;
+    BR.coop.startRun = function (p) { T.trace.push({ k: 'startRun', t: now(), lv: p && p.levelId, mode: p && p.mode }); return orig.apply(this, arguments); };
+  }
+  // 大标题真正播出、黑幕真正撤掉（DOM）
+  // 同一批变动用同一个时刻：黑幕撤掉和大标题开播常在同一个回调里，先后由下面记录的顺序（先黑幕、后标题）表示
+  const mo = new MutationObserver(recs => {
+    const t = now();
+    for (const r of recs) {
+      if (r.type === 'childList') {
+        r.addedNodes.forEach(n => { if (n.nodeType === 1 && n.classList.contains('hud-toast')) T.toasts.push(n.textContent); });
+      } else if (r.type === 'attributes' && r.attributeName === 'class' && r.target.classList && r.target.classList.contains('hud-toast') &&
+        r.target.classList.contains('hud-toast-bump') && !(r.oldValue || '').includes('hud-toast-bump')) {
+        T.toasts.push(r.target.textContent);
+      }
+    }
+    const c = document.querySelector('.hud-curtain');
+    const on = !!(c && !c.hidden);
+    if (on !== T._curtainOn) { T._curtainOn = on; T.trace.push({ k: on ? 'curtainShown' : 'curtainHidden', t }); }
+    const title = document.querySelector('.hud-title');
+    if (title && !title.hidden && title.classList.contains('hud-title-play') && !T._titleOn) { T._titleOn = true; T.trace.push({ k: 'titleShown', t, text: title.textContent.slice(0, 40) }); }
+    if (title && (title.hidden || !title.classList.contains('hud-title-play'))) T._titleOn = false;
+  });
+  mo.observe(document.body, { subtree: true, attributes: true, attributeOldValue: true, attributeFilter: ['class', 'hidden'], childList: true });
+  ['coop:peerGone', 'coop:code', 'coop:reconnecting', 'coop:reconnected'].forEach(n => BR.bus.on(n, p => { T.bus.push({ n, t: now(), p: p ? JSON.parse(JSON.stringify(p)) : null }); }));
   BR.bus.on('player:damage', () => { T.dmg++; });
-  BR.bus.on('level:enter', p => { T.levelEnters++; T.lastEnter = p && p.id; });
+  BR.bus.on('level:enter', p => { T.levelEnters++; T.lastEnter = p && p.id; T.trace.push({ k: 'levelEnter', t: now(), id: p && p.id }); });
   // 统计客机（authoritative=false）时区块自己生成了多少实体：客机的实体应当全部来自房主快照
   T.guestLocalSpawns = 0;
   const sfc = BR.entities.spawnForChunk;
@@ -282,15 +412,18 @@ function installHelpers() {
     if (!BR.entities.authoritative && Array.isArray(r)) T.guestLocalSpawns += r.length;
     return r;
   };
+  T.since = (list, t0) => list.filter(x => x.t >= t0);
+  // 对方语音的 <audio>（net.js 收到对方音轨时 createElement，不挂进 DOM）：记下来，9 节查「联机语音音量」真的设到它上面
+  T.audios = [];
+  const oce = document.createElement;
+  document.createElement = function (tag) { const el = oce.apply(this, arguments); if (String(tag).toLowerCase() === 'audio') T.audios.push(el); return el; };
   T.expectedHex = key => {
     const c = new THREE.Color().setHex(BR.skin.color(key));
     const cm = THREE.ColorManagement;
     if (!cm || cm.legacyMode !== false) c.convertSRGBToLinear();
     return c.getHex();
   };
-  T.peerSuit = () => {
-    const o = BR.gfx.scene.getObjectByName('coop-peer');
-    if (!o) return null;
+  const suitOf = o => {
     const suit = [];
     o.traverse(m => {
       if (!m.isMesh) return;
@@ -298,9 +431,22 @@ function installHelpers() {
         if (mt && mt.color && (/^Suit(\.\d+)?$/.test(mt.name || '') || m.userData.suit)) suit.push(mt.color.getHex());
       });
     });
-    return { visible: o.visible, x: o.position.x, y: o.position.y, z: o.position.z, suit };
+    return suit;
+  };
+  T.peerSuit = () => {
+    const o = BR.gfx.scene.getObjectByName('coop-peer');
+    if (!o) return null;
+    return { visible: o.visible, x: o.position.x, y: o.position.y, z: o.position.z, suit: suitOf(o) };
+  };
+  T.entSuit = id => {
+    const e = BR.entities.get(id);
+    if (!e || !e.obj) return null;
+    let sprites = 0;
+    e.obj.traverse(o => { if (o.isSprite && o.visible !== false) sprites++; });
+    return { suit: suitOf(e.obj), sprites };
   };
   T.ents = () => BR.entities.list.filter(e => !e.removed).map(e => [e.id, e.type, e.x, e.z, e.hp]);
+  T.inv = () => BR.player.inventory.map(s => (s ? s.type + 'x' + s.count : null));
   T.openDir = (x, z, fy, maxD) => {
     const M = maxD || 30;
     let best = { yaw: 0, d: -1 };
@@ -330,6 +476,42 @@ function installHelpers() {
       }
     }
     return { hash: h, blocked, samples: n, loaded: di.loaded, solids: di.solids, center: di.center, stats: BR.phys.stats() };
+  };
+  // 营地小黑板 / 桌面纸：场景里挂着 CanvasTexture 的网格，按离 b.data.coopcamp 里 board / map 的距离认
+  T.campData = () => {
+    const c = BR.world.chunks().find(q => q.key === '0,0');
+    return c && c.res && c.res.data ? c.res.data.coopcamp || null : null;
+  };
+  T.canvasNear = (p, r) => {
+    let best = null, bd = r || 1;
+    BR.gfx.scene.traverse(o => {
+      const mt = o.material;
+      if (!o.isMesh || !mt || !mt.map || !mt.map.isCanvasTexture) return;
+      const wp = new THREE.Vector3(); o.getWorldPosition(wp);
+      const d = Math.hypot(wp.x - p.x, wp.y - p.y, wp.z - p.z);
+      if (d < bd) { bd = d; best = o; }
+    });
+    return best;
+  };
+  T.boardText = () => {
+    const d = T.campData();
+    if (!d || !d.board || !window.__canvasTexts) return null;
+    const o = T.canvasNear(d.board, 0.8);
+    return o ? window.__canvasTexts(o.material.map.image).join(' | ') : null;
+  };
+  T.hudCode = () => { const e = document.querySelector('.hud-info-code'); return e && !e.hidden && e.getClientRects().length ? e.textContent : null; };
+  T.noticeTexts = () => Array.from(document.querySelectorAll('.hud-notice')).filter(n => n.getClientRects().length).map(n => n.innerText.replace(/\s+/g, ' ').trim());
+  T.prop = key => { const P = BR.world.propByKey(key); return P ? { x: +P.x.toFixed(3), z: +P.z.toFixed(3), moved: !!P.moved } : null; };
+  // 「断网」：P2P 这条路断了，本机的连接很快报 failed（DevTools 的离线模拟管不到 WebRTC，只能这样让它断）
+  T.cutPeer = () => {
+    const pcs = (window.__pcs || []).filter(pc => pc.signalingState !== 'closed');
+    for (const pc of pcs) {
+      Object.defineProperty(pc, 'connectionState', { get: () => 'failed', configurable: true });
+      Object.defineProperty(pc, 'iceConnectionState', { get: () => 'failed', configurable: true });
+      try { pc.dispatchEvent(new Event('connectionstatechange')); } catch (err) { /* 已关 */ }
+      try { pc.dispatchEvent(new Event('iceconnectionstatechange')); } catch (err) { /* 已关 */ }
+    }
+    return pcs.length;
   };
   T.sample = (ms, keys) => new Promise(res => {
     const out = {};
@@ -373,44 +555,153 @@ function installHelpers() {
   });
 }
 
-// 在测试里补一个 dev 的复制层，用来验证"真正换到另一层"（首期只注册了 dev）
+// 在测试里补一个 dev 的复制层，用来验证"真正换到另一层"
 function registerDevB() {
   if (!BR.levels.has('dev_b')) BR.levels.register(Object.assign({}, BR.levels.get('dev'), { id: 'dev_b', name: 'Level Dev B' }));
 }
 
-// ---------- 大厅操作 ----------
+// =====================================================================
+// 进局辅助（后面各阶段的联机用例都用这几个）
+// =====================================================================
+const press = (page, touch, loc) => (touch ? loc.tap() : loc.click());
 const btnText = (page, text) => page.locator('.coop-lobby button', { hasText: new RegExp('^' + text + '$') }).first();
-async function openCasualLobby(page, name) {
-  await page.click('.home-play');
-  await sleep(200);
-  await page.click('.home-menu-btn.is-casual');
-  await sleep(200);
-  await page.locator('.home-dialog-casual .home-actions .home-btn', { hasText: /^联机$/ }).first().click();
-  await page.waitForSelector('.coop-lobby', { state: 'visible', timeout: 5000 });
-  await page.fill('.coop-lobby .coop-field .coop-input', name);
+const fmtCode = c => c.slice(0, 3) + ' ' + c.slice(3);
+
+// 主页上点「联机」，等联机面板出来
+async function openCoopFromHome(page, touch) {
+  await press(page, touch, page.locator('.home-secondary-btn.is-coop').first());
+  await page.waitForSelector('.coop-lobby', { state: 'visible', timeout: 25000 });   // 机器忙时 8 s 不够（同 workshop.mjs）
 }
-async function hostRoom(page) {
-  await btnText(page, '创建房间').click();
-  const ok = await waitFor(page, () => BR.coop.phase === 'hosting' && /^[A-Z0-9]{6}$/.test(document.querySelector('.coop-code').textContent), null, 15000);
-  const code = ok ? (await page.textContent('.coop-code')).trim() : null;
-  return code;
+// 开营地：主页「联机」→ 填昵称 →「开一个营地」→ 拿到房号；opts.enter（默认 true）再点「进营地等朋友」进营地。返回房号
+async function hostCamp(page, name, opts) {
+  const o = opts || {};
+  await openCoopFromHome(page, o.touch);
+  await page.fill('.coop-lobby .coop-name-field .coop-input', name);
+  await press(page, o.touch, page.locator('.coop-lobby .coop-btn-host'));
+  const ok = await waitFor(page, () => BR.coop.phase === 'hosting' && /^[A-Z2-9]{3} [A-Z2-9]{3}$/.test(document.querySelector('.coop-lobby .coop-view-host .coop-code').textContent), null, 15000);
+  if (!ok) return null;
+  const code = (await page.textContent('.coop-lobby .coop-view-host .coop-code')).replace(/\s+/g, '');
+  if (o.shot) await shot(page, o.shot);
+  if (o.enter === false) return code;
+  await press(page, o.touch, page.locator('.coop-lobby .coop-btn-enter'));
+  const inCamp = await waitCamp(page, 30000);
+  return inCamp ? code : null;
 }
-async function joinRoom(page, code, shotName, touch) {
-  const press = loc => (touch ? loc.tap() : loc.click());
-  await page.fill('.coop-code-input', code);
-  await press(btnText(page, '加入'));
-  const confirmShown = await waitFor(page, () => {
-    const c = document.querySelector('.coop-confirm');
-    return c && !c.hidden && c.getBoundingClientRect().height > 0;
-  }, null, 15000);
-  const text = confirmShown ? await page.textContent('.coop-confirm') : '';
-  if (shotName) await shot(page, shotName);
-  if (confirmShown) await press(btnText(page, '同意加入'));
-  return { confirmShown, text };
+async function waitCamp(page, timeout) {
+  return waitFor(page, id => BR.game.levelId === id && BR.game.screen === 'playing' && !BR.world.transitioning && !!(BR.coopCamp && BR.coopCamp.inCamp), CAMP, timeout || 30000);
+}
+// 输房号走到卡片这一步：主页「联机」→「加入朋友的营地」→ 输房号（满 6 位自动去查）。返回卡片状态
+async function joinCard(page, code, opts) {
+  const o = opts || {};
+  await openCoopFromHome(page, o.touch);
+  if (o.name) await page.fill('.coop-lobby .coop-name-field .coop-input', o.name);
+  await press(page, o.touch, page.locator('.coop-lobby .coop-btn-join'));
+  await page.waitForSelector('.coop-code-input', { state: 'visible', timeout: 20000 });
+  await page.fill('.coop-code-input', o.typed || code);
+  await waitFor(page, () => {
+    const c = document.querySelector('.coop-camp-card');
+    return c && !c.hidden && !/正在找营地/.test(c.textContent) && c.getClientRects().length > 0;
+  }, null, 30000);
+  return cardState(page);
+}
+function cardState(page) {
+  return ev(page, () => {
+    const vis = e => !!e && !e.hidden && e.getClientRects().length > 0;
+    const card = document.querySelector('.coop-camp-card');
+    const join = document.querySelector('.coop-btn-joincamp');
+    return {
+      shown: vis(card), title: vis(document.querySelector('.coop-card-title')) ? document.querySelector('.coop-card-title').textContent : '',
+      why: vis(document.querySelector('.coop-card-why')) ? document.querySelector('.coop-card-why').textContent : '',
+      join: vis(join), joinEnabled: vis(join) && !join.disabled, privacy: vis(document.querySelector('.coop-privacy')),
+      value: (document.querySelector('.coop-code-input') || {}).value, phase: BR.coop.phase,
+    };
+  });
+}
+// 加入营地：code 是房号（走输房号）或者 null（页面已经停在邀请链接的卡片上）。opts.click=false 只走到卡片。
+// opts.wait（默认 true）等两边都连上、客机进了营地
+async function joinCamp(page, code, opts) {
+  const o = opts || {};
+  const card = code ? await joinCard(page, code, o) : await cardState(page);
+  if (o.click === false || !card.join) return { card, joined: false };
+  await press(page, o.touch, page.locator('.coop-lobby .coop-btn-joincamp'));
+  if (o.wait === false) return { card, joined: false };
+  const joined = await waitFor(page, () => BR.coop.active && BR.coop.phase === 'active', null, o.timeout || 90000) && await waitCamp(page, 45000);
+  return { card, joined };
 }
 async function waitActive(pages, timeout) {
   const r = await Promise.all(pages.map(p => waitFor(p, () => BR.coop.active && BR.coop.phase === 'active', null, timeout || 45000)));
   return r.every(Boolean);
+}
+// 帐篷里改选择：走 BR.coopCamp._debugSet（房主直接写、客机走 use，和选单同一条广播路径）
+function tentPick(page, sel) { return ev(page, s => BR.coopCamp._debugSet(s), sel); }
+// 走进帐篷（跳过「走到门口」的路径检查），等选单打开
+async function enterTent(page) {
+  await ev(page, () => { if (!BR.coopCamp.panelOpen) BR.coopCamp.enter({ force: true }); });
+  return waitFor(page, () => BR.coopCamp.panelOpen && !!document.querySelector('.tent-menu:not([hidden]) .tent-ready'), null, 8000);
+}
+// 两人都进帐篷点「准备」，等房主写下 goAt（倒数开始）。opts.wait=false：点完就返回（调用方自己在页面里卡倒数的时间点）
+async function readyBoth(pages, opts) {
+  const o = opts || {};
+  for (const p of pages) if (!await enterTent(p)) return false;
+  for (const p of pages) {
+    const can = await waitFor(p, () => { const b = document.querySelector('.tent-menu .tent-ready'); return b && !b.disabled && /^准备$/.test(b.textContent.trim()); }, null, 8000);
+    if (!can) return false;
+  }
+  // 两个「准备」紧挨着点：倒数只有 3 秒，中间别耽搁
+  for (const p of pages) await ev(p, () => document.querySelector('.tent-menu .tent-ready').click());
+  if (o.wait === false) return true;
+  const ok = await Promise.all(pages.map(p => waitFor(p, () => { const s = BR.coopCamp.state; return !!(s && s.goAt > 0); }, null, 8000)));
+  return ok.every(Boolean);
+}
+// 等两人都离开营地、在目标层亮起来（黑幕撤掉、过场结束）
+async function waitArrived(pages, lv, mode, timeout) {
+  const r = await Promise.all(pages.map(p => waitFor(p, a => BR.game.levelId === a.lv && (!a.mode || BR.game.mode === a.mode) && BR.game.screen === 'playing' &&
+    !BR.world.transitioning && BR.coopCamp.transit === 'idle', { lv, mode }, timeout || 40000)));
+  return r.every(Boolean);
+}
+async function departBoth(pages, lv, mode) {
+  const ready = await readyBoth(pages);
+  const arrived = ready && await waitArrived(pages, lv, mode, 45000);
+  await sleep(800);
+  return { ready, arrived };
+}
+// 横幅上的按钮（同意 / 不要 / 再开一个营地等朋友 / 回主页 / 不等了）
+async function noticeBtn(page, label, touch) {
+  const loc = page.locator('.hud-notice .hud-notice-btn', { hasText: new RegExp('^' + label + '$') }).first();
+  await loc.waitFor({ state: 'visible', timeout: 10000 });
+  await press(page, touch, loc);
+}
+const snapRun = page => ev(page, () => ({
+  lv: BR.game.levelId, mode: BR.game.mode, seed: BR.game.seed >>> 0, levelSeed: BR.world.levelSeed, x: +BR.player.x.toFixed(2), z: +BR.player.z.toFixed(2),
+  inv: __t.inv(), active: BR.coop.active, phase: BR.coop.phase, role: BR.coop.role, screen: BR.game.screen,
+}));
+
+// 出发 / 回营地亮起来以后：两台电脑都要么锁着指针，要么有「点一下画面继续」横幅。再照横幅说的点在它正中：
+// 横幅不接点击（hud-notice-pass），这一下落到画面上锁住指针，鼠标横移视角跟着转（2026-10-05 返修 r2）。
+// 查完把指针锁放掉（关一下输入再打开：input 自己退锁，不当成意外丢失、不暂停），免得后面点 DOM 的步骤点不到按钮
+let lockPages = [];
+async function lockHintCheck(tag) {
+  const look = p => ev(p, () => {
+    const n = Array.from(document.querySelectorAll('.hud-notice')).filter(x => x.getClientRects().length && /点一下画面/.test(x.textContent));
+    const r = n.length ? n[0].getBoundingClientRect() : null;
+    return { locked: !!document.pointerLockElement, hint: n.length > 0, cx: r ? Math.round(r.x + r.width / 2) : 0, cy: r ? Math.round(r.y + r.height / 2) : 0, yaw: BR.player.yaw, screen: BR.game.screen, inputOn: BR.input.enabled };
+  });
+  const sts = [];
+  for (const p of lockPages) {
+    await waitFor(p, () => !!document.pointerLockElement || Array.from(document.querySelectorAll('.hud-notice')).some(x => x.getClientRects().length && /点一下画面继续/.test(x.textContent)), null, 5000);
+    sts.push(await look(p));
+  }
+  check(tag + '：两台电脑都锁着指针，或者提示「点一下画面继续」', sts.every(s => s.locked || s.hint), sts);
+  const p = lockPages[0], s0 = sts[0];
+  if (s0 && s0.hint && !s0.locked) {
+    await p.mouse.click(s0.cx, s0.cy);
+    const locked = await waitFor(p, () => !!document.pointerLockElement, null, 3000);
+    await p.mouse.move(400, 300); await p.mouse.move(600, 300);
+    await sleep(400);
+    const s1 = await look(p);
+    check(tag + '：照横幅说的点在它正中 → 指针锁上、横幅收起，鼠标横移视角会转', locked && s1.locked && !s1.hint && Math.abs(s1.yaw - s0.yaw) > 0.01, { before: s0, after: s1 });
+  }
+  for (const q of lockPages) await ev(q, () => { const on = BR.input.enabled; if (document.pointerLockElement) { BR.input.enabled = false; BR.input.enabled = on; } return 0; });
 }
 
 // =====================================================================
@@ -441,121 +732,555 @@ async function main() {
 
   fs.appendFileSync(LOG_FILE, '\n===== 信令 =====\n' + JSON.stringify(sig.calls) + '\n' + sig.log.join('\n') + '\n');
 
-  console.log('\n----- 11 console 报错 -----');
+  console.log('\n----- 99 console 报错 -----');
   const stunRe = /stun|turn|ice|webrtc|rtcpeer|getaddrinfo|mdns/i;
   const stunWarn = warnings.filter(w => stunRe.test(w));
   const otherWarn = warnings.filter(w => !stunRe.test(w));
-  check('11 两边 console 零报错（console.error / pageerror）', errors.length === 0, errors.slice(0, 10));
+  check('99 所有页面 console 零报错（console.error / pageerror）', errors.length === 0, errors.slice(0, 10));
   info('WebRTC/STUN 相关警告（离线环境 STUN 超时，可忽略）' + stunWarn.length + ' 条', stunWarn.slice(0, 5));
   info('其他警告 ' + otherWarn.length + ' 条', otherWarn.slice(0, 12));
-  check('信令请求方法与 net.js 约定一致（create/join/signal/close=POST，status/poll=GET）', methodMismatch.length === 0, methodMismatch);
+  info('信令请求的浏览器网络错误（照真服务器回的 4xx、测试断网时的失败；不算页面报错）' + netNoise.length + ' 条', netNoise.slice(0, 6));
+  check('99 信令请求方法与 room.php 一致（create/join/signal/close=POST，status/poll=GET）', methodMismatch.length === 0, methodMismatch);
   info('信令调用次数', sig.calls);
 
   console.log('\n===== 汇总 =====');
   const failed = results.filter(r => !r.ok);
   console.log('检查 ' + results.length + ' 项，失败 ' + failed.length + ' 项');
-  for (const f of failed) console.log('  FAIL ' + f.name + '  ' + JSON.stringify(f.detail));
+  for (const f of failed) console.log('  FAIL ' + f.name + '  ' + JSON.stringify(f.detail).slice(0, 800));
   console.log('页面报错 ' + errors.length + ' 条');
-  for (const e of errors) console.log('  ' + e);
+  for (const e of errors.slice(0, 30)) console.log('  ' + e);
   console.log('截图 ' + shots.length + ' 张：' + path.relative(ROOT, OUT) + '/coop-*.png；console 全量：tests/output/coop-console.log');
   process.exitCode = failed.length || errors.length ? 1 : 0;
 }
 
 async function run(browser, base) {
   const ctxA = await newContext(browser, 'A');
-  const ctxB = await newContext(browser, 'B');
-  let A = await newPage(ctxA, 'A');
+  let ctxB = await newContext(browser, 'B');
+  const A = await newPage(ctxA, 'A');
   let B = await newPage(ctxB, 'B');
   await Promise.all([boot(A, base), boot(B, base)]);
+  lockPages = [A, B];
   await ev(A, () => BR.skin.set('pink'));
   await ev(B, () => BR.skin.set('blue'));
-  await Promise.all([ev(A, registerDevB), ev(B, registerDevB)]);
   const skins = await Promise.all([ev(A, () => BR.skin.current), ev(B, () => BR.skin.current)]);
   check('0 准备：A 皮肤粉色、B 皮肤蓝色（BR.skin.set）', skins[0] === 'pink' && skins[1] === 'blue', skins);
+  const caps = await ev(A, () => BR.coop.debugInfo().caps);
+  check('0 BR.coop.debugInfo().caps 带 camp1（缺了就拒绝配对）', Array.isArray(caps) && caps.includes('camp1'), caps);
 
-  let code = null;
-  let connected = false;
-
-  // ------------------------------------------------------------------
-  await step('1 建房与加入', async () => {
-    await openCasualLobby(A, '房主A');
-    code = await hostRoom(A);
-    check('1 A 打开联机弹窗创建房间，拿到 6 位房号', !!code && /^[A-Z0-9]{6}$/.test(code), code);
-    await shot(A, 'lobby-host');
-    await openCasualLobby(B, '客机B');
-    const j = await joinRoom(B, code, 'confirm-join');
-    check('1 B 输入房号后出现「同意加入」确认（含房主昵称和房号）', j.confirmShown && /同意加入/.test(j.text) && j.text.includes('房主A') && j.text.includes(code), j.text.slice(0, 80));
-  });
+  let code = null;          // A 当前的房号
+  let chairKey = null, chairTo = null;
+  const lastSel = {};       // 出发前帐篷里的选择（回营地后要还在）
 
   // ------------------------------------------------------------------
-  await step('2 DataChannel 连通与 hello 握手', async () => {
-    const t0 = Date.now();
-    connected = await waitActive([A, B]);
-    const st = await Promise.all([A, B].map(p => ev(p, () => ({
-      active: BR.coop.active, role: BR.coop.role, phase: BR.coop.phase, peer: BR.coop.peerName, net: BR.net.connected,
-      lobby: (document.querySelector('.coop-peer-line') || {}).textContent,
-    }))));
-    check('2 双方 DataChannel 连通，hello 握手完成', connected && st[0].net && st[1].net, { ms: Date.now() - t0, A: st[0], B: st[1] });
-    check('2 BR.coop.active、role 分别为 host / guest，昵称互通', st[0].active && st[1].active && st[0].role === 'host' && st[1].role === 'guest' &&
-      st[0].peer === '客机B' && st[1].peer === '房主A', { A: st[0], B: st[1] });
-    await shot(A, 'connected-host-lobby');
-  });
-
-  // ------------------------------------------------------------------
-  await step('3 别的游戏的 hello', async () => {
-    await ev(A, () => BR.coop.leave());
-    const bIdle = await waitFor(B, () => BR.coop.phase === 'idle' && !BR.net.active, null, 15000);
-    check('3 预备：A 退出联机后 B 回到 idle', bIdle);
-    // 通过 A 的 DataChannel 发 game:'rocket' 的 hello（把 A 发出的 hello 改写）
-    await ev(A, () => {
-      window.__origSend = BR.net.send;
-      BR.net.send = function (obj, opt) {
-        if (obj && obj.t === 'hello') obj = Object.assign({}, obj, { game: 'rocket' });
-        return window.__origSend.call(this, obj, opt);
-      };
+  await step('1 主页「联机」入口与第一屏', async () => {
+    const btn = await ev(A, () => {
+      const b = document.querySelector('.home-secondary-btn.is-coop');
+      return b ? { text: b.textContent.trim(), visible: b.getClientRects().length > 0, disabled: b.disabled, order: Array.from(document.querySelectorAll('.home-secondary-btn')).map(x => x.textContent.trim()) } : null;
     });
-    const code2 = await hostRoom(A);
-    await joinRoom(B, code2);
-    const kicked = await waitFor(B, () => /别的游戏的房间/.test(document.querySelector('.coop-status').textContent) && BR.coop.phase === 'idle' && !BR.net.active, null, 45000);
-    const bs = await ev(B, () => ({ status: document.querySelector('.coop-status').textContent, phase: BR.coop.phase, active: BR.coop.active, net: BR.net.active }));
-    check('3 B 收到 game:rocket 的 hello → 提示「别的游戏的房间」并断开', kicked, bs);
-    await shot(B, 'other-game-kicked');
-    const aIdle = await waitFor(A, () => BR.coop.phase === 'idle' && !BR.net.active, null, 15000);
-    check('3 A 随之回到 idle（收到 B 的 bye）', aIdle, await ev(A, () => ({ phase: BR.coop.phase, toasts: __t.toasts.slice(-2) })));
-    await ev(A, () => { BR.net.send = window.__origSend; delete window.__origSend; });
-    // 重新建立正常连接
-    code = await hostRoom(A);
-    await joinRoom(B, code);
-    connected = await waitActive([A, B]);
-    const roles = await Promise.all([ev(A, () => BR.coop.role), ev(B, () => BR.coop.role)]);
-    check('3 恢复 hello 后重新建立 A/B 正常连接', connected && roles[0] === 'host' && roles[1] === 'guest', { code, roles });
+    check('1 主页有单独的「联机」按钮（.home-secondary-btn.is-coop）', !!btn && btn.visible && !btn.disabled && /联机/.test(btn.text), btn);
+    await openCoopFromHome(A);
+    const first = await ev(A, () => {
+      const L = document.querySelector('.coop-lobby');
+      const vis = e => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
+      const btns = Array.from(L.querySelectorAll('button')).filter(vis).map(b => b.textContent.trim());
+      const inputs = Array.from(L.querySelectorAll('input')).filter(vis).map(i => i.className);
+      return { btns, inputs, sub: (L.querySelector('.coop-sub') || {}).textContent, text: L.innerText };
+    });
+    const want = ['开一个营地', '加入朋友的营地'];
+    check('1 第一屏只有昵称框和「开一个营地」「加入朋友的营地」，副标题「2 人 · 语音默认闭麦」', want.every(w => first.btns.includes(w)) &&
+      first.btns.filter(b => !want.includes(b) && b !== '×').length === 0 && first.inputs.length === 1 && first.sub === '2 人 · 语音默认闭麦', first);
+    check('1 第一屏不出现模式、层级、难度', !/游玩|噩梦|测试模式|Level|难度/.test(first.text), first.text.slice(0, 200));
+    await shot(A, 'lobby-first');
+    await A.click('.coop-lobby .coop-close');
+    await sleep(300);
+  });
+
+  // ------------------------------------------------------------------
+  await step('4a 房主一个人进营地', async () => {
+    code = await hostCamp(A, '房主A', { shot: 'lobby-host-code' });
+    check('4a A 从主页「联机」→「开一个营地」拿到 6 位房号（没有 0、O、1、I），再点「进营地等朋友」进了营地', !!code && /^[A-HJ-NP-Z2-9]{6}$/.test(code), code);
+    if (!code) return;
+    const room = rooms.get(code);
+    check('4a 服务器上的房主昵称末尾带营地暗标 U+2063（trim 没剥掉），总长 ≤ 16', !!room && room.host_name === '房主A' + CAMP_TAG && Array.from(room.host_name).length <= 16, room && JSON.stringify(room.host_name));
+    await sleep(1500);
+    const st = await ev(A, () => ({
+      hosting: BR.coop.hosting, code: BR.coop.code, hud: __t.hudCode(), board: __t.boardText(), lv: BR.game.levelId, mode: BR.game.mode,
+      x: BR.player.x, z: BR.player.z, ents: BR.entities.list.filter(e => !e.removed).length, items: BR.items.list.length,
+    }));
+    check('4a 营地里：BR.coop.hosting、出生在第 0 格、没有实体和物资', st.hosting && st.lv === CAMP && Math.hypot(st.x - 15, st.z - 21.2) < 0.5 && st.ents === 0 && st.items === 0, st);
+    check('4a 左上角角标和小黑板上的房号一致（小黑板写「房号 K7M 2QX / 等朋友来」）', !!st.hud && st.hud.includes(code) && !!st.board && st.board.includes(fmtCode(code)) && /等朋友来/.test(st.board), { hud: st.hud, board: st.board });
+    await ev(A, () => { const d = __t.campData(); BR.player.reset({ x: 16, y: 0, z: 22.6, yaw: 0 }, { full: false }); BR.player.pitch = 0.25; });
+    await sleep(600);
+    await shot(A, 'host-alone-board');
+    // 一个人进帐篷：「准备」是灰的，写「等朋友来」
+    const inTent = await enterTent(A);
+    const tent = await ev(A, () => {
+      const b = document.querySelector('.tent-menu .tent-ready'), w = document.querySelector('.tent-menu .tent-why');
+      return { disabled: b && b.disabled, text: b && b.textContent.trim(), why: w && !w.hidden ? w.textContent : '', title: (document.querySelector('.tent-title') || {}).textContent };
+    });
+    check('4a 一个人进帐篷：选单「选下一站」，「准备」是灰的、写「等朋友来」', inTent && tent.disabled && /等朋友来/.test(tent.why) && tent.title === '选下一站', tent);
+    await shot(A, 'host-alone-tent');
+    await ev(A, () => BR.coopCamp.onBack());
+    await waitFor(A, () => !BR.coopCamp.panelOpen && BR.input.enabled, null, 5000);
+    // 电脑上按 Esc 出帐篷（这一下不是点击，锁不上指针）：走出来以后提示「点一下画面继续」（2026-10-05 返修 r1）
+    const hint = await waitFor(A, () => __t.noticeTexts().some(t => /点一下画面继续/.test(t)) || !!document.pointerLockElement, null, 5000);
+    const hintSt = await ev(A, () => ({ notes: __t.noticeTexts(), locked: !!document.pointerLockElement }));
+    check('4a Esc 出帐篷后：电脑上提示「点一下画面继续」（或者指针本来就锁着）', hint, hintSt);
+    // 一个人开着营地等朋友：暂停菜单有「复制邀请链接」（.hud-btn-invite），点了调 BR.coop.copyInvite（2026-10-05 返修 r1）
+    await ev(A, () => {
+      const c = BR.coop;
+      window.__inviteCalls = 0;
+      if (!c.__inviteSpy) { const o = c.copyInvite; c.copyInvite = function () { window.__inviteCalls++; return o.apply(this, arguments); }; c.__inviteSpy = true; }
+      BR.hud.pause(true);
+    });
+    const inv = await waitFor(A, () => { const b = document.querySelector('.hud-pause .hud-btn-invite'); return !!b && !b.hidden && b.getClientRects().length > 0; }, null, 5000);
+    await sleep(700);   // 暂停菜单刚打开有一小段防误触
+    if (inv) await A.click('.hud-pause .hud-btn-invite').catch(() => {});
+    await sleep(600);
+    const invSt = await ev(A, () => ({ calls: window.__inviteCalls, text: (document.querySelector('.hud-pause .hud-btn-invite') || {}).textContent, camp: !!(document.querySelector('.hud-pause .hud-btn-camp') && !document.querySelector('.hud-pause .hud-btn-camp').hidden) }));
+    check('4a 一个人开着营地等人：暂停菜单有「复制邀请链接」、没有「回营地」，点了调 BR.coop.copyInvite、按钮上闪结果', inv && invSt.calls === 1 && !invSt.camp && /已复制|已分享|复制失败/.test(invSt.text || ''), invSt);
+    await ev(A, () => BR.hud.pause(false));
+    await waitFor(A, () => BR.game.screen === 'playing', null, 5000);
+  });
+
+  // ------------------------------------------------------------------
+  await step('4a+ 房号 110 分钟续期、房间被服务器清掉也续期', async () => {
+    if (!code) return;
+    const t0 = await ev(A, () => performance.now());
+    await ev(A, () => BR.net._debugAge(110 * 60 * 1000));   // 把建房时间往前推 110 分钟（net.js 的测试口）
+    const renewed = await waitFor(A, c => BR.coop.code && BR.coop.code !== c, code, 20000);
+    const c2 = await ev(A, () => BR.coop.code);
+    await sleep(800);
+    const r = await ev(A, t0 => ({ hud: __t.hudCode(), board: __t.boardText(), toasts: __t.toasts.slice(-4), bus: __t.since(__t.bus, t0).filter(b => b.n === 'coop:code').map(b => b.p) }), t0);
+    check('4a+ 第 110 分钟自动换新房号：旧房间在服务器上已关，新房间开着、带暗标', renewed && rooms.get(code) && rooms.get(code).state === 'closed' && rooms.get(c2) && rooms.get(c2).state === 'waiting' && rooms.get(c2).host_name.endsWith(CAMP_TAG), { old: code, now: c2, oldState: rooms.get(code) && rooms.get(code).state });
+    check('4a+ 换号后角标、小黑板一起更新，bus coop:code、toast「房号换成了 …」', !!r.hud && r.hud.includes(c2) && !!r.board && r.board.includes(fmtCode(c2)) && r.bus.some(b => b.code === c2) && r.toasts.some(t => /房号换成了/.test(t)), r);
+    // 服务器把房间清掉（TTL 或别的原因）：房主不在大厅里，按同一条续期走，不当致命错误
+    rooms.delete(c2);
+    const regone = await waitFor(A, c => BR.coop.code && BR.coop.code !== c && BR.coop.hosting, c2, 25000);
+    const c3 = await ev(A, () => BR.coop.code);
+    check('4a+ 服务器上房间没了（room_not_found）：房主自动换一个新房号接着等，还在营地里', regone && !!rooms.get(c3) && (await ev(A, () => BR.game.levelId)) === CAMP, { gone: c2, now: c3 });
+    code = c3;
+  });
+
+  // ------------------------------------------------------------------
+  await step('4n 不是后室营地的房间', async () => {
+    const rc = newCode();
+    rooms.set(rc, { state: 'waiting', host_name: '火箭工程师', guest_name: null, createdAt: Date.now() });   // 火箭游戏 / 旧版后室建的房：没有暗标
+    const card = await joinCard(B, rc, { name: '客机B', typed: rc.slice(0, 3).toLowerCase() + '-' + rc.slice(3).toLowerCase() });
+    check('4n 输房号：小写、横杠自动规整成 6 位大写', card.value === rc, card.value);
+    check('4n 查到的不是营地：卡片写原因（不是后室的营地），没有「加入」', card.shown && /不是后室的营地/.test(card.why) && !card.join && !card.privacy, card);
+    check('4n 没去占房：服务器上这个房间还是 waiting、没有 join 请求', rooms.get(rc).state === 'waiting' && !sig.joins[rc], { state: rooms.get(rc).state, joins: sig.joins[rc] || 0 });
+    await shot(B, 'card-not-camp');
+    // 房号框：0、O、1、I 不收，当场红字
+    await B.fill('.coop-code-input', 'k7o');
+    const bad = await ev(B, () => ({ v: document.querySelector('.coop-code-input').value, err: (document.querySelector('.coop-code-err') || {}).textContent }));
+    check('4n 房号框敲到 0、O、1、I：这个字不收，红字「房号里没有 0、O、1、I」', bad.v === 'K7' && /房号里没有 0、O、1、I/.test(bad.err || ''), bad);
+    await B.click('.coop-lobby .coop-close');
+    await sleep(300);
+  });
+
+  // ------------------------------------------------------------------
+  await step('4l 邀请链接', async () => {
+    if (!code) return;
+    // 和「复制邀请链接」一样拼：location.origin + location.pathname + '#join=' + 房号（不带 ?dev）
+    const link = await ev(A, c => location.origin + location.pathname + '#join=' + c, code);
+    await boot(B, base, link);
+    await ev(B, () => BR.skin.set('blue'));
+    const shown = await waitFor(B, () => { const b = document.querySelector('.coop-btn-joincamp'); return b && b.getClientRects().length > 0 && !b.disabled; }, null, 20000);
+    const st = await cardState(B);
+    const hash = await ev(B, () => location.hash);
+    check('4l 打开邀请链接：联机面板直接停在「「房主A」的营地」卡片，有「加入」和隐私提示，还要点一下才加入', shown && st.title === '「房主A」的营地' && st.join && st.privacy && st.phase === 'confirm', st);
+    check('4l 读完立刻把地址里的 #join= 去掉', hash === '', hash);
+    await shot(B, 'invite-link-card');
+    await B.click('.coop-lobby .coop-close');
+    await sleep(300);
+  });
+
+  // ------------------------------------------------------------------
+  // 旧版、别的游戏：O 加入 A 的营地，O 发出去的 hello 被改写（给 BR.net.send 包一层）
+  await step('4o 旧版被拒、别的游戏的 hello', async () => {
+    if (!code) return;
+    const ctxO = await newContext(browser, 'O');
+    const O = await newPage(ctxO, 'O');
+    try {
+      await boot(O, base);
+      for (const kind of ['old', 'rocket']) {
+        const codeBefore = await ev(A, () => BR.coop.code);
+        const t0 = await ev(A, () => performance.now());
+        await ev(O, k => {
+          if (!window.__origSend) window.__origSend = BR.net.send;
+          BR.net.send = function (obj, opt) {
+            if (obj && obj.t === 'hello') {
+              obj = Object.assign({}, obj);
+              if (k === 'old') obj.caps = (obj.caps || []).filter(c => c !== 'camp1');
+              else obj.game = 'rocket';
+            }
+            return window.__origSend.call(this, obj, opt);
+          };
+        }, kind);
+        const j = await joinCamp(O, codeBefore, { name: '客机O', wait: false });
+        const reopened = await waitFor(A, c => BR.coop.hosting && BR.coop.code && BR.coop.code !== c, codeBefore, 45000);
+        const a = await ev(A, t0 => ({ toasts: __t.toasts.slice(-4), code: BR.coop.code, lv: BR.game.levelId, active: BR.coop.active, phase: BR.coop.phase }), t0);
+        const oIdle = await waitFor(O, () => !BR.coop.active, null, 20000);
+        const o = await ev(O, () => ({ phase: BR.coop.phase, active: BR.coop.active, net: BR.net.active, lv: BR.game.levelId, toasts: __t.toasts.slice(-3), status: (document.querySelector('.coop-status') || {}).textContent }));
+        if (kind === 'old') {
+          check('4o 对方 hello 里没有 camp1（旧版）：房主提示「对方的游戏版本旧，请对方刷新页面再试」，不配对', j.card.join && reopened && !a.active && a.toasts.some(t => /对方的游戏版本旧/.test(t)), a);
+        } else {
+          check('4o 对方发来别的游戏的 hello：房主提示「别的游戏的房间」，不配对', reopened && !a.active && a.toasts.some(t => /别的游戏/.test(t)), a);
+        }
+        check('4o（' + kind + '）房主还在营地里、原地换了新房号接着等；对方没连成', reopened && a.lv === CAMP && a.code !== codeBefore && oIdle, { a: { code: a.code, lv: a.lv, phase: a.phase }, o });
+        await ev(O, () => { if (BR.game.screen !== 'home') { try { BR.coop.leave(); } catch (e) { /* 已断 */ } BR.bus.emit('game:home'); } });
+        await sleep(1200);
+        await ev(O, () => { const L = document.querySelector('.coop-lobby'); if (L && !L.hidden) L.querySelector('.coop-close').click(); });
+        await sleep(400);
+      }
+      await shot(A, 'host-after-refused');
+    } finally {
+      await ctxO.close().catch(() => {});
+    }
+    code = await ev(A, () => BR.coop.code);
+  });
+
+  // ------------------------------------------------------------------
+  await step('4b 房主冻结 45 s，客机开低画质输房号加入', async () => {
+    if (!code) return;
+    await boot(B, base);   // 邀请链接那一页不带 ?dev，重新打开
+    await ev(B, () => BR.skin.set('blue'));
+    await ev(B, () => { BR.game.settings.quality = 'low'; });
+    await ev(A, () => { BR.player.reset({ x: 15, y: 0, z: 21.2, yaw: 0 }, { full: false }); BR.player.pitch = 0; });
+    await sleep(400);
+    // 房主切到微信去发房号：页面被冻结。CDP Page.setWebLifecycleState frozen 在无头 Chrome 里实测不停计时器
+    // （tests/output/stage-N1/N1-tests-coop/freeze-probe.mjs：冻结 2 s 里 setInterval 照走 40 次），所以同时用调试器把页面的 JS 停住
+    const cdpA = await ctxA.newCDPSession(A);
+    await cdpA.send('Page.setWebLifecycleState', { state: 'frozen' }).catch(() => {});
+    await cdpA.send('Debugger.enable');
+    await cdpA.send('Debugger.pause');
+    const tFreeze = Date.now();
+    let card = null, waitText = null;
+    try {
+      const j = await joinCamp(B, code, { name: '客机B', wait: false });
+      card = j.card;
+      check('4b 客机输房号：卡片「「房主A」的营地」+「加入」+ 隐私提示', card.title === '「房主A」的营地' && card.join && card.privacy &&
+        /昵称和制服颜色会发给对方/.test(await B.textContent('.coop-privacy')), card);
+      const waited = await waitFor(B, () => { const li = document.querySelectorAll('.coop-steps li')[1]; return !!li && /回到游戏/.test(li.textContent); }, null, 20000);
+      waitText = await ev(B, () => Array.from(document.querySelectorAll('.coop-steps li')).map(li => li.textContent).join(' → '));
+      check('4b 房主冻结时客机显示「等「房主A」回到游戏…」（net waitHost）', waited && /等「房主A」回到游戏/.test(waitText), waitText);
+      await shot(B, 'guest-wait-host');
+      const left = 45000 - (Date.now() - tFreeze);
+      if (left > 0) await sleep(left);
+      const mid = await ev(B, () => ({ phase: BR.coop.phase, active: BR.coop.active, net: BR.net.active }));
+      check('4b 冻结 45 s 里客机一直在等（没有报错放弃）', !mid.active && mid.net && mid.phase !== 'idle', mid);
+    } finally {
+      await cdpA.send('Debugger.resume').catch(() => {});
+      await cdpA.send('Debugger.disable').catch(() => {});
+      await cdpA.send('Page.setWebLifecycleState', { state: 'active' }).catch(() => {});
+      await cdpA.detach().catch(() => {});
+    }
+    const t1 = Date.now();
+    const both = await waitActive([A, B], 60000);
+    const bCamp = both && await waitCamp(B, 30000);
+    check('4b 房主解冻后两边连上，客机进了营地', both && bCamp, { ms: Date.now() - t1 });
+    await sleep(2500);
+    const [sa, sb] = await Promise.all([A, B].map(p => ev(p, () => ({
+      seed: BR.game.seed >>> 0, levelSeed: BR.world.levelSeed, lv: BR.game.levelId, mode: BR.game.mode, x: BR.player.x, z: BR.player.z,
+      phys: __t.physHash(), ents: BR.entities.list.filter(e => !e.removed).length, items: BR.items.list.length, stats: BR.game.statsEnabled,
+      q: BR.game.settings.quality, tris: (BR.world.chunks().find(c => c.key === '0,0') || { res: {} }).res.kit.stats.triangles,
+      role: BR.coop.role, peer: BR.coop.peerName, toasts: __t.toasts.slice(-5), board: __t.boardText(), hud: __t.hudCode(),
+    }))));
+    check('4b 客机落在挑出来的那一格（房主站第 0 格 → 客机第 1 格 (17, 21.2)）', Math.hypot(sb.x - 17, sb.z - 21.2) < 0.35, { A: [sa.x, sa.z], B: [sb.x, sb.z] });
+    check('4b 两边 seed、levelSeed 一致', sa.seed === sb.seed && sa.levelSeed === sb.levelSeed && sa.lv === CAMP && sb.lv === CAMP, { A: [sa.seed, sa.levelSeed], B: [sb.seed, sb.levelSeed] });
+    check('4b 营地碰撞体采样哈希一致（客机低画质、房主高画质，布局一样）', sa.phys.hash === sb.phys.hash && sa.phys.blocked > 0, { A: sa.phys.hash, B: sb.phys.hash, blocked: [sa.phys.blocked, sb.phys.blocked], q: [sa.q, sb.q], tris: [sa.tris, sb.tris] });
+    check('4b 客机保留本机低画质（营地块面数比房主的少）', sb.q === 'low' && sa.q !== 'low' && sb.tris < sa.tris, { q: [sa.q, sb.q], tris: [sa.tris, sb.tris] });
+    check('4b 营地里实体 0、物资 0，statsEnabled=false（不饿、不掉 san）', sa.ents === 0 && sb.ents === 0 && sa.items === 0 && sb.items === 0 && sa.stats === false && sb.stats === false, { A: [sa.ents, sa.items, sa.stats], B: [sb.ents, sb.items, sb.stats] });
+    check('4b 角色 host / guest、昵称互通；房主收到「「客机B」来到了营地」', sa.role === 'host' && sb.role === 'guest' && sa.peer === '客机B' && sb.peer === '房主A' && sa.toasts.some(t => /客机B」来到了营地/.test(t)), { A: sa.toasts, B: sb.toasts });
+    check('4b 两人都在：角标收起，小黑板换成「下一站：…」', !sa.hud && !!sa.board && /下一站/.test(sa.board), { hud: sa.hud, board: sa.board });
+    await shot(A, 'camp-both-A');
+    await shot(B, 'camp-both-B');
+    // 房主挪一把椅子：客机那边跟着挪；回营地后还要在（营地布置按一次联机保存）
+    const mv = await ev(A, () => {
+      const P = BR.world.propsNear(13.5, 18.8, 0.5).find(p => p.kind === 'chair' || (p.rec && p.rec.kind === 'chair'));
+      if (!P) return null;
+      const to = { x: +(P.x - 0.3).toFixed(3), z: +(P.z - 0.45).toFixed(3) };
+      const ok = BR.world.movePropTo(P.key, to.x, to.z) && BR.world.commitProp(P.key);
+      const Q = BR.world.propByKey(P.key);
+      return { key: P.key, ok, to: { x: +Q.x.toFixed(3), z: +Q.z.toFixed(3) } };
+    });
+    if (mv) {
+      chairKey = mv.key; chairTo = mv.to;
+      const synced = await waitFor(B, a => { const P = BR.world.propByKey(a.key); return !!P && Math.hypot(P.x - a.to.x, P.z - a.to.z) < 0.02; }, mv, 5000);
+      check('4b 房主挪了一把折叠椅，客机那边跟着挪', mv.ok && synced, { mv, B: await ev(B, k => __t.prop(k), mv.key) });
+    } else check('4b 找到营地的折叠椅', false, null);
+  });
+
+  // ------------------------------------------------------------------
+  // 2026-10-05 返修：以前站位按「离队友远」挑，两人前后脚按空格时各自看到的对方位置都晚 100–300 ms，两边都挑中 stand[0]、叠在一起；
+  // 一起出帐篷也都走到门外同一点。现在站位按角色固定、出帐篷各站一边
+  await step('4b2 两人前后脚进帐篷：站位不同、相距 1 m、看得见对方；一起出帐篷各站一边', async () => {
+    for (const [lag, tag] of [[0, '同时按'], [300, '客机晚 0.3 s 按']]) {
+      // 两人并排站在门前通道里（房主偏西、客机偏东），面朝帐篷站一会儿（对方人形的插值追上、站着不动）
+      await ev(A, () => { BR.player.reset({ x: 15.6, y: 0, z: 19.6, yaw: 0 }, { full: false }); BR.player.pitch = 0; });
+      await ev(B, () => { BR.player.reset({ x: 16.4, y: 0, z: 19.6, yaw: 0 }, { full: false }); BR.player.pitch = 0; });
+      await sleep(1500);
+      const enter = p => ev(p, () => BR.coopCamp.enter());
+      const r = lag ? await Promise.all([enter(A), sleep(lag).then(() => enter(B))]) : await Promise.all([enter(A), enter(B)]);
+      const open = await Promise.all([A, B].map(p => waitFor(p, () => BR.coopCamp.panelOpen, null, 8000)));
+      await sleep(1500);
+      const snap = p => ev(p, () => ({ x: +BR.player.x.toFixed(3), z: +BR.player.z.toFixed(3), peer: __t.peerSuit() }));
+      const [sa, sb] = await Promise.all([snap(A), snap(B)]);
+      const d = Math.hypot(sa.x - sb.x, sa.z - sb.z);
+      const sees = (s, o) => !!s.peer && s.peer.visible && Math.hypot(s.peer.x - o.x, s.peer.z - o.z) < 0.35;
+      check('4b2 ' + tag + '进帐篷：两人都走进去、选单开着，站位不同、相距 1.0±0.05 m，两边都看得见对方的人形',
+        r[0] !== false && r[1] !== false && open.every(Boolean) && Math.abs(d - 1) <= 0.05 && sees(sa, sb) && sees(sb, sa),
+        { enter: r, open, A: [sa.x, sa.z], B: [sb.x, sb.z], d: +d.toFixed(3), peerOnA: sa.peer, peerOnB: sb.peer });
+      if (!lag) {
+        // 选单先藏一下、转头看旁边的队友：截图里要看得到对方的人形（站位相距 1 m，没被藏掉、没叠在一起）
+        await ev(A, () => { const m = document.querySelector('.tent-menu'); if (m) m.style.visibility = 'hidden'; window.__yaw0 = BR.player.yaw; window.__pit0 = BR.player.pitch; BR.player.yaw = -Math.PI / 2 + 0.35; BR.player.pitch = -0.15; });
+        await sleep(400);
+        await shot(A, 'tent-two-stands-A');
+        await ev(A, () => { const m = document.querySelector('.tent-menu'); if (m) m.style.visibility = ''; BR.player.yaw = window.__yaw0; BR.player.pitch = window.__pit0; });
+      }
+      // 一起出帐篷：各走到门外自己那一边
+      await Promise.all([A, B].map(p => ev(p, () => BR.coopCamp.exit())));
+      await Promise.all([A, B].map(p => waitFor(p, () => !BR.coopCamp.panelOpen && !BR.coopCamp.debugInfo().walking, null, 6000)));
+      await sleep(800);
+      const [oa, ob] = await Promise.all([snap(A), snap(B)]);
+      const d2 = Math.hypot(oa.x - ob.x, oa.z - ob.z);
+      const inCor = q => q.x >= 15.3 - 1e-3 && q.x <= 16.7 + 1e-3 && q.z > 17.2;
+      check('4b2 ' + tag + '后一起出帐篷：各站门外一边，相距 ≥ 0.9 m，都在门前通道里，看得见对方',
+        d2 >= 0.9 && inCor(oa) && inCor(ob) && sees(oa, ob) && sees(ob, oa), { A: [oa.x, oa.z], B: [ob.x, ob.z], d: +d2.toFixed(3) });
+      if (!lag) await shot(A, 'tent-two-out-A');
+    }
+  });
+
+  // ------------------------------------------------------------------
+  // 2026-10-05 返修 r2：挂钩以前按 BR.SKINS 顺序换「下一种」，会换上队友正穿着、挂钩上根本没有的那件；
+  // 队友站在门外正中等着时，出帐篷的人走进他身体里
+  await step('4b3 挂钩：对准哪件换哪件，队友身上那件换不到；队友堵在门口时进出帐篷', async () => {
+    await ev(A, () => BR.skin.set('red'));
+    await ev(B, () => BR.skin.set('pink'));
+    const synced = await waitFor(A, () => BR.coop.peerSkin === 'pink', null, 6000) && await waitFor(B, () => BR.coop.peerSkin === 'red', null, 6000);
+    await sleep(600);
+    const hk = await ev(A, () => { const d = __t.campData(); return { hooks: d.hooks, skins: d.skins }; });
+    const hasAt = !!hk.hooks && Array.isArray(hk.hooks.at) && hk.hooks.at.length === hk.skins.length;
+    check('4b3 营地数据带每件制服沿挂钩排列的位置（hooks.at，顺序同 skins）', synced && hasAt, { synced, hooks: hk.hooks, skins: hk.skins });
+    if (!hasAt) return;
+    const vis = () => ev(A, () => {
+      const c = BR.world.chunks().find(x => x.res && x.res.data && x.res.data._uniforms);
+      const u = c && c.res.data._uniforms, out = {};
+      if (u) for (const k of Object.keys(u)) out[k] = u[k].length > 0 && u[k].every(p => p.visible);
+      return out;
+    });
+    const rows = [];
+    for (let i = 0; i < hk.skins.length; i++) {
+      const key = hk.skins[i];
+      // 站在挂钩那一面外 1 m，准心对准第 i 件（真按键盘空格）
+      const aim = await ev(A, ([h, z]) => {
+        BR.player.reset({ x: h.x - 1.0, y: 0, z, yaw: 0 }, { full: false });
+        BR.interact.aimAt(h.x, 1.3, z);
+        return 0;
+      }, [hk.hooks, hk.hooks.at[i]]);
+      await sleep(350);
+      const before = await ev(A, k => {
+        const c = BR.interact.current;
+        const p = document.querySelector('.hud-prompt');
+        return { key: c && c.key, short: c && c.short ? { verb: c.short.verb, ok: c.short.ok, why: c.short.why, name: c.short.name } : null, prompt: p ? p.textContent.replace(/\s+/g, ' ').trim() : '', skin: BR.skin.current, n: __t.toasts.length };
+      }, key);
+      const v0 = await vis();
+      await A.keyboard.press('Space');
+      await sleep(450);
+      const after = await ev(A, n => ({ skin: BR.skin.current, toasts: __t.toasts.slice(n) }), before.n);
+      rows.push({ i, key, aim, before, onHook: v0[key], after });
+    }
+    const zh = await ev(A, () => Object.fromEntries(BR.SKINS.map(s => [s.key, s.zh])));
+    const peerRow = rows.find(r => r.key === 'pink');
+    check('4b3 A 穿红、B 穿粉：A 对准挂钩上空着的粉色那格，灰字「「客机B」穿着这件」，按了也不换', !!peerRow && peerRow.before.key === 'coopcamp:hooks' && peerRow.before.short && peerRow.before.short.ok === false &&
+      peerRow.before.short.why === '「客机B」穿着这件' && peerRow.onHook === false && peerRow.after.skin === peerRow.before.skin && peerRow.after.toasts.some(t => t === '「客机B」穿着这件'), peerRow);
+    check('4b3 A 依次对准六格各按一次：永远不会换成队友身上的粉色', rows.every(r => r.after.skin !== 'pink'), rows.map(r => [r.key, r.before.skin, r.after.skin]));
+    const okRows = rows.filter(r => r.key !== 'pink' && r.key !== r.before.skin);
+    check('4b3 对准挂着的那件：提示「空格 换制服 X那件」，按了就换成它（换之前它确实挂在钩上）、toast「换上了X制服」',
+      okRows.length >= 4 && okRows.every(r => r.before.short && r.before.short.ok !== false && r.before.short.name === zh[r.key] + '那件' && /换制服/.test(r.before.prompt) && r.before.prompt.indexOf(zh[r.key] + '那件') >= 0 &&
+        r.onHook === true && r.after.skin === r.key && r.after.toasts.includes('换上了' + zh[r.key] + '制服')), okRows.map(r => ({ key: r.key, prompt: r.before.prompt, onHook: r.onHook, after: r.after.skin })));
+    const meRow = rows.find(r => r.key === r.before.skin);
+    if (meRow) check('4b3 对准自己正穿着的那件（钩上空着）：灰字「这件就穿在你身上」，按了不换', meRow.before.short && meRow.before.short.ok === false && meRow.before.short.why === '这件就穿在你身上' && meRow.after.skin === meRow.before.skin, meRow);
+    await shot(A, 'hooks-peer-pink');
+    await ev(A, () => BR.skin.set('pink'));
+    await ev(B, () => BR.skin.set('blue'));
+    await waitFor(A, () => BR.coop.peerSkin === 'blue', null, 6000);
+
+    // 队友堵门：B 站着不动，A 在帐篷里按 Esc（onBack）出来
+    const d = await ev(A, () => __t.campData());
+    const door = d.tent.door;
+    const pos = p => ev(p, () => ({ x: +BR.player.x.toFixed(3), z: +BR.player.z.toFixed(3) }));
+    for (const [tag, bz, wantOut] of [['门外正中 1.2 m', door.z + 1.2, true], ['门口 0.7 m', door.z + 0.7, false]]) {
+      await ev(B, ([x, z]) => { BR.player.reset({ x, y: 0, z: 22.4, yaw: 0 }, { full: false }); }, [door.x, bz]);
+      await ev(A, () => { BR.player.reset({ x: 15.6, y: 0, z: 19.6, yaw: 0 }, { full: false }); });
+      await sleep(600);
+      const inT = await enterTent(A);
+      await waitFor(A, () => !BR.coopCamp.debugInfo().walking, null, 6000);
+      await ev(B, ([x, z]) => { BR.player.reset({ x, y: 0, z, yaw: 0 }, { full: false }); }, [door.x, bz]);
+      // A 那边看到的 B 站稳（插值追上、速度降下来）
+      await waitFor(A, ([x, z]) => BR.coop.peer && Math.hypot(BR.coop.peer.x - x, BR.coop.peer.z - z) < 0.05, [door.x, bz], 10000);
+      await sleep(2500);
+      const n0 = await ev(A, () => __t.toasts.length);
+      await ev(A, () => BR.coopCamp.onBack());
+      await waitFor(A, () => !BR.coopCamp.panelOpen && !BR.coopCamp.debugInfo().walking, null, 6000);
+      await sleep(500);
+      const [pa, pb] = await Promise.all([pos(A), pos(B)]);
+      const tt = await ev(A, n => __t.toasts.slice(n), n0);
+      const dd = Math.hypot(pa.x - pb.x, pa.z - pb.z);
+      if (wantOut) check('4b3 B 站在' + tag + '等着，A 出帐篷：走到门外、不和 B 叠在一起（相距 ≥ 0.8 m）', inT && pa.z > door.z + 0.3 && dd >= 0.8, { A: pa, B: pb, d: +dd.toFixed(2), toasts: tt });
+      else check('4b3 B 站在' + tag + '堵着，A 出帐篷：停在门槛里面、不穿过 B，提示「「客机B」挡在门口」', inT && pa.z < door.z && dd >= 0.6 && tt.includes('「客机B」挡在门口'), { A: pa, B: pb, d: +dd.toFixed(2), toasts: tt });
+    }
+    // 进帐篷：B 站在门口不动，A 在门前通道里按「进帐篷」→ 不走，提示「「客机B」挡在门口」
+    await ev(A, () => { BR.player.reset({ x: 16, y: 0, z: 19.8, yaw: 0 }, { full: false }); });
+    await ev(B, ([x, z]) => { BR.player.reset({ x, y: 0, z, yaw: 0 }, { full: false }); }, [door.x, door.z + 0.5]);
+    await waitFor(A, ([x, z]) => BR.coop.peer && Math.hypot(BR.coop.peer.x - x, BR.coop.peer.z - z) < 0.05, [door.x, door.z + 0.5], 10000);
+    await sleep(2500);
+    const n1 = await ev(A, () => __t.toasts.length);
+    const er = await ev(A, () => BR.coopCamp.enter());
+    await sleep(300);
+    const es = await ev(A, n => ({ toasts: __t.toasts.slice(n), walking: BR.coopCamp.debugInfo().walking, panel: BR.coopCamp.panelOpen }), n1);
+    check('4b3 B 站在门口不动，A 按「进帐篷」：不走、提示「「客机B」挡在门口」', er === false && !es.walking && !es.panel && es.toasts.includes('「客机B」挡在门口'), { er, ...es });
+    await ev(B, () => { BR.player.reset({ x: 17, y: 0, z: 21.2, yaw: 0 }, { full: false }); });
+    await ev(A, () => { BR.player.reset({ x: 15, y: 0, z: 21.2, yaw: 0 }, { full: false }); });
+    await sleep(800);
+  });
+
+  // ------------------------------------------------------------------
+  await step('4c 房主在帐篷里改选择，客机 1 s 内同步、准备清掉', async () => {
+    await tentPick(B, { ready: true });
+    const bReady = await waitFor(A, () => { const s = BR.coopCamp.state; return !!(s && s.rdy[1]); }, null, 5000);
+    const t0 = Date.now();
+    const st = await tentPick(A, { mode: 'casual', lv: 'dev' });
+    const synced = await waitFor(B, v => { const s = BR.coopCamp.state; return !!(s && s.v >= v && s.lv === 'dev' && s.mode === 'casual'); }, st ? st.v : 1e9, 3000);
+    const ms = Date.now() - t0;
+    const [sa, sb] = await Promise.all([A, B].map(p => ev(p, () => ({ st: BR.coopCamp.state, toasts: __t.toasts.slice(-3), board: __t.boardText() }))));
+    check('4c 房主选「游玩 + Level Dev」，客机 1 s 内收到同一份 state', !!st && synced && ms <= 1000 && sb.st.v === sa.st.v && sb.st.lv === 'dev' && sb.st.mode === 'casual', { ms, A: sa.st && { v: sa.st.v, lv: sa.st.lv, mode: sa.st.mode }, B: sb.st && { v: sb.st.v, lv: sb.st.lv } });
+    check('4c 改了选择，两边的准备都清掉（客机先点过准备）', bReady && !sa.st.rdy[0] && !sa.st.rdy[1] && !sb.st.rdy[0] && !sb.st.rdy[1], { bReady, A: sa.st.rdy, B: sb.st.rdy });
+    check('4c 客机 toast「「房主A」改成了 …」，小黑板写下一站', sb.toasts.some(t => /房主A」改成了/.test(t)) && /下一站/.test(sa.board || ''), { toasts: sb.toasts, board: sa.board });
+  });
+
+  // ------------------------------------------------------------------
+  await step('4d 客机改选择走 use；两人准备，客机在最后半秒之前取消，倒数停下', async () => {
+    const cur = await ev(A, () => BR.coopCamp.state.spawn);
+    const want = Math.abs(cur - 0.9) < 0.01 ? 0.8 : 0.9;
+    await tentPick(B, { spawn: want });
+    const got = await waitFor(A, w => { const s = BR.coopCamp.state; return !!s && Math.abs(s.spawn - w) < 0.005 && s.by === 'g'; }, want, 4000);
+    const bSync = await waitFor(B, w => { const s = BR.coopCamp.state; return !!s && Math.abs(s.spawn - w) < 0.005; }, want, 4000);
+    check('4d 客机改「实体生成量」走 use：房主核对后写入（by g）并广播回客机', got && bSync, await ev(A, () => ({ spawn: BR.coopCamp.state.spawn, by: BR.coopCamp.state.by })));
+    Object.assign(lastSel, { mode: 'casual', lv: 'dev', spawn: want });
+    // 「倒数从 3 开始」看客机收到房主 state 的那一刻（页面里 bus 'net:tent' 记的，见 installHelpers 的 goAts），
+    // 不看下面轮询第一次看到 goAt 的时刻：机器忙时 readyBoth 返回、轮询起来已经过了一秒多（以前 g4 里误报过 first 1.76）
+    const t0b = await ev(B, () => performance.now());
+    const ready = await readyBoth([A, B], { wait: false });
+    // 客机在倒数还剩 1.0–2.6 s 时点「取消」（倒数时「准备」按钮变成「取消」）。倒数只有 3 秒，在页面里卡时间点、直接点按钮
+    const cd = ready ? await ev(B, () => new Promise(res => {
+      const t0 = performance.now();
+      let first = null;
+      const tick = () => {
+        const s = BR.coopCamp.state, b = document.querySelector('.tent-menu .tent-ready');
+        const left = s && s.goAt ? s.goAt - BR.coop.clock() : null;
+        if (left != null && first == null) first = +left.toFixed(2);
+        if (left != null && left > 1.0 && left < 2.6 && b && !b.disabled && /^取消$/.test(b.textContent.trim())) {
+          const count = (document.querySelector('.tent-count') || {}).textContent;
+          b.click();
+          res({ first, left: +left.toFixed(2), count, rdy: s.rdy.slice() });
+          return;
+        }
+        if (performance.now() - t0 > 8000) { res({ first, left, miss: true, btn: b && b.textContent }); return; }
+        setTimeout(tick, 8);
+      };
+      tick();
+    })) : { miss: true };
+    const g0 = await ev(B, t0 => __t.goAts.find(g => g.who === 'recv' && g.t >= t0) || null, t0b);
+    cd.recv = g0;
+    check('4d 两人都点「准备」→ 房主写 goAt，客机收到时离出发还有 2–3 s，选单上显示倒数', ready && !!g0 && g0.left > 2 && g0.left <= 3.05 && /^[123]$/.test(cd.count || ''), cd);
+    const okWin = !cd.miss;
+    const stopped = await waitFor(A, () => { const s = BR.coopCamp.state; return !!s && !s.goAt && !s.rdy[0] && !s.rdy[1]; }, null, 3000);
+    const bStop = await waitFor(B, () => { const s = BR.coopCamp.state; return !!s && !s.goAt; }, null, 3000);
+    await shot(B, 'tent-cancelled-B');
+    await sleep(3200);
+    const after = await Promise.all([A, B].map(p => ev(p, () => ({ lv: BR.game.levelId, transit: BR.coopCamp.transit, count: (() => { const c = document.querySelector('.tent-count'); return c && !c.hidden ? c.textContent : ''; })(), toasts: __t.toasts.slice(-3) }))));
+    check('4d 客机在最后半秒之前取消：房主的倒数停下、准备清空，两人都还在营地', okWin && stopped && bStop && after.every(a => a.lv === CAMP && a.transit === 'idle' && !a.count), after);
+    check('4d 两边都提示取消（房主「「客机B」取消了出发」）', after[0].toasts.some(t => /客机B」取消了出发/.test(t)) && after[1].toasts.some(t => /取消/.test(t)), after.map(a => a.toasts));
   });
 
   // ------------------------------------------------------------------
   let seed = null;
-  await step('4 开局同步', async () => {
-    await A.click('.coop-lobby .coop-close');
-    await sleep(150);
-    // 默认起始层已改成 Level 0（选中版本几乎没有实体），第 6 项要比对实体快照，所以固定从 dev 层开局
-    await ev(A, () => { BR.game.settings.startLevel = 'dev'; });
-    await A.click('.home-dialog-casual .home-btn-primary');
-    const aPlay = await waitFor(A, () => BR.game.screen === 'playing', null, 20000);
-    seed = await ev(A, () => BR.game.seed >>> 0);
-    const bPlay = await waitFor(B, s => BR.game.screen === 'playing' && (BR.game.seed >>> 0) === s, seed, 30000);
-    check('4 A 从主页「游玩」开局，B 自动进入', aPlay && bPlay, { aPlay, bPlay });
-    await sleep(1500);   // 等客机传送到房主身边、周围区块建完
-    const [sa, sb] = await Promise.all([A, B].map(p => ev(p, () => ({
-      seed: BR.game.seed >>> 0, levelSeed: BR.world.levelSeed, lv: BR.game.levelId, mode: BR.game.mode, coop: BR.game.coop,
-      x: BR.player.x, z: BR.player.z, phys: __t.physHash(), home: BR.home.shown, lobby: !document.querySelector('.coop-lobby').hidden,
-    }))));
-    check('4 同一层（dev）、mode casual', sa.lv === 'dev' && sb.lv === 'dev' && sb.mode === 'casual', { A: sa.lv, B: sb.lv, mode: sb.mode });
-    check('4 BR.game.seed 一致', sa.seed === sb.seed, { A: sa.seed, B: sb.seed });
-    check('4 BR.world.levelSeed 一致', sa.levelSeed === sb.levelSeed && sa.levelSeed !== 0, { A: sa.levelSeed, B: sb.levelSeed });
-    check('4 出生点周围 3×3 区块碰撞体采样一致', sa.phys.hash === sb.phys.hash && sa.phys.blocked > 0 && sa.phys.blocked === sb.phys.blocked,
-      { A: { hash: sa.phys.hash, blocked: sa.phys.blocked }, B: { hash: sb.phys.hash, blocked: sb.phys.blocked }, samples: sa.phys.samples });
-    info('phys.stats / world.debugInfo（载入区块集合相同则总数相同）', { A: [sa.phys.stats, sa.phys.loaded, sa.phys.solids, sa.phys.center], B: [sb.phys.stats, sb.phys.loaded, sb.phys.solids, sb.phys.center] });
-    check('4 B 的 BR.game.coop = guest、主页和大厅已收起、被传送到房主身边', sb.coop && sb.coop.active && sb.coop.role === 'guest' && !sb.home && !sb.lobby &&
-      Math.hypot(sa.x - sb.x, sa.z - sb.z) < 2, { coop: sb.coop, home: sb.home, lobby: sb.lobby, dist: +Math.hypot(sa.x - sb.x, sa.z - sb.z).toFixed(2) });
+  await step('4e 再次准备后出发：同层同模式同种子，黑幕和大标题的先后', async () => {
+    // 两边联机时钟的偏差在营地里、出发之前量（2026-10-05 返修 r2：原来在刚进 Level Dev 时量，客机最近 10 s 的样本全是
+    // 加载卡顿时收到的、延迟都很大，机器忙时测出 4 s）。量 5 次取最小
+    const clkDiffs = [];
+    for (let i = 0; i < 5; i++) {
+      const [oa, ob] = await Promise.all([ev(A, () => __t.clkOff()), ev(B, () => __t.clkOff())]);
+      clkDiffs.push(Math.abs(oa - ob));
+      await sleep(200);
+    }
+    const clkDiff = Math.min(...clkDiffs);
+    const t0s = await Promise.all([A, B].map(p => ev(p, () => performance.now())));
+    const ready = await readyBoth([A, B], { wait: false });
+    // 最后半秒内客机再申请取消：房主不认，照样出发。
+    // 在倒数还剩 0.8–2.6 s（窗口宽，SwiftShader 一帧很慢也卡得到）时发「取消」申请，但把这条消息在本页扣住，
+    // 到倒数只剩约 0.25 s 才真正发出去——房主收到时已经在最后半秒里（或者已经出发），判的是房主那边的规则
+    const late = ready ? await ev(B, () => new Promise(res => {
+      const t0 = performance.now();
+      let seen = false;
+      const tick = () => {
+        const s = BR.coopCamp.state;
+        const left = s && s.goAt ? s.goAt - BR.coop.clock() : null;
+        if (left != null) seen = true;
+        if (left != null && left > 0.8 && left < 2.6) {
+          const P = BR.player, net = BR.net, orig = net.send;
+          const sendAt = performance.now() + (left - 0.25) * 1000;
+          const isCancel = o => !!(o && o.t === 'ev' && Array.isArray(o.list) && o.list.some(e => Array.isArray(e) && e[0] === 'use' && e[1] && e[1].a === 'tent' && e[1].x && e[1].x.op === 'cancel'));
+          net.send = function (o) {
+            const args = arguments, self = this;
+            if (isCancel(o) && performance.now() < sendAt) { setTimeout(() => orig.apply(self, args), sendAt - performance.now()); return true; }
+            return orig.apply(self, args);
+          };
+          const done = r => { net.send = orig; res({ left: +left.toFixed(3), heldMs: Math.round(sendAt - t0), r }); };
+          BR.coop.use('coopcamp:tent', 'tent', [P.x, P.y, P.z], done, { op: 'cancel' });
+          return;
+        }
+        // 倒数开始过又没了（已经出发、goAt 清掉）或者等太久：没卡到时间点
+        if (performance.now() - t0 > 8000 || (seen && left == null)) { res({ left, r: null, miss: true, seen }); return; }
+        setTimeout(tick, 8);
+      };
+      tick();
+    })) : { miss: true };
+    const arrived = await waitArrived([A, B], 'dev', 'casual', 45000);
+    // 申请到房主时倒数已经到 0（房主已开始出发、goAt 清掉）会回 ok:true（没什么可取消的）——只要照样出发了也算对
+    check('4e 最后半秒内取消无效：房主回「来不及取消了」，两人照样出发', ready && arrived && !!late.r && (late.r.ok === false ? /来不及/.test(late.r.why || '') : late.r.ok === true), late);
+    await sleep(1500);
+    const [sa, sb] = await Promise.all([A, B].map(p => snapRun(p)));
+    seed = sa.seed;
+    check('4e 两人一起到了 Level Dev，模式游玩、种子一致', arrived && sa.lv === 'dev' && sb.lv === 'dev' && sa.mode === 'casual' && sb.mode === 'casual' && sa.seed === sb.seed && sa.levelSeed === sb.levelSeed, { A: sa, B: sb });
+    check('4e 客机在房主 3 m 内，两人背包都是空的', Math.hypot(sa.x - sb.x, sa.z - sb.z) < 3 && sa.inv.every(x => !x) && sb.inv.every(x => !x), { dist: +Math.hypot(sa.x - sb.x, sa.z - sb.z).toFixed(2), A: sa.inv, B: sb.inv });
+    const [ta, tb] = await Promise.all([A, B].map((p, i) => ev(p, t0 => __t.since(__t.trace, t0), t0s[i])));
+    const tr = list => {
+      const black = list.find(x => x.k === 'curtainBlack' && x.v === true);
+      const start = list.find(x => x.k === 'startRun');
+      const hidden = list.filter(x => x.k === 'curtainHidden').pop();
+      const title = list.filter(x => x.k === 'titleShown').pop();
+      const first = list.find(x => x.k === 'curtain' && x.text);
+      return { text: first && first.text, black: black && Math.round(black.t), start: start && Math.round(start.t), hidden: hidden && Math.round(hidden.t), title: title && Math.round(title.t), titleText: title && title.text };
+    };
+    const xa = tr(ta), xb = tr(tb);
+    check('4e 房主：黑幕全黑（curtain resolve）之后才 startRun', xa.black != null && xa.start != null && xa.start >= xa.black, xa);
+    // 数到 0 的那一帧：营地和窗外带所有灯描述的强度都是 0（两边各自灭灯，记在落黑幕那一刻）
+    const lit = list => { const c = list.find(x => x.k === 'curtain' && x.text && x.lv === CAMP); return c ? { n: c.lightsN, max: c.lightsMax, transit: c.transit, text: c.text } : null; };
+    const la = lit(ta), lb = lit(tb);
+    check('4e 数到 0：营地和窗外所有灯的强度都是 0（两边，至少 12 盏）', !!la && !!lb && la.max === 0 && lb.max === 0 && la.n >= 12 && lb.n >= 12, { A: la, B: lb });
+    // 两边的 goAt 一样（客机用的就是房主发来的那个数），出发前两边联机时钟和墙钟的偏差相差 < 250 ms
+    const [ga, gb] = await Promise.all([
+      ev(A, t0 => __t.goAts.filter(g => g.t >= t0 && g.who === 'emit').map(g => g.goAt), t0s[0]), ev(B, t0 => __t.goAts.filter(g => g.t >= t0 && g.who === 'recv').map(g => g.goAt), t0s[1])]);
+    check('4e 倒数同步：两边的 goAt 相同，出发前（营地里）时钟差 < 250 ms', ga.length > 0 && gb.length > 0 && ga[ga.length - 1] === gb[gb.length - 1] && clkDiff < 0.25,
+      { A: ga, B: gb, clockDiffMs: Math.round(clkDiff * 1000), samplesMs: clkDiffs.map(x => Math.round(x * 1000)) });
+    check('4e 两边的层级大标题都在黑幕撤掉之后才播', xa.title != null && xa.hidden != null && xa.title >= xa.hidden && xb.title != null && xb.hidden != null && xb.title >= xb.hidden, { A: xa, B: xb });
+    info('黑幕文字', [xa.text, xb.text]);
+    await shot(A, 'arrived-dev-A');
+    // 出发的过场里关输入会退出指针锁定：亮起来以后电脑上要么指针还锁着，要么提示「点一下画面继续」（2026-10-05 返修 r2：原来什么都没有，鼠标转不了）
+    await lockHintCheck('4e 出发到了 Level Dev');
   });
 
   // ------------------------------------------------------------------
@@ -643,50 +1368,120 @@ async function run(browser, base) {
   });
 
   // ------------------------------------------------------------------
-  await step('7 拾取同步', async () => {
-    const [ia, ib, pa] = await Promise.all([
+  // 拾取同步：A 按空格、B 按 E（隐藏别名）。测试模式那一段（20）再用同样的办法查「拾取不复制」
+  const pickTwo = async (tag) => {
+    const [ia, ib, pa, ents] = await Promise.all([
       ev(A, () => BR.items.list.map(p => ({ id: p.id, type: p.type, x: p.x, y: p.y, z: p.z }))),
       ev(B, () => BR.items.list.map(p => p.id)),
       ev(A, () => ({ x: BR.player.x, z: BR.player.z })),
+      ev(A, () => BR.entities.list.filter(e => !e.removed).map(e => ({ x: e.x, z: e.z }))),
     ]);
     const inB = new Set(ib);
-    const lonely = ia.filter(p => inB.has(p.id) && ia.every(q => q === p || Math.hypot(q.x - p.x, q.z - p.z) > 2.5));
+    // 周围 2.5 m 没有别的物品、也没有实体（测试绿块、测试人会挡准心：2026-10-05 返修 r2 第 14 步偶发「B 按 E 没捡到」）
+    const lonely = ia.filter(p => inB.has(p.id) && ia.every(q => q === p || Math.hypot(q.x - p.x, q.z - p.z) > 2.5) && ents.every(e => Math.hypot(e.x - p.x, e.z - p.z) > 2.5));
     lonely.sort((p, q) => Math.hypot(p.x - pa.x, p.z - pa.z) - Math.hypot(q.x - pa.x, q.z - pa.z));
-    info('物品：A ' + ia.length + ' 件、B ' + ib.length + ' 件，两边都有且周围 2.5 m 无其他物品的 ' + lonely.length + ' 件');
-    if (lonely.length < 2) { check('7 找到两件可拾取的物品', false, lonely.length); return; }
+    info(tag + ' 物品：A ' + ia.length + ' 件、B ' + ib.length + ' 件，两边都有且周围 2.5 m 无其他物品的 ' + lonely.length + ' 件');
+    if (lonely.length < 2) { check(tag + ' 找到两件可拾取的物品', false, lonely.length); return; }
     const [it1, it2] = lonely;
-    // 站到物品 1 m 处（互动距离内），准心对准它（交互 A1：只认准心对准的东西），A 按空格、B 按 E（隐藏别名）
-    const approach = (page, it) => ev(page, t => {
-      const P = BR.player;
-      P.x = t.x + 1.0; P.z = t.z; P.vx = 0; P.vz = 0;
-      P.yaw = Math.atan2(-(t.x - P.x), -(t.z - P.z)); P.pitch = -0.6;
-      const r = BR.items.find(t.id);
-      if (r && BR.interact && BR.interact.aimAt) {
-        const o = r.obj ? r.obj.position : r;
-        BR.interact.aimAt(o.x, o.y + (r.hh || 0.1), o.z);
+    // 站到物品 1 m 处（互动距离内），准心对准它（交互 A1：只认准心对准的东西）。按键之前核对 BR.interact.current 真的是这件
+    // （不是就再瞄几次），返回最后一次核对的结果；没对上时把 toast、输入开关、当前目标打进日志
+    const aimIs = (page, it) => ev(page, id => { const c = BR.interact.current; return !!c && c.kind === 'item' && ((c.ref && c.ref.id === id) || c.key === id); }, it.id);
+    const approach = async (page, it) => {
+      for (let k = 0; k < 4; k++) {
+        await ev(page, t => {
+          const P = BR.player;
+          P.x = t.x + 1.0; P.z = t.z; P.vx = 0; P.vz = 0;
+          P.yaw = Math.atan2(-(t.x - P.x), -(t.z - P.z)); P.pitch = -0.6;
+          const r = BR.items.find(t.id);
+          if (r && BR.interact && BR.interact.aimAt) {
+            const o = r.obj ? r.obj.position : r;
+            BR.interact.aimAt(o.x, o.y + (r.hh || 0.1), o.z);
+          }
+        }, it);
+        await sleep(300);
+        if (await aimIs(page, it)) return true;
       }
-    }, it);
+      return false;
+    };
+    const aimDump = page => ev(page, () => { const c = BR.interact.current; return { cur: c ? { kind: c.kind, key: c.key, label: c.label } : null, input: BR.input.enabled, screen: BR.game.screen, toasts: __t.toasts.slice(-4) }; });
     const count = (page, type) => ev(page, t => BR.player.countOf(t), type);
 
     const before1 = { A: await count(A, it1.type), B: await count(B, it1.type) };
-    await approach(A, it1);
-    await sleep(400);
+    const aim1 = await approach(A, it1);
+    await sleep(100);
     await A.keyboard.press('Space');
     const goneA = await waitFor(A, id => !BR.items.find(id), it1.id, 3000);
     const goneB = await waitFor(B, id => !BR.items.find(id), it1.id, 4000);
+    await sleep(300);
     const after1 = { A: await count(A, it1.type), B: await count(B, it1.type) };
-    check('7 A 按空格拾取 → A 背包 +1、B 上该物品消失', goneA && goneB && after1.A === before1.A + 1 && after1.B === before1.B, { it: it1.id + ':' + it1.type, goneA, goneB, before1, after1 });
+    check(tag + ' A 按空格拾取 → A 背包 +1、B 上该物品消失、B 背包不变', aim1 && goneA && goneB && after1.A === before1.A + 1 && after1.B === before1.B, { it: it1.id + ':' + it1.type, aim1, goneA, goneB, before1, after1, ...(goneA ? {} : { dump: await aimDump(A) }) });
 
     const before2 = { A: await count(A, it2.type), B: await count(B, it2.type) };
-    await approach(B, it2);
-    await sleep(400);
+    const aim2 = await approach(B, it2);
+    const dump2 = await aimDump(B);
+    await sleep(100);
     await B.keyboard.press('KeyE');
     const goneB2 = await waitFor(B, id => !BR.items.find(id), it2.id, 5000);
     const goneA2 = await waitFor(A, id => !BR.items.find(id), it2.id, 3000);
     await sleep(300);
     const after2 = { A: await count(A, it2.type), B: await count(B, it2.type) };
-    check('7 B 按 E 拾取 → A 上消失，且只进 B 的背包', goneA2 && goneB2 && after2.B === before2.B + 1 && after2.A === before2.A, { it: it2.id + ':' + it2.type, goneA2, goneB2, before2, after2 });
-  });
+    check(tag + ' B 按 E 拾取 → A 上消失，且只进 B 的背包（不复制）', aim2 && goneA2 && goneB2 && after2.B === before2.B + 1 && after2.A === before2.A, { it: it2.id + ':' + it2.type, aim2, goneA2, goneB2, before2, after2, ...(goneB2 ? {} : { beforePress: dump2, after: await aimDump(B) }) });
+
+    // 两人同时捡同一件（2026-10-05 返修：没捡到的一方以前一点提示都没有）：A 按着空格（准心锁在它上面、还没到拖动），
+    // 这时 B 的拾取请求先到了房主那边 → 东西归 B，A 手里那一下落空，toast「「客机B」先拿到了」
+    const it3 = lonely[2];
+    if (!it3) { info(tag + ' 只有两件孤立物品，跳过「同时捡同一件」'); return; }
+    const before3 = { A: await count(A, it3.type), B: await count(B, it3.type) };
+    const n3 = await ev(A, () => __t.toasts.length);
+    await approach(A, it3);
+    await sleep(100);
+    await A.keyboard.down('Space');
+    const pressed = await waitFor(A, () => BR.interact.state === 'pressed', null, 1500);
+    await ev(B, t => { BR.bus.emit('item:pickRequest', { id: t.id, type: t.type }); }, it3);
+    const goneA3 = await waitFor(A, id => !BR.items.find(id), it3.id, 3000);
+    await sleep(250);
+    await A.keyboard.up('Space');
+    const goneB3 = await waitFor(B, id => !BR.items.find(id), it3.id, 3000);
+    await sleep(300);
+    const after3 = { A: await count(A, it3.type), B: await count(B, it3.type) };
+    const t3 = await ev(A, n => __t.toasts.slice(n), n3);
+    if (!pressed) info(tag + ' 同时捡：A 的空格没进 pressed（机器忙），这一项只看不复制', { t3 });
+    check(tag + ' 两人同时捡同一件：东西只进 B 的背包，A 那边落空并提示「「客机B」先拿到了」', goneA3 && goneB3 && after3.B === before3.B + 1 && after3.A === before3.A &&
+      (!pressed || t3.some(t => /「客机B」先拿到了/.test(t))), { it: it3.id, pressed, before3, after3, toasts: t3 });
+
+    // 慢了半拍（2026-10-05 返修 r2）：B 准心对着它，A 先拿走了；东西在 B 屏幕上消失后 0.15 s B 才按到（准心上已经没有它了）
+    // → B 也要提示「「房主A」先拿到了」（interact 记着 1 s 内对准过的那件）
+    const it4 = lonely[3];
+    if (!it4) { info(tag + ' 只有三件孤立物品，跳过「慢了半拍」'); return; }
+    const n4 = await ev(B, () => __t.toasts.length);
+    const aimB = await approach(B, it4);
+    await approach(A, it4);
+    const pB = ev(B, id => new Promise(res => {
+      const t0 = performance.now();
+      const tick = () => {
+        if (!BR.items.find(id)) {
+          const tg = performance.now();
+          // 合成按键（input.js 在 window 捕获阶段听 keydown / keyup）：消失后 80 ms 按下、再 60 ms 松开
+          setTimeout(() => {
+            const o = { code: 'KeyE', key: 'e', bubbles: true, cancelable: true };
+            const cur = BR.interact.current ? BR.interact.current.kind : null;
+            window.dispatchEvent(new KeyboardEvent('keydown', o));
+            setTimeout(() => { window.dispatchEvent(new KeyboardEvent('keyup', o)); res({ goneAfterMs: Math.round(tg - t0), pressAfterGoneMs: Math.round(performance.now() - tg), curAtPress: cur }); }, 60);
+          }, 80);
+          return;
+        }
+        if (performance.now() - t0 > 8000) { res(null); return; }
+        requestAnimationFrame(tick);
+      };
+      tick();
+    }), it4.id);
+    await A.keyboard.press('Space');
+    const r4 = await pB;
+    await sleep(600);
+    const t4 = await ev(B, n => __t.toasts.slice(n), n4);
+    check(tag + ' 慢了半拍：东西在 B 屏幕上已经没了 0.1 s B 才按到，B 也提示「「房主A」先拿到了」', aimB && !!r4 && t4.some(t => /「房主A」先拿到了/.test(t)), { it: it4.id, aimB, r4, toasts: t4 });
+  };
+  await step('7 拾取同步', async () => { await pickTwo('7'); });
 
   // ------------------------------------------------------------------
   await step('8 换层', async () => {
@@ -721,6 +1516,11 @@ async function run(browser, base) {
     ok = await settle('dev_b');
     s = await snap();
     check('8d B 走进出口 dev → dev_b → 房主换层并广播，两人都到 dev_b', ok && s[0].lv === 'dev_b' && s[1].lv === 'dev_b' && s[0].levelSeed === s[1].levelSeed, s);
+    // 2026-10-05 返修：走出口换层两人按同一个种子落在同一个到达点、叠在一起；客机进层后站到房主身边的空地上
+    await sleep(800);
+    const pz = await Promise.all([A, B].map(p => ev(p, () => ({ x: +BR.player.x.toFixed(2), z: +BR.player.z.toFixed(2), peer: __t.peerSuit() }))));
+    const dd = Math.hypot(pz[0].x - pz[1].x, pz[0].z - pz[1].z);
+    check('8d 换层后两人不叠在一起（相距 0.6–2 m），房主看得见客机的人形', dd >= 0.6 && dd <= 2 && !!pz[0].peer && pz[0].peer.visible, { A: [pz[0].x, pz[0].z], B: [pz[1].x, pz[1].z], d: +dd.toFixed(2) });
 
     // 8e：客机走进同层出口（dev_b → dev_b）
     e0 = await snap();
@@ -755,6 +1555,32 @@ async function run(browser, base) {
     check('9 说话角标：B「我在说话」、A「对方在说话」出现过', lb.badge.me && pa.badge.peer, { B: lb.badge, A: pa.badge });
     await shot(B, 'mic-on-B');
     await shot(A, 'mic-peer-speaking-A');
+    // 设置里的「联机语音音量」（BR.coop.setVoiceVolume）：桌面 Chrome 直接设对方语音 <audio>.volume；
+    // iOS（BR.net.volumeWorks 为 false）改走 GainNode、<audio> 静音但照播，100% 时拆掉 GainNode、取消静音
+    const vol = await ev(A, () => {
+      const a = __t.audios.find(x => x.srcObject) || null;
+      if (!a) return { err: '没找到对方语音的 <audio>' };
+      const out = {};
+      out.ret = BR.coop.setVoiceVolume(0.3);
+      out.desk = { volume: +a.volume.toFixed(3), muted: a.muted, remoteVolume: BR.net.remoteVolume, works: BR.net.volumeWorks };
+      const d0 = Object.getOwnPropertyDescriptor(BR.net, 'volumeWorks');
+      try {
+        Object.defineProperty(BR.net, 'volumeWorks', { get: () => false, configurable: true, enumerable: true });
+        BR.coop.setVoiceVolume(0.5);
+        out.ios = { muted: a.muted, volume: +a.volume.toFixed(3), playing: !a.paused, voiceVolume: BR.coop.voiceVolume };
+        BR.coop.setVoiceVolume(1);
+        out.ios100 = { muted: a.muted, volume: +a.volume.toFixed(3) };
+      } finally {
+        if (d0) Object.defineProperty(BR.net, 'volumeWorks', d0);
+      }
+      BR.coop.setVoiceVolume(1);
+      out.back = { volume: a.volume, muted: a.muted };
+      return out;
+    });
+    check('9 联机语音音量：setVoiceVolume(0.3) 真的设到对方语音 <audio>.volume（不静音），BR.net.remoteVolume 记住 0.3',
+      !vol.err && Math.abs(vol.ret - 0.3) < 1e-6 && Math.abs(vol.desk.volume - 0.3) < 0.01 && vol.desk.muted === false && Math.abs(vol.desk.remoteVolume - 0.3) < 1e-6, vol);
+    check('9 iOS 那条路（volumeWorks=false）：调到 50% 时 <audio> 静音、照播（声音改走 GainNode）；回到 100% 取消静音',
+      !vol.err && vol.ios.muted === true && vol.ios.playing && vol.ios100.muted === false && vol.back.volume === 1 && vol.back.muted === false, vol);
     await B.keyboard.press('KeyV');
     const off = await waitFor(B, () => BR.coop.mic === false, null, 5000);
     const btn2 = await ev(B, () => { const b = document.querySelector('.coop-mic'); return { on: b.classList.contains('coop-on'), txt: b.textContent }; });
@@ -765,71 +1591,387 @@ async function run(browser, base) {
   });
 
   // ------------------------------------------------------------------
-  await step('10 离开与回单机', async () => {
-    const t0 = Date.now();
-    await B.close();
-    const aLeft = await waitFor(A, () => !BR.coop.active && BR.coop.phase === 'idle', null, 45000);
-    const aSt = await ev(A, () => ({ toasts: __t.toasts.slice(-3), status: document.querySelector('.coop-status').textContent, active: BR.coop.active, coop: BR.game.coop, auth: BR.entities.authoritative, screen: BR.game.screen }));
-    check('10 B 关闭页面 → A 收到「对方已离开」提示', aLeft && aSt.toasts.some(t => /离开了联机/.test(t)), { ms: Date.now() - t0, ...aSt });
-    const t1 = await ev(A, () => ({ time: BR.game.time, ent: BR.entities.debugInfo().time, pos: __t.ents().map(r => [r[0], r[2], r[3]]) }));
-    await sleep(2500);
-    const t2 = await ev(A, () => ({ time: BR.game.time, ent: BR.entities.debugInfo().time, pos: __t.ents().map(r => [r[0], r[2], r[3]]) }));
-    const moved = t2.pos.filter(p => { const q = t1.pos.find(o => o[0] === p[0]); return q && Math.hypot(q[1] - p[1], q[2] - p[2]) > 0.05; }).length;
-    check('10 A 继续单机：playing、authoritative、世界和实体在跑', aSt.screen === 'playing' && aSt.auth === true && !aSt.coop.active && t2.time > t1.time && moved > 0,
-      { time: [t1.time, t2.time], moved, ents: t2.pos.length });
-    await shot(A, 'A-alone-after-B-left');
+  await step('11 断网 10 s 自动重连：层级、背包、位置不变', async () => {
+    const spares = await Promise.all([A, B].map(p => waitFor(p, () => !!BR.coop.debugInfo().spare, null, 15000)));
+    info('备用房号（掉线重连用）两边都有', spares);
+    const before = await Promise.all([A, B].map(p => snapRun(p)));
+    const t0s = await Promise.all([A, B].map(p => ev(p, () => performance.now())));
+    // B 断网：信令请求失败（CDP 离线 + 拦截），P2P 这条路也断（DevTools 离线管不到 WebRTC：让 B 的连接报 failed）
+    await ctxB.setOffline(true);
+    netDown.add('B');
+    const tCut = Date.now();
+    const cut = await ev(B, () => __t.cutPeer());
+    const rcBoth = await Promise.all([A, B].map(p => waitFor(p, () => BR.coop.phase === 'reconnecting', null, 15000)));
+    const notes = await Promise.all([A, B].map(p => ev(p, () => __t.noticeTexts())));
+    check('11 断网后两边都进 reconnecting，顶上「连接断了，正在重连…（最多 90 秒）」带「不等了」', rcBoth.every(Boolean) &&
+      notes.every(n => n.some(t => /连接断了，正在重连…（最多 90 秒）/.test(t) && /不等了/.test(t))), { cut, rcBoth, notes });
+    await shot(A, 'reconnecting-A');
+    const left = 10000 - (Date.now() - tCut);
+    if (left > 0) await sleep(left);
+    await ctxB.setOffline(false);
+    netDown.delete('B');
+    const t1 = Date.now();
+    const back = await waitActive([A, B], 60000);
+    await sleep(2000);
+    const after = await Promise.all([A, B].map(p => snapRun(p)));
+    const bus = await Promise.all([A, B].map((p, i) => ev(p, t0 => __t.since(__t.bus, t0).map(b => b.n), t0s[i])));
+    check('11 恢复网络后自动连回来（coop:reconnected），没有 peerGone', back && bus.every(b => b.includes('coop:reconnected') && !b.includes('coop:peerGone')), { ms: Date.now() - t1, bus });
+    check('11 重连后两边层级、种子不变', after.every((a, i) => a.lv === before[i].lv && a.seed === before[i].seed && a.levelSeed === before[i].levelSeed), { before, after });
+    check('11 背包不变（客机 7 步捡的东西还在）', after.every((a, i) => JSON.stringify(a.inv) === JSON.stringify(before[i].inv)) && before[1].inv.some(Boolean), { before: before.map(b => b.inv), after: after.map(a => a.inv) });
+    check('11 两人原地不动（位置误差 < 0.5 m，客机不被传送）', after.every((a, i) => Math.hypot(a.x - before[i].x, a.z - before[i].z) < 0.5), { before: before.map(b => [b.x, b.z]), after: after.map(a => [a.x, a.z]) });
+    const notesAfter = await Promise.all([A, B].map(p => ev(p, () => __t.noticeTexts())));
+    check('11 连回来后重连横幅收起', notesAfter.every(n => !n.some(t => /正在重连/.test(t))), notesAfter);
+  });
 
-    // 触屏客机 T 加入 A 的新房间：检查触屏麦克风按钮；然后 A 断开，T 回单机
-    const ctxT = await newContext(browser, 'T', { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
-    const T = await newPage(ctxT, 'T');
+  // ------------------------------------------------------------------
+  await step('12 回营地要同意：不要 / 有输入不理 / 挂机自动', async () => {
+    // 15 s 太久，测试里缩到 10 s（2026-10-05 返修 r2：缩到 5 s 时机器一忙，截完图横幅已经到时间自动同意了，点「不要」超时）
+    await Promise.all([A, B].map(p => ev(p, () => { BR.config.coop.askSec = 10; })));
+    // 背包里有东西的一方，横幅上提前说「背包带不回营地」（客机 7 步捡的东西还在）
+    const bags = await Promise.all([A, B].map(p => ev(p, () => BR.player.inventory.filter(x => x && x.count > 0).length)));
+    // 12a 不要
+    let t0 = await ev(A, () => performance.now());
+    const asked = await ev(A, () => BR.coopCamp.back());
+    const shown = await waitFor(B, () => __t.noticeTexts().some(t => /房主A」想回营地/.test(t) && /同意/.test(t) && /不要/.test(t)), null, 5000);
+    const aWait = await ev(A, () => __t.noticeTexts());
+    const bAsk = await ev(B, () => __t.noticeTexts());
+    await noticeBtn(B, '不要');
+    await shot(B, 'camp-ask-B');
+    const no = await waitFor(A, t0 => __t.toasts.some(t => /客机B」还想接着玩/.test(t)), t0, 5000);
+    await sleep(1000);
+    let lv = await Promise.all([A, B].map(p => ev(p, () => BR.game.levelId)));
+    check('12a A 点回营地 → B 横幅「「房主A」想回营地」同意 / 不要，A 看到「等「客机B」同意…」', asked && shown && aWait.some(t => /等「客机B」同意/.test(t)), { aWait });
+    check('12a B 点「不要」→ A 提示「「客机B」还想接着玩」，两人都留在 Level Dev', no && lv.every(l => l === 'dev'), lv);
+    const bagMine = /等「客机B」同意…（背包里的东西带不回营地）/, bagYours = /房主A」想回营地（你背包里的东西带不回去）/;
+    check('12a 背包提醒：背包里有东西的一方横幅上多一句（提出的一方「背包里的东西带不回营地」、回答的一方「你背包里的东西带不回去」），空背包不说',
+      bags[1] > 0 && aWait.some(t => /等「客机B」同意/.test(t)) && (bags[0] > 0) === aWait.some(t => bagMine.test(t)) && bAsk.some(t => bagYours.test(t)), { bags, aWait, bAsk });
+    // 12b B 一直在玩（有输入）但不回答：到时按「不要」
+    await sleep(500);
+    t0 = await ev(A, () => performance.now());
+    await ev(A, () => BR.coopCamp.back());
+    await waitFor(B, () => __t.noticeTexts().some(t => /想回营地/.test(t)), null, 5000);
+    for (let i = 0; i < 6; i++) { await B.keyboard.down('KeyA'); await sleep(250); await B.keyboard.up('KeyA'); await sleep(500); }
+    const busy = await waitFor(A, () => __t.toasts.filter(t => /客机B」还想接着玩/.test(t)).length >= 2, null, 25000);
+    await sleep(800);
+    lv = await Promise.all([A, B].map(p => ev(p, () => BR.game.levelId)));
+    check('12b B 这段时间有输入却没回应 → 当「不要」，A 提示「还想接着玩」，不回营地', busy && lv.every(l => l === 'dev'), lv);
+    // 12c B 挂机（完全没有输入）：到时自动同意，两人一起回营地
+    await sleep(500);
+    const t0c = await Promise.all([A, B].map(p => ev(p, () => __t.toasts.length)));
+    await ev(A, () => BR.coopCamp.back());
+    await waitFor(B, () => __t.noticeTexts().some(t => /想回营地/.test(t)), null, 5000);
+    const home = await waitArrived([A, B], CAMP, null, 45000);
+    await sleep(1500);
+    const tc = await Promise.all([A, B].map((p, i) => ev(p, n => __t.toasts.slice(n), t0c[i])));
+    const [sa, sb] = await Promise.all([A, B].map(p => ev(p, k => ({ lv: BR.game.levelId, st: BR.coopCamp.state, x: +BR.player.x.toFixed(2), z: +BR.player.z.toFixed(2), chair: k ? __t.prop(k) : null, inv: __t.inv() }), chairKey)));
+    check('12c B 挂机 5 s 没碰键盘和屏幕 → 自动同意，两人一起回到营地', home && sa.lv === CAMP && sb.lv === CAMP, { A: sa.lv, B: sb.lv });
+    check('12c 回营地后帐篷里还是上一局的选择（游玩 + Level Dev + 改过的生成量），准备已清空',
+      !!sa.st && sa.st.mode === lastSel.mode && sa.st.lv === lastSel.lv && Math.abs(sa.st.spawn - lastSel.spawn) < 0.005 && !sa.st.rdy[0] && !sa.st.rdy[1] && !!sb.st && sb.st.lv === lastSel.lv,
+      { want: lastSel, A: sa.st && { mode: sa.st.mode, lv: sa.st.lv, spawn: sa.st.spawn, rdy: sa.st.rdy }, B: sb.st && { lv: sb.st.lv } });
+    check('12c 挪过的椅子还在上次的位置（两边都是）', !!chairTo && [sa, sb].every(s => s.chair && Math.hypot(s.chair.x - chairTo.x, s.chair.z - chairTo.z) < 0.02), { want: chairTo, A: sa.chair, B: sb.chair });
+    check('12c 两人站在两个出生格上', [sa, sb].every(s => [[15, 21.2], [17, 21.2]].some(([x, z]) => Math.hypot(s.x - x, s.z - z) < 0.5)) && Math.hypot(sa.x - sb.x, sa.z - sb.z) > 1, { A: [sa.x, sa.z], B: [sb.x, sb.z] });
+    // 回营地是新开一局（返修 r1 选的方案 b）：背包清空，背包里原来有东西的一方亮起来时 toast「背包清空了：捡的东西带不回营地」（不点层名）
+    const cleared = '背包清空了：捡的东西带不回营地';
+    check('12c 回营地后两人背包都是空的；原来有东西的一方提示「' + cleared + '」，空背包的不提示', sa.inv.every(x => !x) && sb.inv.every(x => !x) &&
+      tc[1].includes(cleared) && (bags[0] > 0) === tc[0].includes(cleared), { bags, A: sa.inv, B: sb.inv, toastsA: tc[0], toastsB: tc[1] });
+    await shot(A, 'back-in-camp-A');
+    await lockHintCheck('12c 回到营地');
+  });
+
+  // ------------------------------------------------------------------
+  await step('13 rejoin：客机刷新页面，3 分钟内「回去？」', async () => {
+    const t0 = await ev(A, () => performance.now());
+    const saved = await ev(B, () => { try { return JSON.parse(sessionStorage.getItem('br_coop_rejoin') || 'null'); } catch (e) { return null; } });
+    check('13 客机 sessionStorage 里有 br_coop_rejoin {code, host, at}', !!saved && /^[A-Z2-9]{6}$/.test(saved.code || '') && saved.host === '房主A' && saved.at > 0, saved);
+    await B.reload();
+    await B.waitForFunction(() => window.BR && window.__br && BR.home && BR.home.shown, null, { timeout: 60000 });
+    await ev(B, () => BR.assets.init());
+    await ev(B, installHelpers);
+    await ev(B, registerDevB);
+    const aRc = await waitFor(A, () => BR.coop.phase === 'reconnecting', null, 15000);
+    const card = await waitFor(B, () => { const r = document.querySelector('.coop-rejoin'); return r && !r.hidden && /「房主A」的营地还开着，回去？/.test(r.textContent); }, null, 15000);
+    check('13 客机刷新：房主原地等（reconnecting），客机主页出现「「房主A」的营地还开着，回去？」', aRc && card, await ev(B, () => (document.querySelector('.coop-rejoin') || {}).textContent));
+    await shot(B, 'rejoin-card');
+    if (card) await B.click('.coop-rejoin .coop-rejoin-yes');
+    const back = await waitActive([A, B], 60000) && await waitCamp(B, 30000);
+    await sleep(1500);
+    const [sa, sb] = await Promise.all([A, B].map(p => snapRun(p)));
+    check('13 点「回去」→ 连回原来的营地（同一个种子），房主 toast「「客机B」连回来了」', back && sb.lv === CAMP && sa.seed === sb.seed &&
+      (await ev(A, t0 => __t.toasts.some(t => /客机B」连回来了/.test(t)), t0)), { A: sa, B: sb });
+    await ev(B, () => BR.skin.set('blue'));
+    await Promise.all([A, B].map(p => ev(p, () => { BR.config.coop.askSec = 10; })));
+  });
+
+  // ------------------------------------------------------------------
+  await step('14 测试模式两人', async () => {
+    await tentPick(A, { mode: 'test', lv: 'dev' });
+    await waitFor(B, () => { const s = BR.coopCamp.state; return !!s && s.mode === 'test' && s.lv === 'dev'; }, null, 4000);
+    const d = await departBoth([A, B], 'dev', 'test');
+    check('14 帐篷里选「测试模式 + Level Dev」，两人一起出发到测试模式', d.ready && d.arrived, d);
+    if (!d.arrived) return;
+    // 客机放实体：交给房主放，两边都有，5 s 后还在
+    const t0 = await ev(B, () => performance.now());
+    const ids0 = await ev(A, () => __t.ents().map(e => e[0]));
+    const r1 = await ev(B, () => BR.test.spawnEntity('_dev_friendly'));
+    const appear = await waitFor(A, ids => __t.ents().some(e => e[1] === '_dev_friendly' && !ids.includes(e[0])), ids0, 5000);
+    const newId = await ev(A, ids => { const e = __t.ents().find(q => q[1] === '_dev_friendly' && !ids.includes(q[0])); return e ? e[0] : null; }, ids0);
+    const bSee = newId && await waitFor(B, id => !!BR.entities.get(id) && !BR.entities.get(id).removed, newId, 5000);
+    await sleep(5000);
+    const still = await Promise.all([A, B].map(p => ev(p, id => !!BR.entities.get(id) && !BR.entities.get(id).removed, newId)));
+    const bt = await ev(B, t0 => __t.toasts.slice(-4), t0);
+    check('14 客机放出的实体由房主生成，两边都有，5 s 后还在；客机 toast「已放出 …」', r1 === null && appear && bSee && still.every(Boolean) && bt.some(t => /已放出/.test(t)), { r1, newId, still, toasts: bt });
+    // 客机召唤测试人：id 前缀带召唤者颜色，两边看到的颜色一样（蓝）
+    await ev(B, () => BR.test.spawnDummy());
+    const dumId = await waitFor(A, () => __t.ents().some(e => /^dummy~blue~g~/.test(e[0])), null, 5000) ? await ev(A, () => __t.ents().find(e => /^dummy~blue~g~/.test(e[0]))[0]) : null;
+    await sleep(1500);
+    const hexBlue = await ev(A, () => __t.expectedHex('blue'));
+    const [da, db] = await Promise.all([A, B].map(p => ev(p, id => __t.entSuit(id), dumId)));
+    check('14 测试人 id「dummy~blue~g~…」，房主和客机看到的制服颜色一致（客机的蓝色）', !!dumId && !!da && !!db && da.suit.length > 0 && da.suit.every(h => h === hexBlue) && db.suit.every(h => h === hexBlue), { dumId, A: da, B: db, want: hexBlue.toString(16) });
+    // 两人撞色：测试人头顶挂召唤者名牌
+    await ev(B, () => BR.skin.set('pink'));
+    await sleep(1200);
+    await ev(B, () => BR.test.spawnDummy());
+    const pinkId = await waitFor(A, () => __t.ents().some(e => /^dummy~pink~g~/.test(e[0])), null, 5000) ? await ev(A, () => __t.ents().find(e => /^dummy~pink~g~/.test(e[0]))[0]) : null;
+    await sleep(1500);
+    const [na, nb] = await Promise.all([A, B].map(p => ev(p, id => __t.entSuit(id), pinkId)));
+    check('14 两人撞色（都穿粉色）：客机的测试人头顶挂召唤者名牌（两边都有）', !!pinkId && !!na && !!nb && na.sprites > 0 && nb.sprites > 0, { pinkId, A: na, B: nb });
+    await shot(A, 'test-dummy-tag-A');
+    await ev(B, () => BR.skin.set('blue'));
+    // 清除全部：客机申请，房主清，两边都说是谁清的
+    const tc = await Promise.all([A, B].map(p => ev(p, () => performance.now())));
+    await ev(B, () => BR.test.clearAll());
+    const cleared = await waitFor(A, () => __t.ents().length === 0, null, 5000);
+    await sleep(1500);
+    const cnt = await Promise.all([A, B].map(p => ev(p, () => __t.ents().length)));
+    const ct = await Promise.all([A, B].map((p, i) => ev(p, t0 => __t.toasts.slice(-4), tc[i])));
+    check('14 客机「清除全部」：房主清掉，两边计数一致（0），都提示「「客机B」清除了全部实体」', cleared && cnt[0] === cnt[1] && ct.every(t => t.some(x => /客机B」清除了全部实体/.test(x))), { cnt, toasts: ct });
+    // 放一个再看两边计数一致
+    await ev(B, () => BR.test.spawnEntity('_dev_friendly'));
+    await sleep(2500);
+    const cnt2 = await Promise.all([A, B].map(p => ev(p, () => __t.ents().length)));
+    check('14 场上数量两边读同一份（房主实体表 = 客机快照）', cnt2[0] === cnt2[1] && cnt2[0] >= 1, cnt2);
+    // 拾取之前先清场：测试绿块走来走去会挡准心
+    await ev(A, () => BR.test.clearAll());
+    await waitFor(A, () => __t.ents().length === 0, null, 5000);
+    await waitFor(B, () => __t.ents().length === 0, null, 5000);
+    await pickTwo('14 测试模式');
+  });
+
+  // ------------------------------------------------------------------
+  await step('15 回营地要同意：同意（客机倒下了，在结算页提出）', async () => {
+    // 2026-10-05 返修：队友倒下，房主那边以前一点动静都没有；倒下的人提出回营地，横幅也和平时一样
+    const n0 = await ev(A, () => __t.toasts.length);
+    const died = await ev(B, () => { BR.player.damage({ hp: 999, cause: '测试' }); return BR.player.dead; });
+    const told = await waitFor(A, n => __t.toasts.slice(n).some(t => /「客机B」倒下了/.test(t)), n0, 5000);
+    check('15 客机倒下了：房主 toast「「客机B」倒下了」', died && told, await ev(A, n => __t.toasts.slice(n), n0));
+    const deadScr = await waitFor(B, () => { const r = document.querySelector('.death-btn-camp'); return !!(r && r.getClientRects().length); }, null, 8000);
+    const t0 = await ev(B, () => performance.now());
+    await ev(B, () => BR.coopCamp.back());
+    const shown = await waitFor(A, () => __t.noticeTexts().some(t => /客机B」倒下了，想回营地/.test(t)), null, 5000);
+    check('15 倒下的客机在结算页点「回营地」：房主横幅「「客机B」倒下了，想回营地」', deadScr && shown, await ev(A, () => __t.noticeTexts()));
+    await noticeBtn(A, '同意');
+    const home = await waitArrived([A, B], CAMP, null, 40000);
+    const tr = await ev(B, t0 => __t.since(__t.trace, t0).filter(x => x.k === 'curtain').map(x => x.text), t0);
+    const bAlive = await ev(B, () => ({ dead: BR.player.dead, hp: BR.player.hp, screen: BR.game.screen }));
+    check('15 B 提出回营地，A 点「同意」→ 两人黑幕「回营地」一起回到营地，B 活着、结算页收起', shown && home && tr.some(t => /回营地/.test(String(t))) && !bAlive.dead && bAlive.screen === 'playing', { shown, home, curtain: tr, bAlive });
+  });
+
+  // ------------------------------------------------------------------
+  let ctxT = null, T = null;
+  await step('16 营地里对方离开：卡片；再开营地，新朋友落点不压人', async () => {
+    // B 从暂停菜单「离开联机」（点两次）
+    await ev(B, () => BR.hud.pause(true));
+    await sleep(400);
+    const pb = await ev(B, () => Array.from(document.querySelectorAll('.hud-pause button')).filter(b => b.getClientRects().length).map(b => b.textContent.trim()));
+    check('16 营地里暂停只有「继续」和「离开联机」（没有「回营地」）', pb.includes('继续') && pb.includes('离开联机') && !pb.includes('回营地'), pb);
+    // 两下要在 2.5 s 窗口里：B.click 每次都要等按钮「稳定」（两帧位置不变），SwiftShader 一帧很慢时光等这个就超过窗口了，
+    // 所以先量一次按钮位置，按坐标点两下鼠标（和真人一样，第二下不等动画）
+    const lb = await B.locator('.hud-pause .hud-btn-leave').boundingBox();
+    await B.mouse.click(lb.x + lb.width / 2, lb.y + lb.height / 2);
+    await sleep(300);
+    const armed = await ev(B, () => document.querySelector('.hud-pause .hud-btn-leave').textContent);
+    await B.mouse.click(lb.x + lb.width / 2, lb.y + lb.height / 2);
+    const bHome = await waitFor(B, () => BR.game.screen === 'home' && BR.coop.phase === 'idle', null, 10000);
+    check('16 B「离开联机」要点两次（「再点一次：会断开联机，回到主页」），然后回主页', /再点一次：会断开联机，回到主页/.test(armed) && bHome, armed);
+    const card = await waitFor(A, () => __t.noticeTexts().some(t => /客机B」离开了营地/.test(t) && /再开一个营地等朋友/.test(t) && /回主页/.test(t)), null, 15000);
+    check('16 A 弹出「「客机B」离开了营地」：再开一个营地等朋友 / 回主页', card, await ev(A, () => __t.noticeTexts()));
+    await shot(A, 'peer-left-camp-card');
+    const seed0 = await ev(A, () => BR.game.seed >>> 0);
+    await noticeBtn(A, '再开一个营地等朋友');
+    const reopened = await waitFor(A, () => BR.coop.hosting && /^[A-Z2-9]{6}$/.test(BR.coop.code || ''), null, 15000);
+    code = await ev(A, () => BR.coop.code);
+    const st = await ev(A, () => ({ lv: BR.game.levelId, seed: BR.game.seed >>> 0, hud: __t.hudCode(), role: BR.coop.role }));
+    check('16「再开一个营地等朋友」：原地重新开房（同一个世界），换了新房号，角标写房号', reopened && st.lv === CAMP && st.seed === seed0 && !!st.hud && st.hud.includes(code), st);
+    // 房主站到第 1 格；新朋友（触屏 T）应落在第 0 格，不压人
+    await ev(A, () => { BR.player.reset({ x: 17, y: 0, z: 21.2, yaw: 0 }, { full: false }); });
+    ctxT = await newContext(browser, 'T', TOUCH_VIEW);
+    T = await newPage(ctxT, 'T');
     await boot(T, base);
     await ev(T, () => BR.skin.set('blue'));
-    await ev(T, registerDevB);
-    await ev(A, () => BR.coop.openLobby());
-    const code3 = await hostRoom(A);
-    await ev(T, () => BR.coop.openLobby());
-    await T.fill('.coop-lobby .coop-field .coop-input', '触屏T');
-    const j = await joinRoom(T, code3, null, true);
-    const both = await waitActive([A, T]);
-    await A.click('.coop-lobby .coop-close').catch(() => {});
-    const tPlay = await waitFor(T, () => BR.game.screen === 'playing' && BR.game.coop && BR.game.coop.role === 'guest', null, 30000);
-    check('10 触屏客机 T 加入 A 的新房间并进入同一世界', j.confirmShown && both && tPlay, { code3, both, tPlay });
-    await sleep(1500);
+    const j = await joinCamp(T, code, { name: '触屏T', touch: true });
+    await sleep(2000);
+    const [pa, pt] = await Promise.all([A, T].map(p => ev(p, () => ({ x: +BR.player.x.toFixed(2), z: +BR.player.z.toFixed(2), active: BR.coop.active, lv: BR.game.levelId }))));
+    check('16 触屏 T 点「联机」输房号、点「加入」进了营地', j.joined && pt.lv === CAMP, { joined: j.joined, card: j.card });
+    check('16 新朋友落在没被占的那一格（房主站第 1 格 → T 在第 0 格），不压人', Math.hypot(pt.x - 15, pt.z - 21.2) < 0.35 && Math.hypot(pa.x - pt.x, pa.z - pt.z) > 1.2, { A: pa, T: pt });
+    // 触屏麦克风按钮：存在、≥ 44px、不和动作按钮重叠，点了开 / 关
     const lay = await ev(T, () => {
       const mic = document.querySelector('.coop-mic');
-      const r = mic.getBoundingClientRect();
       const box = e => { const b = e.getBoundingClientRect(); return { l: b.left, t: b.top, r: b.right, b: b.bottom, w: b.width, h: b.height }; };
+      const r = mic.getBoundingClientRect();
       const others = Array.from(document.querySelectorAll('button, [role="button"], .touch-btn'))
         .filter(e => e !== mic && !mic.contains(e) && !e.closest('.coop-lobby'))
         .filter(e => { const b = e.getBoundingClientRect(); const cs = getComputedStyle(e); return b.width > 0 && b.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none'; })
         .map(e => ({ cls: e.className, ...box(e) }));
       const hit = others.filter(o => !(o.r <= r.left || o.l >= r.right || o.b <= r.top || o.t >= r.bottom));
-      return { touch: BR.input.isTouch, hudTouch: document.querySelector('.coop-hud').classList.contains('coop-touch'), mic: { hidden: mic.hidden, ...box(mic) }, hit, n: others.length, touchBtns: others.filter(o => /touch-btn/.test(o.cls)).map(o => o.cls + ' ' + Math.round(o.l) + ',' + Math.round(o.t)) };
+      return { touch: BR.input.isTouch, hudTouch: document.querySelector('.coop-hud').classList.contains('coop-touch'), mic: { hidden: mic.hidden, ...box(mic) }, hit, n: others.length };
     });
-    check('10 触屏视口：麦克风按钮存在且 ≥ 44px', lay.touch && lay.hudTouch && !lay.mic.hidden && lay.mic.w >= 44 && lay.mic.h >= 44, lay.mic);
-    check('10 触屏视口：麦克风按钮不与动作按钮重叠', lay.n > 0 && lay.hit.length === 0, { hit: lay.hit, touchBtns: lay.touchBtns });
-    await shot(T, 'touch-guest-mic');
+    check('16 触屏视口：麦克风按钮存在且 ≥ 44px、不与别的按钮重叠', lay.touch && lay.hudTouch && !lay.mic.hidden && lay.mic.w >= 44 && lay.mic.h >= 44 && lay.n > 0 && lay.hit.length === 0, lay);
+    await shot(T, 'touch-guest-camp');
     await T.tap('.coop-mic');
     const tapOn = await waitFor(T, () => BR.coop.mic === true, null, 10000);
     await T.tap('.coop-mic');
     const tapOff = await waitFor(T, () => BR.coop.mic === false, null, 5000);
-    check('10 触屏点麦克风按钮开麦 / 再点闭麦', tapOn && tapOff, { tapOn, tapOff });
-
-    const t3 = Date.now();
-    await A.close();
-    const tLeft = await waitFor(T, () => !BR.coop.active && BR.coop.phase === 'idle', null, 45000);
-    const p1 = await ev(T, () => __t.ents().map(r => [r[0], r[2], r[3]]));
-    await sleep(3000);
-    const tSt = await ev(T, () => ({ toasts: __t.toasts.slice(-3), auth: BR.entities.authoritative, coop: BR.game.coop, screen: BR.game.screen, pos: __t.ents().map(r => [r[0], r[2], r[3]]), dbg: BR.entities.debugInfo().authoritative }));
-    const moved2 = tSt.pos.filter(p => { const q = p1.find(o => o[0] === p[0]); return q && Math.hypot(q[1] - p[1], q[2] - p[2]) > 0.05; }).length;
-    check('10 A 断开 → 客机回到 authoritative=true 单机，提示已切回单机', tLeft && tSt.auth === true && !tSt.coop.active && tSt.screen === 'playing' && tSt.toasts.some(t => /单机/.test(t)),
-      { ms: Date.now() - t3, toasts: tSt.toasts, auth: tSt.auth, coop: tSt.coop, screen: tSt.screen });
-    check('10 客机回单机后原有实体继续跑本机 AI', tSt.pos.length > 0 && moved2 > 0, { ents: tSt.pos.length, moved: moved2 });
-    await shot(T, 'touch-guest-alone');
-    await ctxT.close();
+    check('16 触屏点麦克风按钮开麦 / 再点闭麦', tapOn && tapOff, { tapOn, tapOff });
   });
+
+  // ------------------------------------------------------------------
+  await step('17 第 10 步（营地）：对方关掉页面 → 原地等重连，超过 reconnectSec 才算离开', async () => {
+    if (!T) return;
+    await ev(A, () => { BR.config.coop.reconnectSec = 12; });
+    await waitFor(A, () => !!BR.coop.debugInfo().spare, null, 15000);   // 有备用房号才会原地等重连
+    const t0 = await ev(A, () => performance.now());
+    const tClose = Date.now();
+    await T.close();
+    await ctxT.close().catch(() => {});
+    T = null;
+    // 机器忙时发现断线要更久（2026-10-05 返修 r2：15 s 内没进 reconnecting 误报过）；12 s 从进 reconnecting 起算
+    const rc = await waitFor(A, () => BR.coop.phase === 'reconnecting', null, 30000);
+    const tRc = Date.now();
+    await sleep(6000);
+    const mid = await ev(A, t0 => ({ phase: BR.coop.phase, gone: __t.since(__t.bus, t0).filter(b => b.n === 'coop:peerGone').length }), t0);
+    const gone = await waitFor(A, t0 => __t.since(__t.bus, t0).some(b => b.n === 'coop:peerGone'), t0, 30000);
+    const ms = Date.now() - tRc;
+    const g = await ev(A, t0 => ({ ev: __t.since(__t.bus, t0).filter(b => b.n === 'coop:peerGone').map(b => b.p), notes: __t.noticeTexts(), lv: BR.game.levelId }), t0);
+    check('17 T 关掉页面：A 先原地等重连（进 reconnecting 6 s 后还在等，没有 peerGone）', rc && mid.phase === 'reconnecting' && mid.gone === 0, { ...mid, detectMs: tRc - tClose });
+    check('17 超过 reconnectSec（12 s，从进 reconnecting 算）才 coop:peerGone {where:camp}，弹「「触屏T」离开了营地」', gone && ms >= 11000 && g.ev.some(p => p.where === 'camp') && g.notes.some(t => /触屏T」离开了营地/.test(t)) && g.lv === CAMP, { ms, ...g });
+    await ev(A, () => { BR.config.coop.reconnectSec = 90; });
+  });
+
+  // ------------------------------------------------------------------
+  await step('18 第 10 步（关卡）：对方断开 → 你接着一个人玩', async () => {
+    // A 再开营地，B 从主页加入，一起去 Level Dev
+    await noticeBtn(A, '再开一个营地等朋友');
+    const reopened = await waitFor(A, () => BR.coop.hosting && /^[A-Z2-9]{6}$/.test(BR.coop.code || ''), null, 15000);
+    code = await ev(A, () => BR.coop.code);
+    await ev(A, () => { BR.player.reset({ x: 15, y: 0, z: 21.2, yaw: 0 }, { full: false }); });
+    const j = reopened ? await joinCamp(B, code, { name: '客机B' }) : { joined: false };
+    check('18 A 原地再开营地，B 从主页「联机」加入', reopened && j.joined, { code, card: j.card });
+    if (!j.joined) return;
+    await tentPick(A, { mode: 'casual', lv: 'dev' });
+    await sleep(600);
+    const d = await departBoth([A, B], 'dev', 'casual');
+    check('18 两人一起到 Level Dev', d.arrived, d);
+    if (!d.arrived) return;
+    await ev(A, () => { BR.config.coop.reconnectSec = 12; });
+    await waitFor(A, () => !!BR.coop.debugInfo().spare, null, 15000);
+    const t0 = await ev(A, () => performance.now());
+    const tClose = Date.now();
+    await B.close();
+    await ctxB.close().catch(() => {});
+    const gone = await waitFor(A, t0 => __t.since(__t.bus, t0).some(b => b.n === 'coop:peerGone'), t0, 40000);
+    const ms = Date.now() - tClose;
+    const t1 = await ev(A, () => ({ time: BR.game.time, pos: __t.ents().map(r => [r[0], r[2], r[3]]) }));
+    await sleep(2500);
+    const aSt = await ev(A, t0 => ({
+      ev: __t.since(__t.bus, t0).filter(b => b.n === 'coop:peerGone').map(b => b.p), toasts: __t.toasts.slice(-4), active: BR.coop.active, phase: BR.coop.phase,
+      coop: BR.game.coop, auth: BR.entities.authoritative, screen: BR.game.screen, lv: BR.game.levelId, time: BR.game.time, pos: __t.ents().map(r => [r[0], r[2], r[3]]),
+    }), t0);
+    const moved = aSt.pos.filter(p => { const q = t1.pos.find(o => o[0] === p[0]); return q && Math.hypot(q[1] - p[1], q[2] - p[2]) > 0.05; }).length;
+    check('18 B 关掉页面：超过 reconnectSec 后 peerGone {where:level}，A 提示「「客机B」断开了，你接着一个人玩」', gone && ms >= 11000 && aSt.ev.some(p => p.where === 'level') && aSt.toasts.some(t => /客机B」断开了，你接着一个人玩/.test(t)), { ms, ev: aSt.ev, toasts: aSt.toasts });
+    check('18 A 继续单机：playing、authoritative、世界和实体在跑、还在 Level Dev', aSt.screen === 'playing' && aSt.auth === true && !aSt.active && aSt.phase === 'idle' && aSt.lv === 'dev' && aSt.time > t1.time && (moved > 0 || aSt.pos.length === 0),
+      { time: [t1.time, aSt.time], moved, ents: aSt.pos.length, coop: aSt.coop });
+    const pm = await ev(A, () => { BR.hud.pause(true); const r = Array.from(document.querySelectorAll('.hud-pause button')).filter(b => b.getClientRects().length).map(b => b.textContent.trim()); BR.hud.pause(false); return r; });
+    check('18 暂停菜单恢复成单人的样子（没有「回营地」「离开联机」）', !pm.includes('回营地') && !pm.includes('离开联机'), pm);
+    await shot(A, 'A-alone-after-B-left');
+    await ev(A, () => { BR.config.coop.reconnectSec = 90; });
+  });
+
+  // ------------------------------------------------------------------
+  await step('19 营地开着时，主页单人开局会关掉营地', async () => {
+    await ev(A, () => BR.bus.emit('game:home'));
+    await sleep(1200);
+    const c = await hostCamp(A, '房主A', { enter: false });
+    check('19 预备：A 开了营地、停在房号页', !!c && rooms.get(c) && rooms.get(c).state === 'waiting', c);
+    if (!c) return;
+    const t0 = await ev(A, () => performance.now());
+    // 照主页 startGame：coop 恒为 null
+    await ev(A, () => { __br.start({ mode: 'casual', levelId: 'dev', seed: 4242 }); });
+    const closed = await waitFor(A, () => BR.coop.phase === 'idle' && !BR.net.active && BR.game.levelId === 'dev', null, 15000);
+    await sleep(1500);
+    const st = await ev(A, t0 => ({ toasts: __t.toasts.slice(-4), coop: BR.game.coop, screen: BR.game.screen, hosting: BR.coop.hosting }), t0);
+    check('19 主页单人开局：营地关掉（服务器上房间 closed），toast「已关闭营地」，进的是单人局', closed && rooms.get(c).state === 'closed' && st.toasts.some(t => /已关闭营地/.test(t)) && !st.hosting && (!st.coop || !st.coop.active), { state: rooms.get(c).state, ...st });
+  });
+
+  // ------------------------------------------------------------------
+  // 2026-10-05 返修 r2：A 这页已经开了很久、一直在用联机时钟（当房主、进帐篷、倒数、售货机），再去加入一个刚打开的页面开的营地时，
+  // 旧的 clkLast（本页时间）比新房主的时钟大好几分钟，clock() 只增不减就卡着不走，帐篷倒数一到客机这边立刻黑幕、也取消不了
+  await step('20 客机页面比房主老：联机时钟从头估，帐篷倒数照样数 3、2、1', async () => {
+    await ev(A, () => { if (BR.coop.phase !== 'idle') BR.coop.leave(); BR.bus.emit('game:home'); });
+    await waitFor(A, () => BR.game.screen === 'home' && BR.home.shown && BR.coop.phase === 'idle', null, 15000);
+    // 第 19 步是在联机面板开着（房号页）时直接开的单人局，回到主页面板还在（写着「已关闭营地」）：先关掉，下面照常从主页点「联机」
+    await ev(A, () => { const l = document.querySelector('.coop-lobby'); if (l && l.getClientRects().length && typeof BR.coop.closeLobby === 'function') BR.coop.closeLobby(); return 0; });
+    await waitFor(A, () => { const l = document.querySelector('.coop-lobby'); return !l || !l.getClientRects().length; }, null, 5000);
+    const ctxC = await newContext(browser, 'C');
+    const C = await newPage(ctxC, 'C');
+    lockPages = [C, A];
+    try {
+      await boot(C, base);
+      const ages = await Promise.all([A, C].map(p => ev(p, () => Math.round(performance.now() / 1000))));
+      const aClk = await ev(A, () => +BR.coop.clock().toFixed(3));
+      // 后开的页面先拿到前台（同一个浏览器里三个页面，后台页面的 rAF 不跑，点按钮时 Playwright 一直等它「稳定」）
+      await C.bringToFront();
+      await sleep(800);
+      const c = await hostCamp(C, '新房主C').catch(async err => { await shot(C, 'C-host-fail'); throw err; });
+      await A.bringToFront();
+      const j = c ? await joinCamp(A, c, { name: '老页面A' }) : { joined: false };
+      check('20 预备：刚打开的页面 C 开营地，老页面 A（早开 ' + (ages[0] - ages[1]) + ' s、用过联机时钟）加入', !!c && j.joined && ages[0] - ages[1] > 60 && aClk > ages[1], { ages, aClk, code: c, joined: j.joined });
+      if (!j.joined) return;
+      await sleep(1500);
+      const both = () => Promise.all([ev(A, () => BR.coop.clock()), ev(C, () => BR.coop.clock())]);
+      const m1 = await both();
+      await sleep(3000);
+      const m2 = await both();
+      const adv = [m2[0] - m1[0], m2[1] - m1[1]];
+      check('20 A 的联机时钟跟上 C（差 < 0.3 s），3 s 里两边走得一样多（差 < 0.3 s）', Math.abs(m1[0] - m1[1]) < 0.3 && Math.abs(adv[0] - adv[1]) < 0.3 && adv[0] > 2.5,
+        { m1, m2, adv: adv.map(x => +x.toFixed(3)) });
+      await tentPick(C, { mode: 'casual', lv: 'dev' });
+      await sleep(800);
+      // A 这边：从收到 goAt 到黑幕落下（transit 离开 idle）过了多久
+      const pA = ev(A, () => new Promise(res => {
+        const t0 = performance.now();
+        let tg = 0;
+        const tick = () => {
+          const s = BR.coopCamp.state;
+          if (!tg && s && s.goAt > 0) tg = performance.now();
+          if (tg && BR.coopCamp.transit !== 'idle') { res({ countMs: Math.round(performance.now() - tg) }); return; }
+          if (performance.now() - t0 > 25000) { res({ countMs: null, sawGoAt: !!tg }); return; }
+          setTimeout(tick, 20);
+        };
+        tick();
+      }));
+      const rd = await readyBoth([C, A], { wait: false });
+      const cd = await pA;
+      check('20 两人准备后，A 这边倒数持续约 3 s（> 2 s）才黑幕（以前 0.1 s 就黑了）', rd && cd.countMs != null && cd.countMs > 2000 && cd.countMs < 6000, { rd, ...cd });
+      const arrived = await waitArrived([C, A], 'dev', 'casual', 45000);
+      const [sa, sc] = await Promise.all([A, C].map(p => snapRun(p)));
+      check('20 两人一起出发到 Level Dev（同一个种子）', arrived && sa.seed === sc.seed, { A: sa, C: sc });
+    } finally {
+      await ev(A, () => { if (BR.coop.phase !== 'idle') BR.coop.leave(); return 0; }).catch(() => {});
+      await ctxC.close().catch(() => {});
+    }
+  });
+
   await ctxA.close().catch(() => {});
-  await ctxB.close().catch(() => {});
 }
 
 main();

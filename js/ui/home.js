@@ -51,9 +51,10 @@ const S = {
   inited: false, shown: false,
   // DOM
   root: null, modal: null, hint: null, skinRoot: null, swatches: [],
-  coopBtn: null, coopStatus: null, micBtn: null, modalView: null,
+  modalView: null, dlgFields: null,           // dlgFields：当前弹窗里 modeFields 画的那一组表单（换弹窗时 destroy）
+  netBtn: null,                               // 主页上的「联机」按钮
   hintW: 0, hintH: 0, hintX: -1, hintY: -1, hintPortrait: null,
-  secEl: null, signEl: null, secRect: null,   // 「创意工坊 / 设置」按钮组、「游玩」挂牌，和它俩的矩形缓存（数组，resize 时清空）
+  secEl: null, signEl: null, secRect: null,   // 「联机 / 创意工坊 / 设置」按钮组、「游玩」挂牌，和它俩的矩形缓存（数组，resize 时清空）
   // 弹层栈：'menu' | 'casual' | 'nightmare' | 'test' | 'skin'
   layers: [], hist: 0, expectDepth: null,
   // 3D
@@ -64,7 +65,7 @@ const S = {
   snapFrame: true,
   flick: { timer: 5, idx: -1, seq: null, pos: 0, segT: 0 },
   // 循环与输入
-  raf: 0, last: 0, t: 0, coopT: 0, hoverT: 0,
+  raf: 0, last: 0, t: 0, hoverT: 0,
   hover: false, ptr: { x: 0, y: 0, ok: false, dirty: false },
   down: null, audioUnlocked: false, startGuard: 0, savedFov: null,
 };
@@ -485,7 +486,7 @@ function updateHint() {
     _v.set(FIG_POS.x, -0.04, FIG_POS.z).project(cam);
     x = (_v.x + 1) / 2 * w - S.hintW / 2;
     y = (1 - _v.y) / 2 * h + 10;
-    // 窄屏上脚下会压到右下的「创意工坊 / 设置」按钮组或「游玩」挂牌（挂牌带棍子、吊绳，比原来的按钮高）：
+    // 窄屏上脚下会压到右下的「联机 / 创意工坊 / 设置」按钮组或「游玩」挂牌（挂牌带棍子、吊绳，比原来的按钮高）：
     // 先在原来的高度往左让，停在按钮左边 8px（x 取 min，镜头漂移时不会跳）；左边放不下（< 8px）才挪到按钮组上方 8px。
     // 矩形只在 resize 后量一次，别每帧 getBoundingClientRect 强制重排
     const rs = avoidRects();
@@ -501,9 +502,13 @@ function updateHint() {
     x = (_v.x + 1) / 2 * w + 14;
     y = (1 - _v.y) / 2 * h - S.hintH / 2;
     // 568×320 这类矮横屏上，提示条右端会贴到同一高度的「设置」按钮（镜头漂移还能压上去）：
-    // 和竖屏同样的规则，同一高度有按钮组 / 挂牌就停在它左边 8px（x 取 min，镜头漂移时不会跳）
+    // 和竖屏同样的规则，同一高度有按钮组 / 挂牌就停在它左边 8px（x 取 min，镜头漂移时不会跳）。
+    // 高 ≤308 的横屏按钮组挪到了挂牌左边（css/home.css），离人物很近，往左让就压到人物身上：这时先把提示条抬到按钮组上方 8px（y 取 min，同样不跳）
     const rs = avoidRects();
-    if (rs) for (const r of rs) if (y < r.bottom && y + S.hintH + 8 > r.top) x = Math.min(x, r.left - 8 - S.hintW);
+    if (rs) {
+      if (rs.length > 1 && rs[0].right <= rs[1].left) y = Math.min(y, rs[0].top - S.hintH - 8);
+      for (const r of rs) if (y < r.bottom && y + S.hintH + 8 > r.top) x = Math.min(x, r.left - 8 - S.hintW);
+    }
   }
   x = U.clamp(x, 8, w - S.hintW - 8);
   y = U.clamp(y, 8, h - S.hintH - 8);
@@ -519,13 +524,20 @@ function hintHits(x, y, rs) {
   return false;
 }
 
-// 提示条要躲开的两块：「创意工坊 / 设置」按钮组；「游玩」挂牌（牌子 + 吊绳 + 横棍：左端伸出牌子一点，右端一直伸到屏幕右边）
+// 提示条要躲开的两块：「联机 / 创意工坊 / 设置」三格按钮（取三格的外接矩形，竖屏时「联机」排在最下也算在里面）；
+// 「游玩」挂牌（牌子 + 吊绳 + 横棍：左端伸出牌子一点，右端一直伸到屏幕右边）
 function avoidRects() {
   if (!S.secRect && S.secEl) {
-    const r = S.secEl.getBoundingClientRect();
+    let r = null;
+    for (const b of S.secEl.querySelectorAll('.home-secondary-btn')) {
+      const q = b.getBoundingClientRect();
+      if (!q.width || !q.height) continue;
+      r = r ? { left: Math.min(r.left, q.left), top: Math.min(r.top, q.top), right: Math.max(r.right, q.right), bottom: Math.max(r.bottom, q.bottom) }
+            : { left: q.left, top: q.top, right: q.right, bottom: q.bottom };
+    }
     // 根节点还没显示时量出来是 0，不缓存，下次再量
-    if (r.width && r.height) {
-      const list = [{ left: r.left, top: r.top, right: r.right, bottom: r.bottom }];
+    if (r) {
+      const list = [r];
       const g = S.signEl && S.signEl.getBoundingClientRect();
       if (g && g.width && g.height) {
         const u = { left: g.left, top: g.top, right: g.right, bottom: g.bottom };
@@ -695,10 +707,8 @@ function renderLayers() {
   const top = S.layers[S.layers.length - 1] || null;
   const modalTop = top && top !== 'skin' ? top : null;
   if (modalTop !== S.modalView) {
+    if (S.dlgFields) { S.dlgFields.destroy(); S.dlgFields = null; }
     S.modal.textContent = '';
-    S.coopBtn = null;
-    S.coopStatus = null;
-    S.micBtn = null;
     if (modalTop) buildDialog(modalTop);
     S.modalView = modalTop;
   }
@@ -713,6 +723,14 @@ function renderLayers() {
 // 弹窗内容
 // ===================================================================
 const LEVEL_NAMES = { fun: 'Level Fun =)', run: 'Level ! · Run For Your Life' };
+
+// 三种模式的 [key, 名字, 说明]，顺序是用户定的：游玩、噩梦生存、测试模式。
+// 主页模式菜单和帐篷选单（js/ui/tentmenu.js）都只从这里取，两边文字一字不差
+const MODE_TEXT = Object.freeze([
+  Object.freeze(['casual', '游玩', '实体不攻击你，可调能见度和实体数量']),
+  Object.freeze(['nightmare', '噩梦生存', '有饥饿值和 san 值，实体会攻击你']),
+  Object.freeze(['test', '测试模式', '不自动生成实体，自己放出实体或召唤测试人']),
+]);
 
 function buildDialog(view) {
   const titles = { menu: '选择模式', casual: '游玩', nightmare: '噩梦生存', test: '测试模式' };
@@ -744,13 +762,7 @@ function buildDialog(view) {
 
 function buildMenu(body) {
   const list = mk('div', 'home-menu', body);
-  // 顺序是用户定的：游玩、噩梦生存、测试模式
-  const items = [
-    ['casual', '游玩', '实体不攻击你，可调能见度和实体数量，可联机'],
-    ['nightmare', '噩梦生存', '有饥饿值和 san 值，实体会攻击你'],
-    ['test', '测试模式', '不自动生成实体，自己放出实体或召唤测试人'],
-  ];
-  for (const [key, name, sub] of items) {
+  for (const [key, name, sub] of MODE_TEXT) {
     const b = button('home-menu-btn is-' + key, list);
     mk('span', 'home-menu-name', b, name);
     mk('span', 'home-menu-sub', b, sub);
@@ -763,7 +775,9 @@ function fmtPct(x) {
   return (r % 1 === 0 ? r.toFixed(0) : r.toFixed(1)) + '%';
 }
 
-function slider(body, label, value01, fmt, onChange) {
+// 0–100 的滑条，onChange 收 0..1。quiet 为真时建好不回调（modeFields 用：只有玩家动了才算改）
+// 返回 { inp, show }：show() 按 inp.value 刷新右边的数值文字（外面直接改 inp.value 后调）
+function slider(body, label, value01, fmt, onChange, quiet) {
   const f = mk('div', 'home-field', body);
   const row = mk('div', 'home-field-row', f);
   const id = U.uid('home-range-');
@@ -773,10 +787,10 @@ function slider(body, label, value01, fmt, onChange) {
   const inp = mk('input', 'home-range', f);
   inp.type = 'range'; inp.min = '0'; inp.max = '100'; inp.step = '1'; inp.id = id;
   inp.value = String(Math.round(U.clamp(+value01 || 0, 0, 1) * 100));
+  const show = () => { val.textContent = fmt(+inp.value); };
   const upd = () => {
-    const v = +inp.value;
-    val.textContent = fmt(v);
-    onChange(v / 100);
+    show();
+    onChange(+inp.value / 100);
   };
   inp.addEventListener('input', upd);
   // 竖向滑动滚弹窗时，手指落在滑条上 Chrome 会先把值跳到手指位置，再把手势转成滚动（发 pointercancel），这里把值还原。
@@ -788,8 +802,8 @@ function slider(body, label, value01, fmt, onChange) {
     touchV0 = null;
   });
   inp.addEventListener('pointerup', () => { touchV0 = null; });
-  upd();
-  return inp;
+  if (quiet) show(); else upd();
+  return { inp, show };
 }
 
 function visibilitySlider(body) {
@@ -803,107 +817,237 @@ function levelLabel(id) {
   return LEVEL_NAMES[id] || ('Level ' + id);
 }
 
-function levelOptions() {
-  const list = (BR.LEVEL_ORDER || []).map(id => ({ id: String(id), label: levelLabel(id), ok: !!(BR.levels && BR.levels.has(id)) }));
-  // 一个正式层级都没注册（开发期）时额外给出开发测试层，保证能进游戏
-  if (!list.some(x => x.ok)) list.push({ id: 'dev', label: BR.levels && BR.levels.has('dev') ? levelLabel('dev') : 'Level Dev · 开发测试层', ok: true });
+function devUrl() {
+  try { return new URLSearchParams(location.search).has('dev'); } catch (err) { return false; }
+}
+
+// 起始层级列表，按 BR.LEVEL_ORDER 排，每项 { id, label, ok, note }：label 是纯层级名；ok 为假的要灰掉，note 写原因
+//   '制作中'：本机没注册这一层；'队友没有这一层'：opts.only（Set 或数组，帐篷选单传两边都有的层）里没有它
+//   opts.dev 为真、并且地址栏带 ?dev 时，末尾再加开发测试层 'dev'（不受 only 限制：hello 里的 lv 只报 LEVEL_ORDER 里的层）
+//   隐藏层（联机营地 coopcamp 之类）不在 LEVEL_ORDER 里，永远不会列出来
+function levelOptions(opts) {
+  opts = opts || {};
+  const only = opts.only == null ? null : new Set(Array.from(opts.only, String));
+  const reg = id => !!(BR.levels && BR.levels.has(id));
+  const list = (BR.LEVEL_ORDER || []).map(raw => {
+    const id = String(raw);
+    const note = !reg(id) ? '制作中' : (only && !only.has(id) ? '队友没有这一层' : '');
+    return { id, label: levelLabel(id), ok: !note, note };
+  });
+  if (!list.some(x => x.note !== '制作中')) {
+    // 一个正式层级都没注册（开发期）时额外给出开发测试层，保证能进游戏
+    list.push({ id: 'dev', label: reg('dev') ? levelLabel('dev') : 'Level Dev · 开发测试层', ok: true, note: '' });
+  } else if (opts.dev && devUrl()) {
+    list.push({ id: 'dev', label: levelLabel('dev'), ok: reg('dev'), note: reg('dev') ? '' : '制作中' });
+  }
   return list;
 }
 
-function levelSelect(body) {
-  const s = BR.game.settings;
-  const f = mk('div', 'home-field', body);
-  const row = mk('div', 'home-field-row', f);
-  const id = U.uid('home-level-');
-  const lab = mk('label', 'home-field-label', row, '起始层级');
-  lab.htmlFor = id;
-  const sel = mk('select', 'home-select', f);
-  sel.id = id;
+function optionText(it) { return it.note ? it.label + ' (' + it.note + ')' : it.label; }
+
+// 主页弹窗用：上次选的层能选就沿用，不能选（没注册、开发期残留的 'dev'）就落到第一个能选的
+function homeLevel(want) {
   const list = levelOptions();
-  for (const it of list) {
-    const o = mk('option', null, sel, it.ok ? it.label : it.label + ' (制作中)');
-    o.value = it.id;
-    o.disabled = !it.ok;
+  const cur = list.find(x => x.ok && x.id === String(want));
+  return cur ? cur.id : (list.find(x => x.ok) || { id: 'dev' }).id;
+}
+
+// ===================================================================
+// 模式表单：主页三个弹窗和帐篷选单共用（ARCHITECTURE 第 12 节 BR.home.modeFields）
+// ===================================================================
+// modeFields(el, mode, value, onChange, opts) → { get, set, destroy, root, levelSelect, levelField }
+//   游玩：「实体生成量」滑条；噩梦：4 张难度卡（只选中、加 .is-on，不开局）；测试：什么都不画。都不画能见度（它只影响自己）。
+//   opts.level 为真时再画「起始层级」下拉；opts.level 写成对象 {only, dev} 或在 opts 上直接给 only / dev，就照 levelOptions(那些参数) 列层。
+//   value 和 get() 的字段（两套名字都认，get() 两套都给）：
+//     spawnSlider | spawn  实体生成量 0..1（没给时用 BR.game.settings.spawnSlider）
+//     difficulty  | diff   噩梦难度 key（没给就一张都不选）
+//     startLevel  | lv     起始层级 id（没给时选第一个能选的层）
+//     mode                 当前模式；set({mode}) 换模式会就地重画
+//   onChange(get()) 只在玩家动了控件、值真的变了时调（滑条拖动时每一步都调）；建表单和 set() 都不回调。
+//   set(patch) 只改给了的字段。给的层级在列表里就照显示（灰掉的也照显示），列表里没有但本机注册了就临时补一项，再不行落到第一个能选的。
+//     patch 里带 only / dev 时换掉层级列表的参数、整组重画（队友的层级表晚到时用）
+function modeFields(el, mode, value, onChange, opts) {
+  opts = opts || {};
+  const lvOpts = Object.assign({}, opts.level && typeof opts.level === 'object' ? opts.level : { only: opts.only, dev: opts.dev });
+  const withLevel = !!opts.level;
+  const v0 = value || {};
+  const pickNum = (a, b, dflt) => (a != null ? +a : b != null ? +b : dflt);
+  const pickStr = (a, b) => (a != null && a !== '' ? String(a) : b != null && b !== '' ? String(b) : null);
+  const st = {
+    mode: MODE_TEXT.some(m => m[0] === mode) ? mode : 'casual',
+    spawnSlider: U.clamp(pickNum(v0.spawnSlider, v0.spawn, BR.game.settings && BR.game.settings.spawnSlider != null ? +BR.game.settings.spawnSlider : 1), 0, 1),
+    difficulty: pickStr(v0.difficulty, v0.diff),
+    startLevel: pickStr(v0.startLevel, v0.lv),
+  };
+  const root = mk('div', 'home-fields', el);
+  let ui = {};
+  let dead = false;
+
+  function get() {
+    return {
+      mode: st.mode,
+      spawnSlider: st.spawnSlider, difficulty: st.difficulty, startLevel: st.startLevel,
+      spawn: st.spawnSlider, diff: st.difficulty, lv: st.startLevel,
+    };
   }
-  const cur = list.find(x => x.ok && x.id === String(s.startLevel));
-  sel.value = cur ? cur.id : (list.find(x => x.ok) || { id: 'dev' }).id;
-  s.startLevel = sel.value;
-  sel.addEventListener('change', () => { s.startLevel = sel.value; });
-  return sel;
+  function emit() { if (!dead && typeof onChange === 'function') onChange(get()); }
+
+  function paintCards() {
+    for (const b of ui.cards || []) {
+      const on = b.dataset.key === st.difficulty;
+      b.classList.toggle('is-on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+  }
+
+  // 下拉显示 want：在列表里照显示；不在列表里但本机注册了（比如测试直接写的 'dev'）临时补一项；都不行落到第一个能选的
+  function showLevel(want) {
+    const sel = ui.sel;
+    if (!sel) return;
+    if (ui.extra) { ui.extra.remove(); ui.extra = null; }
+    const has = id => ui.list.some(x => x.id === id);
+    let id = want != null ? String(want) : null;
+    if (id == null || !has(id)) {
+      if (id != null && BR.levels && BR.levels.has(id)) {
+        ui.extra = mk('option', null, sel, levelLabel(id));
+        ui.extra.value = id;
+      } else {
+        const first = ui.list.find(x => x.ok) || ui.list[0];
+        id = first ? first.id : null;
+      }
+    }
+    if (id != null) sel.value = id;
+    st.startLevel = id;
+  }
+
+  function render() {
+    root.textContent = '';
+    ui = {};
+    if (st.mode === 'casual') {
+      const maxF = (BR.MODES.casual && BR.MODES.casual.maxSpawnFactor) || 0.5;
+      ui.spawn = slider(root, '实体生成量', st.spawnSlider, v => v + '%　= 正常后室的 ' + fmtPct(v * maxF), x => {
+        if (x === st.spawnSlider) return;
+        st.spawnSlider = x;
+        emit();
+      }, true);
+      st.spawnSlider = +ui.spawn.inp.value / 100;   // 对齐到滑条的 1% 刻度，get() 和看到的一致
+    } else if (st.mode === 'nightmare') {
+      const grid = mk('div', 'home-cards', root);
+      ui.cards = (BR.MODES.nightmare.difficulties || []).map(d => {
+        const b = button('home-card home-card-' + d.key, grid);
+        b.dataset.key = d.key;
+        mk('span', 'home-card-name', b, d.zh);
+        mk('span', 'home-card-desc', b, '正常后室实体数量的 ' + Math.round(d.spawnFactor * 100) + '%');
+        b.addEventListener('click', () => {
+          if (st.difficulty === d.key) return;
+          st.difficulty = d.key;
+          paintCards();
+          emit();
+        });
+        return b;
+      });
+      paintCards();
+    }
+    if (withLevel) {
+      const f = ui.levelField = mk('div', 'home-field home-field-level', root);
+      const row = mk('div', 'home-field-row', f);
+      const id = U.uid('home-level-');
+      const lab = mk('label', 'home-field-label', row, '起始层级');
+      lab.htmlFor = id;
+      const sel = ui.sel = mk('select', 'home-select', f);
+      sel.id = id;
+      ui.list = levelOptions(lvOpts);
+      for (const it of ui.list) {
+        const o = mk('option', null, sel, optionText(it));
+        o.value = it.id;
+        o.disabled = !it.ok;
+      }
+      showLevel(st.startLevel);
+      sel.addEventListener('change', () => {
+        if (sel.value === st.startLevel) return;
+        st.startLevel = sel.value;
+        emit();
+      });
+    }
+  }
+
+  function set(patch) {
+    if (dead || !patch) return;
+    const nm = patch.mode != null && MODE_TEXT.some(m => m[0] === patch.mode) ? patch.mode : st.mode;
+    const sp = patch.spawnSlider != null ? patch.spawnSlider : patch.spawn;
+    if (sp != null) st.spawnSlider = U.clamp(+sp || 0, 0, 1);
+    if ('difficulty' in patch || 'diff' in patch) st.difficulty = pickStr(patch.difficulty, patch.diff);
+    const lv = pickStr(patch.startLevel, patch.lv);
+    if (lv != null) st.startLevel = lv;
+    // 队友的层级表晚到 / 变了（帐篷选单收到新的 peerLevels）：换掉 only / dev，层级下拉整个重画
+    let relist = false;
+    if ('only' in patch) { lvOpts.only = patch.only; relist = true; }
+    if ('dev' in patch) { lvOpts.dev = patch.dev; relist = true; }
+    if (nm !== st.mode || relist) { st.mode = nm; render(); return; }
+    if (ui.spawn) {
+      ui.spawn.inp.value = String(Math.round(st.spawnSlider * 100));
+      ui.spawn.show();
+      st.spawnSlider = +ui.spawn.inp.value / 100;
+    }
+    if (ui.cards) paintCards();
+    if (ui.sel) showLevel(st.startLevel);
+  }
+
+  function destroy() {
+    if (dead) return;
+    dead = true;
+    root.remove();
+    ui = {};
+  }
+
+  render();
+  return {
+    get, set, destroy, root,
+    get levelSelect() { return ui.sel || null; },     // 帐篷选了「我的地图」时要把它灰掉
+    get levelField() { return ui.levelField || null; }, // 「起始层级」那一格，帐篷往里补一行小字（L15、L16 没有回去的路）
+  };
 }
 
 function buildCasual(body) {
   const s = BR.game.settings;
   mk('p', 'home-note', body, '实体不会攻击你，但友善实体和有害实体仍会互相作战。没有饥饿值和 san 值。');
   visibilitySlider(body);
-  const maxF = (BR.MODES.casual && BR.MODES.casual.maxSpawnFactor) || 0.5;
-  slider(body, '实体生成量', s.spawnSlider, v => v + '%　= 正常后室的 ' + fmtPct(v * maxF), x => { s.spawnSlider = x; });
-  levelSelect(body);
+  S.dlgFields = modeFields(body, 'casual', { spawnSlider: s.spawnSlider, startLevel: homeLevel(s.startLevel) }, v => {
+    s.spawnSlider = v.spawnSlider;
+    s.startLevel = v.startLevel;
+  }, { level: true });
+  // 和改用 modeFields 之前一样：弹窗一打开，设置里就是滑条对齐到 1% 后的值和下拉里真正选中的层
+  const v0 = S.dlgFields.get();
+  s.spawnSlider = v0.spawnSlider;
+  s.startLevel = v0.startLevel;
   const actions = mk('div', 'home-actions', body);
-  S.coopBtn = button('home-btn', actions, '联机');
-  S.coopBtn.addEventListener('click', () => { if (BR.coop && has(BR.coop, 'openLobby')) BR.coop.openLobby(); });
-  // 右上角的麦克风按钮（.coop-hud，z-index 35）被主页弹层盖住点不到，接通后在弹窗里自己放一个开关
-  S.micBtn = button('home-btn home-btn-mic', actions, '开麦');
-  S.micBtn.hidden = true;
-  S.micBtn.addEventListener('click', () => {
-    const C = BR.coop;
-    if (!C || !has(C, 'setMic')) return;
-    // 申请麦克风途中再点一次 = 取消，和 coop.js 的 toggleMic 一致
-    const p = C.setMic(!(C.mic || C.micBusy));
-    if (p && typeof p.then === 'function') p.then(updateMic, updateMic);
-    updateMic();
-  });
   const start = button('home-btn home-btn-primary', actions, '开始');
   start.addEventListener('click', () => startGame('casual', null));
-  S.coopStatus = mk('div', 'home-coop-status', actions);
-  S.coopT = 0;
-  updateCoop();
 }
 
-function updateCoop() {
-  if (!S.coopBtn) return;
-  const ok = !!(BR.coop && has(BR.coop, 'openLobby'));
-  S.coopBtn.disabled = !ok;
-  S.coopBtn.title = ok ? '' : '联机模块未加载';
-  const txt = ok && BR.coop.active ? ('已联机 · ' + (BR.coop.role === 'host' ? '你是房主' : '你是客机')) : '';
-  if (S.coopStatus.textContent !== txt) S.coopStatus.textContent = txt;
-  updateMic();
-}
-
-// 开麦按钮：只在联机接通时显示；文案 开麦 / 闭麦 / 申请麦克风…（BR.coop.micBusy 由联机模块导出，没有时当作不在申请）
-function updateMic() {
-  const b = S.micBtn;
-  if (!b) return;
-  const C = BR.coop;
-  const show = !!(C && C.active && has(C, 'setMic'));
-  if (b.hidden === show) b.hidden = !show;
-  if (!show) return;
-  const txt = C.micBusy ? '申请麦克风…' : C.mic ? '闭麦' : '开麦';
-  if (b.textContent !== txt) b.textContent = txt;
-  const pressed = C.mic ? 'true' : 'false';
-  if (b.getAttribute('aria-pressed') !== pressed) b.setAttribute('aria-pressed', pressed);
-}
-
+// 主页一个人玩噩梦固定从 Level 0 开始（孩子没提要改）；帐篷里两个人玩噩梦才能选层
 function nightmareLevel() {
   return BR.levels && BR.levels.has('0') ? '0' : 'dev';
 }
 
 function buildNightmare(body) {
   mk('p', 'home-note home-note-warn', body, '有饥饿值和 san 值，实体会攻击你');
-  const grid = mk('div', 'home-cards', body);
-  for (const d of BR.MODES.nightmare.difficulties) {
-    const b = button('home-card home-card-' + d.key, grid);
-    mk('span', 'home-card-name', b, d.zh);
-    mk('span', 'home-card-desc', b, '正常后室实体数量的 ' + Math.round(d.spawnFactor * 100) + '%');
-    b.addEventListener('click', () => startGame('nightmare', d.key));
-  }
+  // 主页的难度卡点了就开局：一张都不预选，点哪张都算「改了」。
+  // 开局被连点保护挡掉时（弹窗还在）把选中清掉，下次点同一张照样算改了、照样开局
+  S.dlgFields = modeFields(body, 'nightmare', { difficulty: null }, v => {
+    if (!v.difficulty) return;
+    startGame('nightmare', v.difficulty);
+    if (S.dlgFields && S.modalView === 'nightmare') S.dlgFields.set({ difficulty: null });
+  }, { level: false });
   mk('p', 'home-note', body, '饥饿低于 20% 时移速减半，饿空时只剩三分之一。选好难度后从 ' + levelLabel(nightmareLevel()) + ' 开始。');
 }
 
 function buildTest(body) {
+  const s = BR.game.settings;
   mk('p', 'home-note', body, '不会自动生成实体，进游戏后按 T（手机点右侧「实体」按钮）打开实体列表放出实体或召唤测试人');
   visibilitySlider(body);
-  levelSelect(body);
+  S.dlgFields = modeFields(body, 'test', { startLevel: homeLevel(s.startLevel) }, v => { s.startLevel = v.startLevel; }, { level: true });
+  s.startLevel = S.dlgFields.get().startLevel;
   const actions = mk('div', 'home-actions', body);
   const start = button('home-btn home-btn-primary', actions, '开始');
   start.addEventListener('click', () => startGame('test', null));
@@ -920,14 +1064,14 @@ function startGame(mode, difficulty) {
   if (BR.input && has(BR.input, 'lock')) { try { BR.input.lock(); } catch (err) { /* 锁不上 input 会退化成拖动视角 */ } }
   const settings = BR.game.settings;
   if (mode === 'nightmare') settings.startLevel = nightmareLevel();
-  // 只有游玩模式能联机（ARCHITECTURE 第 2 节）；噩梦和测试即使大厅里连着人也按单人开
-  const coop = mode === 'casual' && BR.coop && BR.coop.active ? { role: BR.coop.role } : null;
+  // 主页开局一律单人；两人一起玩走主页「联机」→ 营地 → 帐篷。
+  // 营地开着时从这里开局，coop.js 的 game:start 看到 coop 为空会先关掉营地（toast「已关闭营地」）
   const payload = {
     mode,
     difficulty: difficulty || null,
     settings: Object.assign({}, settings),
     seed: (Math.random() * 2 ** 32) >>> 0,
-    coop,
+    coop: null,
   };
   closeAll();
   BR.bus.emit('game:start', payload);
@@ -958,9 +1102,19 @@ function buildDom() {
   const play = button('home-play', sign, '游玩');
   play.addEventListener('click', () => { tryUnlockAudio(true); openLayer('menu'); });
 
-  // 挂牌正上方竖排两个次要按钮：创意工坊、设置（WORKSHOP.md 第 9 节）；竖屏手机上 CSS 把它们挪到挂牌左边，免得压住人物靴子。
-  // 两个模块都是独立文件，可能还没接进 index.html，这里只做存在性判断，不存在就提示"制作中"而不是报错。
+  // 挂牌正上方竖排三个次要按钮：联机、创意工坊、设置（WORKSHOP.md 第 9 节）；竖屏手机上 CSS 把它们挪到挂牌左边，免得压住人物靴子，
+  // 那一档「联机」用 order 排到最下面一格（底边和牌子底边齐平，离拇指最近）。
+  // 几个模块都是独立文件，可能还没接进 index.html，这里只做存在性判断，不存在就提示"制作中"或灰掉，而不是报错。
   const secondary = S.secEl = mk('div', 'home-secondary-actions', root);
+  // 「联机」：孩子说「主页里有一个专门的联机按钮，点进去即可找人联机」。深色底 + 金黄描边金黄字，左边 CSS 画的两人小图标
+  const netBtn = S.netBtn = button('home-secondary-btn is-coop', secondary);
+  const icon = mk('span', 'home-coop-icon', netBtn);
+  icon.setAttribute('aria-hidden', 'true');
+  mk('i', 'is-back', icon);
+  mk('i', 'is-front', icon);
+  mk('span', 'home-coop-label', netBtn, '联机');
+  netBtn.addEventListener('click', openNet);
+  refreshNetBtn();
   const workshopBtn = button('home-secondary-btn', secondary, '创意工坊');
   workshopBtn.addEventListener('click', () => {
     if (BR.workshopUI && typeof BR.workshopUI.open === 'function') BR.workshopUI.open();
@@ -999,6 +1153,42 @@ function buildDom() {
   });
   mk('p', 'home-skin-note', panel, '只换防化服的颜色，防毒面具、手套和靴子不变');
   updateSwatches();
+}
+
+// 「联机」按钮三种情况：联机模块没加载 → 灰掉、title「联机模块未加载」；
+// 联机模块在但缺营地那一套（BR.coop.startRun、BR.coopCamp）→ 多半是缓存里新旧文件混着用，toast 让刷新，不报错；
+// 都在才打开联机面板
+function netState() {
+  const C = BR.coop;
+  if (!C || !has(C, 'openLobby')) return 'missing';
+  if (!has(C, 'startRun') || !BR.coopCamp) return 'stale';
+  return 'ok';
+}
+
+function refreshNetBtn() {
+  const b = S.netBtn;
+  if (!b) return;
+  const off = netState() === 'missing';
+  if (b.disabled !== off) b.disabled = off;
+  const t = off ? '联机模块未加载' : '';
+  if (b.title !== t) b.title = t;
+}
+
+function openNet() {
+  tryUnlockAudio(true);
+  const st = netState();
+  refreshNetBtn();
+  if (st === 'missing') return;
+  if (st === 'stale') {
+    if (BR.hud && has(BR.hud, 'toast')) BR.hud.toast('页面没更新完整，请刷新', 2600);
+    return;
+  }
+  try {
+    BR.coop.openLobby();
+  } catch (err) {
+    console.warn('[home] 打开联机面板失败', err);
+    if (BR.hud && has(BR.hud, 'toast')) BR.hud.toast('页面没更新完整，请刷新', 2600);
+  }
 }
 
 function ensureDom() {
@@ -1044,10 +1234,6 @@ function update(dt) {
   updateCamera(dt);
   updateHover(dt);
   updateHint();
-  if (S.layers[S.layers.length - 1] === 'casual') {
-    S.coopT -= dt;
-    if (S.coopT <= 0) { S.coopT = 0.5; updateCoop(); }
-  }
 }
 
 function init() {
@@ -1067,8 +1253,6 @@ function init() {
   window.addEventListener('resize', () => { S.hintW = 0; S.secRect = null; });
 
   BR.bus.on('skin:change', () => applySkin());
-  // 联机模块在开麦状态变化时发这个事件，弹窗里的开麦按钮立即刷新，不用等 0.5 秒一次的轮询
-  BR.bus.on('coop:mic', () => updateMic());
   // world.js 在 game:home 里会清空灯光列表；它先于本文件注册，这里补回主页的灯和环境
   BR.bus.on('game:home', () => { if (S.shown) enterEnv(); });
 
@@ -1083,6 +1267,7 @@ function show() {
   S.shown = true;
   S.root.hidden = false;
   S.startGuard = 0;
+  refreshNetBtn();
   const gfx = BR.gfx;
   if (gfx && gfx.scene && gfx.camera) {
     if (S.group.parent !== gfx.scene) gfx.scene.add(S.group);
@@ -1125,5 +1310,10 @@ BR.home = {
   get shown() { return S.shown; },
   // 额外：直接打开模式菜单（例如结算页"返回主页"后想直接选模式）
   openMenu() { show(); openLayer('menu'); },
+  // 给帐篷选单（js/ui/tentmenu.js）用的同一套模式表单，两边文字一字不差：
+  modeText: MODE_TEXT,   // [[key, 名字, 说明] × 3]，用户定的顺序：游玩 / 噩梦生存 / 测试模式
+  levelOptions,          // ({only, dev}) → [{id, label, ok, note}]
+  levelLabel,            // (id) → 'Level 3 · …'
+  modeFields,            // (el, mode, value, onChange, {level}) → {get, set, destroy, root, levelSelect, levelField}
 };
 })();

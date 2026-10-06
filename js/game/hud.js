@@ -13,7 +13,39 @@
 //     .hud-cross-hold 进度环（CSS 变量 --hold 0..1，按下 ringDelayMs 后才出现，短按不闪）、.hud-cross-hide（view 情境）
 //   自动订阅 level:enter 播层级大标题（同一层短时间内只播一次，集成层再手动调也不会重复）
 //   暂停、死亡时 toast 整组藏起来（.hud-toasts-modal），不清掉；联机暂停时面板右上角有开关麦（.hud-pause-mic）
-//   额外只读：visible、paused
+//   额外只读：visible、paused、curtainState（'off' | 'in' | 'black' | 'out'）
+//
+//   联机营地（N1）：
+//   - 营地（BR.levels.get(levelId).lobby 为真）：模式标签写「联机营地（Level 1 某处）」，不显示饥饿 / san / HP 条
+//   - BR.coop.active 时模式标签前加「联机 · 」（左上角和暂停菜单副标题一样）
+//   - 房号角标：BR.coop.hosting 为真、还没人连上（!active，也不在 reconnecting）时，左上角信息块多一行
+//     「房号 K7M2QX · 等朋友来」（.hud-info-code，房号前三位后三位分两段显示，textContent 里不带空格）；
+//     暂停菜单副标题同一行（.hud-pause-code）。收到 bus 'coop:code' {code} 立刻刷新；角标显示着时房号换了，toast「房号换成了 K7M 2QX」
+//   - 暂停菜单「联机局」= BR.coop.active、phase 'reconnecting'、hosting，或者人在营地里。联机局里：
+//       · 世界真的不停（active 或 reconnecting）时顶上一行小字「联机时暂停，世界不会停」（.hud-pause-coop）
+//       · 「返回主页」换成「回营地」（.hud-btn-camp，只在不在营地、队友连着、有 BR.coopCamp.back 时出现；
+//         点了调 BR.coopCamp.back() 并关掉暂停菜单回到游戏（返回 false 也关，好让 coopCamp 说原因的 toast 露出来），
+//         等队友回答的横幅由 coopCamp 弹）
+//         和「离开联机」（.hud-btn-leave，点两次：第一次变成「再点一次：会断开联机，回到主页」，窗口 HOME_CONFIRM_MS；
+//         确认后先 BR.coop.leave() 再 emit 'game:home'）。两个按钮包在 .hud-pause-pair 里，横屏手机两个都在时并排
+//       · 在营地里暂停只有「继续」和「离开联机」（能见度滑条照旧，只影响自己）；开着营地等朋友（hosting、还没人连上，副标题写着房号）时
+//         「离开联机」前面多一个「复制邀请链接」（.hud-btn-invite，调 BR.coop.copyInvite，按钮上闪「已复制，发给朋友」），和「回营地」不会同时出现
+//       · 重连中（reconnecting）不出「回营地」：要对方同意，断着问不出去；只有「离开联机」（方案 N1-hud ④ 写的是联机中含重连都换成两个按钮，
+//         这里有意少一个，见 ARCHITECTURE 9.9）
+//     单机时完全不变。暂停中联机状态变了（队友掉线、连上）按签名每帧刷新这一组
+//   - notice(text, actions, ms, opts) → 句柄 { close(), set(text, ms?), open }：屏幕上半部中间的横幅（.hud-notices，z 65；
+//     暂停 / 结算盖着时加 .hud-notices-modal 贴顶，不压面板标题），
+//     在暂停 / 结算（60）和黑幕（56）之上，暂停、结算、黑幕时都看得见。actions = [{ label, fn, key? }]，按钮 ≥44 px；
+//     点按钮先调 fn(句柄)，fn 返回 false 时横幅留着，否则关掉。ms > 0：到时自动关并调 opts.onTimeout；
+//     有按钮时显示倒数秒数（opts.countdown 为 false 不显示，为 true 时没按钮也显示）。
+//     桌面上按钮带键帽（按钮的 data-key，CSS ::before 画，按钮 textContent 只有 label）：没给 key 时按顺序配 Y / N / U，
+//     key:false 不配；指针锁着点不到按钮时按键盘就行。弹出后 NOTICE_ARM_MS 内按钮不响应。
+//     game:home 时全部关掉（opts.keep 为真的除外）；game:start 不关，由调用方自己 close
+//   - curtain(text | false, ms) → Promise：全屏黑幕（.hud-curtain，z 56，gfx 的淡入淡出占着 55），中间一行字。
+//     淡入淡出默认各 CURTAIN_FADE_MS（ms 可改，0..5000）。传文字：全黑那一刻 resolve(true)；已经全黑时只换字、立即 resolve；
+//     没到全黑就被 curtain(false) 打断 resolve(false)。传 false：清掉层级大标题的去重（TITLE_DEDUPE_MS），淡出完 resolve(true)，
+//     然后补播黑幕期间记下的层级大标题；被新的 curtain(文字) 打断 resolve(false)。
+//     黑幕没完全撤掉（in / black / out）时 levelTitle 只记下最后一次，不播。game:home 时立刻撤掉，没 resolve 的都 resolve(false)
 (function () {
 'use strict';
 const BR = window.BR;
@@ -33,6 +65,7 @@ const VERB_PHRASE = new Set([
   '启动发电机', '关闭发电机', '坐下', '躺下', '起身', '起来', '上车', '下车', '按喇叭',
   '喝水', '接水喝', '喝杏仁水', '开灯', '关灯', '换台', '戳破', '喷灭火器', '看看', '放录像带', '玩街机',
   '往外拉', '放下', '滑下去', '荡秋千', '扶起来', '推车',
+  '进帐篷', '出帐篷', '看地图', '换制服',   // 联机营地（N1）：帐篷门、桌上的层级地图、柱子上的制服挂钩
 ]);
 // short 没写动词时按种类补一个（候选本该自己写，这里只是不让第一行空着）
 const KIND_VERB = { item: '拾取', container: '打开', seat: '坐下', vehicle: '上车', door: '往外拉' };
@@ -50,8 +83,23 @@ const TITLE_SAFETY_MS = 15000;   // 正常靠 animationend 收起；HUD 长时�
 const TITLE_REDUCED_MS = 3500;
 const HIT_MS = 350;
 const PAUSE_ARM_MS = 250;        // 按暂停的那一下不能顺带点中菜单按钮
-const HOME_CONFIRM_MS = 2500;    // 「返回主页」点两次才生效：手机上拖能见度滑条时误触会丢掉整局
-const VIS_THUMB_PX = 20;         // 与 css/game.css 里 .hud-range::-webkit-slider-thumb 的宽度一致
+const INVITE_TEXT = '复制邀请链接';
+const HOME_CONFIRM_MS = 2500;    // 「返回主页」「离开联机」点两次才生效：手机上拖能见度滑条时误触会丢掉整局
+// 联机营地（N1）
+const CAMP_MODE_TEXT = '联机营地（Level 1 某处）';
+const COOP_PREFIX = '联机 · ';
+const PAUSE_COOP_NOTE = '联机时暂停，世界不会停';
+const LEAVE_TEXT = '离开联机';
+const LEAVE_CONFIRM_TEXT = '再点一次：会断开联机，回到主页';
+const CODE_WAIT_TEXT = '等朋友来';
+const CODE_TOAST_MS = 4000;
+const NOTICE_ARM_MS = 350;       // 横幅弹出时玩家可能正好在点屏幕上半部：这么久内按钮不响应
+const NOTICE_TICK_MS = 200;      // 倒数刷新、到时关闭的检查间隔
+const NOTICE_KEYS = ['Y', 'N', 'U'];   // 桌面键帽：按钮按顺序配；都是 input.js 没占的键
+const NOTICE_KEY_RESERVED = /^[WASDEFQTVRC0-9]$/;   // input.js 占着的键，调用方给了也不认
+const CURTAIN_FADE_MS = 400;
+const CURTAIN_MAX_MS = 5000;
+const VIS_THUMB_PX = 20;        // 与 css/game.css 里 .hud-range::-webkit-slider-thumb 的宽度一致
 const STYLE_RE = /(^|\/)css\/game\.css([?#]|$)/;
 const SELF_RE = /js\/game\/hud\.js([?#].*)?$/;
 // currentScript 只在脚本同步执行期间有值，必须在顶层取
@@ -84,10 +132,20 @@ const S = {
   micSig: null,
   titleId: null, titleAt: 0, titleTimer: 0,
   pauseArmAt: 0, homeConfirmUntil: 0, homeTimer: 0,
+  confirmBtn: null,                // 正在等第二下的按钮（dom.btnHome | dom.btnLeave）
+  pauseCoopSig: null,              // 暂停菜单联机那一组已经按哪个状态画过
+  shownCode: '',                   // 左上角角标正在显示的房号（'' = 没显示）
+  titleWait: null,                 // 黑幕期间记下的层级大标题（最后一次），淡出完再播
   warnedTarget: false,
   layoutDirty: true,               // 提示框内容 / 显隐 / 窗口尺寸变了：下一帧量一次提示框底边，toast 排在它下面
   toastDy: -1,                     // 已写进 --hud-toast-dy 的值（px）
+  toastTop: 0,                     // 矮横屏有横幅时 toast 排到横幅下面的 top（px，0 = 不挪；写进 --hud-toast-top）
+  noticeSig: null,                 // 横幅容器的布局类（触屏 / 状态条开着）已经按哪个状态写过
 };
+// 横幅（notice）：list 里按弹出先后排，后弹的在下面；tick 是倒数用的 setInterval
+const N = { list: [], tick: 0 };
+// 黑幕（curtain）：state 'off' | 'in'（淡入中）| 'black'（全黑）| 'out'（淡出中）；toBlack / toClear 是等着的 resolve
+const C = { state: 'off', timer: 0, toBlack: [], toClear: [] };
 
 // ---------- 小工具 ----------
 function nowMs() { return window.performance && performance.now ? performance.now() : Date.now(); }
@@ -134,6 +192,7 @@ function levelLabel(id) {
 }
 
 function modeLabel(g) {
+  if (inCamp(g)) return CAMP_MODE_TEXT;
   const m = BR.MODES[g.mode];
   let s = m ? m.zh : String(g.mode || '');
   if (m && Array.isArray(m.difficulties)) {
@@ -141,8 +200,57 @@ function modeLabel(g) {
     if (d) s += ' · ' + d.zh;
   }
   if (!g.attackPlayers) s += ' · 实体不会攻击你';
-  return s;
+  return coopLive() ? COOP_PREFIX + s : s;
 }
+
+// ---------- 联机营地（N1）的几个判断 ----------
+// 营地是隐藏层，层级定义里 lobby 为真
+function inCamp(g) {
+  const def = BR.levels.get((g || BR.game).levelId);
+  return !!(def && def.lobby);
+}
+
+// 队友连着（BR.coop.active）。只看 coop 模块的实时状态，不看开局时记下的 BR.game.coop
+function coopLive() { return !!(BR.coop && BR.coop.active); }
+
+function coopPhase() { return (BR.coop && BR.coop.phase) || ''; }
+
+// 联机局：暂停菜单、结算页要换成「回营地 / 离开联机」。在营地里一定算（营地只能从「联机」进来）
+function coopSession(g) {
+  const c = BR.coop;
+  if (!c) return false;
+  return !!(c.active || c.hosting || coopPhase() === 'reconnecting' || inCamp(g));
+}
+
+// 暂停时世界真的不停（main.js 按 BR.coop.active 决定；重连时两边原地等，也照方案算联机中）
+function worldRuns() { return coopLive() || coopPhase() === 'reconnecting'; }
+
+// 「回营地」能不能点：不在营地、队友连着（要对方同意）、coopCamp 已载入
+function canGoCamp(g) { return !inCamp(g) && coopLive() && !!BR.coopCamp && typeof BR.coopCamp.back === 'function'; }
+
+// 开着营地、还没人连上：返回房号，否则 ''
+function waitingCode() {
+  const c = BR.coop;
+  if (!c || !c.hosting || c.active || coopPhase() === 'reconnecting') return '';
+  const code = c.code;
+  return typeof code === 'string' && code ? code : '';
+}
+
+// 房号分两段显示（K7M 2QX），textContent 里不带空格，和服务器、输入框里的写法一致
+function putCode(node, code) {
+  node.textContent = '';
+  mk('span', 'hud-code-a', node, code.slice(0, 3));
+  mk('span', 'hud-code-b', node, code.slice(3));
+}
+
+function codeLine(node, code) {
+  node.textContent = '';
+  mk('span', 'hud-code-label', node, '房号 ');
+  putCode(mk('span', 'hud-code', node), code);
+  mk('span', 'hud-code-wait', node, ' · ' + CODE_WAIT_TEXT);
+}
+
+function groupCode(code) { return code.length > 3 ? code.slice(0, 3) + ' ' + code.slice(3) : code; }
 
 function currentEnv() {
   // world.current 可能是层级定义本身，也可能包了一层 { def }；换层事件期间可能改过 env，优先用它
@@ -186,15 +294,21 @@ function ensureDom() {
     buildHud();
     buildToasts();
     buildPause();
+    buildNotices();
+    buildCurtain();
     dom.ready = true;
     // 窗口尺寸、横竖屏变了：提示框折行跟着变，toast 的位置重量一次
     window.addEventListener('resize', () => { S.layoutDirty = true; }, { passive: true });
+    // 横幅的键帽：捕获阶段，指针锁着时也收得到
+    document.addEventListener('keydown', onNoticeKey, true);
   }
   // 别的模块清空 #ui 时会把节点一起带走，补挂回去
   const h = host();
   if (!attached(dom.root)) h.appendChild(dom.root);
   if (!attached(dom.toasts)) h.appendChild(dom.toasts);
   if (!attached(dom.pause)) h.appendChild(dom.pause);
+  if (!attached(dom.curtain)) h.appendChild(dom.curtain);
+  if (!attached(dom.notices)) h.appendChild(dom.notices);
   return true;
 }
 
@@ -268,6 +382,9 @@ function buildHud() {
   dom.recTime = mk('span', 'hud-rec-time', rec, '00:00:00');
   dom.recCoop = mk('span', 'hud-rec-coop', rec);
   dom.recCoop.hidden = true;
+  // 开着营地等朋友时的房号角标：放在信息块里最后一行，跟着信息块排，压不到层级名，也不会跑到右上角的麦克风那边
+  dom.infoCode = mk('div', 'hud-info-code', info);
+  dom.infoCode.hidden = true;
 
   dom.cross = mk('div', 'hud-cross', root);
   // 提示三行：第一行「[按住] [空格] 动词 名字 ×2」；第二行「· 长按拖动 货架」；最后一行是降下来的手动提示。
@@ -314,6 +431,9 @@ function buildPause() {
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-modal', 'true');
   panel.setAttribute('aria-label', '暂停菜单');
+  // 联机时暂停只是开了个菜单，房主那边的世界照常跑：顶上写明，免得以为队友也停了
+  dom.pauseCoop = mk('div', 'hud-pause-coop', panel, PAUSE_COOP_NOTE);
+  dom.pauseCoop.hidden = true;
   mk('div', 'hud-pause-tag', panel, '❚❚ PAUSE');
   mk('div', 'hud-pause-title', panel, '已暂停');
   // 联机时暂停不停世界，右上角的麦克风按钮又被暂停层盖住：面板右上角补一个开关麦，只在联机时显示
@@ -325,6 +445,8 @@ function buildPause() {
   const sub = mk('div', 'hud-pause-sub', panel);
   dom.pauseLevel = mk('div', '', sub);
   dom.pauseMode = mk('div', '', sub);
+  dom.pauseCode = mk('div', 'hud-pause-code', sub);
+  dom.pauseCode.hidden = true;
 
   dom.btnResume = mk('button', 'hud-btn hud-btn-primary', panel, '继续');
   dom.btnResume.type = 'button';
@@ -342,10 +464,26 @@ function buildPause() {
 
   dom.btnHome = mk('button', 'hud-btn hud-btn-home', panel, '返回主页');
   dom.btnHome.type = 'button';
+  // 联机局里「返回主页」换成这两个（renderPauseCoop 切显隐）。包一层：横屏手机高度不够时两个并排（css .hud-pause-pair）
+  const pair = dom.pausePair = mk('div', 'hud-pause-pair', panel);
+  pair.hidden = true;
+  dom.btnCamp = mk('button', 'hud-btn hud-btn-camp', pair, '回营地');
+  dom.btnCamp.type = 'button';
+  dom.btnCamp.hidden = true;
+  // 开着营地等朋友（还没人连上）时：复制邀请链接（营地重开、房号续期后，不用回主页也能把新链接发出去）。和「回营地」不会同时出现
+  dom.btnInvite = mk('button', 'hud-btn hud-btn-invite', pair, INVITE_TEXT);
+  dom.btnInvite.type = 'button';
+  dom.btnInvite.hidden = true;
+  dom.btnLeave = mk('button', 'hud-btn hud-btn-leave', pair, LEAVE_TEXT);
+  dom.btnLeave.type = 'button';
+  dom.btnLeave.hidden = true;
   dom.pauseHint = mk('div', 'hud-pause-hint', panel, '按 Esc 也可以继续');
 
   tap(dom.btnResume, onResumeClick);
   tap(dom.btnHome, onHomeClick);
+  tap(dom.btnCamp, onCampClick);
+  tap(dom.btnInvite, onInviteClick);
+  tap(dom.btnLeave, onLeaveClick);
   tap(mic, onMicClick);
   range.addEventListener('input', onVisInput);
   range.addEventListener('change', onVisInput);
@@ -389,7 +527,8 @@ function setBad(st, on) {
 }
 
 function updateStats(g, p) {
-  const on = !!(g.statsEnabled && p);
+  // 营地里不会饿、不掉 san，也没东西打人：整条不显示
+  const on = !!(g.statsEnabled && p) && !inCamp(g);
   if (on !== S.statsOn) {
     S.statsOn = on;
     dom.stats.hidden = !on;
@@ -437,14 +576,19 @@ function updateInfo(g) {
   const c = g.coop || {};
   const coop = coopActive();
   const role = c.role || (BR.coop && BR.coop.role) || null;
-  // 层级文件可能晚于首帧注册，has() 也放进签名，注册后标题自动补上
-  const sig = [g.levelId, BR.levels.has(g.levelId), g.mode, g.difficulty, g.attackPlayers, coop, role].join('|');
+  const code = waitingCode();
+  // 层级文件可能晚于首帧注册，has() 也放进签名，注册后标题自动补上；营地、队友在不在、房号也在签名里
+  const sig = [g.levelId, BR.levels.has(g.levelId), g.mode, g.difficulty, g.attackPlayers, coop, role,
+    inCamp(g), coopLive(), code].join('|');
   if (sig !== S.infoSig) {
     S.infoSig = sig;
     dom.infoLevel.textContent = levelLabel(g.levelId);
     dom.infoMode.textContent = modeLabel(g);
     dom.recCoop.textContent = coop ? (role === 'guest' ? '联机 · 客机' : '联机 · 房主') : '';
     dom.recCoop.hidden = !coop;
+    if (code) codeLine(dom.infoCode, code);
+    dom.infoCode.hidden = !code;
+    S.shownCode = code;
   }
   const sec = Math.max(0, Math.floor(num(g.time, 0)));
   if (sec !== S.recSec) {
@@ -843,10 +987,12 @@ function update(dt) {
     toggle(dom.toasts, 'hud-toasts-modal', modal);
   }
   // 暂停中联机、麦克风状态会变（对方断开、申请结果回来）：按签名刷新开关麦，没有 coop:mic 事件也跟得上
-  if (S.paused) renderPauseMic();
+  if (S.paused) { renderPauseMic(); renderPauseCoop(false); }
 
   updateStats(g, p);
   updateInfo(g);
+  syncNoticeLayout();
+  placeToastsBelowNotices();
   updatePrompt(dt, p, dead);
   updateInventory(p);
 }
@@ -929,6 +1075,11 @@ function hideTitle() {
 
 function levelTitle(level) {
   if (!ensureDom()) return;
+  // 黑幕还没完全撤掉：先记下（最后一次算数），不碰去重计时；curtain(false) 淡出完再播
+  if (C.state !== 'off') {
+    if (level != null && level !== '') S.titleWait = level;
+    return;
+  }
   const def = level && typeof level === 'object' ? level : BR.levels.get(level);
   const id = def && def.id != null ? String(def.id) : level != null && typeof level !== 'object' ? String(level) : '';
   if (!id) return;
@@ -959,25 +1110,59 @@ function levelTitle(level) {
 }
 
 // ---------- 暂停菜单 ----------
-function setHomeConfirm(on) {
+// 「返回主页」（单机）和「离开联机」（联机局）共用一个 2.5 s 确认窗口；btn 是这次进确认态的那个按钮
+function setHomeConfirm(on, btn) {
   clearTimeout(S.homeTimer);
+  const who = on ? (btn || dom.btnHome) : null;
   S.homeConfirmUntil = on ? nowMs() + HOME_CONFIRM_MS : 0;
+  S.confirmBtn = who;
   if (!dom.ready) return;
-  toggle(dom.btnHome, 'hud-btn-confirm', on);
-  dom.btnHome.textContent = on ? '再点一次，确认返回主页' : '返回主页';
+  const home = who === dom.btnHome, leave = who === dom.btnLeave;
+  toggle(dom.btnHome, 'hud-btn-confirm', home);
+  dom.btnHome.textContent = home ? '再点一次，确认返回主页' : '返回主页';
+  toggle(dom.btnLeave, 'hud-btn-confirm', leave);
+  dom.btnLeave.textContent = leave ? LEAVE_CONFIRM_TEXT : LEAVE_TEXT;
   if (on) S.homeTimer = setTimeout(() => setHomeConfirm(false), HOME_CONFIRM_MS);
 }
 
+function confirming(btn) { return S.confirmBtn === btn && nowMs() <= S.homeConfirmUntil; }
+
 function renderPause() {
   const g = BR.game;
-  dom.pauseLevel.textContent = levelLabel(g.levelId);
-  dom.pauseMode.textContent = modeLabel(g);
   const vis = Math.round(U.clamp(num(g.settings && g.settings.visibility, 0.7), 0, 1) * 100);
   dom.visRange.value = String(vis);
   dom.visVal.textContent = vis + '%';
   dom.pauseHint.hidden = isTouch();
   setHomeConfirm(false);
+  renderPauseCoop(true);
   renderPauseMic();
+}
+
+// 暂停菜单里跟联机有关的一组：副标题（层级、模式、房号）、顶上的小字、「返回主页」还是「回营地 / 离开联机」。
+// force：刚打开菜单；否则按签名比较，状态没变不碰 DOM
+function renderPauseCoop(force) {
+  if (!dom.ready) return;
+  const g = BR.game;
+  const sess = coopSession(g), runs = worldRuns(), camp = sess && canGoCamp(g), code = waitingCode();
+  const sig = [g.levelId, g.mode, g.difficulty, g.attackPlayers, inCamp(g), coopLive(), sess, runs, camp, code].join('|');
+  if (!force && sig === S.pauseCoopSig) return;
+  const was = S.pauseCoopSig;
+  S.pauseCoopSig = sig;
+  dom.pauseLevel.textContent = levelLabel(g.levelId);
+  dom.pauseMode.textContent = modeLabel(g);
+  if (code) codeLine(dom.pauseCode, code);
+  dom.pauseCode.hidden = !code;
+  dom.pauseCoop.hidden = !(sess && runs);
+  dom.btnHome.hidden = sess;
+  dom.pausePair.hidden = !sess;
+  dom.btnCamp.hidden = !camp;
+  const invite = !!code && !camp && !!BR.coop && typeof BR.coop.copyInvite === 'function';
+  dom.btnInvite.hidden = !invite;
+  if (!invite) { clearTimeout(S.inviteT); dom.btnInvite.textContent = INVITE_TEXT; }
+  dom.btnLeave.hidden = !sess;
+  toggle(dom.pausePair, 'hud-pause-pair-two', camp || invite);
+  // 菜单开着时从联机变回单机（或反过来）：正在确认的那个按钮可能已经藏起来了，确认态作废
+  if (!force && was !== null && S.confirmBtn && S.confirmBtn.hidden) setHomeConfirm(false);
 }
 
 function pauseMicCoop() {
@@ -1016,6 +1201,7 @@ function closePause() {
   S.paused = false;
   setHomeConfirm(false);
   if (dom.ready) dom.pause.hidden = true;
+  syncNoticeLayout();
 }
 
 function pause(v) {
@@ -1034,6 +1220,7 @@ function pause(v) {
     if (!isTouch() && typeof dom.btnResume.focus === 'function') {
       try { dom.btnResume.focus({ preventScroll: true }); } catch (err) { dom.btnResume.focus(); }
     }
+    syncNoticeLayout();
     BR.bus.emit('game:pause', { paused: true });
     return true;
   }
@@ -1055,9 +1242,56 @@ function onResumeClick() {
 
 function onHomeClick() {
   if (!S.paused || nowMs() < S.pauseArmAt) return;
-  if (nowMs() > S.homeConfirmUntil) { setHomeConfirm(true); return; }
+  if (!confirming(dom.btnHome)) { setHomeConfirm(true, dom.btnHome); return; }
   closePause();
   BR.bus.emit('game:home');
+}
+
+// 「回营地」：要队友同意，问的横幅和回答由 BR.coopCamp 管。点了就关掉菜单回到游戏（世界本来就没停），
+// 等回答期间照常能走能躲。back() 返回 false（没问出去，例如队友版本旧）也关：原因是 coopCamp 发的 toast，
+// 暂停菜单开着时 toast 整组藏着，菜单留着玩家只会看到按钮没反应
+function onCampClick() {
+  if (!S.paused || nowMs() < S.pauseArmAt || dom.btnCamp.hidden) return;
+  const cc = BR.coopCamp;
+  if (!cc || typeof cc.back !== 'function') return;
+  try { cc.back(); }
+  catch (err) { console.error('[hud] coopCamp.back 出错', err); return; }
+  if (!S.paused) return;
+  pause(false);
+  // 和「继续」一样，指针锁定只能在这次点击的调用栈里请求
+  const inp = BR.input;
+  if (inp && !inp.isTouch && inp.enabled && has(inp, 'lock')) inp.lock();
+}
+
+// 「复制邀请链接」：菜单留着（玩家多半接着去微信里发），按钮上闪一下结果
+function onInviteClick() {
+  if (!S.paused || nowMs() < S.pauseArmAt || dom.btnInvite.hidden) return;
+  const c = BR.coop;
+  if (!c || typeof c.copyInvite !== 'function') return;
+  const flash = t => {
+    dom.btnInvite.textContent = t;
+    clearTimeout(S.inviteT);
+    S.inviteT = setTimeout(() => { if (dom.ready) dom.btnInvite.textContent = INVITE_TEXT; }, 1800);
+  };
+  let p;
+  try { p = c.copyInvite(); } catch (err) { console.error('[hud] coop.copyInvite 出错', err); p = null; }
+  if (!p || typeof p.then !== 'function') { flash('复制失败：请记下房号'); return; }
+  p.then(r => flash(r === 'copied' ? '已复制，发给朋友' : r === 'shared' ? '已分享' : '复制失败：请记下房号'), () => flash('复制失败：请记下房号'));
+}
+
+// 「离开联机」：点两次。先断开联机再回主页，回主页的那一串由 main.onGameHome 收拾
+function onLeaveClick() {
+  if (!S.paused || nowMs() < S.pauseArmAt || dom.btnLeave.hidden) return;
+  if (!confirming(dom.btnLeave)) { setHomeConfirm(true, dom.btnLeave); return; }
+  closePause();
+  leaveCoop();
+  BR.bus.emit('game:home');
+}
+
+function leaveCoop() {
+  const c = BR.coop;
+  if (!c || typeof c.leave !== 'function') return;
+  try { c.leave(); } catch (err) { console.error('[hud] coop.leave 出错', err); }
 }
 
 function onVisInput() {
@@ -1068,6 +1302,288 @@ function onVisInput() {
   dom.visVal.textContent = Math.round(v * 100) + '%';
   const env = currentEnv();
   if (env && BR.gfx && has(BR.gfx, 'applyEnv')) BR.gfx.applyEnv(env, v);
+}
+
+// ---------- 横幅（notice，z 65） ----------
+function buildNotices() {
+  dom.notices = mk('div', 'hud-notices');
+  dom.notices.setAttribute('aria-live', 'assertive');
+}
+
+function isTyping(el) {
+  if (!el || el.nodeType !== 1) return false;
+  if (el.isContentEditable) return true;
+  const tag = el.tagName;
+  if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (tag !== 'INPUT') return false;
+  return !/^(button|checkbox|radio|range|color|file|image|reset|submit)$/i.test(el.type || '');
+}
+
+// 触屏不画键帽；状态条开着时（窄屏左上信息块被挤到下面）、左上角多了房号那一行时，横幅再往下让一点。
+// 暂停菜单 / 结算盖着时左上信息块已经被盖住，横幅改贴着顶部（.hud-notices-modal），别压住面板顶上的标题
+// 矮横屏（高 ≤ 520：横屏手机、小窗口）toast 挪到右上角，和横幅（信息块下面、居中、最宽 560）在同一高度带，
+// 「点一下画面开始」开着时又来一句「你们都穿黄色…」就叠在一起：有横幅时 toast 排到横幅底边下面 8px。
+// 竖屏开着帐篷选单时 toast 也挪到了上半屏（css/tent.css），同样排到横幅下面
+function placeToastsBelowNotices() {
+  if (!dom.toasts || !dom.notices) return;
+  let top = 0;
+  const W = window.innerWidth || document.documentElement.clientWidth || 0;
+  const H = window.innerHeight || document.documentElement.clientHeight || 0;
+  const tentTop = H >= W && document.documentElement.classList.contains('br-tent-open');
+  if (N.list.length && (H <= 520 || tentTop)) {
+    const r = dom.notices.getBoundingClientRect();
+    if (r.height > 0) top = Math.ceil(r.bottom + 8);
+  }
+  if (top === S.toastTop) return;
+  S.toastTop = top;
+  toggle(dom.toasts, 'hud-toasts-below', top > 0);
+  if (top > 0) dom.toasts.style.setProperty('--hud-toast-top', top + 'px');
+}
+
+function syncNoticeLayout() {
+  if (!dom.ready) return;
+  // 不读 S.toastModal（每帧 update 才更新）：暂停 / 死亡的那一刻 pause()、player:death 就直接调过来
+  const modal = (S.paused || !!(BR.player && BR.player.dead)) && S.visible;
+  const touch = isTouch(), stats = !modal && !!S.statsOn && S.visible, code = !modal && !!S.shownCode && S.visible;
+  const sig = (touch ? 't' : 'd') + (stats ? 's' : '') + (code ? 'c' : '') + (modal ? 'm' : '');
+  if (sig === S.noticeSig) return;
+  S.noticeSig = sig;
+  toggle(dom.notices, 'hud-notices-touch', touch);
+  toggle(dom.notices, 'hud-notices-stats', stats);
+  toggle(dom.notices, 'hud-notices-code', code);
+  toggle(dom.notices, 'hud-notices-modal', modal);
+}
+
+function noticeKey(a, used) {
+  if (a.key === false) return '';
+  if (typeof a.key === 'string' && a.key) {
+    const k = a.key.trim().toUpperCase();
+    if (/^[A-Z]$/.test(k) && !NOTICE_KEY_RESERVED.test(k) && !used.has(k)) return k;
+    console.warn('[hud] 横幅按钮的键「' + a.key + '」不能用（只认没被游戏占用的一个字母），改成自动分配');
+  }
+  for (const k of NOTICE_KEYS) if (!used.has(k)) return k;
+  return '';
+}
+
+function remainSec(n) { return Math.max(0, Math.ceil((n.until - nowMs()) / 1000)); }
+
+function renderCount(n) {
+  if (!n.showCount) return;
+  const s = n.until ? remainSec(n) : 0;
+  if (s === n.countShown) return;
+  n.countShown = s;
+  n.count.textContent = String(s);
+  n.count.hidden = !n.until;
+}
+
+function armTick() {
+  const need = N.list.some(n => n.until > 0);
+  if (need && !N.tick) N.tick = setInterval(noticeTick, NOTICE_TICK_MS);
+  else if (!need && N.tick) { clearInterval(N.tick); N.tick = 0; }
+}
+
+function noticeTick() {
+  const t = nowMs();
+  // 先拷一份：到时回调里可能再开、再关横幅
+  for (const n of N.list.slice()) {
+    if (!n.open || !n.until) continue;
+    if (t >= n.until) {
+      closeNotice(n);
+      if (typeof n.onTimeout === 'function') {
+        try { n.onTimeout(n.handle); } catch (err) { console.error('[hud] notice onTimeout 出错', err); }
+      }
+    } else renderCount(n);
+  }
+  armTick();
+}
+
+function closeNotice(n) {
+  if (!n.open) return;
+  n.open = false;
+  const a = document.activeElement;
+  if (a && n.node.contains(a) && typeof a.blur === 'function') a.blur();
+  if (n.node.parentNode) n.node.parentNode.removeChild(n.node);
+  const i = N.list.indexOf(n);
+  if (i >= 0) N.list.splice(i, 1);
+  armTick();
+  placeToastsBelowNotices();
+}
+
+function fireNotice(n, b) {
+  if (!n.open || nowMs() < n.armAt) return;
+  let r;
+  try { r = typeof b.fn === 'function' ? b.fn(n.handle) : undefined; }
+  catch (err) { console.error('[hud] 横幅按钮「' + b.label + '」出错', err); }
+  if (r !== false) closeNotice(n);
+}
+
+function onNoticeKey(e) {
+  if (!N.list.length || e.repeat || e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target)) return;
+  const k = e.code && /^Key[A-Z]$/.test(e.code) ? e.code.slice(3)
+    : (e.key && e.key.length === 1 ? e.key.toUpperCase() : '');
+  if (!k) return;
+  // 后弹的优先
+  for (let i = N.list.length - 1; i >= 0; i--) {
+    const n = N.list[i];
+    const b = n.btns.find(x => x.key === k);
+    if (!b) continue;
+    if (e.cancelable) e.preventDefault();
+    fireNotice(n, b);
+    return;
+  }
+}
+
+// text：一行字（可以折行）；actions：[{ label, fn(句柄) → false 留着, key? }]；ms > 0 到时自动关；
+// opts：{ countdown?: bool, onTimeout?: fn(句柄), keep?: bool（game:home 也不关）, cls?: 额外 class }
+function notice(text, actions, ms, opts) {
+  const o = opts || {};
+  const n = { open: false, until: 0, armAt: 0, btns: [], countShown: -1, showCount: false, keep: !!o.keep, onTimeout: o.onTimeout, node: null };
+  const handle = n.handle = {
+    close() { closeNotice(n); },
+    // set(text, ms)：换字；给了 ms 就从现在起重新倒数（0 = 不再自动关）
+    set(t, ms2) {
+      if (!n.node) return;
+      n.text.textContent = t == null ? '' : String(t);
+      if (ms2 !== undefined) {
+        n.until = num(ms2, 0) > 0 ? nowMs() + ms2 : 0;
+        n.countShown = -1;
+        renderCount(n);
+        armTick();
+      }
+    },
+    get open() { return n.open; },
+  };
+  if (!ensureDom()) return handle;
+
+  const acts = Array.isArray(actions) ? actions.filter(a => a && a.label != null && a.label !== '') : [];
+  const node = n.node = mk('div', 'hud-notice' + (acts.length ? ' hud-notice-ask' : '') + (o.cls ? ' ' + o.cls : ''));
+  node.setAttribute('role', acts.length ? 'alertdialog' : 'status');
+  const head = mk('div', 'hud-notice-head', node);
+  n.text = mk('div', 'hud-notice-text', head, text == null ? '' : String(text));
+  n.count = mk('span', 'hud-notice-count', head);
+  n.count.hidden = true;
+  n.count.setAttribute('aria-hidden', 'true');
+  if (acts.length) {
+    const row = mk('div', 'hud-notice-acts', node);
+    const used = new Set();
+    acts.forEach((a, i) => {
+      const btn = mk('button', 'hud-notice-btn' + (i === 0 ? ' hud-notice-btn-first' : ''), row, String(a.label));
+      btn.type = 'button';
+      btn.tabIndex = -1;   // 不拿焦点：玩家接着按空格互动时不会点到它（只认点击和键帽）
+      btn.addEventListener('mousedown', (e) => { if (e.cancelable) e.preventDefault(); });
+      const k = noticeKey(a, used);
+      if (k) { used.add(k); btn.dataset.key = k; btn.setAttribute('aria-keyshortcuts', k); }
+      const b = { label: String(a.label), fn: a.fn, key: k, btn };
+      n.btns.push(b);
+      tap(btn, () => fireNotice(n, b));
+    });
+  }
+  n.showCount = o.countdown === true || (o.countdown !== false && acts.length > 0);
+  n.until = num(ms, 0) > 0 ? nowMs() + ms : 0;
+  n.armAt = nowMs() + (acts.length ? NOTICE_ARM_MS : 0);
+  n.open = true;
+  N.list.push(n);
+  dom.notices.appendChild(node);
+  // 要玩家拿主意的横幅（带按钮）出来时，正在播的层级大标题提前收掉：两个都在屏幕上半部中间，叠在一起谁都看不清
+  // （回营地刚亮起来对方就离开时，「「X」离开了营地」压在「联机营地」大标题上，2026-10-05 返修）
+  if (acts.length && !dom.title.hidden) hideTitle();
+  syncNoticeLayout();
+  placeToastsBelowNotices();
+  renderCount(n);
+  armTick();
+  return handle;
+}
+
+function closeNotices(all) {
+  for (const n of N.list.slice()) if (all || !n.keep) closeNotice(n);
+}
+
+// ---------- 黑幕（curtain，z 56） ----------
+function buildCurtain() {
+  const el = dom.curtain = mk('div', 'hud-curtain');
+  el.hidden = true;
+  el.setAttribute('aria-live', 'polite');
+  dom.curtainText = mk('div', 'hud-curtain-text', el);
+}
+
+function settle(list, v) {
+  const fns = list.splice(0, list.length);
+  for (const r of fns) r(v);
+}
+
+// 从当前实际不透明度出发，剩下多少走多少（被打断的半程不会再走满 0.4 s），done 在到位时调
+function fadeCurtain(target, dur, done) {
+  const el = dom.curtain;
+  clearTimeout(C.timer);
+  el.hidden = false;
+  toggle(el, 'hud-curtain-on', target === 1);   // 全黑和淡入时挡住点击；淡出时放行
+  let from = parseFloat(window.getComputedStyle(el).opacity);
+  if (!isFinite(from)) from = target ? 0 : 1;
+  const ms = Math.round(dur * Math.abs(target - from));
+  el.style.transition = 'none';
+  el.style.opacity = String(from);
+  void el.offsetWidth;   // 先提交起点再开 transition
+  el.style.transition = ms > 0 ? 'opacity ' + ms + 'ms linear' : 'none';
+  el.style.opacity = String(target);
+  // 用定时器不用 transitionend：起止相同、标签页在后台时 transitionend 不一定来（和 gfx.fade 一样）
+  C.timer = setTimeout(done, ms > 0 ? ms + 30 : 0);
+}
+
+function flushTitle() {
+  const t = S.titleWait;
+  S.titleWait = null;
+  if (t != null) levelTitle(t);
+}
+
+function curtain(text, ms) {
+  if (!ensureDom()) return Promise.resolve(false);
+  const dur = num(ms, -1) >= 0 ? U.clamp(ms, 0, CURTAIN_MAX_MS) : CURTAIN_FADE_MS;
+  if (text === false || text === null) {
+    // 撤黑幕：去重清掉，淡出完补播黑幕期间记下的大标题（同一层 3 秒内也要播）
+    S.titleId = null;
+    S.titleAt = 0;
+    if (C.state === 'off') { flushTitle(); return Promise.resolve(true); }
+    const p = new Promise(r => C.toClear.push(r));
+    if (C.state === 'out') return p;
+    settle(C.toBlack, false);   // 还没全黑就被撤：等全黑的那些照实说没到
+    C.state = 'out';
+    fadeCurtain(0, dur, () => {
+      C.state = 'off';
+      dom.curtain.hidden = true;
+      settle(C.toClear, true);
+      flushTitle();
+    });
+    return p;
+  }
+  const t = text == null ? '' : String(text);
+  dom.curtainText.textContent = t;
+  dom.curtainText.hidden = !t;
+  if (C.state === 'black') return Promise.resolve(true);
+  const p = new Promise(r => C.toBlack.push(r));
+  if (C.state === 'in') return p;
+  settle(C.toClear, false);     // 正在淡出又要黑：等撤完的那些照实说没撤完
+  C.state = 'in';
+  fadeCurtain(1, dur, () => {
+    C.state = 'black';
+    settle(C.toBlack, true);
+  });
+  return p;
+}
+
+// 回主页：立刻撤掉，不淡出；没 resolve 的都 resolve(false)，记下的大标题作废
+function resetCurtain() {
+  clearTimeout(C.timer);
+  C.state = 'off';
+  S.titleWait = null;
+  if (dom.ready) {
+    const el = dom.curtain;
+    el.style.transition = 'none';
+    el.style.opacity = '0';
+    el.hidden = true;
+    toggle(el, 'hud-curtain-on', false);
+  }
+  settle(C.toBlack, false);
+  settle(C.toClear, false);
 }
 
 // ---------- 事件 ----------
@@ -1094,7 +1610,23 @@ BR.bus.on('game:home', () => {
   S.toastModal = false;
   if (dom.ready) toggle(dom.toasts, 'hud-toasts-modal', false);
   hideTitle();
+  // 联机的横幅和黑幕都是局内的：回主页一律收掉（keep 的横幅除外）
+  closeNotices(false);
+  resetCurtain();
+  S.shownCode = '';
+  S.infoSig = null;
   show(false);
+  syncNoticeLayout();   // 留下来的 keep 横幅按主页的版式排（没有状态条、没有房号那一行）
+});
+
+// 房号换了（续期、营地里落单后原地重开）：角标、暂停菜单立刻跟上；角标正显示着旧房号时 toast 一句
+BR.bus.on('coop:code', (p) => {
+  const code = p && typeof p.code === 'string' ? p.code : '';
+  const old = S.shownCode;
+  S.infoSig = null;
+  if (S.paused) renderPauseCoop(true);
+  if (code && old && code !== old && S.visible && waitingCode()) toast('房号换成了 ' + groupCode(code), CODE_TOAST_MS);
+  if (S.visible) updateInfo(BR.game);
 });
 
 // 麦克风状态变了（coop.js 发）：暂停菜单开着就立即刷新；没有这个事件时靠 update 里的签名兜底
@@ -1104,7 +1636,10 @@ BR.bus.on('player:death', () => {
   // 联机时暂停并不停世界，可能在菜单里被打死：让位给结算界面，输入保持禁用
   if (S.paused) closePause();
   S.target = null;
+  syncNoticeLayout();   // 结算盖上来：开着的横幅（等回营地的回答之类）立刻贴顶
 });
+
+BR.bus.on('player:respawn', () => { syncNoticeLayout(); });
 
 BR.bus.on('player:damage', (p) => {
   if (!p || !dom.ready) return;
@@ -1127,7 +1662,9 @@ function init() {
 
 BR.hud = {
   init, show, update, toast, levelTitle, prompt, pause,
+  notice, curtain,
   get visible() { return S.visible; },
   get paused() { return S.paused; },
+  get curtainState() { return C.state; },
 };
 })();

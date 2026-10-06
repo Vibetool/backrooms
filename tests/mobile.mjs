@@ -1,11 +1,18 @@
 // 后室 · 移动端回归：node tests/mobile.mjs [设备,...] [--sec 段名,...]
 // 起本地静态服务（随机端口）+ 无头 Chrome（SwiftShader），按移动端适配计划的 mobileTestPlan 逐项检查 A–E 五批修复：
 //   A 游戏内触屏操作与 HUD、B 联机大厅与麦克风、C 主页与设置、D 创意工坊触屏、E 返回键 / 视野 / 上下文丢失 / 性能。
-// 设备矩阵 6 台（isMobile + hasTouch，每台单独 context、串行跑），外加 1 台桌面参照（1280×800 鼠标键盘，只查 Esc 这类桌面行为）。
+// 设备矩阵 7 台（isMobile + hasTouch，每台单独 context、串行跑），外加 1 台桌面参照（1280×800 鼠标键盘，只查 Esc 这类桌面行为）。
 // 多指触摸走 CDP Input.dispatchTouchEvent。iPhone 安全区用 CDP Emulation.setSafeAreaInsetsOverride 注入：覆盖只在发出它的 CDP 会话里生效，
 // 所以每个 context 只建一个会话，注入、触摸都复用它；每次进页面实测 env(safe-area-inset-*)，没取到注入值时相关检查标 SKIP。
-// 联机一律用页面内的 BR.net / BR.coop 桩，不建真实 WebRTC；所有非 127.0.0.1 请求都拦截并记进 blocked，blocked 非空算失败。
-// 不出图；每台设备的数值结果写 tests/output/mobile/<设备>.json。任一检查失败或页面出现 console.error / 未捕获异常时退出码为 1。
+// 联机一律用页面内的假 BR.net（__m.stubNet：建房、查房、加房、发消息、开麦都在本地，照真 net.js 的返回格式）+ 真 coop.js，
+// 不建真实 WebRTC、不碰 room.php；hello 里的 caps 现读 BR.coop.debugInfo().caps，不写死。
+// 所有非 127.0.0.1 请求都拦截并记进 blocked，blocked 非空算失败。
+// 联机营地（N1，孩子 2026-10-02）：联机只从主页「联机」进 → 开营地 / 加入朋友的营地 → 营地 → 帐篷里选模式和层级。
+//   「游玩」弹窗里没有联机和开麦；B 段都从主页「联机」进；联机局里暂停 / 结算的「返回主页」换成「回营地」「离开联机」。
+//   帐篷（390×844 竖屏、640×360 横屏）：「点「互动」进帐篷」不截断、「准备」始终在视口里点得到、横屏两栏、返回键先关选单、不弹键盘；
+//   回营地横幅的「同意」「不要」点得到；邀请链接卡片、「回去？」卡片在手机上看得全、点得到。
+// 数值结果写 tests/output/mobile/<设备>.json；N1 新界面（帐篷选单、回营地横幅、两张卡片）另截几张图到 tests/output/mobile/，给人亲眼看。
+// 任一检查失败或页面出现 console.error / 未捕获异常时退出码为 1。
 // 可选参数：设备名只跑这几台；--sec game,coop 只跑这几段（调试用，all.mjs 不带参数全跑）。
 import http from 'node:http';
 import fs from 'node:fs';
@@ -78,6 +85,8 @@ const UA = {
 const DEVICES = {
   'iphone-p': { w: 402, h: 874, dpr: 3, ua: UA.ios, phone: true, insets: { top: 62, bottom: 34, left: 0, right: 0 } },
   'iphone-l': { w: 874, h: 402, dpr: 3, ua: UA.ios, phone: true, insets: { top: 0, bottom: 21, left: 62, right: 62 } },
+  // 390×844（iPhone 13/14 竖屏）：帐篷选单、两张联机卡片在最常见的竖屏手机上看得全、点得到
+  'iphone13-p': { w: 390, h: 844, dpr: 3, ua: UA.ios, phone: true, insets: { top: 47, bottom: 34, left: 0, right: 0 } },
   'android-p': { w: 360, h: 640, dpr: 2, ua: UA.android, phone: true, blankFirst: true },
   'android-l': { w: 640, h: 360, dpr: 2, ua: UA.android, phone: true },
   'ipadmini-p': { w: 744, h: 1133, dpr: 2, ua: UA.mac, ipad: true },
@@ -177,8 +186,79 @@ function installHelpers() {
     },
     unhookRender() { if (window.__rendOrig) { BR.gfx.renderer.render = window.__rendOrig; window.__rendOrig = null; } },
     lastRender(n) { return (window.__rend || []).slice(-(n || 1)); },
+    // ---- 联机营地（N1） ----
+    // 营地块的 b.data.coopcamp（世界坐标：帐篷、门、站位、地图、通道、挂钩）
+    camp() {
+      for (const c of BR.world.chunks()) if (c.res && c.res.data && c.res.data.coopcamp) return c.res.data.coopcamp;
+      return null;
+    },
+    // 站到 (x, z)，面朝 (tx, tz)（BR 的 yaw：前方 = (−sin, −cos)）
+    stand(x, z, tx, tz) {
+      BR.player.reset({ x, y: 0, z, yaw: Math.atan2(-(tx - x), -(tz - z)) }, { full: false });
+      return 0;
+    },
+    // 假 BR.net：照真 net.js 的接口和返回格式（roomInfo → { state, hostName, isCamp, … }，名字已剥暗标；joinRoom → { hostName, isCamp, code }），
+    // 不碰 room.php、不建 WebRTC。打开 / 加入 / 发消息 / 开麦都记在 window.__ns 里。原来的方法存在 __netOrig，一次会话只替换一回
+    stubNet(o) {
+      const N = BR.net;
+      if (!N) return 0;
+      o = o || {};
+      const S = window.__ns = window.__ns || { sent: [], mic: [], calls: [] };
+      Object.assign(S, { code: o.code || 'K7M2QX', host: o.host || '房主X', camp: o.camp !== false, state: o.state || 'waiting' });
+      S.sent.length = 0; S.mic.length = 0; S.calls.length = 0;
+      const orig = window.__netOrig = window.__netOrig || {};
+      const put = (k, fn) => { if (!(k in orig)) orig[k] = N[k]; N[k] = fn; };
+      const fail = code => { const e = new Error(code); e.code = code; return e; };
+      put('createRoom', async () => { S.calls.push('createRoom'); return S.code; });
+      put('roomInfo', async code => {
+        S.calls.push('roomInfo ' + code);
+        return { state: S.state, hostName: S.host, isCamp: S.camp, guestName: '', host_name: S.host, guest_name: '' };
+      });
+      put('joinRoom', async code => {
+        S.calls.push('joinRoom ' + code);
+        if (S.state === 'closed') throw fail('room_closed');
+        if (!S.camp) throw fail('not_camp');
+        return { hostName: S.host, isCamp: true, code };
+      });
+      put('send', m => { S.sent.push(m); return true; });
+      put('leave', () => { S.calls.push('leave'); });
+      put('resumeAudio', () => {});
+      put('setMic', on => { S.mic.push(!!on); return Promise.resolve(!!on); });
+      // 备用房号 / 重连另有 tests/coop.mjs 测：这里只保证不去碰服务器
+      put('spareCreate', () => new Promise(() => {}));
+      put('reconnectHost', () => new Promise(() => {}));
+      put('reconnectGuest', () => new Promise(() => {}));
+      return 0;
+    },
+    // net 事件直接派发给 coop.js 登记的监听（hookNet 记下的）
+    fire(type, data) { (window.__netL || []).forEach(fn => fn(type, data)); return 0; },
+    // 对方的 hello：caps 照本机 coop.js 现读（不写死），lv 是本机已注册的 LEVEL_ORDER 层级
+    hello(name, skin) {
+      const caps = BR.coop.debugInfo().caps;
+      const lv = (BR.LEVEL_ORDER || []).map(String).filter(id => BR.levels.has(id));
+      return M.fire('msg', { t: 'hello', game: 'backrooms', v: BR.config.version, name, skin, caps, lv });
+    },
+    // 对方发来的事件通道消息（{ t:'ev', lv, list:[[kind, payload]] }，和 coop.js 的 flushEv 同格式）
+    evMsg(kind, payload) { return M.fire('msg', { t: 'ev', lv: String(BR.game.levelId), list: [[kind, payload]] }); },
+    // 发给对方的事件里有没有某一种（sent 里的 ev 批次展开）
+    sentEv(kind) {
+      const out = [];
+      for (const m of (window.__ns && window.__ns.sent) || []) if (m && m.t === 'ev' && Array.isArray(m.list)) for (const it of m.list) if (it && it[0] === kind) out.push(it[1]);
+      return out;
+    },
+    // 聚焦过的文字输入框（会弹软键盘的：text 类 input、textarea、contenteditable），init 时开始记
+    kbd() { return (window.__kbd || []).slice(); },
   };
   window.__m = M;
+  window.__kbd = [];
+  document.addEventListener('focusin', e => {
+    const t = e.target;
+    if (!t || !t.tagName) return;
+    const typ = String(t.type || '').toLowerCase();
+    const texty = t.tagName === 'TEXTAREA' || t.isContentEditable ||
+      (t.tagName === 'INPUT' && !/^(range|checkbox|radio|button|submit|reset|color|file|image|hidden)$/.test(typ));
+    if (texty) window.__kbd.push((t.getAttribute('class') || t.tagName) + ':' + typ);
+  }, true);
 }
 
 // 记下 coop.js 注册到 BR.net 上的监听：联机桩直接派发 connected / msg 等事件，不建真实连接
@@ -192,6 +272,10 @@ function hookNet() {
       net = n;
       window.__netL = window.__netL || [];
       if (n && typeof n.on === 'function') { const on = n.on; n.on = function (fn) { window.__netL.push(fn); return on.call(n, fn); }; }
+      // 邀请链接 #join=、「回去？」卡片：coop.js 一加载就会查房 / 连线，假 net 必须在那之前装好
+      let want = null;
+      try { want = sessionStorage.getItem('__mobileNetStub'); } catch (e) { /* 忽略 */ }
+      if (want && n && window.__m) window.__m.stubNet(JSON.parse(want));
     },
   });
   window.BR = br;
@@ -385,6 +469,14 @@ async function sub(D, name, fn) {
 
 async function goHome(D) {
   await D.t.upAll();
+  // 开着营地（房号页、营地里一个人等）或者联机面板开着：先离开联机、关面板，下一段从干净的主页开始
+  const tidy = await D.ev(() => {
+    let n = 0;
+    try { if (BR.coop && BR.coop.phase !== 'idle') { BR.coop.leave(); n++; } } catch (e) { /* 忽略 */ }
+    try { const l = document.querySelector('.coop-lobby'); if (l && !l.hidden) { BR.coop.closeLobby(); n++; } } catch (e) { /* 忽略 */ }
+    return n;
+  });
+  if (tidy) await sleep(600);   // closeLobby 会 history.back() 退掉面板那条，等 popstate 落地
   const scr = await D.ev(() => BR.game.screen);
   if (scr !== 'home') {
     await D.ev(() => {
@@ -552,14 +644,28 @@ async function secHint(D) {
     if (i) await sleep(400);
     samples.push(await D.ev(() => {
       const a = __m.box('.home-hint'), b = __m.box('.home-secondary-actions');
-      return { hint: a && [a.l, a.t, a.r, a.b], sec: b && [b.l, b.t, b.r, b.b], hintVis: __m.vis('.home-hint'), over: __m.inter(a, b) };
+      // 三格按钮（联机 / 创意工坊 / 设置）逐个比：容器的外框之外，「联机」那格也不能被提示条压到
+      const btns = __m.qa('.home-secondary-btn').map(e => ({ t: e.textContent.trim(), b: __m.box(e) }));
+      return { hint: a && [a.l, a.t, a.r, a.b], sec: b && [b.l, b.t, b.r, b.b], hintVis: __m.vis('.home-hint'), over: __m.inter(a, b), n: btns.length, overBtn: btns.filter(x => __m.inter(a, x.b)).map(x => x.t) };
     }));
   }
   D.data.c4 = samples;
-  D.check('C4 360×640 每 400ms 采样 3 次，.home-hint 与 .home-secondary-actions 都不相交', samples.every(s => s.hint && s.sec && !s.over), samples);
+  D.check('C4 360×640 每 400ms 采样 3 次，.home-hint 与 .home-secondary-actions、三格按钮（含「联机」）都不相交', samples.every(s => s.hint && s.sec && !s.over && s.n === 3 && s.overBtn.length === 0), samples);
+  // 竖屏：三格在挂牌左边那一列，「联机」用 order 排到最下面一格，底边和牌子底边齐平（离拇指最近）
+  const col = await D.ev(() => {
+    const btns = __m.qa('.home-secondary-btn').map(e => ({ t: e.textContent.trim(), coop: e.classList.contains('is-coop'), b: __m.box(e) }));
+    const rod = __m.box('.home-sign-rod'), play = __m.box('.home-play');
+    const low = btns.slice().sort((x, y) => y.b.b - x.b.b)[0];
+    const coop = btns.find(x => x.coop);
+    return { order: btns.slice().sort((x, y) => x.b.t - y.b.t).map(x => x.t), low: low && low.t, coop: coop && coop.b, rodL: rod && rod.l, playB: play && play.b, sizes: btns.map(x => [x.b.w, x.b.h]) };
+  });
+  D.data.c4col = col;
+  D.check('C4 360×640 竖屏：「联机」在挂牌左边那一列的最下格（从上到下 创意工坊 / 设置 / 联机），底边和牌子底边齐平，三格都 ≥44px',
+    JSON.stringify(col.order) === '["创意工坊","设置","联机"]' && col.low === '联机' && !!col.coop && col.coop.r <= col.rodL - 8 && Math.abs(col.coop.b - col.playB) <= 2 &&
+    col.sizes.every(([w, h]) => w >= 44 && h >= 44), col);
 
   // 「游玩」是挂着的牌子（棍子、吊绳在牌子上方）：提示条也不能压到整块挂牌；
-  // 「创意工坊 / 设置」也不能盖住人物：按钮矩形里每 4px 打一条射线，打到人物的触屏碰撞体就说明点那里本该换制服却开了按钮
+  // 「联机 / 创意工坊 / 设置」也不能盖住人物：按钮矩形里每 4px 打一条射线，打到人物的触屏碰撞体就说明点那里本该换制服却开了按钮
   const more = [];
   for (let i = 0; i < 3; i++) {
     if (i) await sleep(400);
@@ -584,7 +690,7 @@ async function secHint(D) {
   }
   D.data.c4b = more;
   D.check('C4b 360×640 采样 3 次，.home-hint 与「游玩」挂牌（牌子 + 吊绳 + 横棍）都不相交', more.every(s => s.hint && s.hang && !s.hintOverHang), more);
-  D.check('C4c 360×640 采样 3 次，「创意工坊 / 设置」按钮里没有一点落在人物的触屏碰撞体上', more.every(s => s.hasHit && s.figPts === 0), more);
+  D.check('C4c 360×640 采样 3 次，「联机 / 创意工坊 / 设置」按钮里没有一点落在人物的触屏碰撞体上', more.every(s => s.hasHit && s.figPts === 0), more);
 }
 
 async function c1(D, full) {
@@ -755,148 +861,179 @@ async function secSettingsAndroidP(D) {
   if (qh !== 'high') throw new Error('「立即刷新」检查后画质没恢复成高：' + qh);
 }
 
-// C10 用的 BR.coop 整体替身（主页只读 active / mic / micBusy / setMic）
-function installCoopStub() {
-  window.__realCoop = BR.coop;
-  const st = { active: true, mic: false, busy: false };
-  const calls = [];
-  window.__stub = { st, calls };
-  BR.coop = {
-    init() {}, update() {}, leave() {}, openLobby() {}, closeLobby() {},
-    setMic(on) {
-      calls.push(!!on);
-      if (!on) { st.mic = false; st.busy = false; return Promise.resolve(false); }
-      st.busy = true;
-      return new Promise(() => { /* 申请中，测试里不回 */ });
-    },
-    get active() { return st.active; }, get role() { return 'guest'; }, get mic() { return st.mic; }, get micBusy() { return st.busy; },
-    get phase() { return st.active ? 'active' : 'idle'; }, get peer() { return null; }, get code() { return null; },
-  };
-  BR.bus.emit('coop:mic', { on: false, busy: false, active: true });
-  return 0;
+// ---------- 联机营地（N1）：从主页「联机」开营地、朋友连上 ----------
+async function openCoopFromHome(D) {
+  await press(D, '.home-secondary-btn.is-coop');
+  if (!await waitFor(D, () => __m.vis('.coop-lobby'), 8000)) throw new Error('点主页「联机」后联机面板没打开');
+  await sleep(350);
 }
-function homeMicInfo() {
-  const b = document.querySelector('.home-dialog-casual .home-btn-mic');
-  const d = document.querySelector('.home-dialog-casual');
-  if (!b || !d) return { exists: false };
-  const r = b.getBoundingClientRect(), dr = d.getBoundingClientRect();
-  const e = b.hidden ? null : document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-  return {
-    exists: true, hidden: b.hidden, text: b.textContent,
-    within: r.top >= dr.top - 0.5 && r.bottom <= dr.bottom + 0.5 && r.left >= dr.left - 0.5 && r.right <= dr.right + 0.5,
-    hitSelf: !!e && (e === b || b.contains(e)), calls: window.__stub ? window.__stub.calls.slice() : null,
-  };
+// 朋友连上：peerJoined → connected → 对方的 hello（caps 现读本机 coop.js）
+async function connectPeer(D, peer) {
+  await D.ev(a => { __m.fire('peerJoined', a.name); __m.fire('connected'); __m.hello(a.name, a.skin); return 0; }, peer);
+  if (!await waitFor(D, () => BR.coop.active, 5000)) throw new Error('朋友没连上：' + JSON.stringify(await D.ev(() => BR.coop.debugInfo().phase)));
+  await D.step(0.2);
+}
+// 主页「联机」→「开一个营地」→ 房号页 →「进营地等朋友」→ 营地（一个人等）；peer 给了再让朋友连上。全程真触摸点按钮，返回房号页上看到的东西
+async function hostCamp(D, peer) {
+  await goHome(D);
+  await D.ev(o => __m.stubNet(o), {});
+  await openCoopFromHome(D);
+  await press(D, '.coop-lobby button', '开一个营地', { exact: true });
+  if (!await waitFor(D, () => BR.coop.phase === 'hosting' && !!BR.coop.code, 8000)) throw new Error('没开成营地：' + JSON.stringify(await D.ev(() => BR.coop.debugInfo())));
+  await sleep(300);
+  const hostPage = await D.ev(() => ({
+    code: (document.querySelector('.coop-view-host .coop-code') || {}).textContent, view: BR.coop.debugInfo().lobby.view,
+    btns: __m.qa('.coop-lobby button').filter(b => __m.vis(b)).map(b => b.textContent.trim()), kbd: __m.kbd(),
+  }));
+  await press(D, '.coop-lobby button', '进营地等朋友', { exact: true });
+  if (!await waitFor(D, () => BR.game.screen === 'playing' && BR.game.levelId === 'coopcamp' && !BR.world.transitioning, 90000)) throw new Error('「进营地等朋友」后没进营地');
+  await D.ev(() => { __br.setAuto(false); __br.step(0.3); return 0; });
+  if (peer) await connectPeer(D, peer);
+  return hostPage;
+}
+
+// C10：营地 HUD 和暂停里的开麦（以前测的是「游玩」弹窗里的开麦，N1 拿掉了）
+async function c10Camp(D) {
+  const hp = await hostCamp(D, null);
+  D.check('C10 房号页：大字房号 K7M 2QX，「复制邀请链接」「复制房号」「进营地等朋友」都在，没弹键盘', hp.view === 'host' && hp.code === 'K7M 2QX' &&
+    ['复制邀请链接', '复制房号', '进营地等朋友'].every(t => hp.btns.includes(t)) && hp.kbd.length === 0, hp);
+  // 一个人在营地等：左上角房号角标
+  const h0 = await D.ev(() => {
+    __br.step(0.1);
+    const el = document.querySelector('.hud-info-code'), box = el ? __m.box(el) : null;
+    const touch = __m.qa('.touch-root .touch-btn').filter(b => __m.vis(b)).map(b => ({ n: b.dataset.touch, b: __m.box(b) }));
+    return {
+      vis: __m.vis(el), text: el ? el.textContent.replace(/\s+/g, '') : null, box, inView: __m.inView(box), mic: __m.vis('.coop-mic'),
+      over: touch.filter(t => __m.inter(t.b, box)).map(t => t.n), mode: (document.querySelector('.hud-info-mode') || {}).textContent,
+    };
+  });
+  D.data.c10 = { h0 };
+  D.check('C10 一个人在营地等朋友：左上角「房号 K7M2QX · 等朋友来」在视口内、不压触屏按钮，模式写「联机营地（Level 1 某处）」，还没有麦克风按钮',
+    h0.vis && h0.text === '房号K7M2QX·等朋友来' && h0.inView && h0.over.length === 0 && /联机营地（Level 1 某处）/.test(h0.mode || '') && !h0.mic, h0);
+  await connectPeer(D, { name: '队友', skin: 'blue' });
+  const h1 = await D.ev(() => {
+    __br.step(0.1);
+    const mic = __m.box('.coop-mic');
+    const others = {};
+    __m.qa('.touch-btn').filter(b => __m.vis(b)).forEach(b => { others[b.dataset.touch || __m.cls(b)] = __m.box(b); });
+    if (__m.vis('.hud-info')) others.info = __m.box('.hud-info');
+    return { micVis: __m.vis('.coop-mic'), mic, inView: __m.inView(mic), over: Object.keys(others).filter(k => __m.inter(mic, others[k])), code: __m.vis('.hud-info-code'), mode: (document.querySelector('.hud-info-mode') || {}).textContent };
+  });
+  D.data.c10.h1 = h1;
+  // 营地的模式标签本身就写着「联机营地」，hud.js 不再叠「联机 · 」前缀（关卡里的「联机 · 游玩 …」在 secGuestBack 查）
+  D.check('C10 朋友连上后：右上角麦克风按钮出现、在视口内、不压触屏按钮和左上信息块；房号角标收起；模式仍写「联机营地（Level 1 某处）」',
+    h1.micVis && h1.inView && h1.over.length === 0 && !h1.code && /联机营地（Level 1 某处）/.test(h1.mode || ''), h1);
+  // 暂停：面板右上角的开麦、「联机时暂停，世界不会停」；营地里只有「继续」和「离开联机」
+  const pz = await D.ev(() => __m.box('.touch-btn-pause'));
+  await D.t.tap(pz.cx, pz.cy);
+  await D.step(0.05);
+  await sleep(400);   // 暂停菜单弹出后 250ms 内不响应点击
+  const pm = await D.ev(() => {
+    __br.step(0.02);
+    const shown = s => __m.vis(s);
+    return {
+      screen: BR.game.screen, mic: __m.hit('.hud-pause-mic'), micVis: shown('.hud-pause-mic'), note: shown('.hud-pause-coop') ? document.querySelector('.hud-pause-coop').textContent.trim() : null,
+      resume: shown('.hud-btn-primary'), leave: shown('.hud-btn-leave'), camp: shown('.hud-btn-camp'), home: shown('.hud-btn-home'),
+      code: shown('.hud-pause-code'),
+    };
+  });
+  D.data.c10.pause = pm;
+  D.check('C10 营地里暂停：右上角开麦可见、中心命中；顶上写「联机时暂停，世界不会停」；只有「继续」「离开联机」（没有「回营地」「返回主页」）',
+    pm.screen === 'paused' && pm.micVis && pm.mic.ok && pm.note === '联机时暂停，世界不会停' && pm.resume && pm.leave && !pm.camp && !pm.home, pm);
+  const m0 = await D.ev(() => window.__ns.mic.length);
+  if (pm.micVis && pm.mic.b) { await D.t.tap(pm.mic.b.cx, pm.mic.b.cy); await sleep(200); }
+  const m1 = await D.ev(() => ({ calls: window.__ns.mic.slice(), mic: BR.coop.mic }));
+  D.check('C10 触摸暂停里的开麦：调到 net.setMic(true)、麦克风打开', m1.calls.length === m0 + 1 && m1.calls[m1.calls.length - 1] === true && m1.mic === true, m1);
+  await D.ev(() => { if (BR.coop.mic) BR.coop.setMic(false); return 0; });
+  const rs = await D.ev(() => __m.box('.hud-btn-primary'));
+  await D.t.tap(rs.cx, rs.cy);
+  await D.step(0.05);
+  await goHome(D);
 }
 
 async function secHomeIphoneP(D) {
   await openDialog(D, 'casual');
   await c1(D, false);
-  try {
-    await D.ev(installCoopStub);
-    // 主页 0.5 秒轮询会把「已联机 · …」写进 .home-actions 里的状态行，这一行出现会把开麦按钮挤开：
-    // 等状态行和按钮都到位再量、再点，免得点在挪位前的旧坐标上
-    await waitFor(D, () => {
-      const b = document.querySelector('.home-dialog-casual .home-btn-mic'), st = document.querySelector('.home-dialog-casual .home-coop-status');
-      return !!b && !b.hidden && !!st && st.textContent.trim().length > 0;
-    }, 5000);
-    await sleep(250);
-    const m0 = await D.ev(homeMicInfo);
-    D.check('C10 BR.coop 桩 active 时「游玩」弹窗出现开麦按钮（可见、完整在弹窗内、中心命中）', m0.exists && !m0.hidden && m0.within && m0.hitSelf, m0);
-    // 记下这一下触摸的事件链（捕获阶段），点击没生效时能看出断在哪一步
-    await D.ev(() => {
-      window.__evs = [];
-      window.__evOff = [];
-      for (const type of ['touchstart', 'touchend', 'pointerdown', 'pointerup', 'click']) {
-        const fn = e => window.__evs.push(type + '@' + (e.target && e.target.className || e.target.nodeName) + (e.defaultPrevented ? '!prevented' : ''));
-        const late = e => { if (e.defaultPrevented) window.__evs.push(type + ' prevented-by-listener'); };
-        window.addEventListener(type, fn, true);
-        window.addEventListener(type, late, false);
-        window.__evOff.push(() => { window.removeEventListener(type, fn, true); window.removeEventListener(type, late, false); });
-      }
-      return 0;
-    });
-    const tapAt = m0.exists && !m0.hidden ? await press(D, '.home-dialog-casual .home-btn-mic') : null;
-    await sleep(200);
-    const evs = await D.ev(() => { const r = (window.__evs || []).slice(); (window.__evOff || []).forEach(f => f()); window.__evOff = []; return r; });
-    const m1 = await D.ev(homeMicInfo);
-    D.check('C10 点开麦按钮调用 setMic(true)', !!m1.calls && m1.calls[0] === true, Object.assign({ tapAt, events: evs }, m1));
-  } finally {
-    await D.ev(() => {
-      if (window.__realCoop) { BR.coop = window.__realCoop; window.__realCoop = null; }
-      BR.bus.emit('coop:mic', { on: false, busy: false, active: false });
-      return 0;
-    });
-  }
   await closeModals(D);
+  await sub(D, 'C10', () => c10Camp(D));
+  await goHome(D);
+  // C10 在营地里开过局：main.js 的「横屏」提示本页只弹一次（内存里记着），重进页面，后面 game 段的 E4 才看得到这次开局的提示
+  await boot(D, false);
 }
 
 // =====================================================================
-// 联机大厅 / 返回键（B1 B2 B3 B7 B8、E1 E2）
+// 联机面板 / 返回键（B1 B2 B3 B7 B8、E1 E2）：N1 起联机只从主页「联机」进
 // =====================================================================
+// 面板量尺寸：卡片可视区、营地卡片（标题、「加入」、原因、隐私提示）、房号框下的红字、状态行
 function lobbyMeasure() {
   const M = __m;
   const card = M.q('.coop-card'), cb = M.box(card);
   const clip = { t: Math.max(cb.t, 0), b: Math.min(cb.b, innerHeight) };
   const within = b => !!b && b.t >= clip.t - 0.5 && b.b <= clip.b + 0.5;
-  const yes = M.qa('.coop-lobby button').find(b => b.textContent.trim() === '同意加入');
-  const st = M.q('.coop-status'), sub = M.q('.coop-sub');
-  const yb = yes ? M.box(yes) : null, sb = M.box(st);
+  const info = sel => {
+    const el = M.q(sel);
+    if (!el || !M.vis(el)) return null;
+    const b = M.box(el);
+    return { text: el.textContent.trim(), box: b, inView: M.inView(b), inCard: within(b), hit: M.hit(el) };
+  };
+  const dbg = BR.coop.debugInfo();
+  const inp = M.q('.coop-code-input');
   return {
     vp: innerWidth + 'x' + innerHeight, card: cb, ch: card.clientHeight, sh: card.scrollHeight, scrollTop: Math.round(card.scrollTop),
-    subVisible: M.vis(sub), phase: BR.coop.phase,
-    yes: yes && M.vis(yes) ? { box: yb, inView: M.inView(yb), inCard: within(yb), hit: M.hit(yes) } : null,
-    status: { text: st.textContent, box: sb, inView: M.inView(sb), inCard: within(sb) },
+    subVisible: M.vis('.coop-sub'), phase: BR.coop.phase, view: dbg.lobby.view, value: inp ? inp.value : null,
+    title: info('.coop-card-title'), join: info('.coop-btn-joincamp'), why: info('.coop-card-why'), privacy: info('.coop-privacy'),
+    err: info('.coop-code-err'), status: info('.coop-status'), steps: M.vis('.coop-steps') ? M.qa('.coop-steps li').map(li => li.textContent.trim()) : null,
+    kbd: M.kbd(),
   };
 }
-
-async function openLobbyFromCasual(D) {
-  await openDialog(D, 'casual');
-  await press(D, '.home-dialog-casual .home-actions .home-btn', '联机', { exact: true });
-  if (!await waitFor(D, () => __m.vis('.coop-lobby'), 8000)) throw new Error('联机大厅没打开');
-  await sleep(350);
+// 房号框里「打字」：直接改 value 再发 input（真打字时框会聚焦弹键盘，那是用户自己点的，不算自动弹）
+function typeCode(v) {
+  const i = document.querySelector('.coop-code-input');
+  i.value = v;
+  i.dispatchEvent(new Event('input', { bubbles: true }));
+  return 0;
 }
 
-async function secLobbyConfirm(D) {
+// B2 B1：打开面板 →「加入朋友的营地」→ 输房号出卡片；错字红字；不是后室营地的房间写原因、不给「加入」
+async function secLobbyCard(D) {
   const vp = D.dev.w + '×' + D.dev.h;
-  await openLobbyFromCasual(D);
+  await goHome(D);
+  await D.ev(o => __m.stubNet(o), {});
+  await openCoopFromHome(D);
   const open = await D.ev(lobbyMeasure);
   D.data.b2 = open;
-  if (D.key === 'android-l') D.check('B2 640×360 打开大厅：.coop-card scrollHeight ≤ clientHeight+10、.coop-sub 可见', open.sh <= open.ch + 10 && open.subVisible, { ch: open.ch, sh: open.sh, sub: open.subVisible });
-  // 房间查询桩：6 位房号 → 确认框
-  await D.ev(() => {
-    BR.net.roomInfo = async () => ({ state: 'waiting', host_name: '房主X', guest_name: '' });
-    const i = document.querySelector('.coop-code-input');
-    i.value = 'ABC123';
-    i.dispatchEvent(new Event('input', { bubbles: true }));
-    document.querySelector('.coop-card').scrollTop = 0;
-    return 0;
-  });
-  await press(D, '.coop-lobby button', '加入', { exact: true });
+  if (D.key === 'android-l') D.check('B2 640×360 打开联机面板：.coop-card scrollHeight ≤ clientHeight+10、.coop-sub 可见', open.sh <= open.ch + 10 && open.subVisible, { ch: open.ch, sh: open.sh, sub: open.subVisible });
+  D.check('B1 ' + vp + ' 打开联机面板是第一屏（昵称 +「开一个营地」「加入朋友的营地」），触屏不自动聚焦、不弹键盘', open.view === 'start' && open.kbd.length === 0, { view: open.view, kbd: open.kbd });
+  await press(D, '.coop-lobby button', '加入朋友的营地', { exact: true });
+  await sleep(300);
+  const j0 = await D.ev(lobbyMeasure);
+  D.check('B1 ' + vp + ' 点「加入朋友的营地」：出房号框，触屏不自动聚焦（不弹键盘）', j0.view === 'join' && j0.kbd.length === 0 && !j0.join, { view: j0.view, kbd: j0.kbd });
+  // 小写、带空格：自动转大写、去空格，满 6 位自动查
+  await D.ev(typeCode, 'k7m 2qx');
   const conf = await waitFor(D, () => BR.coop.phase === 'confirm', 8000);
   await sleep(300);
   const cf = await D.ev(lobbyMeasure);
-  D.data.b1 = { confirm: cf };
-  D.check('B1 ' + vp + ' 输入 ABC123 点「加入」：「同意加入」完全在视口内、中心命中按钮', conf && !!cf.yes && cf.yes.inView && cf.yes.hit.ok, { phase: cf.phase, yes: cf.yes, sh: cf.sh, st: cf.scrollTop });
-  // 取消后输 5 位房号：出错状态行要看得见
-  await D.ev(() => {
-    const cancel = Array.from(document.querySelectorAll('.coop-lobby button')).find(b => b.textContent.trim() === '取消');
-    if (cancel) cancel.click();
-    return 0;
-  });
+  D.data.b1 = { card: cf };
+  D.check('B1 ' + vp + ' 输「k7m 2qx」：转成 K7M2QX、自动查到「「房主X」的营地」，「加入」完全在视口内（也在卡片可视区里）、中心命中',
+    conf && cf.value === 'K7M2QX' && !!cf.title && cf.title.text === '「房主X」的营地' && !!cf.join && cf.join.inView && cf.join.inCard && cf.join.hit.ok,
+    { phase: cf.phase, value: cf.value, title: cf.title && cf.title.text, join: cf.join, sh: cf.sh, st: cf.scrollTop });
+  D.check('B1 ' + vp + ' 卡片下面的隐私提示看得见', !!cf.privacy && cf.privacy.inView && /默认闭麦/.test(cf.privacy.text), cf.privacy);
+  // 敲到 0、O、1、I：这个字不收，当场红字
+  await D.ev(typeCode, 'K7M2Q0');
+  await sleep(300);
+  const bad = await D.ev(lobbyMeasure);
+  D.data.b1.bad = bad;
+  D.check('B1 ' + vp + ' 敲到 0：这个字不收，红字「房号里没有 0、O、1、I」在视口内（也在卡片可视区里），刚才的卡片收起',
+    bad.value === 'K7M2Q' && !!bad.err && bad.err.text === '房号里没有 0、O、1、I' && bad.err.inView && bad.err.inCard && !bad.join && bad.phase === 'idle', { value: bad.value, err: bad.err, join: bad.join, phase: bad.phase });
+  // 火箭游戏的房间 / 对方是旧版（昵称没有营地暗标）：卡片的位置写原因，不给「加入」
+  await D.ev(() => { window.__ns.camp = false; return 0; });
+  await D.ev(typeCode, 'K7M2QX');
+  await waitFor(D, () => { const w = document.querySelector('.coop-card-why'); return !!w && !w.hidden && w.textContent.length > 0; }, 8000);
   await sleep(250);
-  await D.ev(() => {
-    const i = document.querySelector('.coop-code-input');
-    i.value = 'ABC12';
-    i.dispatchEvent(new Event('input', { bubbles: true }));
-    document.querySelector('.coop-card').scrollTop = 0;
-    const join = Array.from(document.querySelectorAll('.coop-lobby button')).find(b => b.textContent.trim() === '加入');
-    if (join) join.click();
-    return 0;
-  });
-  await sleep(350);
-  const sh = await D.ev(lobbyMeasure);
-  D.data.b1.short = sh;
-  D.check('B1 ' + vp + ' 输入 5 位房号：.coop-status 在视口内（且在卡片可视区内）', !!sh.status.text && sh.status.inView && sh.status.inCard, sh.status);
+  const nc = await D.ev(lobbyMeasure);
+  D.data.b1.notCamp = nc;
+  D.check('B1 ' + vp + ' 不是后室营地的房间：卡片写「这不是后室的营地…」并在视口内，没有「加入」', !!nc.why && /不是后室的营地/.test(nc.why.text) && nc.why.inView && !nc.join && nc.phase === 'idle', { why: nc.why, join: nc.join, phase: nc.phase });
+  await D.ev(() => { window.__ns.camp = true; return 0; });
   await press(D, '.coop-close');
   await waitFor(D, () => !__m.vis('.coop-lobby'), 5000);
   await sleep(700);
@@ -908,13 +1045,48 @@ function histInfo() {
   const d = m && !m.hidden ? m.querySelector('.home-dialog') : null;
   const kind = d ? (Array.from(d.classList).find(c => /^home-dialog-/.test(c)) || 'home-dialog') : null;
   const lob = document.querySelector('.coop-lobby');
-  return { path: location.pathname, hasBR: !!window.BR, dialog: kind, lobby: !!lob && !lob.hidden, state: history.state, len: history.length, screen: window.BR && BR.game ? BR.game.screen : null };
+  const armed = document.querySelector('.coop-armed');
+  return {
+    path: location.pathname, hasBR: !!window.BR, dialog: kind, lobby: !!lob && !lob.hidden, state: history.state, len: history.length, screen: window.BR && BR.game ? BR.game.screen : null,
+    phase: window.BR && BR.coop ? BR.coop.phase : null, armed: armed && !armed.hidden ? armed.textContent.trim() : null,
+    tent: !!(window.BR && BR.coopCamp && BR.coopCamp.panelOpen), lv: window.BR && BR.game ? BR.game.levelId : null,
+  };
 }
-// 用 setTimeout 发 back：万一真把页面退掉了，evaluate 本身不会卡在导航上
+// 用 setTimeout 发 back：万一真把页面退掉了，evaluate 本身不会卡在导航上。
+// 退到别的页面（空白页）时要等那次导航真正结束：以前固定等 900 ms，机器忙时导航还没完 histInfo 就求值失败（path:null），
+// 被当成「已离开」，紧接着 boot 的 goto 撞上还在进行的返回导航（'interrupted by another navigation'）。
+// 现在：等到 URL 稳定、页面 load 完，histInfo 失败就再等一会儿重试（最多约 10 s）
+// 按一次返回：先在页面里挂上 popstate / pagehide 标记再 history.back()，等到「同一个文档里退了（popstate）」或者「离开了这页
+// （地址变了、新页面载入完）」才读状态（2026-10-05 返修 r2：原来固定等 900 ms，导航开始得晚时读到的还是旧页面，
+// 下一次 history.back() 报 Execution context was destroyed）
 async function goBack(D) {
-  await D.ev(() => { setTimeout(() => history.back(), 0); return 0; });
-  await sleep(900);
-  return D.ev(histInfo).catch(e => ({ err: String(e && e.message || e), path: null }));
+  const url0 = D.page.url();
+  await D.ev(() => {
+    window.__backMark = '';
+    const on = k => () => { if (!window.__backMark) window.__backMark = k; };
+    window.addEventListener('popstate', on('pop'), { once: true });
+    window.addEventListener('pagehide', on('hide'), { once: true });
+    setTimeout(() => history.back(), 0);
+    return 0;
+  });
+  let last = null;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 15000) {
+    await sleep(150);
+    if (D.page.url() !== url0) {
+      try { await D.page.waitForLoadState('load', { timeout: 5000 }); } catch (e) { /* 再试 */ }
+      try { return await D.ev(histInfo); } catch (e) { last = e; continue; }
+    }
+    let mark = '';
+    try { mark = await D.ev(() => window.__backMark || ''); } catch (e) { last = e; continue; }   // 正在离开这页：上下文没了，接着等
+    if (mark === 'pop') {
+      await sleep(400);   // 游戏自己的 popstate 处理（关面板、退暂停）跑完
+      if (D.page.url() !== url0) continue;
+      try { return await D.ev(histInfo); } catch (e) { last = e; continue; }
+    }
+  }
+  try { return await D.ev(histInfo); } catch (e) { last = e; }
+  return { err: String(last && last.message || last), path: null };
 }
 // 流程收尾、主页没有弹层时连按返回：恰好 1 次就该离开 index.html。多按一次才走 = 历史里留了无效记录，只看单步状态发现不了。
 // 离开后重新进页面（先进空白页，下次返回还有地方可退），后面的检查接着用
@@ -932,17 +1104,23 @@ async function backsToLeave(D, label) {
 }
 
 async function secLobbyBack(D) {
-  await openLobbyFromCasual(D);
+  await D.ev(o => __m.stubNet(o), {});
+  await openCoopFromHome(D);
   const s0 = await D.ev(histInfo);
   const s1 = await goBack(D);
-  D.check('B3 主页→游玩→游玩→联机后 history.back() 一次：lobby 隐藏、.home-dialog-casual 仍在、pathname 不变', s0.lobby && !s1.lobby && s1.dialog === 'home-dialog-casual' && s1.path === '/index.html', { s0, s1 });
-  const s2 = await goBack(D);
-  const s3 = await goBack(D);
-  D.check('B3 再 back 两次依次关「游玩」弹窗和菜单，pathname 始终 /index.html', s2.dialog === 'home-dialog-menu' && s3.dialog === null && s2.path === '/index.html' && s3.path === '/index.html', { s2, s3 });
-  if (s3.path !== '/index.html') throw new Error('返回键离开了页面');
-  D.check('B3 三次返回后回到无弹层主页：history.state 为 null', s3.dialog === null && !s3.lobby && s3.state === null, s3);
-  await closeModals(D);
-  await backsToLeave(D, 'B3 大厅流程结束后');
+  D.check('B3 主页→联机后 history.back() 一次：面板关掉，下面就是没有弹层的主页（history.state 为 null）', s0.lobby && !s1.lobby && s1.dialog === null && s1.state === null && s1.path === '/index.html', { s0, s1 });
+  if (s1.path !== '/index.html') throw new Error('返回键离开了页面');
+  // 房号页（营地开了、人还没进营地）：返回键第一次只提示「再点一次：不等朋友了」，第二次才关面板、关营地
+  await openCoopFromHome(D);
+  await press(D, '.coop-lobby button', '开一个营地', { exact: true });
+  if (!await waitFor(D, () => BR.coop.phase === 'hosting', 8000)) throw new Error('没开成营地');
+  await sleep(300);
+  const h1 = await goBack(D);
+  D.check('B3 房号页按返回：面板还在、提示「再点一次：不等朋友了」、营地没关', h1.lobby && h1.armed === '再点一次：不等朋友了' && h1.phase === 'hosting' && h1.path === '/index.html' && !!h1.state && h1.state.brPanel === 'lobby', h1);
+  const h2 = await goBack(D);
+  D.check('B3 房号页 3 秒内再按返回：面板关掉、营地关掉，回到没有弹层的主页（history.state 为 null）', !h2.lobby && h2.phase === 'idle' && h2.dialog === null && h2.state === null && h2.path === '/index.html', h2);
+  if (h2.path !== '/index.html') throw new Error('返回键离开了页面');
+  await backsToLeave(D, 'B3 联机面板流程结束后');
 }
 
 async function secGameBack(D) {
@@ -976,59 +1154,82 @@ async function secGameBack(D) {
   await D.ev(() => { __br.setAuto(true); return 0; });
 }
 
-// 大厅里以客机身份开局（房主发 world 开局）→ 返回键暂停 → 回主页：大厅、主页弹层、开局哨兵三方的历史记录都得退干净
+// 客机：主页「联机」→ 加入朋友的营地 → 卡片「加入」→ 房主发 world 进营地 → 帐篷里返回键先关选单 → 从帐篷出发（房主发新一局的 world）
+// → 返回键暂停：「返回主页」换成「回营地」「离开联机」→「离开联机」点两次回主页。面板、主页弹层、开局哨兵三方的历史记录都得退干净
 async function secGuestBack(D) {
-  await openLobbyFromCasual(D);
-  await D.ev(() => {
-    const N = BR.net;
-    N.roomInfo = async () => ({ state: 'waiting', host_name: '房主X', guest_name: '' });
-    N.joinRoom = async () => '房主X';
-    N.send = () => true;
-    N.leave = () => {};
-    N.resumeAudio = () => {};
-    N.setMic = on => Promise.resolve(!!on);
-    const i = document.querySelector('.coop-code-input');
-    i.value = 'ABC123';
-    i.dispatchEvent(new Event('input', { bubbles: true }));
-    document.querySelector('.coop-card').scrollTop = 0;
-    return 0;
-  });
-  await press(D, '.coop-lobby button', '加入', { exact: true });
-  if (!await waitFor(D, () => BR.coop.phase === 'confirm', 8000)) throw new Error('点「加入」后没进入确认');
+  await D.ev(o => __m.stubNet(o), { host: '房主X' });
+  await openCoopFromHome(D);
+  await press(D, '.coop-lobby button', '加入朋友的营地', { exact: true });
   await sleep(300);
-  await press(D, '.coop-lobby button', '同意加入', { exact: true });
-  if (!await waitFor(D, () => BR.coop.phase === 'connecting', 8000)) throw new Error('点「同意加入」后没进入连接中');
+  await D.ev(typeCode, 'K7M2QX');
+  if (!await waitFor(D, () => BR.coop.phase === 'confirm', 8000)) throw new Error('输满房号后没出营地卡片');
+  await sleep(300);
+  await press(D, '.coop-lobby .coop-btn-joincamp');
+  if (!await waitFor(D, () => BR.coop.phase === 'connecting', 8000)) throw new Error('点「加入」后没进入连线');
+  await D.ev(() => __m.fire('phase', 'waitHost'));
+  await sleep(150);
+  const p0 = await D.ev(lobbyMeasure);
+  D.check('客机点「加入」：进度「找到营地 ✓ → 等「房主X」回到游戏… → 进入营地…」，不弹键盘', !!p0.steps && p0.steps[0] === '找到营地 ✓' && p0.steps[1] === '等「房主X」回到游戏…' && p0.steps[2] === '进入营地…' && p0.kbd.length === 0, { steps: p0.steps, kbd: p0.kbd });
   const g0 = await D.ev(() => {
-    const L = window.__netL || [];
-    L.forEach(fn => fn('connected'));
-    L.forEach(fn => fn('msg', { t: 'hello', game: 'backrooms', v: BR.config.version, name: '房主X', skin: 'pink', caps: ['ev1', 'fx1', 'veh1'] }));
+    __m.fire('phase', 'connecting');
+    __m.fire('connected');
+    __m.hello('房主X', 'pink');
     return { phase: BR.coop.phase, role: BR.coop.role, lobby: __m.vis('.coop-lobby'), state: history.state };
   });
   if (g0.phase !== 'active') throw new Error('客机桩没接通：' + JSON.stringify(g0));
-  await D.ev(() => { (window.__netL || []).forEach(fn => fn('msg', { t: 'world', seed: 424242, levelId: '0', settings: {}, picked: [], at: null })); return 0; });
-  if (!await waitFor(D, () => BR.game.screen === 'playing', 90000)) throw new Error('客机收到 world 后没开局');
+  // 房主在营地：world 带 mode、difficulty、slot（房主挑的出生格）
+  await D.ev(() => __m.fire('msg', { t: 'world', seed: 424242, levelId: 'coopcamp', mode: (BR.config.coop && BR.config.coop.campMode) || 'casual', difficulty: null, settings: {}, picked: [], at: null, slot: 1, c: 0 }));
+  if (!await waitFor(D, () => BR.game.screen === 'playing' && BR.game.levelId === 'coopcamp', 90000)) throw new Error('客机收到营地的 world 后没进营地');
   await D.ev(() => { __br.setAuto(false); __br.step(0.1); return 0; });
-  await sleep(2000);   // 开局哨兵要等 home.hide() 退弹层历史的 popstate（或 1 秒兜底）之后才压
-  const g1 = await D.ev(histInfo);
-  D.check('客机开局：大厅关闭、screen=playing、history.state 为 {brGame:1}', !g1.lobby && g1.screen === 'playing' && !!g1.state && g1.state.brGame === 1 && g1.path === '/index.html', { g0, g1 });
-  const g2 = await goBack(D);
-  D.check('客机开局后 history.back()：仍在 /index.html 且 screen=paused', g2.path === '/index.html' && g2.screen === 'paused', g2);
-  if (g2.path !== '/index.html') throw new Error('返回键离开了页面');
+  await sleep(2000);   // 开局哨兵要等面板那条历史退掉的 popstate（或 1 秒兜底）之后才压
+  const g1 = Object.assign(await D.ev(histInfo), await D.ev(() => ({ p: { x: BR.player.x, z: BR.player.z }, slot: BR.levels.get('coopcamp').spawnSlots[1] })));
+  D.check('客机进营地：面板关闭、screen=playing、在 coopcamp、落在房主挑的出生格、history.state 为 {brGame:1}', !g1.lobby && g1.screen === 'playing' && g1.lv === 'coopcamp' &&
+    Math.hypot(g1.p.x - g1.slot.x, g1.p.z - g1.slot.z) < 0.3 && !!g1.state && g1.state.brGame === 1 && g1.path === '/index.html', { g0, g1 });
+  // 帐篷里按返回键：先关选单、走出帐篷，不暂停
+  await D.ev(() => { BR.coopCamp.enter({ force: true }); for (let i = 0; i < 8; i++) __br.step(0.15); return 0; });
+  const t0 = await D.ev(histInfo);
+  const t1 = await goBack(D);
+  await D.ev(() => { for (let i = 0; i < 6; i++) __br.step(0.15); return 0; });
+  const t2 = Object.assign(await D.ev(histInfo), await D.ev(() => ({ inputOn: BR.input.enabled })));
+  D.check('客机在帐篷里按返回键：先关选单、走出帐篷，不进暂停，页面不离开、history.state 仍是 {brGame:1}', t0.tent && !t1.tent && t1.screen === 'playing' && t1.path === '/index.html' &&
+    !!t1.state && t1.state.brGame === 1 && t2.screen === 'playing' && t2.inputOn, { t0, t1, t2 });
+  if (t1.path !== '/index.html') throw new Error('返回键离开了页面');
+  // 从帐篷出发：房主那边倒数、灯灭后 startRun，发来新一局的 world（游玩 · Level 0）
+  await D.ev(() => __m.fire('msg', { t: 'world', seed: 515151, levelId: '0', mode: 'casual', difficulty: null, settings: {}, picked: [], at: null, c: 1 }));
+  if (!await waitFor(D, () => BR.game.screen === 'playing' && String(BR.game.levelId) === '0' && !BR.world.transitioning, 90000)) throw new Error('客机收到新一局的 world 后没跟进');
+  await D.ev(() => { __br.setAuto(false); __br.step(0.1); return 0; });
+  await sleep(500);
+  const g2 = Object.assign(await D.ev(histInfo), await D.ev(() => ({ seed: BR.game.seed >>> 0, same: BR.coop.sameRun(), mode: (document.querySelector('.hud-info-mode') || {}).textContent })));
+  D.check('从帐篷出发：客机跟进 Level 0、同一局（sameRun），左上角写「联机 · 游玩 …」，history 里仍只有一条 {brGame:1}', g2.lv === '0' && g2.seed === 515151 && g2.same &&
+    /^联机 · 游玩/.test(g2.mode || '') && !!g2.state && g2.state.brGame === 1 && g2.path === '/index.html', g2);
+  const g3 = await goBack(D);
+  D.check('客机在关卡里 history.back()：仍在 /index.html 且 screen=paused', g3.path === '/index.html' && g3.screen === 'paused', g3);
+  if (g3.path !== '/index.html') throw new Error('返回键离开了页面');
   await sleep(400);   // 暂停菜单弹出后 250ms 内的点击不响应
-  const hb = await D.ev(() => __m.box('.hud-btn-home'));
-  await D.t.tap(hb.cx, hb.cy);
-  await sleep(150);
-  await D.t.tap(hb.cx, hb.cy);
+  const pm = await D.ev(() => ({
+    camp: __m.hit('.hud-btn-camp'), leave: __m.hit('.hud-btn-leave'), home: __m.vis('.hud-btn-home'), campVis: __m.vis('.hud-btn-camp'), leaveVis: __m.vis('.hud-btn-leave'),
+    note: __m.vis('.hud-pause-coop') ? document.querySelector('.hud-pause-coop').textContent.trim() : null,
+    texts: __m.qa('.hud-pause .hud-btn').filter(b => __m.vis(b)).map(b => b.textContent.trim()),
+  }));
+  D.check('联机时暂停：「返回主页」换成「回营地」「离开联机」（都看得见、点得到），顶上写「联机时暂停，世界不会停」', !pm.home && pm.campVis && pm.camp.ok && pm.leaveVis && pm.leave.ok && pm.note === '联机时暂停，世界不会停', pm);
+  // 「离开联机」点两次（2.5 秒确认窗口内）：直接用 CDP 触摸
+  const lb = await D.ev(() => __m.box('.hud-btn-leave'));
+  await D.t.tap(lb.cx, lb.cy);
+  await sleep(200);
+  const armed = await D.ev(() => (document.querySelector('.hud-btn-leave') || {}).textContent);
+  const lb2 = await D.ev(() => __m.box('.hud-btn-leave'));
+  await D.t.tap(lb2.cx, lb2.cy);
   const home = await waitFor(D, () => BR.game.screen === 'home' && BR.home.shown, 15000);
   await sleep(1200);
-  const g3 = await D.ev(histInfo);
-  D.check('客机暂停「返回主页」点两下后回主页：history.state 为 null', home && g3.screen === 'home' && g3.state === null && g3.path === '/index.html', g3);
+  const g4 = await D.ev(histInfo);
+  D.check('客机暂停「离开联机」点两次（第一次「再点一次：会断开联机，回到主页」）后回主页：联机断开、history.state 为 null', home && /再点一次：会断开联机，回到主页/.test(armed || '') &&
+    g4.screen === 'home' && g4.phase === 'idle' && g4.state === null && g4.path === '/index.html', { armed, g4 });
   await openMenu(D);
-  const g4 = await goBack(D);
-  D.check('客机回主页后打开「游玩」菜单，返回一次就关掉菜单', g4.dialog === null && g4.path === '/index.html', g4);
-  if (g4.path !== '/index.html') throw new Error('返回键离开了页面');
+  const g5 = await goBack(D);
+  D.check('客机回主页后打开「游玩」菜单，返回一次就关掉菜单', g5.dialog === null && g5.path === '/index.html', g5);
+  if (g5.path !== '/index.html') throw new Error('返回键离开了页面');
   await closeModals(D);
-  await backsToLeave(D, '客机开局流程结束后');
+  await backsToLeave(D, '客机进营地、出发、离开联机流程结束后');
 }
 
 // 桌面：按元素中心点真实鼠标点击
@@ -1044,18 +1245,12 @@ async function mouseClick(D, sel, text) {
   return p;
 }
 
-// 桌面 Esc：大厅盖在「游玩」弹窗上时，Esc 只关大厅（焦点在不在大厅输入框里都一样），之后返回键一步退一层
+// 桌面 Esc：联机面板开着时 Esc 只关面板（焦点在不在面板输入框里都一样），下面就是没有弹层的主页，之后返回键 1 次离开页面
 async function secDesktopEsc(D) {
   for (const inInput of [false, true]) {
-    const tag = inInput ? '焦点在大厅输入框' : '焦点不在大厅内';
-    await mouseClick(D, '.home-play');
-    if (!await waitFor(D, () => !!document.querySelector('.home-modal:not([hidden]) .home-dialog-menu'), 8000)) throw new Error('「游玩」菜单没打开');
-    await sleep(350);
-    await mouseClick(D, '.home-menu-btn.is-casual');
-    if (!await waitFor(D, () => !!document.querySelector('.home-modal:not([hidden]) .home-dialog-casual'), 8000)) throw new Error('「游玩」弹窗没打开');
-    await sleep(450);
-    await mouseClick(D, '.home-dialog-casual .home-actions .home-btn', '联机');
-    if (!await waitFor(D, () => __m.vis('.coop-lobby'), 8000)) throw new Error('联机大厅没打开');
+    const tag = inInput ? '焦点在面板输入框' : '焦点不在面板内';
+    await mouseClick(D, '.home-secondary-btn.is-coop');
+    if (!await waitFor(D, () => __m.vis('.coop-lobby'), 8000)) throw new Error('联机面板没打开');
     await sleep(350);
     const focus = await D.ev(f => {
       const a = document.activeElement;
@@ -1068,18 +1263,14 @@ async function secDesktopEsc(D) {
     await D.page.keyboard.press('Escape');
     await sleep(1100);
     const s1 = await D.ev(histInfo);
-    D.check('桌面 大厅开着时按 Esc（' + tag + '）：只关大厅，「游玩」弹窗仍在、history.state 不含 brPanel', s0.lobby && !s1.lobby && s1.dialog === 'home-dialog-casual' && !(s1.state && s1.state.brPanel) && s1.path === '/index.html', { focus, s0, s1 });
-    const s2 = await goBack(D);
-    D.check('桌面 Esc 关大厅后（' + tag + '）返回一次：「游玩」弹窗退回菜单', s2.dialog === 'home-dialog-menu' && s2.path === '/index.html', s2);
-    if (s2.path !== '/index.html') { await boot(D, true); continue; }
-    await D.ev(() => { if (__m.vis('.coop-lobby')) BR.coop.closeLobby(); return 0; });
-    await sleep(500);
-    await closeModals(D);
+    D.check('桌面 联机面板开着时按 Esc（' + tag + '）：只关面板，下面是没有弹层的主页、history.state 不含 brPanel', s0.lobby && !s1.lobby && s1.dialog === null &&
+      !(s1.state && s1.state.brPanel) && s1.screen === 'home' && s1.path === '/index.html', { focus, s0, s1 });
+    await backsToLeave(D, '桌面 Esc 关联机面板后（' + tag + '）');
   }
 }
 
 async function secNet(D) {
-  // B7：页面里临时删掉 RTCPeerConnection（大厅 renderLobby / createRoom 都是调用时现查）
+  // B7：页面里临时删掉 RTCPeerConnection（面板 renderLobby / createRoom 都是调用时现查）
   const blocked0 = D.blocked.length;
   const r = await D.ev(async () => {
     const saved = { R: window.RTCPeerConnection, W: window.webkitRTCPeerConnection };
@@ -1093,8 +1284,8 @@ async function secNet(D) {
       const note = document.querySelector('.coop-note');
       out.noteVis = __m.vis(note);
       out.note = note ? note.textContent : null;
-      out.create = btn('创建房间') ? btn('创建房间').disabled : null;
-      out.join = btn('加入') ? btn('加入').disabled : null;
+      out.host = btn('开一个营地') ? btn('开一个营地').disabled : null;
+      out.join = btn('加入朋友的营地') ? btn('加入朋友的营地').disabled : null;
       out.cr = await BR.net.createRoom('测试').then(c => ({ ok: true, c }), e => ({ ok: false, code: e && e.code }));
     } finally {
       if (saved.R) window.RTCPeerConnection = saved.R;
@@ -1104,8 +1295,8 @@ async function secNet(D) {
   });
   await sleep(300);
   D.data.b7 = r;
-  D.check('B7 删除 RTCPeerConnection 后打开大厅：.coop-note 可见且含「WebRTC」', r.type === 'undefined' && r.noteVis && /WebRTC/.test(r.note || ''), r);
-  D.check('B7 「创建房间」「加入」都 disabled', r.create === true && r.join === true, { create: r.create, join: r.join });
+  D.check('B7 删除 RTCPeerConnection 后打开联机面板：.coop-note 可见且含「WebRTC」', r.type === 'undefined' && r.noteVis && /WebRTC/.test(r.note || ''), r);
+  D.check('B7 「开一个营地」「加入朋友的营地」都 disabled', r.host === true && r.join === true, { host: r.host, join: r.join });
   D.check('B7 BR.net.createRoom() 以 no_webrtc reject，没有发出任何外网请求', !!r.cr && !r.cr.ok && r.cr.code === 'no_webrtc' && D.blocked.length === blocked0, { cr: r.cr, blocked: D.blocked.slice(blocked0) });
   await D.ev(() => { BR.coop.closeLobby(); return 0; });
   await sleep(700);
@@ -1395,13 +1586,18 @@ async function a13(D) {
     await waitArmed(D);
     const dm = await D.ev(() => {
       const b = document.querySelector('.death-mic');
-      return { screen: BR.game.screen, vis: __m.vis(b), hit: b ? __m.hit(b) : null, txt: b ? b.textContent : null, texts: __m.qa('.death-btn .death-btn-main').map(e => e.textContent.trim()) };
+      return {
+        screen: BR.game.screen, vis: __m.vis(b), hit: b ? __m.hit(b) : null, txt: b ? b.textContent : null,
+        texts: __m.qa('.death-btn').filter(x => __m.vis(x)).map(x => (x.querySelector('.death-btn-main') || x).textContent.trim()),
+        leave: __m.vis('.death-leave') ? document.querySelector('.death-leave').textContent.trim() : null,
+      };
     });
     D.check('A13 死亡结算时 .death-mic 可见、中心命中', dm.screen === 'dead' && dm.vis && !!dm.hit && dm.hit.ok, dm);
     if (dm.vis && dm.hit && dm.hit.b) { await D.t.tap(dm.hit.b.cx, dm.hit.b.cy); await sleep(150); }
     const calls2 = await D.ev(() => window.__stub.calls.slice());
     D.check('A13 触摸 .death-mic 后 setMic 桩被调用', calls2.length === 2 && calls2[1] === false, calls2);
-    D.check('A13 「.death-btn .death-btn-main」文本仍只有 继续 / 返回主页', JSON.stringify(dm.texts) === '["继续","返回主页"]', dm.texts);
+    // 联机局（N1）：「返回主页」换成「回营地」（要队友同意）和小号的「离开联机」
+    D.check('A13 联机结算的按钮是「继续」「回营地」和小号的「离开联机」（单机的「返回主页」藏起来）', JSON.stringify(dm.texts) === '["继续","回营地"]' && dm.leave === '离开联机', { texts: dm.texts, leave: dm.leave });
     const cb = await D.ev(() => __m.box('.death-btn-continue'));
     await D.t.tap(cb.cx, cb.cy);
     await D.step(0.1);
@@ -1584,11 +1780,14 @@ async function a13short(D) {
       const r = document.querySelector('.death-root'), b = document.querySelector('.death-mic');
       return {
         vp: innerWidth + 'x' + innerHeight, screen: BR.game.screen, sh: r.scrollHeight, ch: r.clientHeight, st: r.scrollTop,
-        vis: __m.vis(b), mic: b ? __m.hit(b) : null, btns: __m.qa('.death-btn').map(x => { const h = __m.hit(x); return { ok: h.ok, by: h.by, b: h.b }; }),
+        vis: __m.vis(b), mic: b ? __m.hit(b) : null,
+        btns: __m.qa('.death-btn').filter(x => __m.vis(x)).map(x => { const h = __m.hit(x); return { t: x.textContent.trim().slice(0, 6), ok: h.ok, by: h.by, b: h.b }; }),
+        leave: __m.vis('.death-leave') ? __m.hit('.death-leave') : null,
       };
     });
-    D.check('A13 640×304 联机结算：.death-root scrollHeight ≤ clientHeight+1，.death-mic 和两个主按钮不用滚动就可见、中心命中',
-      dm.screen === 'dead' && dm.sh <= dm.ch + 1 && dm.vis && !!dm.mic && dm.mic.ok && dm.btns.length === 2 && dm.btns.every(x => x.ok), dm);
+    // 联机结算（N1）：「继续」「回营地」两个主按钮 + 小号「离开联机」+ 开关麦，矮横屏上都不用滚动就看得见、点得到
+    D.check('A13 640×304 联机结算：.death-root scrollHeight ≤ clientHeight+1，.death-mic、「继续」「回营地」和「离开联机」不用滚动就可见、中心命中',
+      dm.screen === 'dead' && dm.sh <= dm.ch + 1 && dm.vis && !!dm.mic && dm.mic.ok && dm.btns.length === 2 && dm.btns.every(x => x.ok) && !!dm.leave && dm.leave.ok, dm);
     if (dm.mic && dm.mic.ok) {
       await D.t.tap(dm.mic.b.cx, dm.mic.b.cy);
       await sleep(200);
@@ -1650,24 +1849,7 @@ async function secGame(D) {
 // =====================================================================
 // 游戏内联机浮层（B4 B5 B6）、测试面板（A4 A10 A11）、toast（A9）、E5 E7 E8
 // =====================================================================
-// 联机桩：真实 coop.js + 假 BR.net（建房、发消息、开麦都是本地桩），接通事件由 hookNet 记下的监听直接派发
-async function coopConnect() {
-  const L = window.__netL || [], N = BR.net;
-  window.__micCalls = [];
-  N.createRoom = async () => 'MOBILE';
-  N.send = () => true;
-  N.leave = () => {};
-  N.resumeAudio = () => {};
-  N.setMic = on => { window.__micCalls.push(!!on); return Promise.resolve(!!on); };
-  BR.coop.openLobby();
-  const cb = Array.from(document.querySelectorAll('.coop-lobby button')).find(b => b.textContent.trim() === '创建房间');
-  if (cb) cb.click();
-  for (let i = 0; i < 80 && BR.coop.phase !== 'hosting'; i++) await new Promise(r => setTimeout(r, 25));
-  L.forEach(fn => fn('peerJoined', '队友'));
-  L.forEach(fn => fn('connected'));
-  L.forEach(fn => fn('msg', { t: 'hello', game: 'backrooms', v: BR.config.version, name: '队友', skin: 'blue', caps: ['ev1', 'fx1', 'veh1'] }));
-  return { active: BR.coop.active, role: BR.coop.role, phase: BR.coop.phase, listeners: L.length };
-}
+// 联机局的浮层（B4 B5 B6）：真实 coop.js + 假 BR.net（__m.stubNet），接通事件由 hookNet 记下的监听直接派发
 function coopLayout() {
   const M = __m;
   const mic = M.box('.coop-mic');
@@ -1696,33 +1878,46 @@ function coopBadges() {
 
 async function secCoop(D) {
   const W = D.dev.w, H = D.dev.h;
-  await ensureCasual(D);
   try {
-    const st = await D.ev(coopConnect);
+    // 从主页「联机」开营地、进营地等朋友：一个人等的时候量左上角的房号角标
+    await hostCamp(D, null);
+    const cd = await D.ev(() => {
+      __br.step(0.1);
+      const el = document.querySelector('.hud-info-code'), box = el ? __m.box(el) : null;
+      const touch = __m.qa('.touch-root .touch-btn').filter(b => __m.vis(b)).map(b => ({ n: b.dataset.touch, b: __m.box(b) }));
+      return { vis: __m.vis(el), box, inView: __m.inView(box), over: touch.filter(t => __m.inter(t.b, box)).map(t => t.n), text: el ? el.textContent.replace(/\s+/g, '') : null };
+    });
+    D.data.b4code = cd;
+    D.check('B4 ' + W + '×' + H + ' 营地里一个人等：左上角房号角标在视口内、不压触屏按钮', cd.vis && cd.inView && cd.over.length === 0 && /K7M2QX/.test(cd.text || ''), cd);
+    await connectPeer(D, { name: '队友', skin: 'blue' });
+    const st = await D.ev(() => ({ active: BR.coop.active, role: BR.coop.role, phase: BR.coop.phase, lv: BR.game.levelId, listeners: (window.__netL || []).length }));
     D.data.coopStub = st;
     if (!st.active) throw new Error('联机桩没接通：' + JSON.stringify(st));
     await sleep(200);
     if (D.key === 'android-l') {
+      // 局内打开联机面板只看状态：已连接、开麦、离开联机
+      await D.ev(() => { BR.coop.openLobby(); return 0; });
+      await sleep(350);
       const b6 = await D.ev(() => {
         const b = document.querySelector('.coop-lobby-mic');
-        return { lobby: __m.vis('.coop-lobby'), vis: __m.vis(b), txt: b ? b.textContent.trim() : null, hit: b ? __m.hit(b) : null, tips: __m.qa('.coop-lobby .coop-hint').filter(e => __m.vis(e)).map(e => e.textContent) };
+        return { lobby: __m.vis('.coop-lobby'), view: BR.coop.debugInfo().lobby.view, vis: __m.vis(b), txt: b ? b.textContent.trim() : null, hit: b ? __m.hit(b) : null, tips: __m.qa('.coop-lobby .coop-hint').filter(e => __m.vis(e)).map(e => e.textContent) };
       });
-      D.check('B6 联机接通（phase=active）时大厅里有开麦按钮', b6.lobby && b6.vis && b6.txt === '开麦', b6);
+      D.check('B6 营地里朋友连上后打开联机面板：只看状态，有开麦按钮', b6.lobby && b6.view === 'live' && b6.vis && b6.txt === '开麦', b6);
       D.check('B6 触屏下 .coop-hint 文案不含「V 键」', b6.tips.length > 0 && !b6.tips.some(t => /V 键/.test(t)), b6.tips);
       if (b6.vis) await press(D, '.coop-lobby-mic');
       await sleep(250);
-      const c1 = await D.ev(() => ({ calls: window.__micCalls.slice(), mic: BR.coop.mic }));
-      D.check('B6 点大厅开麦按钮调用 setMic', c1.calls[0] === true, c1);
+      const c1 = await D.ev(() => ({ calls: window.__ns.mic.slice(), mic: BR.coop.mic }));
+      D.check('B6 点面板里的开麦按钮调用 setMic', c1.calls[0] === true, c1);
       await D.ev(() => { if (BR.coop.mic) BR.coop.setMic(false); return 0; });
       await sleep(150);
+      await D.ev(() => { BR.coop.closeLobby(); return 0; });
+      await sleep(700);
     }
-    await D.ev(() => { BR.coop.closeLobby(); return 0; });
-    await sleep(700);
     await D.step(0.1);
 
     const L = await D.ev(coopLayout);
     D.data.b4 = L;
-    D.check('B4 ' + W + '×' + H + ' 横屏 .coop-mic 与 .touch-btn-pause、各 .touch-btn、.hud-info 都不相交', L.touchCls && L.micVis && L.over.length === 0, { mic: L.mic, over: L.over, pause: L.others.pause });
+    D.check('B4 ' + W + '×' + H + ' 横屏营地里 .coop-mic 与 .touch-btn-pause、各 .touch-btn、.hud-info 都不相交', L.touchCls && L.micVis && L.over.length === 0, { mic: L.mic, over: L.over, pause: L.others.pause, info: L.others.info });
     const bd = await D.ev(coopBadges);
     D.data.b4.badges = bd;
     D.check('B4 ' + W + '×' + H + ' 两枚说话角标强制显示时不与 .touch-btn-sprint 相交', bd.n === 2 && !!bd.sprint && bd.over.length === 0 && bd.inView, bd);
@@ -1730,27 +1925,223 @@ async function secCoop(D) {
     if (D.key === 'android-l') {
       const S0 = { x: W * 0.25, y: H * 0.45 };
       const micC = await D.ev(() => __m.box('.coop-mic'));
-      const c0 = await D.ev(() => window.__micCalls.length);
+      const c0 = await D.ev(() => window.__ns.mic.length);
       await D.t.down(1, S0.x, S0.y);
       await sleep(60);
       await D.t.move(1, S0.x + 10, S0.y - 20);
       await sleep(60);
       await D.t.tap(micC.cx, micC.cy);
       await sleep(250);
-      const c1 = await D.ev(() => ({ n: window.__micCalls.length, mic: BR.coop.mic }));
+      const c1 = await D.ev(() => ({ n: window.__ns.mic.length, mic: BR.coop.mic }));
       await D.t.up(1);
       await sleep(900);
-      const c2 = await D.ev(() => window.__micCalls.length);
+      const c2 = await D.ev(() => window.__ns.mic.length);
       D.check('B5 手指按住摇杆时另一指触摸 .coop-mic：toggle 计数 +1', c1.n === c0 + 1 && c2 === c1.n, { c0, c1, c2 });
       await D.t.tap(micC.cx, micC.cy);
       await sleep(900);
-      const c3 = await D.ev(() => window.__micCalls.length);
+      const c3 = await D.ev(() => window.__ns.mic.length);
       D.check('B5 单指触摸 .coop-mic 只加 1，不会切两次', c3 === c2 + 1, { c2, c3 });
     }
   } finally {
     await D.t.upAll();
-    await D.ev(() => { try { if (BR.coop.active) BR.coop.leave(); } catch (e) { /* 忽略 */ } __br.step(0.1); return 0; });
-    await sleep(300);
+    await goHome(D);
+  }
+}
+
+// ---------- 帐篷选单（N1）：390×844 竖屏、640×360 横屏 ----------
+// 选单的几块：卡片、模式两栏、「准备」、「出帐篷」、触屏键藏没藏、聚焦过的文字输入框
+function tentLayout() {
+  const M = __m;
+  const root = M.q('.tent-menu'), body = M.q('.tent-body'), ready = M.q('.tent-ready');
+  const a = M.box('.tent-col-a'), b = M.box('.tent-col-b');
+  const rb = ready ? M.box(ready) : null;
+  const touchVis = M.qa('.touch-root .touch-btn').filter(x => M.vis(x)).map(x => x.dataset.touch);
+  return {
+    open: M.vis(root), panel: !!(BR.coopCamp && BR.coopCamp.panelOpen), card: M.box('.tent-card'),
+    body: body ? { st: Math.round(body.scrollTop), sh: body.scrollHeight, ch: body.clientHeight } : null,
+    ready: ready ? { text: ready.textContent.trim(), dis: ready.disabled, box: rb, inView: M.inView(rb), hit: M.hit(ready), h: rb.h, w: rb.w } : null,
+    exit: M.vis('.tent-exit') ? M.hit('.tent-exit') : null,
+    cols: { a, b, side: !!a && !!b && b.l >= a.r - 1 && Math.min(a.b, b.b) - Math.max(a.t, b.t) > 20, stacked: !!a && !!b && b.t >= a.b - 1 },
+    touchVis, inputOn: BR.input.enabled, screen: BR.game.screen, state: history.state, path: location.pathname,
+    rdy: BR.coopCamp && BR.coopCamp.state ? BR.coopCamp.state.rdy.slice() : null, kbd: M.kbd(),
+  };
+}
+async function shotTo(D, name) {
+  try { await D.page.screenshot({ path: path.join(OUT, D.key + '-' + name + '.png') }); } catch (e) { /* 截图失败不影响判定 */ }
+}
+
+async function secTent(D) {
+  const W = D.dev.w, H = D.dev.h, vp = W + '×' + H, portrait = H > W;
+  await hostCamp(D, { name: '队友', skin: 'blue' });
+  await D.ev(() => { window.__kbd.length = 0; return 0; });
+  // ① 站在门前通道里对准帐篷门：触屏提示「点「互动」进帐篷」，完整显示
+  const pr = await D.ev(() => {
+    const d = __m.camp(), door = d.tent.door, corr = d.corridor;
+    __m.stand((corr.x0 + corr.x1) / 2, door.z + 2, door.x, door.z);
+    __br.step(0.1);
+    BR.interact.aimAt(door.x, 1.0, door.z);
+    __br.step(0.1);
+    const el = document.querySelector('.hud-prompt'), main = el && el.querySelector('.hud-prompt-main'), txt = el && el.querySelector('.hud-prompt-text');
+    const cut = n => !!n && n.scrollWidth > n.clientWidth + 1;
+    const nodes = [el, main, txt].concat(txt ? Array.from(txt.children) : []);
+    const box = el ? __m.box(el) : null;
+    return { key: BR.interact.current && BR.interact.current.key, text: main ? main.textContent.replace(/\s+/g, '') : '', vis: __m.vis(el), box, inView: __m.inView(box), cut: nodes.filter(cut).map(__m.cls) };
+  });
+  D.data.tent = { prompt: pr };
+  D.check('T1 ' + vp + ' 门前通道里对准帐篷门：提示「点「互动」进帐篷」完整显示（不截断、在视口内），不出现「空格」', pr.key === 'coopcamp:tent' && pr.text === '点「互动」进帐篷' && pr.vis && pr.inView && pr.cut.length === 0, pr);
+  // ② 点「互动」：自己走进帐篷、打开「选下一站」
+  const ib = await D.ev(() => __m.box('.touch-btn-interact'));
+  await D.t.down(1, ib.cx, ib.cy); await D.step(0.1);
+  await D.t.up(1); await D.step(0.05);
+  for (let i = 0; i < 8; i++) await D.step(0.15);
+  await sleep(300);
+  const m0 = await D.ev(tentLayout);
+  D.data.tent.open = m0;
+  D.check('T2 ' + vp + ' 点「互动」：自己走进帐篷、打开「选下一站」，触屏键整组藏起来、输入关着', m0.open && m0.panel && m0.touchVis.length === 0 && !m0.inputOn && m0.screen === 'playing', { open: m0.open, panel: m0.panel, touchVis: m0.touchVis, inputOn: m0.inputOn });
+  if (portrait) D.check('T3 ' + vp + ' 竖屏是底部抽屉、一栏（模式卡在上，设置和层级在下）', m0.cols.stacked && m0.card && m0.card.b >= H - 1 && m0.card.t > H * 0.3, { cols: m0.cols, card: m0.card });
+  else D.check('T3 ' + vp + ' 横屏是两栏（左边模式卡，右边设置、层级）', m0.cols.side, m0.cols);
+  await shotTo(D, 'tent-menu');
+  // 选中模式的说明（文字和主页 BR.home.modeText 一字不差）：竖屏三张卡并排放不下，整行写在卡片下面（2026-10-05 返修 r1）；
+  // 矮横屏写在选中的那张卡里当第二行（返修 r2：640×360 上整行那一行正好落在底栏后面，看不到）。不用滚动就要看得到、不被底栏盖住
+  const ml = await D.ev(() => {
+    const st = BR.coopCamp.state;
+    const row = (BR.home.modeText || []).find(r => st && r[0] === st.mode);
+    const line = document.querySelector('.tent-mode-line'), sel = document.querySelector('.tent-mode.is-on .tent-mode-desc');
+    const el = __m.vis(line) ? line : (__m.vis(sel) ? sel : null);
+    const body = document.querySelector('.tent-body');
+    return { where: !el ? null : el === line ? 'line' : 'card', both: __m.vis(line) && __m.vis(sel), text: el ? el.textContent : null, want: row ? row[2] : null,
+      box: el ? __m.box(el) : null, bar: __m.box('.tent-bar'), cut: !!el && el.scrollWidth > el.clientWidth + 1, scroll: body ? Math.round(body.scrollTop) : null };
+  });
+  const mlSeen = !!ml.box && !!ml.bar && ml.box.h > 0 && ml.box.t >= 0 && ml.box.b <= ml.bar.t + 0.5;
+  const mlWhere = portrait ? 'line' : (H <= 430 ? 'card' : ml.where);
+  D.check('T3b ' + vp + ' 选中模式的说明' + (mlWhere === 'line' ? '整行写在卡片下面' : '写在选中的那张卡里') + '：不用滚动就看得到、不被底栏盖住，和主页 modeText 一字不差、不截断',
+    !!ml.where && ml.where === mlWhere && !ml.both && !!ml.want && ml.text === ml.want && !ml.cut && mlSeen && ml.scroll === 0, ml);
+  // ③「准备」始终在视口里、点得到：选单滚到底、滚回顶都量一次
+  const readyOk = r => !!r && r.inView && r.hit.ok && !r.dis && r.h >= 44 && r.w >= 44;
+  const rs = [m0.ready];
+  for (const top of ['max', 0]) {
+    await D.ev(t => { const b = document.querySelector('.tent-body'); b.scrollTop = t === 'max' ? b.scrollHeight : t; return 0; }, top);
+    await sleep(200);
+    rs.push((await D.ev(tentLayout)).ready);
+  }
+  D.data.tent.ready = rs;
+  D.check('T4 ' + vp + '「准备」始终在视口里、中心命中、≥44px（打开时、选单滚到底、滚回顶）', rs.every(readyOk) && rs[0].text === '准备', { rs, body: m0.body });
+  if (D.envOk) D.check('T4 ' + vp + '「准备」在安全区之内（底边不压 Home 条）', rs.every(r => r.box.b <= H - D.env.b + 0.5), { env: D.env, ready: rs.map(r => r.box) });
+  // 用 CDP 触摸点「准备」：房主自己这一格准备勾上，按钮变「取消准备」；再点一下取消
+  const rb = m0.ready.box;
+  await D.t.tap(rb.cx, rb.cy); await sleep(150); await D.step(0.05);
+  const r1 = await D.ev(tentLayout);
+  await sleep(1100);   // 按钮文字变了以后有 1 s 防误触
+  const rb2 = r1.ready.box;
+  await D.t.tap(rb2.cx, rb2.cy); await sleep(150); await D.step(0.05);
+  const r2 = await D.ev(tentLayout);
+  D.check('T5 ' + vp + ' CDP 触摸点「准备」：自己的准备勾上、按钮变「取消准备」；再点一下取消', !!r1.rdy && r1.rdy[0] === true && r1.ready.text === '取消准备' && !!r2.rdy && r2.rdy[0] === false && r2.ready.text === '准备',
+    { r1: { rdy: r1.rdy, text: r1.ready.text }, r2: { rdy: r2.rdy, text: r2.ready.text } });
+  // ④ 返回键先关选单：走出帐篷，不进暂停，页面不离开
+  const h1 = await goBack(D);
+  for (let i = 0; i < 6; i++) await D.step(0.15);
+  const m1 = await D.ev(tentLayout);
+  D.check('T6 ' + vp + ' 选单开着按返回键：先关选单、走出帐篷，不进暂停，页面不离开、history.state 仍是 {brGame:1}，触屏键回来了',
+    !h1.tent && h1.path === '/index.html' && h1.screen === 'playing' && !m1.open && m1.screen === 'playing' && m1.inputOn && !!m1.state && m1.state.brGame === 1 && m1.touchVis.includes('interact'), { h1, m1: { open: m1.open, screen: m1.screen, inputOn: m1.inputOn, state: m1.state, touch: m1.touchVis } });
+  if (h1.path !== '/index.html') throw new Error('返回键离开了页面');
+  D.check('T7 ' + vp + ' 开营地、进帐篷、点准备、出帐篷一路没有聚焦过文字输入框（不弹键盘）', m1.kbd.length === 0, m1.kbd);
+  await sub(D, 'T8 回营地横幅', () => tentAsk(D));
+  await goHome(D);
+}
+
+// 回营地的「同意」「不要」：房主出发去 Level 0，队友在那边提出回营地，横幅上的两个按钮用 CDP 触摸点得到
+async function tentAsk(D) {
+  const vp = D.dev.w + '×' + D.dev.h;
+  await D.ev(() => { __br.setAuto(true); BR.coop.startRun({ mode: 'casual', difficulty: null, levelId: '0', seed: 777, settings: Object.assign({}, BR.game.settings) }); return 0; });
+  if (!await waitFor(D, () => BR.game.screen === 'playing' && String(BR.game.levelId) === '0' && !BR.world.transitioning, 90000)) throw new Error('房主 startRun 后没进 Level 0');
+  await D.ev(() => { __br.setAuto(false); __br.step(0.2); return 0; });
+  const askOnce = async () => {
+    await D.ev(() => { window.__ns.sent.length = 0; __m.evMsg('campAsk', { by: '队友', r: 'g' }); __br.step(0.05); return 0; });
+    await sleep(450);   // 横幅弹出后 350 ms 内按钮不响应
+    return D.ev(() => {
+      const n = __m.qa('.hud-notice').find(x => __m.vis(x));
+      const btn = t => { const b = n ? Array.from(n.querySelectorAll('.hud-notice-btn')).find(x => x.textContent.trim() === t) : null; return b ? Object.assign({ hit: __m.hit(b) }, __m.box(b)) : null; };
+      return { text: n ? (n.querySelector('.hud-notice-text') || n).textContent.trim() : null, box: n ? __m.box(n) : null, yes: btn('同意'), no: btn('不要') };
+    });
+  };
+  const okBtn = b => !!b && b.hit.ok && b.h >= 44 && b.w >= 44 && b.l >= 0 && b.r <= D.dev.w && b.t >= 0 && b.b <= D.dev.h;
+  const a1 = await askOnce();
+  D.data.tent.ask = a1;
+  D.check('T8 ' + vp + ' 队友提出回营地：横幅「「队友」想回营地」，「同意」「不要」都在视口内、中心命中、≥44px', a1.text === '「队友」想回营地' && okBtn(a1.yes) && okBtn(a1.no), a1);
+  await shotTo(D, 'camp-ask');
+  if (a1.no) await D.t.tap(a1.no.cx, a1.no.cy);
+  await sleep(200);
+  const n1 = await D.ev(() => { __br.step(0.05); return { no: __m.sentEv('campNo'), open: __m.qa('.hud-notice').some(x => __m.vis(x)), lv: String(BR.game.levelId) }; });
+  D.check('T9 ' + vp + ' CDP 触摸点「不要」：发出 campNo、横幅收起、还在 Level 0', n1.no.length === 1 && !n1.open && n1.lv === '0', n1);
+  const a2 = await askOnce();
+  if (a2.yes) await D.t.tap(a2.yes.cx, a2.yes.cy);
+  await sleep(200);
+  const y1 = await D.ev(() => { __br.step(0.05); return { go: __m.sentEv('campGo'), open: __m.qa('.hud-notice').some(x => __m.vis(x) && /想回营地/.test(x.textContent)) }; });
+  D.check('T10 ' + vp + ' CDP 触摸点「同意」：房主发出 campGo、横幅收起，开始灯灭回营地', a2.text === '「队友」想回营地' && y1.go.length === 1 && !y1.open, { a2: a2.text, y1 });
+  // 灯灭 → 黑幕 → 房主 startRun 回营地；队友到了（arrived）就一起亮起来
+  await D.ev(() => { __br.setAuto(true); return 0; });
+  const back = await waitFor(D, () => BR.game.levelId === 'coopcamp' && BR.game.screen === 'playing' && !BR.world.transitioning, 30000);
+  await D.ev(() => { __m.evMsg('arrived', { lv: 'coopcamp' }); return 0; });
+  await sleep(1500);
+  const c1 = await D.ev(() => ({ lv: BR.game.levelId, curtain: BR.hud.curtainState, same: BR.coop.sameRun() }));
+  await D.ev(() => { __br.setAuto(false); return 0; });
+  D.check('T11 ' + vp + ' 同意以后两人回到营地、黑幕撤掉', back && c1.lv === 'coopcamp' && c1.curtain === 'off' && c1.same, c1);
+}
+
+// ---------- 两张联机卡片（N1）：邀请链接卡片、「回去？」卡片 ----------
+function cardMeasure(sel) {
+  const M = __m, root = M.q(sel);
+  const btns = root ? Array.from(root.querySelectorAll('button')).filter(b => M.vis(b)).map(b => Object.assign(M.box(b), { txt: b.textContent.trim(), hit: M.hit(b) })) : [];
+  const box = root && M.vis(root) ? M.box(root) : null;
+  return { vis: !!box, box, inView: M.inView(box), btns, text: root ? root.textContent.replace(/\s+/g, ' ').trim() : null, kbd: M.kbd(), hash: location.hash };
+}
+async function secCards(D) {
+  const vp = D.dev.w + '×' + D.dev.h;
+  const btnOk = b => !!b && b.hit.ok && b.h >= 44 && b.w >= 44;
+  try {
+    // 邀请链接：#join=房号 打开游戏，直接停在「「X」的营地」卡片，仍然要点一下「加入」
+    await D.page.goto(D.base + '__blank.html');
+    await D.page.evaluate(() => { sessionStorage.setItem('__mobileNetStub', JSON.stringify({ host: '房主X' })); sessionStorage.removeItem('br_coop_rejoin'); });
+    await D.page.goto(D.base + 'index.html#join=K7M2QX');
+    await D.page.waitForFunction(() => window.BR && BR.home && BR.home.shown, null, { timeout: 60000 });
+    if (D.dev.insets) await measureEnv(D);
+    const got = await waitFor(D, () => !!window.BR && BR.coop && BR.coop.phase === 'confirm' && __m.vis('.coop-btn-joincamp'), 15000);
+    await sleep(400);
+    const iv = Object.assign(await D.ev(lobbyMeasure), await D.ev(() => ({ hash: location.hash, href: location.href, name: __m.vis('.coop-name-field') })));
+    D.data.cards = { invite: iv };
+    D.check('K1 ' + vp + ' 邀请链接 #join=K7M2QX 打开：直接出「「房主X」的营地」卡片，「加入」完全在视口内、中心命中，昵称框也在', got && iv.view === 'join' && !!iv.title && iv.title.text === '「房主X」的营地' &&
+      !!iv.join && iv.join.inView && iv.join.inCard && iv.join.hit.ok && iv.name, { title: iv.title, join: iv.join, view: iv.view, phase: iv.phase });
+    D.check('K1 ' + vp + ' 读完房号就把地址里的 #join 清掉，没有自动聚焦输入框（不弹键盘）', iv.hash === '' && !/#join/.test(iv.href) && iv.kbd.length === 0, { hash: iv.hash, kbd: iv.kbd });
+    await shotTo(D, 'invite-card');
+    await press(D, '.coop-close');
+    await waitFor(D, () => !__m.vis('.coop-lobby'), 5000);
+    await sleep(500);
+
+    // 「回去？」：客机的页面被关掉重开，3 分钟内主页上问一句
+    await D.ev(() => { sessionStorage.setItem('br_coop_rejoin', JSON.stringify({ code: 'K7M2QX', host: '房主X', at: Date.now() })); return 0; });
+    await D.page.reload();
+    await D.page.waitForFunction(() => window.BR && BR.home && BR.home.shown, null, { timeout: 60000 });
+    const rj = await waitFor(D, () => __m.vis('.coop-rejoin'), 15000);
+    await sleep(400);
+    const r0 = await D.ev(cardMeasure, '.coop-rejoin');
+    D.data.cards.rejoin = r0;
+    const yes = r0.btns.find(b => b.txt === '回去'), no = r0.btns.find(b => b.txt === '不了');
+    D.check('K2 ' + vp + ' 「「房主X」的营地还开着，回去？」卡片整张在视口内，「回去」「不了」中心命中、≥44px，不弹键盘', rj && r0.vis && r0.inView && /「房主X」的营地还开着，回去？/.test(r0.text) && btnOk(yes) && btnOk(no) && r0.kbd.length === 0, r0);
+    // 卡片不是全屏弹层（没有遮罩）：底下的主页按钮还要点得到，卡片不能压住「联机 / 创意工坊 / 设置」和「游玩」挂牌
+    const ov = await D.ev(() => {
+      const c = __m.box('.coop-rejoin');
+      return ['.home-secondary-btn', '.home-play', '.home-sign-rod'].flatMap(sel => __m.qa(sel).filter(e => __m.vis(e)).map(e => ({ sel, t: e.textContent.trim(), b: __m.box(e) })))
+        .filter(x => __m.inter(c, x.b)).map(x => x.t || x.sel);
+    });
+    D.check('K2 ' + vp + ' 「回去？」卡片不压主页的「联机 / 创意工坊 / 设置」和「游玩」挂牌', ov.length === 0, { over: ov, card: r0.box });
+    await shotTo(D, 'rejoin-card');
+    if (no) await D.t.tap(no.cx, no.cy);
+    await sleep(400);
+    const r1 = await D.ev(() => ({ vis: __m.vis('.coop-rejoin'), saved: sessionStorage.getItem('br_coop_rejoin'), phase: BR.coop.phase }));
+    D.check('K3 ' + vp + ' 点「不了」：卡片收起，记录清掉', !r1.vis && r1.saved === null && r1.phase === 'idle', r1);
+  } finally {
+    await D.page.evaluate(() => { try { sessionStorage.removeItem('__mobileNetStub'); sessionStorage.removeItem('br_coop_rejoin'); } catch (e) { /* 忽略 */ } }).catch(() => {});
+    await boot(D, false);
   }
 }
 
@@ -2491,21 +2882,23 @@ async function secWorkshop(D) {
 const PLANS = {
   'android-p': [
     ['basics', secBasics],                                                                           // G1 E6 C3 C9 E9
-    ['home', async D => { await secHint(D); await openDialog(D, 'casual'); await c1(D, true); await c7Home(D); await closeModals(D); }],   // C4 C1 C7
-    ['lobby', secLobbyBack],                                                                         // B3
+    ['home', async D => { await secHint(D); await openDialog(D, 'casual'); await c1(D, true); await c7Home(D); await closeModals(D); }],   // C4（含「联机」在左列最下格）C1 C7
+    ['lobby', secLobbyBack],                                                                         // B3：面板 → 没有弹层的主页；房号页返回要两次
     ['settings', secSettingsAndroidP],                                                               // C6 C7 C8
     ['history', secGameBack],                                                                        // E1 E2
-    ['guest', secGuestBack],                                                                         // 大厅客机开局 → 回主页的返回键
+    ['guest', secGuestBack],                                                                         // 客机：卡片「加入」→ 营地 → 帐篷返回键 → 出发 → 离开联机
     ['game', secGame],                                                                               // E3 E4 A1 A3 A2 A12
     ['workshop', secWorkshop],                                                                       // D6 D12
   ],
   'android-l': [
     ['basics', secBasics],
     ['home', async D => { await openDialog(D, 'casual'); await c1(D, true); await closeModals(D); await c2(D); }],   // C1 C2
-    ['lobby', secLobbyConfirm],                                                                      // B2 B1
+    ['lobby', secLobbyCard],                                                                         // B2 B1：营地卡片、红字、不是后室营地
     ['settings', secSettingsLayout],                                                                 // C5
-    ['game', secGame],                                                                               // E3 E4 A1 A6 A5 A7 A4
-    ['coop', secCoop],                                                                               // B6 B4 B5
+    ['game', secGame],                                                                               // E3 E4 A1 A6 A5 A7 A4 A13
+    ['coop', secCoop],                                                                               // 从主页开营地进营地：B6 B4 B5
+    ['tent', secTent],                                                                               // 帐篷 640×360：T1–T7，回营地横幅 T8–T11
+    ['cards', secCards],                                                                             // 邀请链接卡片、「回去？」卡片 K1–K3
     ['ctx', secCtx],                                                                                 // E5
     ['render', secRender],                                                                           // E8
     ['test', secTest],                                                                               // A4 A10 A11
@@ -2515,7 +2908,7 @@ const PLANS = {
   ],
   'iphone-p': [
     ['basics', secBasics],                                                                           // + B8（iOS）
-    ['home', secHomeIphoneP],                                                                        // C1 C10
+    ['home', secHomeIphoneP],                                                                        // C1 C10（营地 HUD、暂停里的开麦）
     ['settings', secSettingsLayout],                                                                 // C5
     ['game', secGame],                                                                               // E3 E4 A1 A2 A6 A12 A14 A13
     ['workshop', secWorkshop],                                                                       // D6 D12 D11 D7 D4 D10 D2
@@ -2523,12 +2916,16 @@ const PLANS = {
   'iphone-l': [
     ['basics', secBasics],
     ['home', async D => { await openDialog(D, 'casual'); await c1(D, true); await closeModals(D); }],   // C1
-    ['lobby', secLobbyConfirm],                                                                      // B1
+    ['lobby', secLobbyCard],                                                                         // B1
     ['settings', secSettingsLayout],                                                                 // C5
     ['game', secGame],                                                                               // E3 E4 A1 A6 A8
     ['coop', secCoop],                                                                               // B4
     ['test', secTest],                                                                               // A10 A11
     ['workshop', secWorkshop],                                                                       // D6 D12 D8 D3
+  ],
+  'iphone13-p': [
+    ['tent', secTent],                                                                               // 帐篷 390×844：T1–T7，回营地横幅 T8–T11
+    ['cards', secCards],                                                                             // K1–K3
   ],
   'ipadmini-p': [
     ['basics', secBasics],
@@ -2540,7 +2937,7 @@ const PLANS = {
     ['workshop', secWorkshop],                                                                       // D6
   ],
   desktop: [
-    ['esc', secDesktopEsc],                                                                          // 桌面 Esc 只关大厅
+    ['esc', secDesktopEsc],                                                                          // 桌面 Esc 只关联机面板，下面是主页
   ],
 };
 

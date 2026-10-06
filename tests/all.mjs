@@ -5,7 +5,7 @@
 // tests/output/all/<名称>.log，最后打印一张汇总表，并写 tests/output/all/summary.txt / summary.json。
 //
 // 跑哪些（按这个顺序）：
-//   1. tests/ 下的回归脚本：phys.test.js、smoke、kit、items、coop、settings、workshop、workshop_core、workshop_ui、infection、visualhooks，
+//   1. tests/ 下的回归脚本：phys.test.js、smoke、kit、items、coop、camp、settings、workshop、workshop_core、workshop_ui、infection、visualhooks，
 //      以及以后新加的其他 *.mjs / *.test.js（自动发现，文件名以 _ 开头的当辅助模块跳过；all / online / golden / preview 单独处理）
 //   2. golden.mjs 比对模式（tests/golden/ 下还没有任何基线 JSON 时标"无基线跳过"，不算失败）
 //   3. preview.mjs --arch
@@ -13,7 +13,8 @@
 // 规则：
 //   - coop 失败自动重跑一次（大厅握手在机器高负载时偶发超时），表里标"重试"；首次日志留在 coop.try1.log
 //   - --quick：跳过源码里调用了 .screenshot( 的截图类脚本；golden、--arch、--scale 始终保留
-//   - 单项超时（缺省 25 分钟，--scale 5 分钟；--timeout-min 统一改）先 SIGTERM 让 Playwright 关掉浏览器，10 秒后 SIGKILL
+//   - 单项超时（缺省 25 分钟；coop 40 分钟——联机营地起每一步都多进一次营地、还有冻结 45 s、断网 10 s、等重连超时这些真等的步骤；
+//     --scale 5 分钟；--timeout-min 统一改）先 SIGTERM 让 Playwright 关掉浏览器，10 秒后 SIGKILL
 //   - 子进程打印完自己的汇总后 20 秒还没退出，就结束它、按汇总行判定结果：Chrome 退出后遗留的 crashpad 进程会占着
 //     stdio 管道，Playwright 的 browser.close() 要等管道关上才返回，实测能把 18 秒的脚本拖到 5 分钟（表里记"退出拖延"）
 //   - 任何一项失败 / 超时，退出码 1
@@ -55,7 +56,9 @@ function levelOrder() {
 }
 
 // ---------- 测试清单 ----------
-const KNOWN = ['phys.test.js', 'smoke.mjs', 'mobile.mjs', 'kit.mjs', 'items.mjs', 'coop.mjs', 'settings.mjs', 'workshop.mjs', 'workshop_core.mjs', 'workshop_ui.mjs', 'infection.mjs', 'visualhooks.mjs'];
+// camp.mjs：联机营地（隐藏层 coopcamp）的单页检查，紧跟 coop；营地不在 LEVEL_ORDER，不跑 --scale、不进入库 golden
+const KNOWN = ['phys.test.js', 'smoke.mjs', 'mobile.mjs', 'kit.mjs', 'items.mjs', 'coop.mjs', 'camp.mjs', 'settings.mjs', 'workshop.mjs', 'workshop_core.mjs', 'workshop_ui.mjs', 'infection.mjs', 'visualhooks.mjs'];
+const TIMEOUT_OF = { 'coop.mjs': 40 };   // 分钟；没列的按 25
 const SPECIAL = new Set(['all.mjs', 'online.mjs', 'golden.mjs', 'preview.mjs']);
 // "汇总已打印"的标志：各脚本只在最后的汇总段里打印这些行。preview 单独给，因为 --arch 中途也会打 PASS/FAIL
 const DONE_DEFAULT = /页面报错 \d+ 条|\d+ 条页面错误|^phys: \d+ 通过/m;
@@ -70,7 +73,7 @@ function buildItems() {
       args: ['tests/' + f],
       shots: /\.screenshot\(/.test(src),
       retry: f === 'coop.mjs' ? 1 : 0,
-      timeoutMin: 25,
+      timeoutMin: TIMEOUT_OF[f] || 25,
       doneMark: DONE_DEFAULT,
     };
   });
