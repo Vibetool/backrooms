@@ -196,6 +196,8 @@ function safeLevel() {
 function unloadChunk(c, bulk) {
   chunks.delete(c.key);
   byNum.delete(numKey(c.cx, c.cz));
+  // 容器 / 设备 / 载具先收尾（几何还在，要读 c.res 的也读得到），再拆几何
+  unloadChunkState(c);
   if (c.group) {
     if (c.group.parent) c.group.parent.remove(c.group);
     disposeGroup(c.group);
@@ -203,7 +205,6 @@ function unloadChunk(c, bulk) {
   if (has(c.res, 'dispose')) {
     try { c.res.dispose(); } catch (err) { console.error('[world] 区块 dispose 出错', c.key, err); }
   }
-  unloadChunkState(c);
   dropChunkProps(c, bulk);
   if (!bulk) {
     if (c.solids.length && has(BR.phys, 'removeSolids')) BR.phys.removeSolids(c.key);
@@ -347,8 +348,11 @@ function setupProps(c) {
     if (has(BR.phys, 'addSolids')) BR.phys.addSolids(F.skey, F.solids);
     c.fixtureKeys.push(F.skey);
   }
-  // 准心候选（拖不动的原因；出货的售货机还能取货，取货口里的东西按 levelState 摆出来）
+  // 准心候选（拖不动的原因；出货的售货机还能取货，取货口里的东西按 levelState 摆出来）。
+  // 载具（kind 'vehicle'，L1 停着的叉车）：碰撞体照上面按 skey 登记（'cx,cz#v<i>'，BR.vehicles 载入时换成 OBB），
+  // 准心候选交给 BR.vehicles 自己的来源，这里不出（不然同一台车两个候选，还会提示「叉车太重，拖不动」盖住「空格 上车」）
   for (const rec of fixes) {
+    if (rec && String(rec.kind) === 'vehicle') continue;
     const F = makeFixture(c, rec);
     if (!F) continue;
     c.fixtures.push(F); fixList.push(F);
@@ -1147,7 +1151,7 @@ function propSource(ray, reach, out) {
   const movable = kitMoveOk();
   for (let i = 0; i < propList.length; i++) {
     const P = propList[i];
-    if (!P.obb || !P.cand) continue;
+    if (!P.obb || !P.cand || P.kind === 'vehicle') continue;   // 载具的候选归 BR.vehicles
     const cx = P.hx - ox, cy = P.hy - oy, cz = P.hz - oz;
     const lim = R + P.rad;
     if (cx * cx + cy * cy + cz * cz > lim * lim) continue;
@@ -1232,11 +1236,16 @@ function onLevelStateImport(p) {
   for (let i = 0; i < fixList.length; i++) if (fixList[i].vend) vendSync(fixList[i], false);
 }
 
-// ---- 容器、开关、设备：建块后按 levelState 重建、卸块时收尾（D1 实现 BR.containers / BR.devices） ----
-// 约定：applyChunk(c, st) 必须可重复调用（幂等）；st 为 null 表示本层没有记录（或工坊编辑态）
+// ---- 容器、开关、设备、载具、搬运的货：建块后按 levelState 重建、卸块时收尾 ----
+// BR.containers / BR.devices（D1）、BR.vehicles（FE1 叉车）、BR.cargo（FE2 托盘货，FE1 时不存在，自动跳过）。
+// 约定：applyChunk(c, st) 必须可重复调用（幂等）；st 为 null 表示本层没有记录（或工坊编辑态）。
+// 调用时机：setupProps 登记完碰撞体（含 kit fixture 的 skey，例如停着的叉车 'cx,cz#v<i>'）、placeChunkProps 套完偏移之后，
+// spawnItems / spawnEntities 之前，区块第一次渲染之前（同一帧里还没 render）——开走的车在原地藏掉顶点，不会闪一帧。
+// 注意本块的地上物资这时还没刷出来：要把压在车 OBB 里的物资推出去，放在 BR.vehicles.update 里做（同一帧、render 之前）
+const CHUNK_MODS = ['containers', 'devices', 'vehicles', 'cargo'];
 function applyChunkState(c) {
   const st = editingNow() ? null : levelRec();
-  const mods = ['containers', 'devices'];
+  const mods = CHUNK_MODS;
   for (const m of mods) {
     const mod = BR[m];
     if (!has(mod, 'applyChunk')) continue;
@@ -1245,7 +1254,7 @@ function applyChunkState(c) {
   }
 }
 function unloadChunkState(c) {
-  const mods = ['containers', 'devices'];
+  const mods = CHUNK_MODS;
   for (const m of mods) {
     const mod = BR[m];
     if (!has(mod, 'unloadChunk')) continue;
@@ -1436,15 +1445,53 @@ function pushLights() {
   if (!has(BR.gfx, 'setLightSources')) return;
   const list = [];
   chunks.forEach(c => { for (let i = 0; i < c.lights.length; i++) list.push(c.lights[i]); });
+  const nChunk = list.length;
+  extraLights.forEach(arr => { for (let i = 0; i < arr.length; i++) list.push(arr[i]); });
   // 工坊 lightMul/flicker/blackout：未激活时原样返回同一个数组引用，不新建对象
-  const out = has(BR.workshop, 'lightTransform') ? BR.workshop.lightTransform(list) : list;
+  let out = has(BR.workshop, 'lightTransform') ? BR.workshop.lightTransform(list) : list;
+  // 工坊激活时 lightTransform 返回的是拷贝：额外光源的位置每帧由调用方改，拷贝就不跟着动了。
+  // 换成以原光源为原型的对象：x / y / z 从原型上实时读，只有工坊改过的字段（强度、闪烁）挂在自己身上
+  if (out !== list && Array.isArray(out) && out.length === list.length && list.length > nChunk) {
+    for (let i = nChunk; i < list.length; i++) if (out[i] !== list[i]) out[i] = liveLight(list[i], out[i]);
+  }
   BR.gfx.setLightSources(out);
   S.lightsPushed = true;
 }
+function liveLight(src, t) {
+  if (!src || typeof src !== 'object' || !t || typeof t !== 'object') return t;
+  const o = Object.create(src);
+  for (const k of Object.keys(t)) {
+    if (k === 'x' || k === 'y' || k === 'z') continue;
+    if (t[k] !== src[k]) o[k] = t[k];
+  }
+  return o;
+}
+
+// ---------- 额外光源（FE1：开着的叉车前大灯） ----------
+// setExtraLights(owner, list | null)：owner 名下的光源整组替换（null / 空数组 = 撤掉），并进 pushLights 交给 gfx 的灯池
+// （和区块灯一样按离相机的距离挑，最多 6 盏真光）。光源对象 { x, y, z, color, intensity, range, decay?, flicker? }（世界坐标）
+// 由调用方持有、每帧直接改 x / y / z，gfx 每帧跟随，不用再调；颜色、强度、range 变了要再调一次（工坊激活时强度是推灯那一刻算的）。
+// 工坊的 lightTransform 照样套（工坊地图全黑时大灯也不亮）。lightAt 也算上它们。换层、回主页时整个清空
+const extraLights = new Map();   // owner → [光源, …]
+function setExtraLights(owner, list) {
+  const key = owner == null ? '' : String(owner);
+  const arr = Array.isArray(list) ? list.filter(L => !!L && typeof L === 'object') : list && typeof list === 'object' ? [list] : [];
+  if (arr.length) extraLights.set(key, arr);
+  else if (!extraLights.delete(key)) return false;
+  S.lightsDirty = true;
+  return true;
+}
 
 // ---------- 出口 ----------
+// 坐在车上（含上下车那 0.5 s）：出口一律不触发，也不显示「尚未开放」——想去下一层就下车走过去（FE1 叉车）。
+// 车本身开不进出口圈 +0.4（BR.forklift 按 blockers() 挡住），下车落点也永远不在出口圈里
+function riding() {
+  const p = BR.player;
+  return !!(p && (p.mounted || p.pose === 'drive'));
+}
 function collectInside(f) {
   insideNow.length = 0;
+  if (riding()) return;
   const p = BR.player;
   const feet = p && num(p.y, NaN) === p.y ? p.y - BR.config.player.eyeHeight : null;
   const cx = Math.floor(f.x / S.size), cz = Math.floor(f.z / S.size);
@@ -1476,7 +1523,7 @@ function setSealedPrompt(text) {
 }
 
 function checkExits(f) {
-  if (S.transition || (BR.player && BR.player.dead)) { setSealedPrompt(null); return; }
+  if (S.transition || (BR.player && BR.player.dead) || riding()) { setSealedPrompt(null); return; }
   collectInside(f);
   let fired = null, sealedHere = null;
   for (let i = 0; i < insideNow.length; i++) {
@@ -1704,6 +1751,25 @@ function lightAt(x, z) {
       }
     }
   }
+  // 额外光源（开着的叉车大灯）：同样的衰减。没有时一条都不多算，和改前逐位一样
+  if (extraLights.size) {
+    let hit = false;
+    extraLights.forEach(arr => {
+      for (let i = 0; i < arr.length && !hit; i++) {
+        const L = arr[i];
+        if (!validPoint(L)) continue;
+        const I = L.intensity != null ? +L.intensity : 1;
+        if (!(I > 0)) continue;
+        const r = rangeOf(L);
+        const d2 = (L.x - x) * (L.x - x) + (L.z - z) * (L.z - z);
+        if (d2 >= r * r) continue;
+        const k = 1 - Math.sqrt(d2) / r;
+        v += I * k * k;
+        if (v >= 1) hit = true;
+      }
+    });
+    if (hit) return 1;
+  }
   return U.clamp(v, 0, 1);
 }
 
@@ -1725,6 +1791,8 @@ function clear() {
   if (has(BR.items, 'clear')) BR.items.clear();
   if (has(BR.entities, 'clear')) BR.entities.clear();
   clearDecals();
+  // 额外光源（叉车大灯）：车已经在 level:leave 里熄火撤灯，这里兜底整个清掉，免得带到下一层
+  extraLights.clear();
   // 只有自己推过灯才清：主页可能在用 gfx 的灯
   if (S.lightsPushed && has(BR.gfx, 'setLightSources')) BR.gfx.setLightSources([]);
   S.lightsPushed = false;
@@ -1767,12 +1835,16 @@ function debugInfo() {
   });
   let movedProps = 0;
   for (let i = 0; i < propList.length; i++) if (propList[i].moved) movedProps++;
+  let extra = 0;
+  extraLights.forEach(arr => { extra += arr.length; });
   return {
     level: S.id, levelSeed: S.levelSeed, chunkSize: S.size,
     loaded: chunks.size, queued: queue.length,
     center: [S.centerCx, S.centerCz], spawnChunk: [S.spawnCx, S.spawnCz],
     lights, solids, exits, spawnPoints,
     props: propList.length, movedProps,
+    extraLights: extra, extraOwners: Array.from(extraLights.keys()),
+    riding: riding(),
     transitioning: !!S.transition,
   };
 }
@@ -1803,6 +1875,7 @@ BR.world = {
   exits: loadedExits,
   blockers,     // (opts?) → [{kind:'exit', x, z, r, y?} | {kind:'keep', x, z, r, why} | {kind:'keep', x0, z0, x1, z1, why}]：拖动禁区（出口圈 + keepClear），见「拖动禁区」
   debugInfo,
+  setExtraLights,   // (owner, list | null) → bool：额外光源（叉车大灯）并进灯池；对象由调用方每帧改 x/y/z，见「额外光源」
   decal,        // (x, z, { color, radius, ttl, y }?) → bool：贴地斑块，纯表现、不同步（ENGINE_PLAN M1 AA）
   decalInfo,    // () → { count, cap, byChunk, inScene, visible, instances }
   // 道具（交互方案 A1）：运行时记录见「道具」一节；返回的记录只读，改位置一律走 movePropTo / commitProp

@@ -334,6 +334,7 @@ function onGameHome() {
   // world / entities / hud / death / testmode 各自也监听了 game:home，这里再显式调一遍，
   // 保证不管脚本注册顺序如何，回到主页时场景和界面都是干净的
   safe('world', 'clear');
+  safe('vehicles', 'clear');   // 叉车：坐着的先放下、共用载具网格收起来（BR.vehicles 自己也听 game:home，这里兜底）
   safe('entities', 'clear');
   safe('items', 'clear');
   safe('effects', 'clear');   // 物品时效效果（js/items/_effects.js）：回主页时加速、毒发、画面效果都要停
@@ -379,6 +380,10 @@ function tick(dt, render) {
     safe('player', 'update', dt);
     safe('world', 'update', dt);
     safe('entities', 'update', dt);
+    // 载具（FE1 叉车），排在 entities 之后。联机表现先跑：队友开的车插值后经 BR.vehicles.setPose 进来（js/game/vehicles_net.js）；
+    // 核心再跑：本机司机的模拟已经在 player.update 里经 handle.update 跑完了，这里只管升格 / 释放网格、货叉上的物资、顶点更新、声音灯光
+    safe('vehiclesNet', 'update', dt);
+    safe('vehicles', 'update', dt);
     safe('items', 'update', dt);
     safe('workshop', 'update', dt);   // 地图未激活或在编辑态时是空操作，见 js/game/workshop.js
   }
@@ -503,6 +508,7 @@ window.__br = {
       screen: BR.game.screen, mode: BR.game.mode, levelId: BR.game.levelId,
       world: has(BR.world, 'debugInfo') ? BR.world.debugInfo() : null,
       entities: has(BR.entities, 'debugInfo') ? BR.entities.debugInfo() : null,
+      vehicles: has(BR.vehicles, 'debugInfo') ? BR.vehicles.debugInfo() : null,
       gfx: has(BR.gfx, 'debugInfo') ? BR.gfx.debugInfo() : null,
       failed: Array.from(S.failed),
     };

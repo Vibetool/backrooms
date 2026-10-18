@@ -391,6 +391,18 @@ class Builder {
     this._kitContainers = [];
     this._kitFixtures = [];
     this._kitN = { p: 0, c: 0, f: 0 };
+    // 区块外的一次性 builder（2026-10-06 FE1：BR.vehicles 按部件建可动叉车、L1 量叉车面数）：ctx 里没有层级就是它，
+    // 也可以用 opts.helper 明说。finish() 时不跑工坊 decorate —— 否则工坊会把 (cx, cz) 那块的自由墙、新增出口摆进这个模型里
+    this._wsHelper = o.helper != null ? !!o.helper : !this.level;
+  }
+
+  // 各材质累加器现在的顶点数 { matKey: n }（2026-10-06 FE1）：前后各调一次，[前, 后) 就是中间画的那段（BR.vehicles 按部件量顶点段）。
+  // 只是读数，不加几何、不吃 rng。这之后才第一次用到的材质不在前一次的结果里，按 0 算。
+  // 注意 kit 构件的磨损贴花（kit.prop.* 里的 wear）晚到 finish 才画，不会落在两次 mark 之间
+  mark() {
+    const out = {};
+    this._accs.forEach(a => { if (a instanceof Acc) out[matName(a)] = a.n; });
+    return out;
   }
 
   // ---------- 局部坐标系 ----------
@@ -909,13 +921,16 @@ class Builder {
     const N = this._kitN;
     const pivot = { x: r4(this.ox + fx), y: r4(fy), z: r4(this.oz + fz), rot: r6(fr) };
     let rec = null, merged = false;
+    // 显式 meta.key（2026-10-06 FE1）：不占自动编号 —— n 记 0，后面自动编号的 #p/#f/#c（和子道具的 .n）照旧连着往下数，
+    // 层级以后给已有的东西补一个显式 key 包起来（叉车 '#v<i>'、FE2 的托盘货），别的道具的 key 一个都不变（联机、存档只靠 key 对上）
+    const explicit = m.key != null;
     if (type === 'prop' || type === 'fixture') {
       let n, key;
       if (type === 'prop') {
-        if (owner) { n = ++owner.childN; key = m.key != null ? String(m.key) : owner.rec.key + '.' + n; }
-        else { n = ++N.p; key = m.key != null ? String(m.key) : base + '#p' + n; }
+        if (owner) { n = explicit ? 0 : ++owner.childN; key = explicit ? String(m.key) : owner.rec.key + '.' + n; }
+        else { n = explicit ? 0 : ++N.p; key = explicit ? String(m.key) : base + '#p' + n; }
       } else {
-        n = ++N.f; key = m.key != null ? String(m.key) : base + '#f' + n;
+        n = explicit ? 0 : ++N.f; key = explicit ? String(m.key) : base + '#f' + n;
       }
       rec = {
         n, key, skey: skeyOf(key), kind: String(m.kind || type), label: m.label != null ? String(m.label) : '',
@@ -938,8 +953,8 @@ class Builder {
       copyExtra(rec, m);
       (type === 'prop' ? this._kitProps : this._kitFixtures).push(rec);
     } else if (type === 'container') {
-      const n = ++N.c;
-      const key = m.key != null ? String(m.key) : base + '#c' + n;
+      const n = explicit ? 0 : ++N.c;
+      const key = explicit ? String(m.key) : base + '#c' + n;
       rec = {
         n, key, kind: String(m.kind || 'container'), label: m.label != null ? String(m.label) : '',
         spans: [], solids: [this._solids.length, this._solids.length], pivot, obb: null,
@@ -1121,20 +1136,35 @@ class Piece {
     markRange(attr, this.start, this.count);
     return this;
   }
-  // 隐藏 = 把这件的顶点全部叠到第一个顶点上（零面积三角形不出像素），显示时从备份恢复
+  // 隐藏 = 把这件的顶点全部叠到第一个顶点上（零面积三角形不出像素），显示时从备份恢复。
+  // 这件落在 kit.hideSpans 藏起来的段里时（2026-10-06 FE1），改的是那段底下存着的原值：网格里仍是叠成一点的样子，showSpans 之后才看得见
   setVisible(on) {
     on = !!on;
     if (!this.mesh) { this._pendingVisible = on; return this; }
     const attr = this.mesh.geometry.attributes.position;
     const arr = attr.array;
     const s = this.start * 3, e = (this.start + this.count) * 3;
+    const layered = hidOverlaps(attr, this.start, this.start + this.count);
     if (!on) {
       if (this._saved) return this;
+      if (layered) {
+        this._saved = underRead(attr, this.start, this.start + this.count);
+        underFill(attr, this.start, this.start + this.count, this._saved[0], this._saved[1], this._saved[2]);
+        // 藏着的那部分网格没变（还叠着），只上传露在段外面的部分（这件一般整件都在段里，就什么都不传）
+        for (const r of hidUncovered(attr, this.start, this.start + this.count)) markRange(attr, r[0], r[1] - r[0]);
+        return this;
+      }
       this._saved = arr.slice(s, e);
       const x = arr[s], y = arr[s + 1], z = arr[s + 2];
       for (let i = s; i < e; i += 3) { arr[i] = x; arr[i + 1] = y; arr[i + 2] = z; }
     } else {
       if (!this._saved) return this;
+      if (layered) {
+        underWrite(attr, this.start, this._saved);
+        this._saved = null;
+        for (const r of hidUncovered(attr, this.start, this.start + this.count)) markRange(attr, r[0], r[1] - r[0]);
+        return this;
+      }
       arr.set(this._saved, s);
       this._saved = null;
     }
@@ -1151,6 +1181,103 @@ function markRange(attr, start, count) {
   if (r.count === -1) { r.offset = s; r.count = e - s; }
   else { const end = Math.max(r.offset + r.count, e); r.offset = Math.min(r.offset, s); r.count = end - r.offset; }
   attr.needsUpdate = true;
+}
+
+// ---------- 整段藏起来（kit.hideSpans / showSpans，2026-10-06 FE1） ----------
+// 和 Piece.setVisible 一样把一段顶点叠到段首一点（零面积三角形不出像素），只是按"顶点段"而不是按件：
+// 开过的叉车要从区块网格里整台藏掉（车身 + 磨损贴花，油渍留着），FE2 的搬运件也是。
+// HID：position attribute → 藏起来的段 [{ v0, v1, saved, x, y, z }]（互不重叠）。网格里那段叠在 (x, y, z)；
+// saved 是"藏起来那层底下"的值 —— 这期间 Piece.setVisible、moveProp 改的都是 saved，showSpans 把它放回网格，往返逐位不变
+const HID = new WeakMap();
+function hidOverlaps(attr, v0, v1) {
+  const L = HID.get(attr);
+  if (!L || !L.length) return false;
+  for (const h of L) if (h.v0 < v1 && h.v1 > v0) return true;
+  return false;
+}
+// [v0, v1) 里没藏起来的子段
+function hidUncovered(attr, v0, v1) {
+  const L = HID.get(attr);
+  if (!L || !L.length) return v1 > v0 ? [[v0, v1]] : [];
+  return subtractRanges(v0, v1, L.filter(h => h.v0 < v1 && h.v1 > v0).map(h => [h.v0, h.v1]));
+}
+// 底下那层的值（藏着的部分取 saved）
+function underRead(attr, v0, v1) {
+  const out = attr.array.slice(v0 * 3, v1 * 3);
+  const L = HID.get(attr);
+  if (L) for (const h of L) {
+    const a = Math.max(h.v0, v0), b = Math.min(h.v1, v1);
+    if (b > a) out.set(h.saved.subarray((a - h.v0) * 3, (b - h.v0) * 3), (a - v0) * 3);
+  }
+  return out;
+}
+// 写进底下那层：没藏的部分直接写网格，藏着的部分写 saved（网格里仍叠成一点）。不管上传，调用方按 hidUncovered 自己 markRange
+function underWrite(attr, v0, src) {
+  const S = src instanceof Float32Array ? src : Float32Array.from(src);
+  const v1 = v0 + Math.floor(S.length / 3), arr = attr.array;
+  for (const r of hidUncovered(attr, v0, v1)) arr.set(S.subarray((r[0] - v0) * 3, (r[1] - v0) * 3), r[0] * 3);
+  const L = HID.get(attr);
+  if (L) for (const h of L) {
+    const a = Math.max(h.v0, v0), b = Math.min(h.v1, v1);
+    if (b > a) h.saved.set(S.subarray((a - v0) * 3, (b - v0) * 3), (a - h.v0) * 3);
+  }
+}
+function underFill(attr, v0, v1, x, y, z) {
+  const arr = attr.array;
+  for (const r of hidUncovered(attr, v0, v1)) for (let i = r[0] * 3; i < r[1] * 3; i += 3) { arr[i] = x; arr[i + 1] = y; arr[i + 2] = z; }
+  const L = HID.get(attr);
+  if (L) for (const h of L) {
+    const a = Math.max(h.v0, v0), b = Math.min(h.v1, v1);
+    for (let i = (a - h.v0) * 3; i < (b - h.v0) * 3; i += 3) { h.saved[i] = x; h.saved[i + 1] = y; h.saved[i + 2] = z; }
+  }
+}
+// 网格里 [v0, v1) 刚被直接写过（moveProp）：藏着的部分把新值收进 saved，网格里重新叠回那一点
+function hidReapply(attr, v0, v1) {
+  const L = HID.get(attr);
+  if (!L || !L.length) return;
+  const arr = attr.array;
+  for (const h of L) {
+    const a = Math.max(h.v0, v0), b = Math.min(h.v1, v1);
+    if (!(b > a)) continue;
+    h.saved.set(arr.subarray(a * 3, b * 3), (a - h.v0) * 3);
+    for (let i = a * 3; i < b * 3; i += 3) { arr[i] = h.x; arr[i + 1] = h.y; arr[i + 2] = h.z; }
+  }
+}
+// 藏一段：已经藏着的部分不动（重复调用不改网格、不上传）；新藏的部分叠到"段首顶点底下的真值"那一点
+function hideRange(attr, v0, v1) {
+  const segs = hidUncovered(attr, v0, v1);
+  if (!segs.length) return 0;
+  const p = underRead(attr, v0, v0 + 1);
+  let L = HID.get(attr);
+  if (!L) { L = []; HID.set(attr, L); }
+  const arr = attr.array;
+  let n = 0;
+  for (const r of segs) {
+    const a = r[0], b = r[1];
+    L.push({ v0: a, v1: b, saved: arr.slice(a * 3, b * 3), x: p[0], y: p[1], z: p[2] });
+    for (let i = a * 3; i < b * 3; i += 3) { arr[i] = p[0]; arr[i + 1] = p[1]; arr[i + 2] = p[2]; }
+    markRange(attr, a, b - a);
+    n += b - a;
+  }
+  return n;
+}
+// 放出一段：和藏着的段相交的部分放回 saved，藏着的段被切开的话剩下的照旧藏着
+function showRange(attr, v0, v1) {
+  const L = HID.get(attr);
+  if (!L || !L.length) return 0;
+  const arr = attr.array, keep = [];
+  let n = 0;
+  for (const h of L) {
+    const a = Math.max(h.v0, v0), b = Math.min(h.v1, v1);
+    if (!(b > a)) { keep.push(h); continue; }
+    arr.set(h.saved.subarray((a - h.v0) * 3, (b - h.v0) * 3), a * 3);
+    markRange(attr, a, b - a);
+    n += b - a;
+    if (a > h.v0) keep.push({ v0: h.v0, v1: a, saved: h.saved.slice(0, (a - h.v0) * 3), x: h.x, y: h.y, z: h.z });
+    if (b < h.v1) keep.push({ v0: b, v1: h.v1, saved: h.saved.slice((b - h.v0) * 3), x: h.x, y: h.y, z: h.z });
+  }
+  if (keep.length) HID.set(attr, keep); else HID.delete(attr);
+  return n;
 }
 
 // ---------- 出口句柄 ----------
@@ -1361,7 +1488,7 @@ Builder.prototype.finish = function () {
       props: reg.props, containers: reg.containers, fixtures: reg.fixtures,
     },
   };
-  KIT_RES.set(res.kit, { res, byKey: reg.byKey, objects: this._objects, lights: this._lights });
+  KIT_RES.set(res.kit, { res, byKey: reg.byKey, objects: this._objects, lights: this._lights, accs: this._accs });
   const links = this._glowLinks, ups = this._updates;
   if (links.length || ups.length) {
     let t = 0;
@@ -1444,7 +1571,11 @@ function subtree(rec, out) {
 function kitFinalize(b) {
   const props = b._kitProps, fixtures = b._kitFixtures, containers = b._kitContainers;
   const byKey = new Map();
-  for (const list of [props, fixtures, containers]) for (const r of list) byKey.set(r.key, r);
+  for (const list of [props, fixtures, containers]) for (const r of list) {
+    // 显式 key 撞上了别的记录（自动编号的或另一个显式的）：后一个覆盖前一个，按 key 找会找错 —— 层级写错了，提醒一次
+    if (byKey.has(r.key)) warnOnce('dup-key:' + r.key, '道具登记 key 重复（显式 meta.key 和别的记录撞了）：' + r.key);
+    byKey.set(r.key, r);
+  }
   // ① 显式 on（不是嵌套出来的）：on 等于某个道具 key，或是 '<道具 key>#<格号>'（货架格位）→ 挂成它的子道具；别的区块的不管
   for (const r of props) {
     const I = INT.get(r);
@@ -1518,9 +1649,10 @@ function firstPiece(acc, v0) {
   while (lo < hi) { const mid = (lo + hi) >> 1; if (ps[mid].start < v0) lo = mid + 1; else hi = mid; }
   return lo;
 }
-// 生成时的顶点坐标（第一次挪之前拷一份）：被 setVisible(false) 藏起来的件，真坐标在它的 _saved 里
-function baseOf(g, arr) {
-  const B = arr.slice(g.v0 * 3, g.v1 * 3);
+// 生成时的顶点坐标（第一次挪之前拷一份）：被 setVisible(false) 藏起来的件，真坐标在它的 _saved 里；
+// 被 kit.hideSpans 整段藏起来的，在那段的 saved 里（先取它，再叠上件的 _saved）
+function baseOf(g, arr, attr) {
+  const B = attr && hidOverlaps(attr, g.v0, g.v1) ? underRead(attr, g.v0, g.v1) : arr.slice(g.v0 * 3, g.v1 * 3);
   const ps = g.acc.pieces;
   for (let i = firstPiece(g.acc, g.v0); i < ps.length && ps[i].start < g.v1; i++) {
     const pc = ps[i];
@@ -1544,7 +1676,7 @@ function writeOwn(rec, E, info) {
     const mesh = meshOf(g.acc);
     if (!mesh) continue;
     const attr = mesh.geometry.attributes.position, arr = attr.array;
-    if (!g.base) g.base = baseOf(g, arr);
+    if (!g.base) g.base = baseOf(g, arr, attr);
     const B = g.base;
     for (let i = g.v0 * 3, k = 0, e = g.v1 * 3; i < e; i += 3, k += 3) {
       arr[i] = B[k] + E.dx; arr[i + 1] = B[k + 1]; arr[i + 2] = B[k + 2] + E.dz;
@@ -1559,6 +1691,8 @@ function writeOwn(rec, E, info) {
       const x = arr[s], y = arr[s + 1], z = arr[s + 2];
       for (let j = s; j < e; j += 3) { arr[j] = x; arr[j + 1] = y; arr[j + 2] = z; }
     }
+    // kit.hideSpans 藏着的部分：挪过的坐标收进那段的 saved，网格里重新叠回去（showSpans 之后出现在挪过的位置）
+    hidReapply(attr, g.v0, g.v1);
     markRange(attr, g.v0, g.v1 - g.v0);
     // 拖动中关视锥裁剪：包围球还是生成时的，道具拖出球外会被整块裁掉"突然消失"。settleProp 时重算再打开
     mesh.frustumCulled = false;
@@ -1675,6 +1809,151 @@ function toWorld(rec, local, out) {
 function propByKey(res, key) {
   const K = res && res.kit && KIT_RES.get(res.kit);
   return K ? K.byKey.get(String(key)) || null : null;
+}
+
+// ---------- 按顶点段藏起 / 临时改形（2026-10-06 FE1） ----------
+// 区块结果里某个材质合并出来的那个网格：res.kit 登记过的累加器优先（材质对象当 key 的也认），找不到再按网格名找
+// （独立物体 b.object 不算）；res 直接传一个 THREE.Mesh 也行（matKey 不看）
+function meshFor(res, matKey) {
+  if (!res) return null;
+  if (res.isMesh) return res;
+  const k = matKey && matKey.isMaterial ? matKey : String(matKey == null ? 'kit:prop' : matKey);
+  const info = res.kit ? KIT_RES.get(res.kit) : null;
+  if (info && info.accs) {
+    let a = info.accs.get(k);
+    if (!a && typeof k === 'string') info.accs.forEach((q, kk) => { if (!a && kk && kk.isMaterial && q instanceof Acc && matName(q) === k) a = q; });
+    const m = a && a.pieces ? meshOf(a) : null;
+    if (m) return m;
+  }
+  const g = res.group || (res.isObject3D ? res : null);
+  const name = typeof k === 'string' ? k : k.name;
+  if (g && g.children) {
+    for (const m of g.children) {
+      if (!m.isMesh || m.name !== name || !m.geometry || !m.geometry.attributes.position) continue;
+      if (info && info.objects && info.objects.indexOf(m) >= 0) continue;
+      return m;
+    }
+  }
+  return null;
+}
+// 找不到网格时提醒一次（spans 的键要写材质名 'kit:prop'、'kit:decal'，不是 b.data 里的 prop / wear / oil）
+function spanMesh(res, matKey, who) {
+  const m = meshFor(res, matKey);
+  if (!m) warnOnce(who + '-nomesh:' + String(matKey && matKey.isMaterial ? matKey.name : matKey), 'kit.' + who + '：这块里没有材质 "' + String(matKey && matKey.isMaterial ? matKey.name : matKey) + '" 的网格（spans 的键要写材质名，如 kit:prop、kit:decal），这一段跳过');
+  return m;
+}
+// [v0, v1] 或 { v0, v1 } → 夹进网格顶点数以内的整数段；空段返回 null
+function rangeOf(r, mesh) {
+  if (!r || !mesh) return null;
+  const n = mesh.geometry.attributes.position.count;
+  const a = Array.isArray(r) ? r[0] : r.v0, b = Array.isArray(r) ? r[1] : r.v1;
+  const v0 = Math.max(0, Math.round(+a) || 0), v1 = Math.min(n, Math.round(+b) || 0);
+  return v1 > v0 ? [v0, v1] : null;
+}
+// spans 的几种写法统一成 [[matKey, [v0, v1]], …]：
+//   { 'kit:prop': [v0, v1] | [[v0, v1], …] | null, 'kit:decal': … }（方案接口的写法）；
+//   记录自己的 spans [{ mat, v0, v1 }, …]（res.kit 里道具/设备/容器的 spans 原样传进来）
+function spanList(spans) {
+  const out = [];
+  const add = (k, r) => {
+    if (!r || typeof r !== 'object') return;
+    if (Array.isArray(r)) {
+      if (r.length >= 2 && typeof r[0] === 'number') { out.push([k, r]); return; }
+      for (const q of r) add(k, q);
+      return;
+    }
+    if (r.v0 != null) out.push([r.mat != null ? r.mat : k, [r.v0, r.v1]]);
+  };
+  if (!spans) return out;
+  if (Array.isArray(spans)) for (const s of spans) add(s && s.mat != null ? s.mat : 'kit:prop', s);
+  else for (const k of Object.keys(spans)) add(k, spans[k]);
+  return out;
+}
+// kit.hideSpans(res, spans) → 这次新藏起来的顶点数。每段叠到段首一点，原值存下来；已经藏着的部分不动（重复调用 = 什么都不做、不上传）；
+// 只上传藏起来的那几段（updateRange）。之后对这段调 moveProp、Piece.setVisible 都改存着的原值，showSpans 后出现在该在的样子
+function hideSpans(res, spans) {
+  let n = 0;
+  for (const it of spanList(spans)) {
+    const mesh = spanMesh(res, it[0], 'hideSpans'), R = rangeOf(it[1], mesh);
+    if (R) n += hideRange(mesh.geometry.attributes.position, R[0], R[1]);
+  }
+  return n;
+}
+// kit.showSpans(res, spans) → 这次放出来的顶点数。藏着的段和它相交的部分逐位放回；没藏的不动（重复调用 = 什么都不做）
+function showSpans(res, spans) {
+  let n = 0;
+  for (const it of spanList(spans)) {
+    const mesh = spanMesh(res, it[0], 'showSpans'), R = rangeOf(it[1], mesh);
+    if (R) n += showRange(mesh.geometry.attributes.position, R[0], R[1]);
+  }
+  return n;
+}
+// kit.spanHidden(res, matKey, [v0, v1])：这一段是不是整段都藏着（测试、调试用）
+function spanHidden(res, matKey, range) {
+  const mesh = meshFor(res, matKey), R = rangeOf(range, mesh);
+  return !!R && hidUncovered(mesh.geometry.attributes.position, R[0], R[1]).length === 0;
+}
+
+// kit.spanEdit(res, matKey, [v0, v1], fn(pos, nrm, orig)) → true / false：把这一段的 position、normal（Float32Array 视图，
+// 直接改网格里的值）交给 fn 改，只上传这一段。同一段第一次调用时存下原值，orig = { v0, v1, pos, nrm } 就是它（只读）——
+// 每帧按原值重算（藤蔓按离车的角度转开、再慢慢摆回）不会越改越歪。和另一段正在改的段重叠时，重叠部分的原值从那一段的备份里取。
+// 这段有一部分被 hideSpans 藏着：不改，返回 false（藏着的东西用不着拨开）。
+// 不要用在能拖的道具上（moveProp 每次从生成时的基准重写坐标，会把改过的形状冲掉）
+const EDIT = new WeakMap();   // position attribute → Map('v0:v1' → { v0, v1, pos, nrm })
+function spanEdit(res, matKey, range, fn) {
+  const mesh = spanMesh(res, matKey, 'spanEdit'), R = rangeOf(range, mesh);
+  if (!R) return false;
+  const v0 = R[0], v1 = R[1];
+  const P = mesh.geometry.attributes.position, N = mesh.geometry.attributes.normal || null;
+  if (hidOverlaps(P, v0, v1)) return false;
+  let M = EDIT.get(P);
+  if (!M) { M = new Map(); EDIT.set(P, M); }
+  const id = v0 + ':' + v1;
+  let e = M.get(id);
+  if (!e) {
+    e = { v0, v1, pos: P.array.slice(v0 * 3, v1 * 3), nrm: N ? N.array.slice(v0 * 3, v1 * 3) : null };
+    M.forEach(o => {
+      const a = Math.max(o.v0, v0), b = Math.min(o.v1, v1);
+      if (!(b > a)) return;
+      e.pos.set(o.pos.subarray((a - o.v0) * 3, (b - o.v0) * 3), (a - v0) * 3);
+      if (e.nrm && o.nrm) e.nrm.set(o.nrm.subarray((a - o.v0) * 3, (b - o.v0) * 3), (a - v0) * 3);
+    });
+    M.set(id, e);
+  }
+  try {
+    if (typeof fn === 'function') fn(P.array.subarray(v0 * 3, v1 * 3), N ? N.array.subarray(v0 * 3, v1 * 3) : null, e);
+  } finally {
+    markRange(P, v0, v1 - v0);
+    if (N) markRange(N, v0, v1 - v0);
+  }
+  return true;
+}
+// kit.spanRestore(res, matKey, [v0, v1]?) → true / false：和这一段相交的 spanEdit 段全部逐位放回原值（position、normal），
+// 只上传那几段；不传 range = 这个网格上所有改过的段。期间被 hideSpans 藏起来的部分，原值放进藏着的那层（showSpans 后是原样）
+function spanRestore(res, matKey, range) {
+  const mesh = meshFor(res, matKey);
+  if (!mesh) return false;
+  const P = mesh.geometry.attributes.position, N = mesh.geometry.attributes.normal || null;
+  const M = EDIT.get(P);
+  if (!M || !M.size) return false;
+  const R = range == null ? null : rangeOf(range, mesh);
+  if (range != null && !R) return false;
+  let done = 0;
+  for (const [id, e] of Array.from(M.entries())) {
+    if (R && !(e.v0 < R[1] && e.v1 > R[0])) continue;
+    if (hidOverlaps(P, e.v0, e.v1)) {
+      underWrite(P, e.v0, e.pos);
+      for (const r of hidUncovered(P, e.v0, e.v1)) markRange(P, r[0], r[1] - r[0]);
+    } else {
+      P.array.set(e.pos, e.v0 * 3);
+      markRange(P, e.v0, e.v1 - e.v0);
+    }
+    if (N && e.nrm) { N.array.set(e.nrm, e.v0 * 3); markRange(N, e.v0, e.v1 - e.v0); }
+    M.delete(id);
+    done++;
+  }
+  if (!M.size) EDIT.delete(P);
+  return done > 0;
 }
 
 // =====================================================================
@@ -4511,6 +4790,9 @@ BR.kit = {
   // 2026-10-02 道具登记（A1，写法见 _TEMPLATE.md 8.1 节）：Builder 的 prop / container / part / fixture 作用域记数据，
   // 这几个函数在运行时按记录挪顶点、拆碰撞体、换算锚点
   moveProp, settleProp, propSolids, splitSolids, toWorld, propByKey,
+  // 2026-10-06 FE1：按顶点段藏起 / 放回（开过的叉车从区块网格里整台藏掉）、临时改形 / 复原（藤蔓被车拨开）。
+  // 和 moveProp、Piece.setVisible 叠着用往返逐位不变。b.mark() 量顶点段；ctx 里没有层级的 builder（区块外建模型）不跑工坊 decorate
+  hideSpans, showSpans, spanHidden, spanEdit, spanRestore,
   propTree: rec => (rec && INT.get(rec) ? subtree(rec, []) : []),   // [rec, ...子道具]：拖父道具时每件都要按自己的 skey 重登碰撞体
   // 这件道具（连同子道具）的作用域里登记过灯：moveProp 会改灯描述的 x/z，调用方（world）要重排动态灯
   propHasLights: rec => {

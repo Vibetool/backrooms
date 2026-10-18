@@ -24,6 +24,8 @@
 //   联机客机自己拖时由 coop 设 e._localHold = { x, z }（或用 localHold(id, x, z)），本机按手点覆盖显示位置，松手后回到快照
 // 噪音：makeNoise(level, sec)：玩家这一刻弄出 level（0..1）的响动，持续 sec 秒，和走路冲刺的 player.noise 取大，
 //   走同一套听觉判断（perceive、archetypes 的 hearPlayer 都读 playerNoise）。只在实体会打玩家的模式（噩梦）生效
+// 坐在车上的玩家（FE1 叉车，见「坐在车上的玩家」一节）：视线对准 BR.vehicles.chestOf(玩家)，追击点是车侧 / 车尾外沿离怪最近的一点，
+//   攻击距离量到驾驶舱矩形（BR.vehicles.cabFor），货叉不算。spawnForChunk 和实体表不受影响
 (function () {
 'use strict';
 const BR = window.BR;
@@ -225,11 +227,145 @@ function chestY(kind, ref) {
 }
 function targetRadius(kind, ref) { return kind === 'player' ? BR.config.player.radius : ref.r; }
 
+// ---------- 坐在车上的玩家（FE1 叉车） ----------
+// 目标玩家（本机，或以后传进来的联机队友）坐在车上时（BR.vehicles.cabFor(玩家) 给出驾驶舱矩形）：
+//   视线目标点 = BR.vehicles.chestOf(玩家)（护顶四周是空的，从车侧、车尾看得见坐着的人）；
+//   追击目标点 = 车身左右两侧（驾驶舱那一段）和车尾外沿上离怪最近的一点，往外让出怪的半径 —— 怪绕到车侧或车尾，不会去顶货叉；
+//     车尾只在「站在车尾够得着驾驶舱」时才算（手短的怪去车侧）；
+//   攻击距离量到驾驶舱矩形（加上人的半径，和站着时一样的算法），货叉不算：货叉尖前面的怪够不着，会绕过去。
+// 驾驶舱矩形认 phys 的 OBB 写法 { cx, cz, hx, hz, rot }（rot 和 kit 一致：本地 → 世界 x' = c·x + s·z、z' = −s·x + c·z，
+//   车头在本地 −z），也认 { x, z, hx, hz, yaw }、轴对齐 { minX, maxX, minZ, maxZ } 和四个角点。
+//   车身半宽、车尾位置取 BR.forklift.geo / BR.L1forklift.geo 的 half、cab（缺省 0.6 / 1.3、驾驶舱 z −0.5…0.55）。
+// 本机玩家每帧（按本模块的 time）只问一次 BR.vehicles
+const RIDE_GAP = 0.05;          // 追击点在车身外再让出的距离（加在怪的半径上）
+const RS = { t: -1, h: null, ride: null };
+function vehGeo() {
+  const F = BR.forklift, L = BR.L1forklift;
+  return (F && F.geo) || (L && L.geo) || null;
+}
+function ptOf(p) {
+  if (!p || typeof p !== 'object') return null;
+  const a = Array.isArray(p);
+  const x = +(a ? p[0] : p.x), y = +(a ? p[1] : p.y), z = +(a ? p[2] : p.z);
+  return Number.isFinite(x) && Number.isFinite(z) ? { x, y: Number.isFinite(y) ? y : NaN, z } : null;
+}
+// 驾驶舱矩形 → { cx, cz, hx, hz, c, s }；chest 用来给四个角点定前后（胸口在驾驶舱中心偏车尾一侧）
+function normCab(raw, chest) {
+  if (!raw || typeof raw !== 'object') return null;
+  let pts = Array.isArray(raw) ? raw : Array.isArray(raw.corners) ? raw.corners : Array.isArray(raw.pts) ? raw.pts : null;
+  if (pts && pts.length >= 4) {
+    const q = [];
+    for (let i = 0; i < 4; i++) { const p = ptOf(pts[i]); if (!p) return null; q.push(p); }
+    const cx = (q[0].x + q[1].x + q[2].x + q[3].x) / 4, cz = (q[0].z + q[1].z + q[2].z + q[3].z) / 4;
+    const e1x = q[1].x - q[0].x, e1z = q[1].z - q[0].z, e2x = q[2].x - q[1].x, e2z = q[2].z - q[1].z;
+    const l1 = Math.hypot(e1x, e1z), l2 = Math.hypot(e2x, e2z);
+    if (!(l1 > 1e-4) || !(l2 > 1e-4)) return null;
+    // 长的那条边是车的前后方向（本地 z）
+    let zx = l1 >= l2 ? e1x / l1 : e2x / l2, zz = l1 >= l2 ? e1z / l1 : e2z / l2;
+    if (chest && (chest.x - cx) * zx + (chest.z - cz) * zz < 0) { zx = -zx; zz = -zz; }
+    // 本地 +z → 世界 (s, c)
+    return { cx, cz, hx: Math.min(l1, l2) / 2, hz: Math.max(l1, l2) / 2, s: zx, c: zz };
+  }
+  let cx = num(raw.cx, num(raw.x, NaN)), cz = num(raw.cz, num(raw.z, NaN));
+  let hx = num(raw.hx, NaN), hz = num(raw.hz, NaN);
+  let rot = num(raw.rot, num(raw.yaw, 0));
+  if (!(hx > 0 && hz > 0) && Number.isFinite(+raw.minX) && Number.isFinite(+raw.maxX) && Number.isFinite(+raw.minZ) && Number.isFinite(+raw.maxZ)) {
+    cx = (+raw.minX + +raw.maxX) / 2; cz = (+raw.minZ + +raw.maxZ) / 2;
+    hx = Math.abs(+raw.maxX - +raw.minX) / 2; hz = Math.abs(+raw.maxZ - +raw.minZ) / 2; rot = 0;
+  }
+  if (!Number.isFinite(cx) || !Number.isFinite(cz) || !(hx > 0) || !(hz > 0)) return null;
+  return { cx, cz, hx, hz, c: Math.cos(rot), s: Math.sin(rot) };
+}
+// 玩家坐在车上：{ cab, chest:{x,y,z}, bx（车身半宽）, rz（车尾外沿离驾驶舱中心，本地 +z） }；没坐车返回 null
+function rideOf(P) {
+  if (!P) return null;
+  const local = P === BR.player;
+  if (local) {
+    if (!P.mounted) return null;            // 没坐车（含下车插值那 0.5 s）：快速返回，不问 BR.vehicles
+    if (RS.t === time && RS.h === P.mounted) return RS.ride;
+  }
+  const V = BR.vehicles;
+  let ride = null;
+  if (V && has(V, 'cabFor')) {
+    try {
+      const chest = has(V, 'chestOf') ? ptOf(V.chestOf(P)) : null;
+      const cab = normCab(V.cabFor(P), chest);
+      if (cab) {
+        const G = vehGeo();
+        const gc = G && G.cab, gh = G && G.half;
+        const z0 = gc ? num(gc.z0, -0.5) : -0.5, z1 = gc ? num(gc.z1, 0.55) : 0.55;
+        const bx = Math.max(cab.hx, gh ? num(gh.x, 0.6) : 0.6);
+        const rz = Math.max(cab.hz, (gh ? num(gh.z, 1.3) : 1.3) - (z0 + z1) / 2);
+        let ch = chest;
+        if (!ch || !Number.isFinite(ch.y)) {
+          const x = ch ? ch.x : cab.cx, z = ch ? ch.z : cab.cz;
+          ch = { x, y: playerFeet(P) + CHEST_H, z };
+        }
+        ride = { cab, chest: ch, bx, rz };
+      }
+    } catch (err) {
+      once('ride', () => console.error('[entities] 读坐车玩家的驾驶舱出错', err));
+      ride = null;
+    }
+  }
+  if (local) { RS.t = time; RS.h = P.mounted; RS.ride = ride; }
+  return ride;
+}
+// 点到驾驶舱矩形的水平距离（在矩形里为 0）
+function cabDist(cab, x, z) {
+  const dx = x - cab.cx, dz = z - cab.cz;
+  const lx = cab.c * dx - cab.s * dz, lz = cab.s * dx + cab.c * dz;
+  const ex = Math.max(0, Math.abs(lx) - cab.hx), ez = Math.max(0, Math.abs(lz) - cab.hz);
+  return Math.hypot(ex, ez);
+}
+// 站在车尾（追击点上）够不够得着驾驶舱
+function rearReach(e, ride) {
+  const atk = e.def.attack;
+  if (!atk) return false;
+  return ride.rz + e.r + RIDE_GAP - ride.cab.hz <= num(atk.range, 1.2) + BR.config.player.radius - 0.02;
+}
+// 追击点写进 out.x / out.z：车身两侧（驾驶舱那一段）和车尾外沿上离怪最近的一点，沿外法线让出怪的半径
+const chaseOut = { x: 0, z: 0 };
+function chasePoint(e, ride, out) {
+  const cab = ride.cab, bx = ride.bx, rz = ride.rz, hz = cab.hz;
+  const dx = e.x - cab.cx, dz = e.z - cab.cz;
+  const lx = cab.c * dx - cab.s * dz, lz = cab.s * dx + cab.c * dz;
+  const off = e.r + RIDE_GAP;
+  // 两侧：x = ±bx，z ∈ [−hz, hz]，外法线 (±1, 0)
+  const sz = U.clamp(lz, -hz, hz);
+  const sx = lx < 0 ? -bx : bx;
+  let px = sx + (lx < 0 ? -off : off), pz = sz;
+  let best = (lx - sx) * (lx - sx) + (lz - sz) * (lz - sz);
+  // 车尾：z = rz，x ∈ [−bx, bx]，外法线 (0, +1)
+  if (rearReach(e, ride)) {
+    const rx = U.clamp(lx, -bx, bx);
+    const d = (lx - rx) * (lx - rx) + (lz - rz) * (lz - rz);
+    if (d < best) { best = d; px = rx; pz = rz + off; }
+  }
+  // 本地 → 世界
+  out.x = cab.cx + cab.c * px + cab.s * pz;
+  out.z = cab.cz - cab.s * px + cab.c * pz;
+  return out;
+}
+// 目标的追击点：坐车的玩家给车侧 / 车尾那一点，其余就是目标自己的位置。写进 t.x / t.z
+function aimPoint(e, kind, ref, t) {
+  const ride = kind === 'player' ? rideOf(ref) : null;
+  if (ride) { chasePoint(e, ride, chaseOut); t.x = chaseOut.x; t.z = chaseOut.z; }
+  else { t.x = ref.x; t.z = ref.z; }
+  return t;
+}
+
 // ---------- 感知 ----------
 function los(e, x, z, y) {
   if (!has(BR.phys, 'los')) return true;
   const ty = Number.isFinite(y) ? y : groundAt(x, z, e.y) + CHEST_H;
   return BR.phys.los(e.x, e.y + e.h * 0.9, e.z, x, ty, z);
+}
+// 对准目标胸口的视线：坐车的玩家对准座椅胸口点，其余照旧（目标位置的胸高）
+function losTarget(e, kind, ref) {
+  const ride = kind === 'player' ? rideOf(ref) : null;
+  if (ride) return los(e, ride.chest.x, ride.chest.z, ride.chest.y);
+  return los(e, ref.x, ref.z, chestY(kind, ref));
 }
 
 function perceive(e, kind, ref, dist) {
@@ -245,7 +381,7 @@ function perceive(e, kind, ref, dist) {
     if (Math.abs(U.angleDiff(e.yaw, want)) > fov * Math.PI / 360) return false;
   }
   if (p.needsLight && lightAt(ref.x, ref.z) < DARK) return false;
-  return los(e, ref.x, ref.z, chestY(kind, ref));
+  return losTarget(e, kind, ref);
 }
 
 // 返回 { kind, ref, x, z, dist, seen }；看不见但还记得时 x/z 是最后看到的位置
@@ -266,7 +402,8 @@ function findTarget(e, range) {
         if (m.curSeen) m.seenAt = time;
       }
       if (time - m.seenAt <= MEMORY_SEC) {
-        if (m.curSeen) { had.x = ref.x; had.z = ref.z; }
+        // 看得见就更新追击点（坐车的玩家是车侧 / 车尾那一点，车开走了跟着变）；看不见去最后那一点找
+        if (m.curSeen) aimPoint(e, had.kind, ref, had);
         had.dist = Math.hypot(had.x - e.x, had.z - e.z);
         had.seen = m.curSeen;
         return had;
@@ -297,7 +434,8 @@ function findTarget(e, range) {
     const c = cands[i];
     const dist = Math.sqrt(c.d2);
     if (!perceive(e, c.kind, c.ref, dist)) continue;
-    const t = { kind: c.kind, ref: c.ref, x: c.ref.x, z: c.ref.z, dist, seen: true };
+    const t = aimPoint(e, c.kind, c.ref, { kind: c.kind, ref: c.ref, x: c.ref.x, z: c.ref.z, dist, seen: true });
+    if (t.x !== c.ref.x || t.z !== c.ref.z) t.dist = Math.hypot(t.x - e.x, t.z - e.z);
     if (!had && e.def.sounds && e.def.sounds.alert && nearestPlayerD2(e.x, e.z) <= ALERT_HEAR * ALERT_HEAR) {
       sound(e, e.def.sounds.alert);
     }
@@ -444,12 +582,15 @@ function attack(e, target) {
   if (!atk || !t || e.cooldown > 0) return false;
   const kind = t.kind, ref = t.ref;
   if (!canAttack(e, kind, ref)) return false;
-  const dist = Math.hypot(ref.x - e.x, ref.z - e.z);
+  // 坐在车上的玩家：距离量到驾驶舱矩形（货叉不算），视线对准座椅胸口点
+  const ride = kind === 'player' ? rideOf(ref) : null;
+  const dist = ride ? cabDist(ride.cab, e.x, e.z) : Math.hypot(ref.x - e.x, ref.z - e.z);
   if (dist > num(atk.range, 1.2) + targetRadius(kind, ref)) return false;
-  if (!los(e, ref.x, ref.z, chestY(kind, ref))) return false;   // 隔着薄墙挠不到
+  if (!losTarget(e, kind, ref)) return false;   // 隔着薄墙挠不到
 
   e.cooldown = Math.max(0.05, num(atk.cooldown, 1));
-  e.yaw = Math.atan2(-(ref.x - e.x), -(ref.z - e.z));   // 出手瞬间正对目标
+  const ax = ride ? ride.chest.x : ref.x, az = ride ? ride.chest.z : ref.z;
+  e.yaw = Math.atan2(-(ax - e.x), -(az - e.z));   // 出手瞬间正对目标
   e._m.attackAt = time;
   let ok = false;
   if (kind === 'player') {
@@ -1249,6 +1390,71 @@ function separate() {
   }
 }
 
+// 车旁的实体被车身压住时推出来（FE1 叉车）：phys.moveCircle 起点和 OBB 重叠时会先推出，可停着发呆的实体不调它；
+// 队友开的车在房主这边只按位姿摆 OBB（不扫掠），开到站着不动的实体身上时，每 0.25 s 把它推到车外。
+// 只看载具 4 m 以内的、没被拖着、不是固定实体的；场上没有载具时什么都不做（不改别处的行为）
+const UNSTICK_SEC = 0.25, UNSTICK_NEAR = 4;
+let unstickT = 0;
+const vehPts = [], vehKeys = [];
+function vehiclePoints() {
+  vehPts.length = 0; vehKeys.length = 0;
+  const V = BR.vehicles;
+  if (!V || !has(V, 'list')) return vehPts;
+  let L = null;
+  try { L = V.list(); } catch (err) { return vehPts; }
+  const each = v => {
+    if (!v || typeof v !== 'object') return;
+    const p = Number.isFinite(+v.x) && Number.isFinite(+v.z) ? v : v.pose || v.state || null;
+    if (p && Number.isFinite(+p.x) && Number.isFinite(+p.z)) { vehPts.push(+p.x, +p.z); vehKeys.push(v.physKey != null ? String(v.physKey) : null); }
+  };
+  if (Array.isArray(L)) L.forEach(each);
+  else if (L && typeof L.forEach === 'function') L.forEach(v => each(v));
+  return vehPts;
+}
+function unstick(dt) {
+  unstickT -= dt;
+  if (unstickT > 0) return;
+  unstickT = UNSTICK_SEC;
+  if (!ents.length || !has(BR.phys, 'overlapCircle') || !BR.vehicles) return;
+  const pts = vehiclePoints();
+  if (!pts.length) return;
+  const n2 = UNSTICK_NEAR * UNSTICK_NEAR;
+  for (let i = 0; i < ents.length; i++) {
+    const e = ents[i];
+    if (e.removed || e.dead || e.held || e.fixed === true || e.def.fixed === true) continue;
+    let near = -1;
+    for (let k = 0; k < pts.length && near < 0; k += 2) if (U.dist2(e.x, e.z, pts[k], pts[k + 1]) <= n2) near = k >> 1;
+    if (near < 0 || !BR.phys.overlapCircle(e.x, e.z, e.r, e.y, e.h)) continue;
+    moveBy(e, 0, 0);
+    if (!BR.phys.overlapCircle(e.x, e.z, e.r, e.y, e.h)) continue;
+    // 轻推出不来（夹在两根货叉之间、几个部件 OBB 互相顶着，phys 只许越推越浅）：就近找一块空地放过去 ——
+    // 一圈圈往外找，落点不压任何碰撞体，从实体到落点腰高的射线不碰别的东西（车自己的部件不算），不会被放到墙那边
+    const spot = unstuckSpot(e, vehKeys[near]);
+    if (spot) { e.x = spot.x; e.z = spot.z; e.y = groundAt(e.x, e.z, e.y); }
+  }
+}
+const UNSTUCK_STEP = 0.15, UNSTUCK_RINGS = 24;
+function unstuckSpot(e, ignoreKey) {
+  const P = BR.phys;
+  const ym = e.y + Math.min(e.h * 0.5, 0.9);
+  const ign = ignoreKey ? { ignoreKey } : undefined;
+  for (let ring = 1; ring <= UNSTUCK_RINGS; ring++) {
+    const d = ring * UNSTUCK_STEP;
+    const n = Math.max(8, Math.round(Math.PI * 2 * d / UNSTUCK_STEP));
+    for (let k = 0; k < n; k++) {
+      const a = (k + (ring & 1) * 0.5) / n * Math.PI * 2, ux = Math.cos(a), uz = Math.sin(a);
+      const x = e.x + ux * d, z = e.z + uz * d;
+      if (P.overlapCircle(x, z, e.r, e.y, e.h)) continue;
+      if (has(P, 'raycast')) {
+        const hit = P.raycast(e.x, ym, e.z, ux, 0, uz, d, ign);
+        if (hit && hit.dist < d) continue;
+      }
+      return { x, z };
+    }
+  }
+  return null;
+}
+
 function sweepOrphans(dt) {
   orphanT -= dt;
   if (orphanT > 0) return;
@@ -1307,7 +1513,7 @@ function update(dt) {
   api.dt = dt;
   ensureSource();
   batch(() => {
-    if (isAuthoritative()) { runAI(dt); sweepOrphans(dt); }
+    if (isAuthoritative()) { runAI(dt); sweepOrphans(dt); unstick(dt); }
     else runInterp(dt);
     for (let i = 0; i < ents.length; i++) {
       const e = ents[i];

@@ -1,6 +1,14 @@
 // 后室 · 音频：全部 WebAudio 程序化合成，不加载任何音频文件
 // 接口见 ARCHITECTURE.md 第 12 节 BR.audio。
 // 图：环境层/单次音效 → 低 san 低通 → 压缩器 → 主音量 → 扬声器；幻听总线绕过低通（"声音在脑子里"）
+// 循环音效（FE1，叉车）：loop(name, pos?) → { name, alive, sounding, setRate(r), setGain(g), setPos(x, y, z), stop(fadeS) }（名字不认识返回 null）
+//   和单次音效同一条路（bus.sfx：音效音量、低 san 闷声、压缩器）、同一套 3D 规则（给了位置就过 PannerNode，
+//   隔墙削高频压音量（每 0.25 s 重判一次），离听者超过 45 m 静音、回来再响）；占发声名额，但不会被别的音效抢掉。
+//   没解锁、上下文挂起（切后台）、名额满了的时候先不出声，句柄照样给、照样收调用，条件满足了（下一次调用或调度器 50ms 一查）自己响起来，
+//   调用方不用重试。切后台时跟着上下文一起挂起（回来接着响），回主页（game:home）全部停掉。
+//   setRate：1 = 原速，夹在 0.25–4；fk_engine 的转速随它变（叉车给 0.8–1.6）。stop 之后句柄上的方法都不做事
+//   active(name) → 现在还在响的同名声部数（单次 + 循环），测试判断「在播」用
+//   叉车音效：单次 fk_ignite fk_end fk_strain fk_bang fk_bump fk_seat fk_radar fk_off；循环 fk_engine fk_hydraulic fk_reverse
 (function () {
 'use strict';
 const BR = window.BR;
@@ -396,6 +404,28 @@ class Voice {
     s.stop(Math.max(t0 + 0.01, t1));
     if (t1 > this.end) this.end = t1;
     return s;
+  }
+  // 循环声：开始了就一直响，stop 时统一排停（见 stopLoop）
+  hold(s, t0, offset) {
+    this.keep(s);
+    this.live++;
+    s.onended = () => { if (--this.live <= 0) this.dispose(); };
+    s.start(Math.max(0, t0), offset || 0);
+    (this.held || (this.held = [])).push(s);
+    return s;
+  }
+  losc(type, freq, t0) {
+    const o = ctx.createOscillator();
+    if (typeof type === 'string') o.type = type; else o.setPeriodicWave(type);
+    o.frequency.value = Math.max(1, freq);
+    return this.hold(o, t0);
+  }
+  lnoise(kind, t0, rate) {
+    const s = ctx.createBufferSource();
+    const buf = noiseBuf(kind);
+    s.buffer = buf; s.loop = true;
+    if (rate) s.playbackRate.value = rate;
+    return this.hold(s, t0, Math.random() * (buf.duration - 0.2));
   }
   // 兜底：万一某个源的 onended 没触发（异常中断），过期后强制回收
   arm() {
@@ -886,6 +916,306 @@ const SFX_ALIAS = {
   scream: 'screech', shriek: 'screech', laugh: 'giggle', roar: 'growl', footstep: 'step', splash: 'step-wet',
   zap: 'buzz', shock: 'buzz', attack: 'hit', punch: 'hit', heart: 'heartbeat', exit: 'noclip',
 };
+
+// ---------- 叉车（FE1）：单次音效 ----------
+// 液化气叉车：四缸发动机怠速约 810 转，点火频率 27Hz（转速 / 60 × 2）；起动机、液压泵、倒车蜂鸣器、防撞雷达都按真东西的声音做
+const FK_FIRE_HZ = 27;
+// 点火脉冲列：一个振荡器给整列谐波，往上慢慢衰减，偶次稍弱（四缸的"突突"比单缸圆）
+function engineWave() {
+  return harmonicWave('engine', 28, (n, rng) => (n % 2 ? 1 : 0.75) * (0.75 + rng() * 0.5) / Math.pow(n, 0.75), 0xF0B11F7);
+}
+
+SFX.fk_seat = { level: 0.55, pri: 1, fn(v, t, r) {
+  // 坐上座椅：身体压下去的闷"噗"（座垫）+ 座椅弹簧"吱——"（钢丝弹簧受压的粘滑摩擦，比门轴高、短）+ 一点弹簧余振
+  const th = v.osc('sine', 110, t, t + 0.3);
+  sweep(th.frequency, t, 115 * r, 52 * r, 0.12 / r);
+  const gt = v.g(0);
+  ad(gt.gain, t, 0.85, 0.004, 0.17 / r);
+  chain(th, gt, v.out);
+  const gc = v.g(0);
+  ad(gc.gain, t, 0.9, 0.012, 0.11 / r);
+  chain(v.noise('pink', t, t + 0.25), v.f('lowpass', 520, 0.7), gc, v.out);
+  const cs = t + 0.03 / r, cd = rand(0.22, 0.3) / r;
+  const saw = v.osc('sawtooth', 70 * r, cs, cs + cd + 0.05);
+  for (let tt = cs; tt < cs + cd; tt += rand(0.018, 0.04) / r) saw.frequency.setTargetAtTime(rand(45, 120) * r, tt, 0.012);
+  const env = v.g(0);
+  env.gain.setValueAtTime(0, cs);
+  env.gain.linearRampToValueAtTime(0.7, cs + 0.04 / r);
+  env.gain.setValueAtTime(0.7, cs + cd * 0.6);
+  env.gain.linearRampToValueAtTime(0, cs + cd);
+  saw.connect(env);
+  [[1750, 14, 2.6], [2900, 16, 1.8], [4300, 12, 0.9]].forEach(p => {
+    chain(env, v.f('bandpass', p[0] * r * rand(0.94, 1.06), p[1]), v.g(p[2]), v.out);
+  });
+  // 弹簧余振：两个不成整数比的低音轻轻晃
+  [[205, 0.07], [331, 0.04]].forEach(p => {
+    const o = v.osc('sine', p[0] * r, cs, cs + 0.5 / r);
+    const g = v.g(0);
+    ad(g.gain, cs, p[1], 0.004, 0.3 / r);
+    chain(o, g, v.out);
+  });
+} };
+
+SFX.fk_ignite = { level: 0.6, pri: 2, fn(v, t, r) {
+  const T = x => t + x / r;
+  // 钥匙：插着拧到 ON 一下「咔」，再拧到起动档「哒」
+  const gk = v.g(0.8);
+  gk.connect(v.out);
+  v.buf(baked('click'), t, 0.75 * r, gk);
+  v.buf(baked('click'), T(0.13), 1.05 * r, gk);
+  // 起动机：电机的"呜"（高一点的锯齿过带通）+ 齿轮啮合的"嗤"，压缩冲程时转速掉下来、声音变沉 —— 转两下
+  const ts = T(0.18), te = T(0.82);
+  const mot = v.osc('sawtooth', 160 * r, ts, te + 0.05);
+  const gm = v.g(0);
+  gm.gain.setValueAtTime(0, ts);
+  gm.gain.linearRampToValueAtTime(0.5, ts + 0.03);
+  const crank = v.osc(engineWave(), 9 * r, ts, te + 0.05);
+  const gcr = v.g(0);
+  gcr.gain.setValueAtTime(0, ts);
+  mot.frequency.setValueAtTime(175 * r, ts);
+  for (let i = 0; i < 2; i++) {
+    const tc = ts + i * 0.31 / r;
+    // 压缩冲程：起动机被拖慢、发动机"呃"一下；过了上止点又转快
+    mot.frequency.linearRampToValueAtTime(118 * r, tc + 0.12 / r);
+    mot.frequency.linearRampToValueAtTime(182 * r, tc + 0.29 / r);
+    gcr.gain.linearRampToValueAtTime(0.85, tc + 0.12 / r);
+    gcr.gain.linearRampToValueAtTime(0.35, tc + 0.29 / r);
+  }
+  gm.gain.setValueAtTime(0.5, te - 0.04);
+  gm.gain.linearRampToValueAtTime(0, te);
+  gcr.gain.setValueAtTime(0.35, te - 0.06);
+  gcr.gain.linearRampToValueAtTime(0, te);
+  chain(mot, v.f('bandpass', 900, 1.6), gm, v.out);
+  chain(crank, v.f('lowpass', 260, 0.8), gcr, v.out);
+  const gg = v.g(0);
+  gg.gain.setValueAtTime(0, ts);
+  gg.gain.linearRampToValueAtTime(0.18, ts + 0.02);
+  gg.gain.setValueAtTime(0.18, te - 0.05);
+  gg.gain.linearRampToValueAtTime(0, te);
+  chain(v.noise('white', ts, te + 0.02), v.f('bandpass', 2600, 1.4), gg, v.out);
+  // 着车：最后一下低沉的"轰"，转速从起动机的速度冲到怠速，接上发动机循环声（叉车在 0.8 s 时起循环）
+  const tf = T(0.74);
+  const fire = v.osc(engineWave(), 16 * r, tf, tf + 0.42);
+  fire.frequency.setValueAtTime(16 * r, tf);
+  fire.frequency.exponentialRampToValueAtTime(FK_FIRE_HZ * 1.25 * r, tf + 0.12);
+  fire.frequency.exponentialRampToValueAtTime(FK_FIRE_HZ * r, tf + 0.35);
+  const gf = v.g(0);
+  gf.gain.setValueAtTime(0, tf);
+  gf.gain.linearRampToValueAtTime(0.9, tf + 0.06);
+  gf.gain.linearRampToValueAtTime(0.35, tf + 0.25);
+  gf.gain.linearRampToValueAtTime(0, tf + 0.4);
+  chain(fire, v.f('lowpass', 420, 0.9), v.shaper(driveCurve(1.6)), gf, v.out);
+} };
+
+SFX.fk_off = { level: 0.6, pri: 1, fn(v, t, r) {
+  // 熄火：钥匙「咔」，发动机转速往下掉、越来越稀的"突……突…突"，最后车身一抖
+  const gk = v.g(0.7);
+  gk.connect(v.out);
+  v.buf(baked('click'), t, 0.85 * r, gk);
+  const t0 = t + 0.04 / r, td = 0.6 / r;
+  const o = v.osc(engineWave(), FK_FIRE_HZ * r, t0, t0 + td + 0.05);
+  o.frequency.setValueAtTime(FK_FIRE_HZ * r, t0);
+  o.frequency.exponentialRampToValueAtTime(5 * r, t0 + td);
+  const lp = v.f('lowpass', 380, 0.9);
+  lp.frequency.setValueAtTime(380, t0);
+  lp.frequency.exponentialRampToValueAtTime(140, t0 + td);
+  const g = v.g(0);
+  g.gain.setValueAtTime(0.75, t0);
+  g.gain.linearRampToValueAtTime(0.45, t0 + td * 0.6);
+  g.gain.linearRampToValueAtTime(0, t0 + td);
+  chain(o, lp, v.shaper(driveCurve(1.4)), g, v.out);
+  const gr = v.g(0);
+  gr.gain.setValueAtTime(0.5, t0);
+  gr.gain.linearRampToValueAtTime(0, t0 + td);
+  chain(v.noise('brown', t0, t0 + td + 0.02), v.f('lowpass', 150, 0.7), gr, v.out);
+  const ts = t0 + td * 0.92;
+  const sh = v.osc('sine', 62, ts, ts + 0.3);
+  sweep(sh.frequency, ts, 64 * r, 34 * r, 0.16 / r);
+  const gs = v.g(0);
+  ad(gs.gain, ts, 0.6, 0.004, 0.18 / r);
+  chain(sh, gs, v.out);
+  synthMetal(v, ts + 0.01, rand(560, 700) * r, 0.025, 0.12);
+} };
+
+SFX.fk_end = { level: 0.55, pri: 1, fn(v, t, r) {
+  // 油缸到头：钢对钢的"咔"（低频闷撞 + 短金属响 + 机械咔哒）+ 溢流阀一小声"嗤"
+  const th = v.osc('sine', 140, t, t + 0.2);
+  sweep(th.frequency, t, 150 * r, 68 * r, 0.05 / r);
+  const gt = v.g(0);
+  ad(gt.gain, t, 0.75, 0.002, 0.09 / r);
+  chain(th, gt, v.out);
+  synthMetal(v, t, rand(720, 880) * r, 0.1, 0.16 / r);
+  const gk = v.g(0.6);
+  gk.connect(v.out);
+  v.buf(baked('click'), t, 0.6 * r, gk);
+  const gh = v.g(0);
+  ad(gh.gain, t + 0.02 / r, 0.14, 0.006, 0.09 / r);
+  chain(v.noise('white', t, t + 0.18 / r), v.f('bandpass', 3600, 1.2), gh, v.out);
+} };
+
+SFX.fk_strain = { level: 0.38, pri: 1, fn(v, t, r) {
+  // 憋压：液压泵顶到溢流阀，电机被拖得"嗯——"往下沉，阀口"嘶——"地尖啸
+  const dur = 0.95 / r, te = t + dur;
+  const hum = v.osc(motorWave(), 100 * r, t, te + 0.05);
+  hum.frequency.setValueAtTime(100 * r, t);
+  hum.frequency.linearRampToValueAtTime(82 * r, t + 0.25 / r);
+  hum.frequency.setValueAtTime(82 * r, te - 0.15 / r);
+  hum.frequency.linearRampToValueAtTime(94 * r, te);
+  const wh = v.osc('sawtooth', 500 * r, t, te + 0.05);
+  wh.frequency.setValueAtTime(500 * r, t);
+  wh.frequency.linearRampToValueAtTime(410 * r, t + 0.25 / r);
+  const env = v.g(0);
+  env.gain.setValueAtTime(0, t);
+  env.gain.linearRampToValueAtTime(0.8, t + 0.08 / r);
+  env.gain.setValueAtTime(0.8, te - 0.18 / r);
+  env.gain.linearRampToValueAtTime(0, te);
+  const gw = v.g(0.25);
+  chain(wh, v.f('bandpass', 450, 4), gw, env);
+  chain(hum, v.f('lowpass', 700, 0.8), env, v.out);
+  // 溢流阀：窄带噪声慢慢顶上来，带一点抖
+  const bp = v.f('bandpass', 3100 * r, 16);
+  const gv = v.g(0);
+  gv.gain.setValueAtTime(0, t);
+  gv.gain.linearRampToValueAtTime(1.8, t + 0.3 / r);
+  gv.gain.setValueAtTime(1.8, te - 0.15 / r);
+  gv.gain.linearRampToValueAtTime(0, te);
+  const wob = v.g(250);
+  chain(v.osc('sine', 7, t, te), wob);
+  wob.connect(bp.frequency);
+  chain(v.noise('white', t, te + 0.02), bp, gv, v.out);
+} };
+
+SFX.fk_bang = { level: 0.72, pri: 2, fn(v, t, r) {
+  // 撞上「哐」：一吨多的车身撞硬东西 —— 低频冲击 + 宽带撞击噪声 + 中频"嘎" + 钢板 / 门架的金属余响 + 车上零碎的哗啦
+  const boom = v.osc('sine', 80, t, t + 0.5);
+  sweep(boom.frequency, t, 82 * r, 38 * r, 0.22 / r);
+  const gb = v.g(0);
+  ad(gb.gain, t, 1, 0.002, 0.32 / r);
+  chain(boom, v.shaper(driveCurve(1.8)), gb, v.out);
+  const gi = v.g(0);
+  ad(gi.gain, t, 1.3, 0.001, 0.06 / r);
+  chain(v.noise('white', t, t + 0.25), v.f('lowpass', 2400, 0.7), gi, v.out);
+  const gm = v.g(0);
+  ad(gm.gain, t, 1.1, 0.002, 0.11 / r);
+  chain(v.noise('white', t, t + 0.3), v.f('bandpass', 620 * r, 1.1), gm, v.out);
+  synthMetal(v, t + 0.002, rand(170, 230) * r, 0.22, 0.75 / r);
+  synthMetal(v, t + 0.006, rand(430, 520) * r, 0.12, 0.42 / r);
+  const gc = v.g(0);
+  ad(gc.gain, t + 0.02, 1.4, 0.01, 0.22 / r);
+  chain(v.noise('crackle', t, t + 0.45, rand(0.9, 1.2)), v.f('highpass', 1400, 0.7), gc, v.out);
+} };
+
+SFX.fk_bump = { level: 0.6, pri: 1, fn(v, t, r) {
+  // 慢慢碰上「咚」：橡胶轮 / 护顶轻轻顶住，只有低频的闷声和一点点车身的响
+  const o = v.osc('sine', 95, t, t + 0.35);
+  sweep(o.frequency, t, 96 * r, 58 * r, 0.1 / r);
+  const g = v.g(0);
+  ad(g.gain, t, 0.9, 0.004, 0.2 / r);
+  chain(o, g, v.out);
+  const gn = v.g(0);
+  ad(gn.gain, t, 0.8, 0.003, 0.07 / r);
+  chain(v.noise('brown', t, t + 0.2), v.f('lowpass', 420, 0.7), gn, v.out);
+  synthMetal(v, t + 0.004, rand(260, 320) * r, 0.03, 0.2 / r);
+} };
+
+SFX.fk_radar = { level: 0.42, pri: 2, fn(v, t, r) {
+  // 防撞雷达「嘀嘀嘀」：三声又短又尖的蜂鸣（压电片：基频 + 一点三次谐波），间隔 0.1 s
+  const f = 2350 * r;
+  for (let i = 0; i < 3; i++) {
+    const tb = t + i * 0.1 / r, d = 0.055 / r;
+    const g = v.g(0);
+    g.gain.setValueAtTime(0, tb);
+    g.gain.linearRampToValueAtTime(0.6, tb + 0.004);
+    g.gain.setValueAtTime(0.6, tb + d - 0.006);
+    g.gain.linearRampToValueAtTime(0, tb + d);
+    chain(v.osc('sine', f, tb, tb + d + 0.01), g, v.out);
+    const g3 = v.g(0);
+    g3.gain.setValueAtTime(0, tb);
+    g3.gain.linearRampToValueAtTime(0.08, tb + 0.004);
+    g3.gain.setValueAtTime(0.08, tb + d - 0.006);
+    g3.gain.linearRampToValueAtTime(0, tb + d);
+    chain(v.osc('square', f, tb, tb + d + 0.01), v.f('lowpass', 6000, 0.7), g3, v.out);
+  }
+} };
+
+// ---------- 叉车（FE1）：循环音效 ----------
+// fn(v, t)：用 v.losc / v.lnoise 起一直响的源，往 v.out 里接；返回 { rate(r, t) }（可选）
+const LOOPS = {};
+
+LOOPS.fk_engine = { level: 0.19, pri: 2, fn(v, t) {
+  // 液化气发动机怠速：点火脉冲列过低通 = 低低的"突突突"；半频成分 = 某一缸稍弱的不平衡；
+  // 排气的"噗噗"是棕噪声按点火频率调幅；转速慢慢游走 ±1.5%（怠速不稳）。rate 1 = 怠速，叉车给 0.8–1.6
+  const f0 = FK_FIRE_HZ;
+  const fire = v.losc(engineWave(), f0, t);
+  const half = v.losc('sine', f0 / 2, t);
+  const amSrc = v.losc('sine', f0, t);
+  const wob = v.losc('sine', 0.37, t);
+  const wg = v.g(f0 * 0.015), wgH = v.g(f0 * 0.0075);
+  wob.connect(wg); wob.connect(wgH);
+  wg.connect(fire.frequency); wg.connect(amSrc.frequency); wgH.connect(half.frequency);
+  const lp = v.f('lowpass', 380, 0.9);
+  const loud = v.g(0.9);
+  const mix = v.g(1);
+  chain(fire, lp, v.shaper(driveCurve(1.5)), mix);
+  chain(half, v.g(0.22), mix);
+  // 排气：0.5 ± 0.5 调幅
+  const rg = v.g(0.5), depth = v.g(0.5);
+  amSrc.connect(depth); depth.connect(rg.gain);
+  chain(v.lnoise('brown', t, 1), v.f('lowpass', 170, 0.7), v.g(2.2), rg, mix);
+  // 机械"哒哒"：很轻的带通噪声，也跟着点火走
+  const tg = v.g(0.04), tdepth = v.g(0.04);
+  amSrc.connect(tdepth); tdepth.connect(tg.gain);
+  chain(v.lnoise('white', t, 1), v.f('bandpass', 1900, 1.3), tg, mix);
+  chain(mix, v.f('lowpass', 1100, 0.7), loud, v.out);
+  return {
+    rate(r, tt) {
+      const k = 0.12;
+      fire.frequency.setTargetAtTime(f0 * r, tt, k);
+      amSrc.frequency.setTargetAtTime(f0 * r, tt, k);
+      half.frequency.setTargetAtTime(f0 * r / 2, tt, k);
+      wg.gain.setTargetAtTime(f0 * r * 0.015, tt, k);
+      wgH.gain.setTargetAtTime(f0 * r * 0.0075, tt, k);
+      lp.frequency.setTargetAtTime(380 * Math.pow(r, 0.9), tt, k);
+      // 带着负荷转得快时更响一点
+      loud.gain.setTargetAtTime(0.9 * clamp(0.85 + 0.3 * (r - 0.8), 0.7, 1.25), tt, k);
+    },
+  };
+} };
+
+LOOPS.fk_hydraulic = { level: 0.13, pri: 2, fn(v, t) {
+  // 液压泵「嗡」：电机 100Hz 的嗡为主，齿轮泵的齿频哨音（500Hz 一族）在上面，再加一点油在管子里流的嘶声
+  const hum = v.losc(motorWave(), 100, t);
+  const whine = v.losc('sawtooth', 500, t);
+  const wob = v.losc('sine', 3.1, t);
+  const wg = v.g(4);
+  wob.connect(wg); wg.connect(whine.frequency);
+  chain(hum, v.f('lowpass', 900, 0.8), v.g(0.75), v.out);
+  const gw = v.g(0.16);
+  chain(whine, v.f('bandpass', 500, 5), gw, v.out);
+  chain(whine, v.f('bandpass', 1000, 8), v.g(0.06), v.out);
+  chain(v.lnoise('pink', t, 1), v.f('bandpass', 2600, 0.8), v.g(0.12), v.out);
+  return {
+    rate(r, tt) {
+      hum.frequency.setTargetAtTime(100 * r, tt, 0.08);
+      whine.frequency.setTargetAtTime(500 * r, tt, 0.08);
+    },
+  };
+} };
+
+LOOPS.fk_reverse = { level: 0.13, pri: 2, fn(v, t) {
+  // 倒车蜂鸣器「哔、哔」：1.15kHz 压电蜂鸣，响 0.5 s 停 0.5 s。开关用 1Hz 方波过 30Hz 低通推 gain，边沿圆一点不"咔"
+  const f = 1150;
+  const s1 = v.losc('sine', f, t);
+  const s3 = v.losc('square', f, t);
+  const tone = v.g(1);
+  s1.connect(tone);
+  chain(s3, v.f('lowpass', 4000, 0.7), v.g(0.12), tone);
+  const gate = v.g(0.5);
+  const lfo = v.losc('square', 1, t);
+  chain(lfo, v.f('lowpass', 30, 0.5), v.g(0.5), gate.gain);
+  chain(tone, gate, v.out);
+  return null;
+} };
 
 // ---------- 环境层 ----------
 // 每个预设 = 少量长期运行的节点 + 调度器按时间随机触发的小瞬态（咔哒、滴水……）
@@ -1922,6 +2252,7 @@ function tick() {
   if (S.layer) S.layer.tick(now, ahead);
   applySanity(now, false);
   halluTick(now, ahead);
+  if (loops.size) loopTick();
   if (lastPlay.size > 64) for (const [key, t] of lastPlay) if (now - t > 1) lastPlay.delete(key);
 }
 
@@ -1941,6 +2272,7 @@ function makeRoom(pri) {
   for (const v of voices) {
     if (v.pri < 0 || v.dead || v.stolen) continue;
     n++;
+    if (v.loop) continue;   // 循环声占名额，但不被抢：叉车开着发动机声不能突然没了
     if (!victim || v.pri < victim.pri || (v.pri === victim.pri && v.born < victim.born)) victim = v;
   }
   if (n >= SOFT_VOICES && pri <= 0) return false;
@@ -2006,7 +2338,11 @@ function play(name, pos, opts) {
   if (!ctx || !bus || ctx.state !== 'running') return null;   // 挂起时排进去的音效会在恢复瞬间一起炸出来
   const key = SFX[name] ? name : SFX_ALIAS[name];
   const def = key && SFX[key];
-  if (!def) { warnOnce('sfx:' + name, '未知音效 "' + name + '"'); return null; }
+  if (!def) {
+    if (LOOPS[name]) warnOnce('sfxloop:' + name, '"' + name + '" 是循环音效，要用 BR.audio.loop(name, pos)');
+    else warnOnce('sfx:' + name, '未知音效 "' + name + '"');
+    return null;
+  }
   opts = opts || {};
   const vol = num(opts.volume) ? clamp(opts.volume, 0, 4) : 1;
   const rate = num(opts.rate) && opts.rate > 0 ? clamp(opts.rate, 0.25, 4) : 1;
@@ -2025,6 +2361,7 @@ function play(name, pos, opts) {
   lastPlay.set(mk, now);
   const v = new Voice(null, def.pri);
   v.born = now;
+  v.name = key;
   v.out.gain.value = def.level * vol;
   if (p) v.out.connect(makeSpatial(v, p, bus.sfx));
   else v.out.connect(bus.sfx);
@@ -2038,6 +2375,177 @@ function play(name, pos, opts) {
   if (v.live <= 0) { v.dispose(); return null; }
   v.arm();
   return { name: key, stop(sec) { fadeKill(v, num(sec) && sec > 0 ? sec : 0.05); } };
+}
+
+// ---------- 循环音效 ----------
+const LOOP_LOS_SEC = 0.25;   // 隔墙判断的间隔：每帧都做太费，0.25 s 跟得上车速
+const loops = new Set();     // 活着的循环（句柄内部记录）
+
+function setPanPos(pn, x, y, z) {
+  if (pn.positionX) { pn.positionX.value = x; pn.positionY.value = y; pn.positionZ.value = z; }
+  else pn.setPosition(x, y, z);
+}
+
+// 3D 循环：v.out → 隔墙低通 → 隔墙压音量 → PannerNode → bus.sfx。隔墙两个节点常驻，按视线开关（平滑过渡）
+function loopSpatial(L, p) {
+  const v = L.v;
+  const pn = v.keep(ctx.createPanner());
+  const useHrtf = !isTouch() && hrtfCount < MAX_HRTF;
+  pn.panningModel = useHrtf ? 'HRTF' : 'equalpower';
+  if (useHrtf) { hrtfCount++; v.hrtf = true; }
+  pn.distanceModel = 'inverse';
+  pn.refDistance = 1.6;
+  pn.rolloffFactor = 1.1;
+  pn.maxDistance = 60;
+  setPanPos(pn, p.x, p.y, p.z);
+  const lp = v.f('lowpass', Math.min(20000, ctx.sampleRate * 0.45), 0.6);
+  const og = v.g(1);
+  chain(v.out, lp, og, pn, bus.sfx);
+  L.pn = pn; L.occLp = lp; L.occG = og;
+}
+
+function loopOcclude(L, now) {
+  if (!L.pn || !L.pos || !BR.phys || typeof BR.phys.los !== 'function' || !S.listener.set) return;
+  L.losAt = now;
+  let clear = true;
+  try { clear = BR.phys.los(S.listener.x, S.listener.y, S.listener.z, L.pos.x, L.pos.y, L.pos.z) !== false; } catch (e) { clear = true; }
+  if (clear === L.clear) return;
+  L.clear = clear;
+  L.occLp.frequency.setTargetAtTime(clear ? Math.min(20000, ctx.sampleRate * 0.45) : 750, now, 0.06);
+  L.occG.gain.setTargetAtTime(clear ? 1 : 0.6, now, 0.06);
+}
+
+function loopFar(L) {
+  if (!L.pos || !S.listener.set) return false;
+  const dx = L.pos.x - S.listener.x, dy = L.pos.y - S.listener.y, dz = L.pos.z - S.listener.z;
+  return dx * dx + dy * dy + dz * dz > MAX_3D_DIST * MAX_3D_DIST;
+}
+
+function loopLevel(L, tc) {
+  const v = L.v;
+  if (L.stopped || !v || v.dead || !ctx) return;
+  const target = L.far ? 0 : L.def.level * L.gain;
+  v.out.gain.setTargetAtTime(target, ctx.currentTime, tc || 0.05);
+}
+
+// 真正建声部。没解锁、上下文挂起（切后台）、发声名额满了就先不建，句柄照常收 setRate / setPos，
+// 之后任何一次调用或者调度器（50ms）发现条件满足了再建 —— 调用方拿着句柄就行，不用自己重试
+function startLoop(L) {
+  if (L.stopped) return false;
+  if (L.v && !L.v.dead) return true;
+  L.v = null;
+  if (!ctx || !bus || ctx.state !== 'running' || !makeRoom(L.def.pri)) return false;
+  const now = ctx.currentTime;
+  const v = new Voice(null, L.def.pri);
+  v.loop = true;
+  v.born = now;
+  v.name = L.name;
+  v.end = Infinity;
+  v.out.gain.value = 0;
+  L.v = v; L.pn = null; L.clear = true; L.losAt = -1; L.ctl = null;
+  if (L.pos) loopSpatial(L, L.pos);
+  else v.out.connect(bus.sfx);
+  try {
+    L.ctl = L.def.fn(v, now + 0.01) || null;
+  } catch (e) {
+    console.error('[audio] 循环音效出错', L.name, e);
+    v.dispose();
+    L.v = null;
+    L.stopped = true;   // 合成出错就别每帧再试
+    loops.delete(L);
+    return false;
+  }
+  if (v.live <= 0) { v.dispose(); L.v = null; return false; }
+  if (L.rate !== 1 && L.ctl && typeof L.ctl.rate === 'function') L.ctl.rate(L.rate, now);
+  if (L.pos) { loopOcclude(L, now); L.far = loopFar(L); }
+  loopLevel(L, 0.03);   // 淡入，接缝不"噗"
+  return true;
+}
+
+function stopLoop(L, fade) {
+  if (L.stopped) return;
+  L.stopped = true;
+  loops.delete(L);
+  const v = L.v;
+  if (!v || v.dead || !ctx) return;
+  v.stopping = true;
+  const t = ctx.currentTime, sec = num(fade) && fade > 0 ? clamp(fade, 0.01, 5) : 0.05;
+  const g = v.out.gain;
+  g.cancelScheduledValues(t);
+  g.setValueAtTime(g.value, t);
+  g.linearRampToValueAtTime(0, t + sec);
+  for (const s of v.held || []) { try { s.stop(t + sec + 0.03); } catch (e) { /* 已停 */ } }
+  // onended 正常会回收；上下文挂起时 stop 不会到点，兜底
+  setTimeout(() => v.dispose(), (sec + 1) * 1000);
+}
+
+// 调度器里补建还没建起来的循环（刚解锁、切回前台、名额空出来）
+function loopTick() {
+  for (const L of loops) if (!L.v || L.v.dead) startLoop(L);
+}
+
+function loop(name, pos) {
+  const def = LOOPS[name];
+  if (!def) {
+    if (SFX[name] || SFX_ALIAS[name]) warnOnce('loopsfx:' + name, '"' + name + '" 是单次音效，要用 BR.audio.play');
+    else warnOnce('loop:' + name, '未知循环音效 "' + name + '"');
+    return null;
+  }
+  const L = { v: null, def, name, gain: 1, rate: 1, pos: readPos(pos), pn: null, occLp: null, occG: null, clear: true, losAt: -1, far: false, stopped: false, ctl: null };
+  loops.add(L);
+  startLoop(L);
+  return {
+    name,
+    get alive() { return !L.stopped; },             // 停之前一直算活着（声部可能还在等解锁 / 名额）
+    get sounding() { return !L.stopped && !!L.v && !L.v.dead; },
+    setRate(r) {
+      r = +r;
+      if (L.stopped || !(r > 0)) return;
+      r = clamp(r, 0.25, 4);
+      if (Math.abs(r - L.rate) < 0.004) return;   // 每帧都调：变化太小不往 AudioParam 塞事件
+      L.rate = r;
+      if (!startLoop(L)) return;
+      if (L.ctl && typeof L.ctl.rate === 'function') L.ctl.rate(r, ctx.currentTime);
+    },
+    setGain(g) {
+      g = +g;
+      if (L.stopped || !(g >= 0)) return;
+      g = clamp(g, 0, 4);
+      if (Math.abs(g - L.gain) < 0.002) return;
+      L.gain = g;
+      if (startLoop(L)) loopLevel(L);
+    },
+    setPos(x, y, z) {
+      if (L.stopped || !L.pos || !num(x) || !num(z)) return;   // 建的时候没给位置的是 2D 循环，不能中途变 3D
+      if (!num(y)) y = L.pos.y;
+      L.pos.x = x; L.pos.y = y; L.pos.z = z;
+      if (!startLoop(L) || !L.pn) return;
+      setPanPos(L.pn, x, y, z);
+      const now2 = ctx.currentTime;
+      if (now2 - L.losAt >= LOOP_LOS_SEC) loopOcclude(L, now2);
+      const far = loopFar(L);
+      if (far !== L.far) { L.far = far; loopLevel(L, 0.1); }
+    },
+    stop(fadeS) { stopLoop(L, fadeS); },
+  };
+}
+
+function stopAllLoops(fade) {
+  for (const L of [...loops]) stopLoop(L, fade);
+}
+
+// 现在还在响的同名声部数（单次 + 循环）。单次按排定的结束时刻算，挂起时也照算
+function active(name) {
+  if (!ctx) return 0;
+  const key = SFX[name] ? name : SFX_ALIAS[name] || name;
+  const now = ctx.currentTime;
+  let n = 0;
+  for (const v of voices) {
+    if (v.dead || v.stolen || v.stopping || v.name !== key) continue;
+    if (v.loop) { n++; continue; }
+    if (v.end > now) n++;
+  }
+  return n;
 }
 
 function setListener(x, y, z, yaw) {
@@ -2095,12 +2603,15 @@ function onShow() {
 document.addEventListener('visibilitychange', () => { if (document.hidden) onHide(); else onShow(); });
 window.addEventListener('pagehide', onHide);
 window.addEventListener('pageshow', onShow);
+// 回主页：局里的循环声（叉车发动机……）一律停掉，调用方忘了停也不会在主页上一直响
+if (BR.bus && typeof BR.bus.on === 'function') BR.bus.on('game:home', () => stopAllLoops(0.15));
 
-// ---------- 离线渲染（自测页用）：kind = 'ambient' | 'sfx' | 'hallu'，返回响度统计 ----------
+// ---------- 离线渲染（自测页用）：kind = 'ambient' | 'sfx' | 'loop' | 'hallu'，返回响度统计 ----------
+// 'sfx' 给循环音效的名字也行（按 loop 渲染）；循环音效可以带 rate：opts.rate 或名字后缀 'fk_engine@1.6'
 const CTX_CACHES = [noiseCache, waveCache, bakedSets, lastBaked];
 function stashObj(o) { const c = Object.assign({}, o); for (const k in o) delete o[k]; return c; }
 function unstashObj(o, c) { for (const k in o) delete o[k]; Object.assign(o, c); }
-async function renderOffline(kind, name, seconds) {
+async function renderOffline(kind, name, seconds, opts) {
   const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
   if (!OAC) throw new Error('浏览器没有 OfflineAudioContext');
   seconds = clamp(+seconds || 5, 0.5, 120);
@@ -2125,6 +2636,22 @@ async function renderOffline(kind, name, seconds) {
         layer.out.gain.value = ambLevel(name);
         for (let t = 0; t < seconds; t += LOOKAHEAD) layer.tick(t, t + LOOKAHEAD);
       }
+    } else if (kind === 'loop' || (kind === 'sfx' && LOOPS[String(name).split('@')[0]])) {
+      // 循环音效：按 rate（opts.rate 或名字后缀 '@1.6'）响到结束前 0.25 s 再淡出
+      const m = /^([^@]+)(?:@([\d.]+))?$/.exec(String(name));
+      const key = m && m[1];
+      const def = key && LOOPS[key];
+      if (!def) throw new Error('没有循环音效 ' + name);
+      const rate = opts && +opts.rate > 0 ? +opts.rate : m[2] ? +m[2] : 1;
+      const v = new Voice(bus.sfx, -1);
+      v.loop = true;
+      v.out.gain.value = def.level;
+      const ctl = def.fn(v, 0.02);
+      if (rate !== 1 && ctl && typeof ctl.rate === 'function') ctl.rate(clamp(rate, 0.25, 4), 0.02);
+      const te = Math.max(0.3, seconds - 0.25);
+      v.out.gain.setValueAtTime(def.level, te);
+      v.out.gain.linearRampToValueAtTime(0, te + 0.2);
+      for (const s of v.held || []) s.stop(te + 0.22);
     } else if (kind === 'sfx') {
       const key = SFX[name] ? name : SFX_ALIAS[name];
       if (!key || !SFX[key]) throw new Error('没有音效 ' + name);
@@ -2139,7 +2666,7 @@ async function renderOffline(kind, name, seconds) {
       applySanity(0, true);
       for (let t = 0; t < seconds; t += LOOKAHEAD) halluTick(t, t + LOOKAHEAD);
     } else {
-      throw new Error('kind 只能是 ambient / sfx / hallu');
+      throw new Error('kind 只能是 ambient / sfx / loop / hallu');
     }
   } finally {
     ctx = saved.ctx; bus = saved.bus;
@@ -2172,12 +2699,13 @@ async function renderOffline(kind, name, seconds) {
 
 // ---------- 导出 ----------
 BR.audio = {
-  unlock, setAmbient, play, setListener, setMaster, setSanity,
+  unlock, setAmbient, play, loop, active, setListener, setMaster, setSanity,
   setAmbientVolume, setSfxVolume,
   get unlocked() { return !!ctx && ctx.state === 'running'; },
   get ctx() { return ctx; },               // 解锁前为 null；联机语音的 AnalyserNode 可复用同一个上下文
   presets: Object.keys(AMB),
   sounds: Object.keys(SFX),
+  loops: Object.keys(LOOPS),
   _renderOffline: renderOffline,
 };
 })();

@@ -89,6 +89,11 @@
 <script src="js/game/death.js"></script>
 <script src="js/game/skin.js"></script>
 <script src="js/game/testmode.js"></script>
+<!-- 载具（FE1 叉车）：模拟 BR.forklift → 核心 BR.vehicles → 联机表现 BR.vehiclesNet。都在 interact / world / player 之后；
+     BR.kit、BR.L1forklift、BR.coop 这时还没载入，三个文件都是用到时再取 -->
+<script src="js/game/forklift.js"></script>
+<script src="js/game/vehicles.js"></script>
+<script src="js/game/vehicles_net.js"></script>
 <script src="js/levels/_kit.js"></script>
 <!-- 营地构件 BR.camp（帐篷、行军床、营地范围）：联机营地和以后 C1 的 NPC 营地共用 -->
 <script src="js/levels/_camp.js"></script>
