@@ -11,9 +11,13 @@
 //   me 的 y 是 BR.player.y（眼睛高度）；picked 额外带 type；level / exitReq 额外带 kind、from
 //   main 需要每帧（暂停时也要）调用 BR.coop.update(dt)，V 键 pressed('mic') 在这里读；漏调时有 100ms 看门狗兜底收发
 // 交互大改 A1 起新增（协议细节见下面「事件通道」一节开头）：
-//   hello 带 caps:['ev1','fx1','veh1']：ev1 = 事件通道与拖动租约，fx1 = 通用使用请求和座位，veh1 = 载具；对方缺哪项就关哪项并 toast
+//   hello 带 caps:['ev1','fx1','veh1','veh2']：ev1 = 事件通道与拖动租约，fx1 = 通用使用请求和座位，veh2 = 叉车驾驶（FE1）；
+//   对方缺哪项就关哪项并 toast。veh1 是 A1 时占的位：线上旧版已经声明了它、却开不了车，所以照旧发出去，但不再代表能开车
 //   { t:'ev', lv, list } 每个 tick 合批走可靠通道；租约 'p:' 道具 'i:' 物资 'e:' 实体 'u:' 座位 'k:' 载具（'d:' 'v:' 留给 B）
 //   me 追加 h（拿着租约时的实时位置，按 key 前缀分两种格式）、pose [mode,key]、c（房主时钟）
+// 叉车驾驶 FE1 起（见「事件通道」一节的「载具」小节）：'k:'+车 key 的租约 = 谁坐在驾驶座上；司机按 15 Hz 经 me.h 报位姿，
+//   对方 bus 'net:veh'；房主记下每把 'k:' 租约的最后位姿，超时 / 掉线时按它停车写 levelState.vehicles；
+//   me.pose = ['drive', 车 key] 时对方人形换成坐在驾驶座上的程序化防化服
 //   { t:'st' } 在 world 之后单独发：levelState.export(lv) + taken + 当前租约，超过 32 KB 分片；{ t:'stReq', lv } 要全量
 //   拾取记录 taken 按层保存，换层不清，回主页 / 新开一局才清
 (function () {
@@ -35,7 +39,8 @@ const RECONCILE_S = 1;
 const WATCHDOG_MS = 100;
 // camp1 = 联机营地这一套（营地、帐篷、startRun、备用房号重连）；对方缺它就拒绝配对。
 // 测试可在页面脚本执行前设 window.__brCapsOverride（数组）模拟旧版，init 时读
-const BASE_CAPS = ['ev1', 'fx1', 'veh1', 'camp1'];
+// veh1 留着（线上旧版已经声明它，但那时还开不了车）；能不能两人一起开叉车只看 veh2
+const BASE_CAPS = ['ev1', 'fx1', 'veh1', 'veh2', 'camp1'];
 let CAPS = BASE_CAPS.slice();
 const CAMP_TAG = '\u2063';           // 营地暗标：net.js createRoom 接在昵称后（PHP trim 不剥它）；显示前一律去掉
 const NOT_CAMP_TEXT = '这不是后室的营地：可能是火箭游戏的房间，或者对方的后室版本旧，请对方刷新后重开营地';
@@ -49,6 +54,12 @@ const RC_RETRY_MS = 3000;          // 重连途中服务器暂时连不上（断
 const RC_RETRY_CODES = { unreachable: 1, timeout: 1, bad_response: 1, db_unavailable: 1 };
 const BAD_MODE_TOAST_MS = 10000;   // 「这个模式本机还不能两人一起玩」最短间隔
 const LEASE_TTL_MS = 1500;        // 对方拿着租约这么久没发 h / pose 保活，房主按最后位置替他松手
+// 叉车租约（'k:'）的保活上限放宽一点：司机切到别的窗口时页面计时器被浏览器压到 1 秒一次，me 还在发，只是稀；
+// 1.5 s 会在两包之间误判成掉线，把正坐着的人的车按最后位姿停掉
+const VEH_TTL_MS = 3000;
+const VEH_RESERVE_MS = 5000;      // 司机掉线（超时 / 断线）后，这台车给他留着：重连途中加上连回来后这么久，房主上不去，等他重新拿租约
+const VEH_SEAT_MAX = 3;           // 米：客机申请 'k:' 租约时，它最近一次 me 位置离这台车座椅（水平）的上限
+const VEH_STALE_DIST = 0.5;       // 米：客机松手带来的 levelState 值离松手点超过这么多，当作旧值不用（用房主记下的最后位姿）
 const OWN_IDLE_MS = 1500;         // 自己拿着拖动类租约、却既没 hand() 也不在拖动状态这么久：当作漏了 release，自己松手
 const GRAB_WAIT_MS = 4000;        // 客机申请租约等房主回复的上限
 const USE_WAIT_MS = 4000;         // 客机 use 请求等房主回复的上限
@@ -137,6 +148,12 @@ const S = {
   oldWarnAt: -1e9,
   localHeld: new Set(),   // 客机：本地覆盖了显示位置的实体 id（e._localHold）
   gaveUp: new Set(),      // 客机：被房主的 own 抢先、已经放弃的申请；房主随后对它回的 deny 不再提示
+  // ---- 叉车（FE1） ----
+  vehLast: new Map(),     // 'k:'+车 key → { x,z,yaw,steer,lift,tilt,spd,on, t, by, lv }：每把载具租约最后一次报来的位姿（房主据此在超时 / 掉线时停车）
+  vehResv: new Map(),     // 房主：'k:'+车 key → 留给掉线司机的时刻（ms）；见 VEH_RESERVE_MS
+  vehFin: new Map(),      // 房主：'k:'+车 key → 房主最近一次替客机停车（finalizeVeh）写下的位置 { x, z }；客机晚到的 rel 只在车还停在这里时才挪车
+  rcEndAt: -1e9,          // 上一次重连成功的时刻（vehResv 从这一刻再留 VEH_RESERVE_MS）
+  vehWarn: null,          // { lv, t }：进层后等叉车登记出来再提示「对方版本较旧，联机时…叉车用不了」
   meAcc: 0, entsAcc: 0, reconcileAcc: 0,
   lastUpdateAt: 0, lastTickAt: 0,
   micOn: false, micBusy: false,
@@ -1120,11 +1137,14 @@ function endSession() {
     // 断线：手上拖着的就地放下；房主替客机把它拿着的东西按最后位置放下（写进本机 levelState，之后单机照样在那儿）
     releaseMine('net', false);
     if (S.role === 'host') {
-      Array.from(S.holds).forEach(([k, h]) => { if (h.by === 'guest') { S.holds.delete(k); finalize(k, h.kind, h.p, undefined, h.a, h); } });
+      Array.from(S.holds).forEach(([k, h]) => { if (h.by === 'guest') { S.holds.delete(k); finalize(k, h.kind, h.p, undefined, h.a, h, 'net'); } });
     }
   }
   stopRc();
   clearLeases('net');
+  S.vehResv.clear();   // 真断开了：掉线司机的车谁都能再上去开
+  S.vehFin.clear();
+  S.vehWarn = null;
   S.evq.length = 0;
   S.relP.clear();
   S.uses.forEach(u => callSafe(u.cb, { ok: false, why: '联机已断开' }));
@@ -1421,7 +1441,7 @@ function enterReconnect() {
   // 手上的都放下（和断线一样），但不结束会话：角色、队友名字、本局拾取记录、备用房号都留着
   releaseMine('net', false);
   if (S.role === 'host') {
-    Array.from(S.holds).forEach(([k, h]) => { if (h.by === 'guest') { S.holds.delete(k); finalize(k, h.kind, h.p, undefined, h.a, h); } });
+    Array.from(S.holds).forEach(([k, h]) => { if (h.by === 'guest') { S.holds.delete(k); finalize(k, h.kind, h.p, undefined, h.a, h, 'net'); } });
   }
   clearLeases('net');
   S.evq.length = 0;
@@ -1520,7 +1540,9 @@ function resumeAfterReconnect() {
   renderMic();
   renderLobby();
   toast('「' + S.peerName + '」连回来了', 2500);
+  S.rcEndAt = nowMs();   // 掉线司机的车从这一刻起再留 VEH_RESERVE_MS，等他重新拿租约
   if (S.role === 'host') {
+    hostVehLease();   // 房主自己还坐在车上：租约补回来，随 st 一起告诉客机
     sendWorld();   // 客机在同一局里就留在原地（onWorld 不算 fresh、不传送），只补状态
     S.spareSent = null;
     if (S.spare) sendSpare();
@@ -1596,7 +1618,8 @@ function sendWorld() {
     mode: BR.game.mode, difficulty: BR.game.difficulty == null ? null : BR.game.difficulty,
     settings: Object.assign({}, BR.game.settings),
     picked: Array.from(takenSet(lv)),
-    at: P && isNum(P.x) && isNum(P.z) ? { x: r2(P.x), y: r2(P.y - eyeHeight()), z: r2(P.z), yaw: r3(P.yaw || 0) } : null,
+    // 房主坐在叉车上时 P.x/z 是座椅：给中途加入的人一个车旁边的落点（hostAtSpot），不然会被传送进驾驶舱
+    at: P && isNum(P.x) && isNum(P.z) ? hostAtSpot(P) : null,
     workshopMap: wsMap,
     c: r3(clock()),
   };
@@ -1878,7 +1901,8 @@ function sendMe() {
   const m = { t: 'me', x: r2(P.x), y: r2(P.y), z: r2(P.z), yaw: r3(P.yaw || 0), pitch: r3(P.pitch || 0), lv: String(BR.game.levelId) };
   const h = myH();
   if (h) m.h = h;
-  if (S.myPose) m.pose = S.myPose;
+  const pose = myPoseNow();
+  if (pose) m.pose = pose;
   if (S.role === 'host') m.c = r3(clock());
   send(m, true);
 }
@@ -2017,7 +2041,7 @@ function applyRemoteTaken() {
 //   { t:'ev', lv, c?, n?, n0?, list:[[kind, payload], …] }  每个 coop tick 合批一次，按层分批。
 //     c = 房主时钟（秒）；这一批里有 set 时 n = 房主 levelState 该层当前版本、n0 = 上一批发出时的版本，客机对不上就发 stReq
 //   kind：
-//     grab {k, kind}                客机→房主：申请租约
+//     grab {k, kind, re?}           客机→房主：申请租约（re = 坐在叉车上重新要，FE1 返修 r3：房主收回以后车被挪过就回 deny 'moved'）
 //     own  {k, by}                  房主→客机：k 现在归 'host' | 'guest' | null（放开）
 //     deny {k, why}                 房主→客机：申请被拒。why：'peer' 队友拿着、'lv' 不在同一层、'gone' 东西没了、'far' 太远、'fixed' 拖不动
 //     rel  {k, kind, p, a?, v?}     客机→房主：松手。p=[x,y,z] 落点；v=客机本地 levelState 里的值（房主没载入那块时直接信任）
@@ -2060,8 +2084,9 @@ function toP(p) {
 }
 function r3p(p) { return p ? [r3(p[0]), r3(p[1]), r3(p[2])] : null; }
 function peerHas(cap) { return !!(S.peerCaps && S.peerCaps.has(cap)); }
-function capFor(k) { return k[0] === 'k' ? 'veh1' : k[0] === 'u' ? 'fx1' : 'ev1'; }
-// 联机时对方支持这项功能吗（单机恒为 true）。fx1 / veh1 都骑在 ev1 的事件通道上
+// 载具租约看 veh2（FE1 叉车驾驶）。veh1 是 A1 占的位，线上旧版声明了它却开不了车，所以不能拿它判断
+function capFor(k) { return k[0] === 'k' ? 'veh2' : k[0] === 'u' ? 'fx1' : 'ev1'; }
+// 联机时对方支持这项功能吗（单机恒为 true）。fx1 / veh2 都骑在 ev1 的事件通道上
 function can(cap) {
   if (!S.active) return true;
   if (!peerHas('ev1')) return false;
@@ -2072,16 +2097,17 @@ function degradeText() {
   if (!peerHas('ev1')) return MSG_OLD;
   const miss = [];
   if (!peerHas('fx1')) miss.push('箱子', '柜子', '座位');
-  if (!peerHas('veh1')) miss.push('叉车');
+  if (!peerHas('veh2')) miss.push('叉车');
   if (!miss.length) return '';
   const last = miss.pop();
   return '对方版本较旧，联机时' + (miss.length ? miss.join('、') + '和' : '') + last + '用不了';
 }
+const MSG_OLD_VEH = '对方版本较旧，联机时开不了车';
 function warnOld(cap) {
   const t = nowMs();
   if (t - S.oldWarnAt < 4000) return;
   S.oldWarnAt = t;
-  toast(cap === 'veh1' ? '对方版本较旧，联机时开不了车' : cap === 'fx1' ? '对方版本较旧，联机时这个用不了' : MSG_OLD, 3000);
+  toast(cap === 'veh2' ? MSG_OLD_VEH : cap === 'fx1' ? '对方版本较旧，联机时这个用不了' : MSG_OLD, 3000);
 }
 
 // ---------- levelState 适配（js/game/levelstate.js；缺模块或接口对不上时退回直接读写每层的 Map） ----------
@@ -2324,7 +2350,8 @@ function propPlaceOk(id, h) {
 }
 // 房主：把一件被放下的东西落到 p（客机 rel、租约超时、断线、换层时都走这里），并安排把结果广播给客机。
 // h = 那条租约（有的话：客机拖的道具落点不合法时退回 h.validP，没有合法记录就退回抓起前的位置）
-function finalize(k, kind, p, v, a, h) {
+// why：'rel' 客机松手 | 'ttl' 保活超时 | 'net' 断线 / 进重连 | 'level' 换层（载具超时、断线时给掉线的司机留车，见 finalizeVeh）
+function finalize(k, kind, p, v, a, h, why) {
   const lv = curLv(), id = k.slice(2);
   p = toP(p);
   try {
@@ -2360,7 +2387,7 @@ function finalize(k, kind, p, v, a, h) {
     } else if (k[0] === 'e') {
       if (has(BR.entities, 'release')) BR.entities.release(id);
     } else if (k[0] === 'k') {
-      if (v && typeof v === 'object') lsWrite(lv, 'veh', id, v);
+      finalizeVeh(lv, id, k, p, v, why);
     }
   } catch (err) {
     console.error('[coop] 放下出错', k, err);
@@ -2369,6 +2396,11 @@ function finalize(k, kind, p, v, a, h) {
 // 房主：把房主这边 k 的当前状态再发一次（客机的 rel 不合法、或过期时用来把客机拉回来）
 function resendState(k) {
   const lv = curLv(), id = k.slice(2), kind = kindOfKey(k);
+  if (kind === 'veh') {
+    const v = lsGet(lv, 'veh', id);
+    if (v !== undefined) queueSet(lv, 'veh', id, v, null);
+    return;
+  }
   if (kind !== 'prop' && kind !== 'item') return;
   const v = lsGet(lv, kind, id), p = objPos(k);
   if (v === undefined && !p) {
@@ -2376,6 +2408,247 @@ function resendState(k) {
     return;
   }
   queueSet(lv, kind, id, v === undefined && kind === 'prop' ? ZERO_PROP : v, p);
+}
+
+// ---------- 载具（叉车驾驶 FE1）：租约 'k:'+车 key = 谁坐在驾驶座上 ----------
+// 规则（孩子定的）：一台叉车同一时间只能一个人开；两人同时按空格只有一个坐得上去，另一个看到「队友在开叉车」。
+// 司机那端先算（本机模拟），按 15 Hz 经 me.h 报 [k, x, z, yaw, steer, lift, tilt, spd, on?, hl?]，对方 bus 'net:veh'（vehicles_net 插值）；
+// 房主只核对同一层、离座椅 ≤3 m、没人坐着。司机下车：vehicles 先写本机 levelState.vehicles（on:0）再 release；
+// 客机的 rel 带着它的 levelState 值，房主写进自己的 levelState 再转发。司机掉线（保活超时、断线进重连）：
+// 房主按这把租约最后报来的位姿停车（on:0）写进 levelState 并广播，这台车给他留 VEH_RESERVE_MS（重连途中一直留），
+// 重连后由 vehicles_net 重新 requestGrab 接着开；真断开了，车停在最后的位置，谁都能再上去开。
+// 连接没断、只是客机的消息晚到 3 s 以上：房主同样按超时停车；客机发现租约没了就坐在车上重新要（vehicles_net，连接还在时
+// 要不到会接着要，最多 15 s），要回来接着开；要不回来被放下车时，release 照样发 rel（带本机位姿），房主按它停车并广播。
+// 正被对方开着的车：房主的 levelState 改动不转发给司机，客机也不让房主的旧值盖掉自己正在开的车（以司机的模拟为准）
+function V_() { return BR.vehicles || null; }
+function vehSeated() {
+  const Vh = V_();
+  try { const s = Vh && Vh.seated; return s != null && s !== '' ? String(s) : null; } catch (err) { return null; }
+}
+function vehRec(id) {
+  const Vh = V_();
+  if (!has(Vh, 'byKey')) return null;
+  try { return Vh.byKey(String(id)) || null; } catch (err) { return null; }
+}
+function geoF() { const F = BR.L1forklift; return (F && F.geo) || null; }
+function geoPt(name, dx, dy, dz) {
+  const g = geoF(), p = g && g[name];
+  return { x: p && isNum(p.x) ? p.x : dx, y: p && isNum(p.y) ? p.y : dy, z: p && isNum(p.z) ? p.z : dz };
+}
+// 车本地坐标 → 世界（和 vehicles.js 的 toWorld 同一套：车头朝本地 -Z，前方 (-sin yaw, -cos yaw)）
+function vehToWorld(x, z, yaw, lx, lz) {
+  const c = Math.cos(yaw), s = Math.sin(yaw);
+  return { x: x + c * lx + s * lz, z: z - s * lx + c * lz };
+}
+// 这台车座椅（坐垫顶面中心）的世界坐标：载入了问 BR.vehicles；没载入看 levelState.vehicles；再不行看已载入区块的 data.forklifts
+function vehSeatPos(id, lv) {
+  const Vh = V_();
+  if (has(Vh, 'seatWorld')) {
+    try { const s = Vh.seatWorld(id); if (s && isNum(s.x) && isNum(s.z)) return s; } catch (err) { /* 往下找 */ }
+  }
+  const st = geoPt('seat', 0, 1.16, 0.24);
+  const at = (x, y, z, yaw) => { const w = vehToWorld(x, z, yaw, 0, st.z); return { x: w.x, y: (isNum(y) ? y : 0) + st.y, z: w.z, yaw }; };
+  const v = lsGet(lv != null ? lv : curLv(), 'veh', id);
+  if (v && isNum(v.x) && isNum(v.z)) return at(v.x, v.y, v.z, isNum(v.yaw) ? v.yaw : 0);
+  if (has(BR.world, 'chunks')) {
+    try {
+      const cs = BR.world.chunks();
+      for (let i = 0; i < cs.length; i++) {
+        const fl = cs[i] && cs[i].res && cs[i].res.data && cs[i].res.data.forklifts;
+        if (!Array.isArray(fl)) continue;
+        for (let j = 0; j < fl.length; j++) {
+          const f = fl[j];
+          if (f && String(f.key) === id && isNum(f.x) && isNum(f.z)) return at(f.x, f.y, f.z, isNum(f.rot) ? f.rot : 0);
+        }
+      }
+    } catch (err) { /* 拿不到就算了 */ }
+  }
+  return null;
+}
+// 'lv@cx,cz#v<i>'：车登记在哪个区块。座椅位置都查不到时，用这块的范围粗判请求者离车远不远
+function vehChunkDist(id, x, z) {
+  const m = /@(-?\d+),(-?\d+)#/.exec(id);
+  if (!m || !has(BR.world, 'chunkBounds')) return null;
+  let b = null;
+  try { b = BR.world.chunkBounds(+m[1], +m[2]); } catch (err) { b = null; }
+  if (!b || !isNum(b.minX)) return null;
+  const qx = Math.min(Math.max(x, b.minX), b.maxX), qz = Math.min(Math.max(z, b.minZ), b.maxZ);
+  return Math.hypot(qx - x, qz - z);
+}
+// 本机 BR.vehicles 里这台车此刻的位姿（没有就 null）
+function vehPoseOf(id) {
+  const r = vehRec(id), p = r && r.pose;
+  if (!p || !isNum(p.x) || !isNum(p.z)) return null;
+  return {
+    x: p.x, z: p.z, yaw: isNum(p.yaw) ? p.yaw : 0, steer: isNum(p.steer) ? p.steer : 0, lift: isNum(p.lift) ? p.lift : 0,
+    tilt: isNum(p.tilt) ? p.tilt : 0, spd: isNum(p.spd) ? p.spd : 0, on: p.on ? 1 : 0, n: r.n != null ? r.n | 0 : undefined,
+    hl: p.hl === 0 ? 0 : 1,   // 仪表台大灯开关（FE1 返修 r2：家长定的规则，开关状态联机同步、离开再回来保留）
+  };
+}
+// levelState.vehicles 的一条：只存和画质无关的状态（细节档、磨损片数各端现算，'d' 'w' 不进记录）；多出来的字段原样带着
+const VEH_NUM = ['x', 'z', 'yaw', 'steer', 'lift', 'tilt'];
+function vehVal(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v) || !isNum(v.x) || !isNum(v.z)) return null;
+  if (Math.abs(v.x) > 1e6 || Math.abs(v.z) > 1e6) return null;
+  const o = {};
+  Object.keys(v).forEach(key => {
+    if (key === 'd' || key === 'w') return;
+    const x = v[key];
+    if (typeof x === 'function' || x === undefined) return;
+    o[key] = x;
+  });
+  VEH_NUM.forEach(key => { o[key] = isNum(v[key]) ? +v[key] : 0; });
+  o.lift = Math.min(1, Math.max(0, o.lift));
+  o.on = v.on ? 1 : 0;
+  if (o.carry === undefined) o.carry = null;
+  if (o.n != null) o.n = o.n | 0;
+  return o;
+}
+function r4(v) { return Math.round(v * 1e4) / 1e4; }
+// 一份位姿（vehLast / vehPoseOf）→ levelState 记录。base = 原来的记录（带过来 carry、车号这些）
+function vehFromPose(p, base, on) {
+  const o = vehVal(base) || {};
+  o.x = r4(p.x); o.z = r4(p.z); o.yaw = r4(p.yaw || 0); o.steer = r4(p.steer || 0);
+  o.lift = r4(Math.min(1, Math.max(0, p.lift || 0))); o.tilt = r4(p.tilt || 0);
+  o.on = on ? 1 : 0;
+  if (p.hl === 0 || p.hl === 1) o.hl = p.hl;
+  if (o.carry === undefined) o.carry = null;
+  if (o.n == null && p.n != null) o.n = p.n | 0;
+  return o;
+}
+// 记下一把 'k:' 租约最后报来的位姿（hand() 和对方的 me.h 都走这里）
+function noteVeh(k, v, by, lv) {
+  const on = v.length >= 8 && isNum(v[7]) ? (v[7] ? 1 : 0) : 1;
+  const hl = v.length >= 9 && isNum(v[8]) ? (v[8] ? 1 : 0) : 1;
+  const o = { x: v[0], z: v[1], yaw: v[2], steer: v[3], lift: v[4], tilt: v[5], spd: v[6], on, hl, t: nowMs(), by, lv: lv != null ? String(lv) : curLv() };
+  S.vehLast.set(k, o);
+  return o;
+}
+// 房主：客机松手 / 保活超时 / 断线 / 换层时把这台车停下，写进 levelState.vehicles（on:0），onLsSet 随后转发给客机。
+// v = 客机松手时带来的它本机 levelState 值（正常下车时有）；没有、不合法、或者离松手点太远（旧值），就用这把租约最后报来的位姿
+function finalizeVeh(lv, id, k, p, v, why) {
+  const last = S.vehLast.get(k);
+  S.vehLast.delete(k);
+  const old = lsGet(lv, 'veh', id);
+  let rec = null;
+  const good = vehVal(v);
+  if (good && relOk([good.x, 0, good.z], lv) && (!p || Math.hypot(good.x - p[0], good.z - p[2]) <= VEH_STALE_DIST)) rec = good;
+  if (!rec && last && last.lv === lv) rec = vehFromPose(last, old || good, 0);
+  if (!rec) { const vp = vehPoseOf(id); if (vp) rec = vehFromPose(vp, old || good, 0); }
+  if (!rec && good) rec = good;
+  if (rec) {
+    rec.on = 0;
+    if (rec.carry === undefined) rec.carry = old && old.carry !== undefined ? old.carry : null;
+    if (rec.n == null) {
+      const n = old && old.n != null ? old.n : (vehRec(id) || {}).n;
+      if (n != null) rec.n = n | 0;
+    }
+    lsWrite(lv, 'veh', id, rec);
+    S.vehFin.set(k, { x: +rec.x, z: +rec.z });
+  }
+  // 司机掉线：这台车给他留着，重连后他重新拿租约接着开（房主这时按空格只会看到「队友在开叉车」）；正常下车就不留了
+  if (why === 'ttl' || why === 'net') S.vehResv.set(k, nowMs());
+  else S.vehResv.delete(k);
+}
+function vehReserved(k) {
+  const t0 = S.vehResv.get(k);
+  if (t0 == null) return false;
+  if (S.phase === 'reconnecting') return true;
+  if (S.active && nowMs() - Math.max(t0, S.rcEndAt) < VEH_RESERVE_MS) return true;
+  S.vehResv.delete(k);
+  return false;
+}
+// 房主核对客机的 'k:' 申请：同一层（hostGrab 已核）、房主自己没坐在这台车上、请求者最近一次 me 位置离座椅 ≤3 m
+function vehGrabCheck(id, lv) {
+  if (vehSeated() === id) return 'peer';
+  const pp = S.peerPos;
+  if (!pp || pp.lv !== lv) return '';   // 还没收到对方位置：和拾取一样先信任
+  const s = vehSeatPos(id, lv);
+  if (s) return Math.hypot(s.x - pp.x, s.z - pp.z) > VEH_SEAT_MAX ? 'far' : '';
+  const d = vehChunkDist(id, pp.x, pp.z);
+  return d != null && d > VEH_SEAT_MAX ? 'far' : '';
+}
+// 客机松手时随 rel 带过去的值：本机这台车此刻的位姿（on:0），没有就退回本机 levelState 的记录
+function vehRelVal(lv, id) {
+  const old = lsGet(lv, 'veh', id), vp = vehPoseOf(id);
+  return vp ? vehFromPose(vp, old, 0) : old;
+}
+// 客机：自己正开着这台车（拿着租约，或者重连后还坐着、租约还没拿回来）
+function guestDrives(id) {
+  const h = S.holds.get('k:' + id);
+  return (!!h && h.by === 'guest' && !h.pending) || vehSeated() === id;
+}
+// 客机收全量状态时：自己正坐着的那台车按本机的位姿记，不让房主那份（可能是掉线时停下的旧位姿）把车拽回去
+function keepSeatedVeh(ls, lv) {
+  const vs = vehSeated();
+  if (S.role !== 'guest' || !vs || !ls || typeof ls !== 'object' || lv !== curLv()) return;
+  const vp = vehPoseOf(vs);
+  if (!vp) return;
+  const list = ls.vehicles;
+  let base = null, idx = -1;
+  if (Array.isArray(list)) {
+    idx = list.findIndex(e => Array.isArray(e) && String(e[0]) === vs);
+    base = idx >= 0 ? list[idx][1] : null;
+  } else if (list && typeof list === 'object') {
+    base = list[vs];
+  }
+  const mine = vehFromPose(vp, base || lsGet(lv, 'veh', vs), 1);
+  if (Array.isArray(list)) { if (idx >= 0) list[idx] = [vs, mine]; else list.push([vs, mine]); }
+  else if (list && typeof list === 'object') list[vs] = mine;
+  else ls.vehicles = [[vs, mine]];
+}
+// 本机姿态：别的系统用 setPose 设过就按它；没设过但坐在叉车上 = ['drive', 车 key]（对方据此把人形摆成坐姿、给租约保活）
+function myPoseNow() {
+  if (S.myPose) return S.myPose;
+  const vs = vehSeated();
+  return vs ? ['drive', str(vs)] : null;
+}
+// 房主坐在车上却没有这台车的租约（重连时 releaseMine 放掉了）：补回来，客机那边才知道这台车有人开
+function hostVehLease() {
+  if (S.role !== 'host' || !S.active || !peerHas('ev1')) return;
+  const vs = vehSeated();
+  if (!vs || transitioning()) return;
+  const k = 'k:' + vs;
+  if (S.holds.has(k)) return;
+  const t = nowMs();
+  S.holds.set(k, { by: 'host', kind: 'veh', since: t, last: t, p: null, a: 0 });
+  S.vehResv.delete(k);
+  queueEv('own', { k, by: 'host' });
+}
+// 进层后对方缺 veh2：等这一层的叉车登记出来，提示一次「对方版本较旧，联机时…叉车用不了」
+function vehWarnTick() {
+  const w = S.vehWarn;
+  if (!w) return;
+  const t = nowMs();
+  if (!S.active || peerHas('veh2') || String(BR.game.levelId) !== w.lv || t - w.t > 15000) { S.vehWarn = null; return; }
+  if (t - (w.at || 0) < 400) return;
+  w.at = t;
+  const Vh = V_();
+  let n = 0;
+  try { n = has(Vh, 'list') ? Vh.list().length : 0; } catch (err) { n = 0; }
+  if (!n) return;
+  S.vehWarn = null;
+  toast(peerHas('ev1') ? degradeText() || '对方版本较旧，联机时叉车用不了' : '对方版本较旧，联机时叉车用不了', 5000);
+}
+// 房主在车上时，客机中途加入 / 跟到房主身边的落点：座椅两侧外 1 m（再不行车尾后面），不然会被传送进驾驶舱
+function hostAtSpot(P) {
+  const yaw = isNum(P.yaw) ? P.yaw : 0;
+  const plain = { x: r2(P.x), y: r2(P.y - eyeHeight()), z: r2(P.z), yaw: r3(yaw) };
+  const vs = vehSeated(), vp = vs && vehPoseOf(vs);
+  if (!vp) return plain;
+  const es = geoPt('exitSide', 1.0, 0, 0.24), er = geoPt('exitRear', 0, 0, 1.75);
+  const Ph = BR.phys, R0 = BR.config.player && BR.config.player.radius, pr = (isNum(R0) ? R0 : 0.3) + 0.05;
+  const cands = [[-Math.abs(es.x), es.z], [Math.abs(es.x), es.z], [er.x, er.z]];
+  for (let i = 0; i < cands.length; i++) {
+    const w = vehToWorld(vp.x, vp.z, vp.yaw, cands[i][0], cands[i][1]);
+    let free = true;
+    try { free = !has(Ph, 'overlapCircle') || !Ph.overlapCircle(w.x, w.z, pr, null, 1.6); } catch (err) { free = true; }
+    if (!free) continue;
+    let gy = null;
+    try { gy = has(Ph, 'groundY') ? Ph.groundY(w.x, w.z) : null; } catch (err) { gy = null; }
+    return { x: r2(w.x), y: r2(isNum(gy) ? gy : P.y - eyeHeight()), z: r2(w.z), yaw: r3(yaw) };
+  }
+  return plain;
 }
 
 // ---------- 队列 ----------
@@ -2437,7 +2710,8 @@ function flushEv() {
       if (e[1] === 'rel' && p && p.fill) {
         // 客机松手时 interact 可能还没 commit：发出前现读本机 levelState，房主没载入那块时用它
         delete p.fill;
-        const v = lsGet(e[0], kindOfKey(p.k), p.k.slice(2));
+        // 载具：带本机这台车此刻的位姿（vehicles 下车时先写 levelState 再 release，两者一样；它漏写时也不会带旧值过去）
+        const v = p.k[0] === 'k' ? vehRelVal(e[0], p.k.slice(2)) : lsGet(e[0], kindOfKey(p.k), p.k.slice(2));
         if (v !== undefined) p.v = v;
       }
       if (e[1] === 'set') b.hasSet = true;
@@ -2496,18 +2770,23 @@ function leaseOf(k) {
 }
 // 返回 false = 当场被拒（cb 也已经同步收到 (false, why)）；true = 已拿到或在等房主（客机先动手、不等回复）。
 // cb(ok, why) 只调一次：单机 / 房主当场调；客机等房主回 own / deny，或 4 s 没回复按 (false, 'timeout')。
-// why：'peer' 队友拿着、'old' 对方版本旧、'lv' 'gone' 'far' 'fixed' 房主核对不过、'timeout'、'bad'
-function requestGrab(k, kind, cb) {
+// why：'peer' 队友拿着、'old' 对方版本旧、'lv' 'gone' 'far' 'fixed' 房主核对不过、'moved'（见 hostGrab）、'timeout'、'bad'
+// opts.re（FE1 返修 r3）：客机坐在车上「重新要」叉车租约（消息晚到、房主已按超时收回时 vehicles_net 自动要）；房主据此判断是不是晚到的旧申请
+function requestGrab(k, kind, cb, opts) {
   k = str(k);
   const done = (ok, why) => { callSafe(cb, ok, why); return ok; };
   if (!LEASE_RE.test(k)) return done(false, 'bad');
-  if (guestOffline()) { toast('正在重连，连上了再拿', 1500); return done(false, 'net'); }
+  if (guestOffline()) { toast(k[0] === 'k' ? '正在重连，连上了再上车' : '正在重连，连上了再拿', 1500); return done(false, 'net'); }
+  // 掉线的司机的车（重连途中、连回来后 VEH_RESERVE_MS 内）给他留着：房主上不去
+  if (k[0] === 'k' && S.role === 'host' && vehReserved(k)) return done(false, 'peer');
   if (!S.active) return done(true);
   const need = capFor(k);
-  if (!can(need)) { warnOld(peerHas('ev1') ? need : 'ev1'); return done(false, 'old'); }
+  if (!can(need)) { warnOld(k[0] === 'k' || peerHas('ev1') ? need : 'ev1'); return done(false, 'old'); }
   kind = kind ? String(kind) : kindOfKey(k);
   const t = nowMs(), h = S.holds.get(k);
   if (h && h.by !== S.role) return done(false, 'peer');
+  // 对方正坐在这台车上（他的姿态是 drive 这台）：租约表还没跟上时也不让抢
+  if (k[0] === 'k' && !h && S.peerPose && S.peerPose.mode === 'drive' && String(S.peerPose.key).replace(/^k:/, '') === k.slice(2)) return done(false, 'peer');
   if (S.role === 'host') {
     if (h) { h.last = t; return done(true); }
     const why = k[0] === 'i' && takenSet(curLv()).has(k.slice(2)) ? 'gone' : '';
@@ -2521,7 +2800,7 @@ function requestGrab(k, kind, cb) {
   if (old) callSafe(old.cb, false, 'dup');
   S.holds.set(k, { by: 'guest', kind, since: t, last: t, p: null, a: 0, pending: true });
   S.pend.set(k, { cb, t });
-  queueEv('grab', { k, kind });
+  queueEv('grab', opts && opts.re ? { k, kind, re: 1 } : { k, kind });
   return true;
 }
 // 松手。p = 落点 [x,y,z] 或 {x,y,z}（道具 = 枢轴世界坐标）。不是自己拿着的返回 false
@@ -2529,9 +2808,19 @@ function release(k, p) {
   k = str(k);
   if (!S.active) return true;
   const h = S.holds.get(k);
+  if (!h && k[0] === 'k' && S.role === 'guest') {
+    // 叉车：客机的消息晚到 3 s 以上（连接没断）时，房主已经按超时把租约收走、按它听到的最后位姿停了车；客机这时才下车
+    // （正常下车，或者重新拿租约失败被放下来）。照样发 rel、带上本机这台车此刻的位姿（fill）：房主走 hostRel「超时以后他才下车，
+    // 车停在他下车的地方」那条路并广播。不发的话两边的车永远停在不同的地方（FE1 返修 r2）
+    S.vehLast.delete(k);
+    if (S.hand && S.hand.k === k) S.hand = null;
+    queueEv('rel', { k, kind: 'veh', p: r3p(toP(p)), fill: true });
+    return true;
+  }
   if (!h || h.by !== S.role) return false;
   const pos = toP(p) || h.p || objPos(k);
   S.holds.delete(k);
+  if (k[0] === 'k') S.vehLast.delete(k);
   if (S.hand && S.hand.k === k) S.hand = null;
   if (S.role === 'guest') {
     const pd = S.pend.get(k);
@@ -2548,17 +2837,21 @@ function release(k, p) {
   return true;
 }
 // 拖动中每帧报一次被拿着那件东西的位置（道具 = 枢轴世界坐标，物资 = 物资坐标，实体 = 手点）。
-// 载具：hand('k:'+key, x, z, yaw, steer, lift, tilt, spd)。只在自己持有 k 的租约时才随 me 发出去
+// 载具：hand('k:'+key, x, z, yaw, steer, lift, tilt, spd, on?, hl?)（on 缺省算 1：拿着租约就是坐在车上、发动机开着；
+// hl = 仪表台大灯开关，缺省算 1 开着。旧版只收前 8 个值，多出来的 hl 它不看）。
+// 只在自己持有 k 的租约时才随 me 发出去；载具的最后一份位姿记进 vehLast（h.p 记 [x, 0, z]）
 function hand(k) {
   k = str(k);
   if (!k) return;
   const v = [];
-  for (let i = 1; i < arguments.length && i <= 8; i++) v.push(isNum(arguments[i]) ? arguments[i] : 0);
+  for (let i = 1; i < arguments.length && i <= 9; i++) v.push(isNum(arguments[i]) ? arguments[i] : 0);
   S.hand = { k, v, t: nowMs() };
   const h = S.holds.get(k);
   if (h && h.by === S.role) {
     h.last = S.hand.t;
-    if (k[0] !== 'k' && v.length >= 3) { h.p = [v[0], v[1], v[2]]; h.a = v[3] || 0; }
+    if (k[0] === 'k') {
+      if (v.length >= 7) { h.p = [v[0], 0, v[1]]; noteVeh(k, v, S.role); }
+    } else if (v.length >= 3) { h.p = [v[0], v[1], v[2]]; h.a = v[3] || 0; }
   }
 }
 function setPose(mode, key) {
@@ -2592,7 +2885,18 @@ function myH() {
   const hd = S.hand;
   if (hd && nowMs() - hd.t < HAND_STALE_MS) {
     const h = S.holds.get(hd.k);
-    if (h && h.by === S.role) return [hd.k].concat(hd.v.map(r3));
+    if (h && h.by === S.role && !(hd.k[0] === 'k' && h.pending)) return [hd.k].concat(hd.v.map(r3));
+  }
+  // 坐在叉车上、拿着租约，但这一阵没人调 hand()（vehicles_net 没接上、或刚好卡了一下）：按本机这台车此刻的位姿报
+  const vs = vehSeated();
+  if (vs) {
+    const k = 'k:' + vs, h = S.holds.get(k), vp = h && h.by === S.role && !h.pending ? vehPoseOf(vs) : null;
+    if (vp) {
+      const v = [vp.x, vp.z, vp.yaw, vp.steer, vp.lift, vp.tilt, vp.spd, vp.on, vp.hl];
+      h.p = [vp.x, 0, vp.z];
+      noteVeh(k, v, S.role);
+      return [k].concat(v.map(r3));
+    }
   }
   const hi = interactHeld();
   if (hi) {
@@ -2616,10 +2920,23 @@ function onPeerH(h, lv) {
   if (!Array.isArray(h) || typeof h[0] !== 'string' || !h[0]) return;
   const k = h[0].slice(0, 160);
   if (k[0] === 'k' && k[1] === ':') {
-    const v = h.slice(1, 8);
-    if (v.length < 7 || !v.every(isNum)) return;
-    S.peerH = { k, x: v[0], z: v[1], yaw: v[2], steer: v[3], lift: v[4], tilt: v[5], spd: v[6] };
-    if (lv === curLv()) BR.bus.emit('net:veh', S.peerH);
+    // 载具：[k, x, z, yaw, steer, lift, tilt, spd, on?, hl?] → bus 'net:veh' { k, key, x, z, yaw, steer, lift, tilt, spd, on, hl, lv, t }
+    //（hl = 仪表台大灯开关，旧版不发时按开着算）
+    const v = h.slice(1, 10);
+    if (v.length < 7 || !v.slice(0, 7).every(isNum)) return;
+    const on = v.length >= 8 && isNum(v[7]) ? (v[7] ? 1 : 0) : 1;
+    const hl = v.length >= 9 && isNum(v[8]) ? (v[8] ? 1 : 0) : 1;
+    const ph = { k, key: k.slice(2), x: v[0], z: v[1], yaw: v[2], steer: v[3], lift: Math.min(1, Math.max(0, v[4])), tilt: v[5], spd: v[6], on, hl, lv, t: nowMs() };
+    S.peerH = ph;
+    if (lv !== curLv() || transitioning()) return;
+    const held = S.holds.get(k);
+    if (S.role === 'host') {
+      // 房主只认客机拿着租约的那台：被拒、超时、还没批下来时报的位姿不理，免得客机把房主这边停着的车挪走
+      if (!held || held.by !== 'guest') return;
+      held.p = [ph.x, 0, ph.z];
+    }
+    noteVeh(k, v, S.role === 'host' ? 'guest' : 'host', lv);
+    BR.bus.emit('net:veh', ph);
     return;
   }
   if (h.length < 4) return;   // [k] 只保活
@@ -2657,6 +2974,7 @@ function grabCheck(k) {
   if (k[0] === 'i' && takenSet(lv).has(id)) return 'gone';
   if (k[0] === 'p') { const r = propRec(id); if (r && (r.draggable === false || r.fixed)) return 'fixed'; }
   if (k[0] === 'e' && has(BR.entities, 'get') && !BR.entities.get(id)) return 'gone';
+  if (k[0] === 'k') return vehGrabCheck(id, lv);
   const op = objPos(k), pp = S.peerPos;
   if (op && pp && pp.lv === lv && Math.hypot(op[0] - pp.x, op[2] - pp.z) > REL_MAX_DIST) return 'far';
   return '';
@@ -2671,6 +2989,13 @@ function hostGrab(o, lv) {
   if (h) { h.last = t; queueEv('own', { k, by: 'guest' }); return; }
   const why = grabCheck(k);
   if (why) { queueEv('deny', { k, why }); return; }
+  // 叉车：客机坐在车上「重新要」租约（re，FE1 返修 r3）。他的消息晚到、房主已经按超时收回租约替他停了车（S.vehFin）；
+  // 这期间车已经被挪过（levelState 不在 vehFin 那儿了）就不批 —— 不然晚到的申请先批下来、后面晚到的 rel 再按他那边的位姿停车，
+  // 会把车拽回他看到的旧位置（tests/coop.mjs V14c）。他会被放下车（「没连上，再试一次」），rel 到了走 hostRel 的 vehFin 分支、把现状发回去
+  if (k[0] === 'k' && o.re) {
+    const fin = S.vehFin.get(k), cur = lsGet(lv, 'veh', k.slice(2));
+    if (fin && cur && isNum(+cur.x) && isNum(+cur.z) && Math.hypot(+cur.x - fin.x, +cur.z - fin.z) > 0.01) { queueEv('deny', { k, why: 'moved' }); return; }
+  }
   if (k[0] === 'e' && has(BR.entities, 'grab')) {
     let ok = true;
     try { ok = BR.entities.grab(k.slice(2), 'guest') !== false; } catch (err) { ok = false; console.error('[coop] entities.grab 出错', err); }
@@ -2678,6 +3003,7 @@ function hostGrab(o, lv) {
   }
   const nh = { by: 'guest', kind: o.kind ? str(o.kind, 16) : kindOfKey(k), since: t, last: t, p: null, a: 0 };
   if (k[0] === 'p') propBaseline(k.slice(2), nh);
+  if (k[0] === 'k') S.vehResv.delete(k);   // 掉线的司机连回来、把车要回去了
   S.holds.set(k, nh);
   queueEv('own', { k, by: 'guest' });
 }
@@ -2691,17 +3017,29 @@ function hostRel(o, lv) {
   const k = str(o.k);
   if (!LEASE_RE.test(k)) return;
   const h = S.holds.get(k);
-  if (!h || h.by !== 'guest') { if (lv === curLv()) resendState(k); return; }   // 过期或从没拿到：把客机拉回房主这边的状态
+  if (!h || h.by !== 'guest') {
+    if (lv !== curLv()) return;
+    // 叉车：租约已经超时作废（他切到后台太久、他的消息晚到好几秒）后他才下车，车停在他下车的地方（房主没坐在这台车上、也没别人拿着时）。
+    // 这期间车被人开走过（levelState 里的位置已经不是房主上次替他停车的地方）就以房主现在的为准，把客机拉回来（FE1 返修 r2）
+    let ok = k[0] === 'k' && !h && vehSeated() !== k.slice(2);
+    if (ok) {
+      const fin = S.vehFin.get(k), cur = lsGet(lv, 'veh', k.slice(2));
+      if (fin && cur && isNum(+cur.x) && isNum(+cur.z) && Math.hypot(+cur.x - fin.x, +cur.z - fin.z) > 0.01) ok = false;
+    }
+    if (ok) finalize(k, 'veh', o.p, o.v, 0, null, 'rel');
+    else resendState(k);   // 过期或从没拿到：把客机拉回房主这边的状态
+    return;
+  }
   S.holds.delete(k);
   queueEv('own', { k, by: null });
   if (lv !== curLv()) return;   // 错层：只放锁，不落位置
   const p = toP(o.p);
   if (o.p != null && (!p || !relOk(p, lv))) {
-    finalize(k, h.kind, h.p, undefined, h.a, h);   // 坐标非法或离客机太远：按房主看到的最后位置放下
+    finalize(k, h.kind, h.p, undefined, h.a, h, 'rel');   // 坐标非法或离客机太远：按房主看到的最后位置放下
     resendState(k);
     return;
   }
-  finalize(k, h.kind, p || h.p, o.v, isNum(o.a) ? o.a : h.a, h);
+  finalize(k, h.kind, p || h.p, o.v, isNum(o.a) ? o.a : h.a, h, 'rel');
 }
 function runUse(req) {
   const fn = S.useHandlers.get(req.a) || S.useHandlers.get('*');
@@ -2849,6 +3187,10 @@ function applySet(o, batchLv) {
   } else if (kind === 'taken') {
     // 本机还刷着这件时不动它：随后到的 picked 会按谁拿的处理（自己的请求被批准时要进自己背包）
     if (!(here && has(BR.items, 'find') && BR.items.find(k))) { markTaken(k, lv); lsWrite(lv, 'taken', k, o.v === undefined ? true : o.v); }
+  } else if (kind === 'veh') {
+    // 自己正开着这台车：以本机模拟为准，房主那份（比如掉线时按最后位姿停下的）不往回拽
+    if (lv === curLv() && guestDrives(k)) return;
+    lsWrite(lv, kind, k, o.v);
   } else {
     lsWrite(lv, kind, k, o.v);
   }
@@ -2957,6 +3299,9 @@ function importSt(st, live, remember) {
   const L = LSt();
   const before = live ? entriesOf((lsLevel(lv) || {}).props).map(e => e[0]) : null;
   let imported = false;
+  // 租约先镜像（排在导入前面）：'levelstate:import' 的监听方据此认出哪台叉车正被房主开着，不按记录把它摆回去
+  if (lv === curLv()) mirrorHolds(body.holds);
+  if (body.ls && lv === curLv()) keepSeatedVeh(body.ls, lv);   // 自己正坐着的车按本机位姿记
   if (body.ls && has(L, 'import')) {
     // world / items 听 'levelstate:import'，把已载入的道具、物资按新记录重摆，拿走过的物资移除
     try { imported = L.import(lv, body.ls, { src: 'net' }) !== false; } catch (err) { console.error('[coop] levelState.import 出错', lv, err); }
@@ -2967,7 +3312,6 @@ function importSt(st, live, remember) {
   const ids = new Set((Array.isArray(body.taken) ? body.taken : []).map(String));
   entriesOf(body.ls && body.ls.taken).forEach(e => ids.add(e[0]));
   ids.forEach(id => { ts.add(id); rt.add(id); });   // 本机已经刷出来的，tick 里 applyRemoteTaken 移除
-  if (lv === curLv()) mirrorHolds(body.holds);
   if (live && !imported) applyLive(lv, body, before);   // 没有 levelState.import 时自己摆
   BR.bus.emit('net:st', { lv, live: !!live });
 }
@@ -3058,6 +3402,7 @@ function clearLeases(why) {
   S.localHeld.clear();
   S.gaveUp.clear();
   S.hand = null;
+  S.vehLast.clear();   // 要按最后位姿停的车在调这里之前已经 finalize 过了
 }
 function leaseTimers() {
   const t = nowMs();
@@ -3085,11 +3430,11 @@ function leaseTimers() {
       if (I && t - h.last > OWN_IDLE_MS) release(k, h.p || objPos(k));
       return;
     }
-    // 房主：客机拿着的，1.5 s 没保活就按最后位置替他放下并广播
-    if (S.role !== 'host' || t - h.last <= LEASE_TTL_MS) return;
+    // 房主：客机拿着的，1.5 s（叉车 3 s）没保活就按最后位置替他放下并广播；叉车按最后位姿停车，给他留一会儿
+    if (S.role !== 'host' || t - h.last <= (k[0] === 'k' ? VEH_TTL_MS : LEASE_TTL_MS)) return;
     S.holds.delete(k);
     queueEv('own', { k, by: null });
-    finalize(k, h.kind, h.p, undefined, h.a, h);
+    finalize(k, h.kind, h.p, undefined, h.a, h, 'ttl');
   });
 }
 // 客机拖实体：显示位置按自己的手点覆盖（房主的快照晚一拍），松手后回到快照。
@@ -3121,6 +3466,8 @@ function onGameStart(p) {
   S.peerN.clear();
   S.sentN.clear();
   clearLeases('start');
+  S.vehResv.clear();
+  S.vehFin.clear();
   if (S.phase === 'idle') return;
   if (!p || !p.coop) {
     // 主页单人开局（游玩 / 噩梦 / 测试弹窗、工坊地图）：两人一起玩只走 主页「联机」→ 营地 → 帐篷，开着的营地关掉
@@ -3146,6 +3493,8 @@ function onLevelEnter(p) {
   const id = p && p.id != null ? String(p.id) : String(BR.game.levelId);
   if (S.active && S.role === 'host') sendWorld();
   if (S.active) maybeSkinHint();
+  // 对方版本旧、开不了叉车：这一层有叉车时提示一次（等区块登记出叉车，见 vehWarnTick）
+  S.vehWarn = S.active && S.peerCaps && !peerHas('veh2') ? { lv: id, t: nowMs(), at: 0 } : null;
   if (!S.active || S.role !== 'guest') return;
   const st = S.stReady.get(id);
   if (st) { S.stReady.delete(id); importSt(st, true); }
@@ -3162,10 +3511,12 @@ function onLevelLeave() {
   if (!S.active) return;
   releaseMine('level', false);
   if (S.role === 'host') {
-    Array.from(S.holds).forEach(([k, h]) => { if (h.by === 'guest') { S.holds.delete(k); finalize(k, h.kind, h.p, undefined, h.a, h); } });
+    Array.from(S.holds).forEach(([k, h]) => { if (h.by === 'guest') { S.holds.delete(k); finalize(k, h.kind, h.p, undefined, h.a, h, 'level'); } });
   }
   flushEv();
   clearLeases('lv');
+  S.vehResv.clear();
+  S.vehFin.clear();
 }
 
 function onPause(p) { if (p && p.paused) releaseMine('pause', true); }
@@ -3178,6 +3529,8 @@ function onLsSet(p) {
   const k = p.key != null ? String(p.key) : p.k != null ? String(p.k) : null;
   if (!kind || k == null) return;
   if ((kind === 'prop' && S.holds.has('p:' + k)) || (kind === 'item' && S.holds.has('i:' + k))) return;
+  // 叉车正被客机开着（租约在他手里）：房主这边的改动不转发、不回推给司机，以司机的模拟为准；他下车 / 掉线时 finalize 再写一次最终值
+  if (kind === 'veh') { const h = S.holds.get('k:' + k); if (h && h.by === 'guest') return; }
   queueSet(p.lv != null ? String(p.lv) : curLv(), kind, k, p.v, null);
 }
 
@@ -3422,6 +3775,10 @@ function toggleMic() { return setMic(!(S.micOn || S.micBusy)); }
 // ---------- 对方人形 ----------
 const R = {
   obj: null, head: null, own: [], model: false, loadingModel: false, skinKey: null,
+  body: null,             // 走路时的人形（hazmat.glb，或没有 glb 时的胶囊体），R.obj 的子节点
+  seat: null,             // 坐在叉车上时的人形 { g, mesh, rig, dims, hex, detail }（程序化防化服），R.obj 的子节点
+  seatFail: '',
+  dbg: null,              // debugInfo().avatar
   tag: null, tagTex: null, tagCtx: null, tagText: '', tagAcc: 0,
   samples: [], lv: null, lastRecv: -1e9, walk: 0,
   cur: { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 },
@@ -3526,7 +3883,8 @@ function ensureAvatar(scene) {
   const root = new THREE.Group();
   root.name = 'coop-peer';
   const model = has(BR.assets, 'modelSync') ? BR.assets.modelSync('hazmat') : null;
-  root.add(model ? normalizeModel(model) : buildFallback());
+  R.body = model ? normalizeModel(model) : buildFallback();
+  root.add(R.body);
   R.model = !!model;
   R.obj = root;
   R.skinKey = null;
@@ -3541,10 +3899,11 @@ function ensureAvatar(scene) {
 
 function swapModel(m) {
   const root = R.obj;
-  while (root.children.length) root.remove(root.children[0]);
+  if (R.body && R.body.parent === root) root.remove(R.body);   // 只换走路的人形，坐姿人形（R.seat）留着
   disposeOwn();
   R.head = null;
-  root.add(normalizeModel(m));
+  R.body = normalizeModel(m);
+  root.add(R.body);
   R.model = true;
   R.skinKey = null;   // 新模型要重新上色
 }
@@ -3619,11 +3978,11 @@ function drawTag(text) {
   R.tagTex.needsUpdate = true;
 }
 
-function updateTag(dt, c, feet) {
+// 名牌摆在 (hx, hy, hz)；视线检查对准 (lx, ly, lz)：走路时是胸口高度，坐在叉车上是 BR.vehicles.chestOf(对方)
+function updateTag(dt, hx, hy, hz, lx, ly, lz) {
   const cam = BR.gfx && BR.gfx.camera, tag = R.tag;
   if (!tag || !cam) return;
   const cp = cam.position;
-  const hx = c.x, hy = feet + 2.05, hz = c.z;
   const dx = hx - cp.x, dy = hy - cp.y, dz = hz - cp.z;
   const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
   const k = d > TAG_MAX_DIST ? TAG_MAX_DIST / d : 1;   // 远了就沿视线拉近，方向不变
@@ -3634,9 +3993,144 @@ function updateTag(dt, c, feet) {
   R.tagAcc = 0.25;
   const hd = Math.sqrt(dx * dx + dz * dz);
   drawTag((S.peerName || '队友') + (hd > 8 ? ' · ' + Math.round(hd) + ' m' : ''));
-  // 隔墙时名牌变淡：还能指路，但一眼看得出不在视线里
-  const blocked = has(BR.phys, 'los') && !BR.phys.los(cp.x, cp.y, cp.z, hx, feet + 1.6, hz);
+  // 隔墙时名牌变淡：还能指路，但一眼看得出不在视线里（护顶四周是空的，坐在叉车上的人隔着车身也看得见，不变淡）
+  const blocked = has(BR.phys, 'los') && !BR.phys.los(cp.x, cp.y, cp.z, lx, ly, lz);
   tag.material.opacity = blocked ? 0.45 : 0.95;
+}
+
+// ---------- 对方坐在叉车上（叉车驾驶 FE1） ----------
+// hazmat.glb 是一整块不带骨骼的模型，摆不了坐姿：对方姿态是 ['drive', 车 key] 时把它藏起来，换成 BR.arch.parts.hazmat
+// （程序化防化服，约 1k 面、带骨骼）摆坐姿，钉在 BR.vehicles.seatWorld(key) 上：身体朝车头，头按对方相机相对车转（±90°），
+// 双手握方向盘。制服色用对方的皮肤色，和 skin.apply 一样先转线性，和他走路时的 glb 制服看起来一样。下车切回 glb。
+// 名牌坐车时摆在座椅上方 1.2 m（护顶上面），视线检查对准 chestOf(对方)
+const SEAT_HIP_UP = 0.08;        // 米：胯骨在坐垫顶面上方这么高（坐垫压下去一点）
+const SEAT_LEAN = 0.42;          // 弧度：上身前倾，手够得着方向盘
+const SEAT_THIGH = 1.32;         // 弧度：大腿从竖直往前抬（接近水平，膝盖略低于胯），小腿竖直，脚落在驾驶舱地板上
+const SEAT_SPLAY = 0.08;         // 弧度：两膝略分开
+const SEAT_GRIP = Math.PI / 3;   // 双手握在方向盘靠司机一侧、左右各偏 60° 的地方（轮缘上 4 点、8 点）
+const SEAT_TAG_UP = 1.2;         // 米：坐车时名牌在座椅上方这么高
+const HEAD_YAW_MAX = Math.PI / 2;
+const IKV = {};
+function ikTmp() {
+  if (!IKV.down) {
+    const V3 = () => new THREE.Vector3(), Q = () => new THREE.Quaternion();
+    Object.assign(IKV, {
+      down: new THREE.Vector3(0, -1, 0), e: new THREE.Euler(0, 0, 0, 'YXZ'),
+      qS: Q(), qSi: Q(), qA: Q(), qAi: Q(), qH: Q(),
+      piv: V3(), sh: V3(), tg: V3(), dv: V3(), pole: V3(), u: V3(), el: V3(), f: V3(), l: V3(),
+    });
+  }
+  return IKV;
+}
+function linHex(hex) {
+  const c = new THREE.Color(hex);
+  const cm = THREE.ColorManagement;
+  if (!cm || cm.legacyMode !== false) c.convertSRGBToLinear();
+  return c.getHex();
+}
+function skinHex(key) { return has(BR.skin, 'color') ? BR.skin.color(key) : suitColor(key); }
+function seatDetail() { const s = BR.game && BR.game.settings; return s && s.quality === 'low' ? 'low' : 'high'; }
+function dropSeat() {
+  const st = R.seat;
+  if (!st) return;
+  R.seat = null;
+  if (st.g.parent) st.g.parent.remove(st.g);
+  try { if (st.mesh.skeleton) st.mesh.skeleton.dispose(); } catch (err) { /* 忽略 */ }
+  // 几何和材质是 BR.arch 的缓存（拟态实体也在用），不释放
+}
+function ensureSeat(hex, detail) {
+  if (R.seat && R.seat.hex === hex && R.seat.detail === detail) return R.seat;
+  const A = BR.arch, fn = A && A.parts && A.parts.hazmat;
+  const sig = hex + '|' + detail;
+  if (typeof fn !== 'function' || R.seatFail === sig) return null;
+  dropSeat();
+  let mesh = null;
+  try { mesh = fn(null, { color: hex, detail }); } catch (err) { warnOnce('seatAv', '坐姿人形建不出来', err); }
+  const rig = mesh && mesh.userData && mesh.userData.rig, dims = rig && rig.meta && rig.meta.dims;
+  const B = rig && rig.bones;
+  if (!B || !dims || !B.spine || !B.head || !B.armL || !B.foreL || !B.legL || !B.shinL) { R.seatFail = sig; return null; }
+  mesh.frustumCulled = false;   // 包围球按站姿算，坐姿时腿伸到前面去了
+  const g = new THREE.Group();
+  g.name = 'coop-peer-seat';
+  g.add(mesh);
+  R.obj.add(g);
+  R.seat = { g, mesh, rig, dims, hex, detail };
+  return R.seat;
+}
+// 两段 IK：肩 S（模型坐标）→ 手握点 tg，上臂长 a、前臂长 b；肘往外、往下、略往后。结果写进 arm / fore 两根骨骼（父骨骼是脊柱）
+function armIK(T, armB, foreB, side, a, b) {
+  const dv = T.dv.subVectors(T.tg, T.sh);
+  const dist = dv.length();
+  if (dist < 1e-4) return;
+  const dn = Math.min(Math.max(dist, Math.abs(a - b) + 1e-3), (a + b) * 0.999);
+  dv.multiplyScalar(1 / dist);
+  const cosA = Math.min(1, Math.max(-1, (a * a + dn * dn - b * b) / (2 * a * dn))), sinA = Math.sqrt(1 - cosA * cosA);
+  const pole = T.pole.set(side * 0.8, -1, 0.25).normalize();
+  pole.addScaledVector(dv, -pole.dot(dv));
+  if (pole.lengthSq() < 1e-6) pole.set(0, -1, 0);
+  pole.normalize();
+  const u = T.u.copy(dv).multiplyScalar(cosA).addScaledVector(pole, sinA).normalize();
+  const el = T.el.copy(T.sh).addScaledVector(u, a);
+  const f = T.f.copy(T.sh).addScaledVector(dv, dn).sub(el).normalize();
+  armB.quaternion.setFromUnitVectors(T.down, T.l.copy(u).applyQuaternion(T.qSi));
+  T.qA.multiplyQuaternions(T.qS, armB.quaternion);
+  T.qAi.copy(T.qA).invert();
+  foreB.quaternion.setFromUnitVectors(T.down, T.l.copy(f).applyQuaternion(T.qAi));
+}
+// 摆坐姿：回到绑定姿势 → 脊柱前倾、大腿抬平、小腿竖直、头按相对车的朝向转 → 两臂握方向盘
+function poseSeat(st, headYaw, pitch) {
+  const rig = st.rig, B = rig.bones, d = st.dims, H = d.H, T = ikTmp();
+  for (let i = 0; i < rig.list.length; i++) { const it = rig.list[i]; it.bone.rotation.set(0, 0, 0); it.bone.position.copy(it.rest); }
+  B.spine.rotation.set(-SEAT_LEAN, 0, 0);
+  for (const s of [-1, 1]) {
+    const L = s < 0 ? 'L' : 'R';
+    if (B['leg' + L]) B['leg' + L].rotation.set(SEAT_THIGH, 0, s * SEAT_SPLAY);
+    if (B['shin' + L]) B['shin' + L].rotation.set(-SEAT_THIGH, 0, 0);
+  }
+  T.qS.setFromEuler(T.e.set(-SEAT_LEAN, 0, 0, 'XYZ'));
+  T.qSi.copy(T.qS).invert();
+  // 头：模型坐标里先转 yaw 再抬 pitch（上身前倾不带着头歪）
+  T.qH.setFromEuler(T.e.set(U.clamp(pitch, -0.6, 0.6), U.clamp(headYaw, -HEAD_YAW_MAX, HEAD_YAW_MAX), 0, 'YXZ'));
+  B.head.quaternion.multiplyQuaternions(T.qSi, T.qH);
+  // 方向盘（车本地坐标）换到模型坐标：模型原点 = 座椅中心正下方、胯骨往下 hipY 的地方
+  const sw = geoF() && geoF().steerWheel, seat = geoPt('seat', 0, 1.16, 0.24);
+  const wy = sw && isNum(sw.y) ? sw.y : 1.25, wz = sw && isNum(sw.z) ? sw.z : -0.5;
+  const tilt = sw && isNum(sw.tilt) ? sw.tilt : 0.55, rr = sw && isNum(sw.r) ? sw.r : 0.16;
+  const cy = wy - (seat.y + SEAT_HIP_UP - d.hipY), cz = wz - seat.z;
+  const piv = T.piv.set(0, d.hipY + 0.08 * H, 0);
+  const shY = d.shoulderY - 0.01 * H, a = shY - d.elbowY, b = d.elbowY - (d.handY - 0.04 * H);
+  for (const s of [-1, 1]) {
+    const L = s < 0 ? 'L' : 'R';
+    if (!B['arm' + L] || !B['fore' + L]) continue;
+    T.sh.set(s * d.shoulderW, shY, 0).sub(piv).applyQuaternion(T.qS).add(piv);
+    T.tg.set(s * rr * Math.cos(SEAT_GRIP), cy - rr * Math.sin(SEAT_GRIP) * Math.sin(tilt), cz + rr * Math.sin(SEAT_GRIP) * Math.cos(tilt));
+    armIK(T, B['arm' + L], B['fore' + L], s, a, b);
+  }
+}
+// 对方正坐在哪台车上：{ key, x, y, z, yaw（座椅世界坐标和车的朝向）, cx, cy, cz（胸口）, real } | null
+function peerDriveKey() {
+  const pp = S.peerPose;
+  if (!pp || pp.mode !== 'drive' || !pp.key) return null;
+  return String(pp.key).replace(/^k:/, '');
+}
+function seatedPeer(c) {
+  const key = peerDriveKey();
+  if (!key) return null;
+  const Vh = V_();
+  let s = null;
+  if (has(Vh, 'seatWorld')) { try { s = Vh.seatWorld(key); } catch (err) { s = null; } }
+  let out;
+  if (s && isNum(s.x) && isNum(s.y) && isNum(s.z)) out = { key, x: s.x, y: s.y, z: s.z, yaw: isNum(s.yaw) ? s.yaw : c.yaw, real: true };
+  else {
+    // 本机还没登记这台车：按对方报的眼点往下推出座椅（坐着时 me 的 x/z 就是座椅）
+    const eye = geoPt('eye', 0, 1.8, 0.16), seat = geoPt('seat', 0, 1.16, 0.24);
+    out = { key, x: c.x, y: c.y - (eye.y - seat.y), z: c.z, yaw: c.yaw, real: false };
+  }
+  let ch = null;
+  if (out.real && has(Vh, 'chestOf')) { try { ch = Vh.chestOf(key); } catch (err) { ch = null; } }
+  const ok = ch && isNum(ch.x) && isNum(ch.y) && isNum(ch.z);
+  out.cx = ok ? ch.x : out.x; out.cy = ok ? ch.y : out.y + 0.5; out.cz = ok ? ch.z : out.z;
+  return out;
 }
 
 function updateAvatar(dt) {
@@ -3647,13 +4141,39 @@ function updateAvatar(dt) {
   if (!show) {
     if (R.obj) R.obj.visible = false;
     if (R.tag) R.tag.visible = false;
+    R.dbg = null;
     return;
   }
   ensureAvatar(scene);
   const skin = S.peerSkin || BR.DEFAULT_SKIN;
-  if (R.skinKey !== skin) { R.skinKey = skin; applySkin(R.obj, skin); }
+  if (R.skinKey !== skin) { R.skinKey = skin; applySkin(R.body, skin); }
   const prevX = R.obj.position.x, prevZ = R.obj.position.z;
   const c = sampleAt(t - INTERP_DELAY, R.cur);
+  const cam = BR.gfx && BR.gfx.camera;
+  const drv = seatedPeer(c);
+  if (drv) {
+    // 坐在叉车上：glb 藏起来，坐姿人形钉在驾驶座上
+    const st = ensureSeat(linHex(skinHex(skin)), seatDetail());
+    if (R.body) R.body.visible = false;
+    // 根节点（'coop-peer'）就摆在座椅（坐垫顶面中心）上，坐姿人形往下挪到胯骨落在坐垫上方 SEAT_HIP_UP
+    R.obj.position.set(drv.x, drv.y, drv.z);
+    R.obj.rotation.y = drv.yaw;
+    const headYaw = U.angleDiff(drv.yaw, c.yaw);
+    if (st) { st.g.position.set(0, SEAT_HIP_UP - st.dims.hipY, 0); st.g.visible = true; poseSeat(st, headYaw, c.pitch); }
+    R.obj.visible = !!st && !(cam && U.dist2(cam.position.x, cam.position.z, drv.x, drv.z) < HIDE_NEAR * HIDE_NEAR);
+    updateTag(dt, drv.x, drv.y + SEAT_TAG_UP, drv.z, drv.cx, drv.cy, drv.cz);
+    R.dbg = {
+      mode: 'drive', key: drv.key, real: drv.real, visible: R.obj.visible, seatModel: !!st,
+      seat: [r3(drv.x), r3(drv.y), r3(drv.z)], hips: [r3(drv.x), r3(drv.y + SEAT_HIP_UP), r3(drv.z)], yaw: r3(drv.yaw),
+      headYaw: r3(U.clamp(headYaw, -HEAD_YAW_MAX, HEAD_YAW_MAX)), skin, skinHex: skinHex(skin), suitHex: st ? st.hex : null,
+      tris: st ? Math.round((st.mesh.geometry.index ? st.mesh.geometry.index.count : st.mesh.geometry.attributes.position.count) / 3) : 0,
+      tag: R.tag ? { x: r3(R.tag.position.x), y: r3(R.tag.position.y), z: r3(R.tag.position.z), opacity: R.tag.material.opacity, at: [r3(drv.x), r3(drv.y + SEAT_TAG_UP), r3(drv.z)] } : null,
+      chest: [r3(drv.cx), r3(drv.cy), r3(drv.cz)],
+    };
+    return;
+  }
+  if (R.seat) R.seat.g.visible = false;
+  if (R.body) R.body.visible = true;
   const feet = c.y - eyeHeight();
   // 走动时轻微起伏，免得像雕像在地上滑
   const speed = dt > 0 ? Math.min(6, Math.sqrt(U.dist2(prevX, prevZ, c.x, c.z)) / dt) : 0;
@@ -3663,12 +4183,17 @@ function updateAvatar(dt) {
   R.obj.rotation.y = c.yaw;   // 与相机同一套 yaw：面朝 -Z 的模型直接用
   if (R.head) R.head.rotation.x = U.clamp(c.pitch, -0.6, 0.6);
   // 两人重叠时相机在对方模型里面，满屏是面罩内侧：贴得太近先不画人形，名牌照常显示
-  const cam = BR.gfx && BR.gfx.camera;
   R.obj.visible = !(cam && U.dist2(cam.position.x, cam.position.z, c.x, c.z) < HIDE_NEAR * HIDE_NEAR);
-  updateTag(dt, c, feet);
+  updateTag(dt, c.x, feet + 2.05, c.z, c.x, feet + 1.6, c.z);
+  R.dbg = {
+    mode: 'walk', visible: R.obj.visible, x: r3(c.x), y: r3(feet), z: r3(c.z), skin,
+    tag: R.tag ? { opacity: R.tag.material.opacity } : null,
+  };
 }
 
 function removeAvatar() {
+  dropSeat();
+  R.seatFail = '';
   if (R.obj && R.obj.parent) R.obj.parent.remove(R.obj);
   if (R.tag) {
     if (R.tag.parent) R.tag.parent.remove(R.tag);
@@ -3677,7 +4202,7 @@ function removeAvatar() {
   }
   disposeOwn();
   Object.assign(R, {
-    obj: null, head: null, model: false, loadingModel: false, skinKey: null,
+    obj: null, head: null, body: null, model: false, loadingModel: false, skinKey: null, dbg: null,
     tag: null, tagTex: null, tagCtx: null, tagText: '', lv: null, lastRecv: -1e9,
   });
   R.samples.length = 0;
@@ -3702,6 +4227,8 @@ function tick(dt) {
   }
   if (D.hud && !document.body.contains(D.hud)) buildHud();
   leaseTimers();
+  hostVehLease();
+  vehWarnTick();
   localHolds();
   netSends(dt);
   if (S.stReqLater && nowMs() - S.stReqAt >= ST_REQ_GAP_MS) requestState(S.stReqLater);
@@ -3800,12 +4327,12 @@ BR.coop = {
   on: onEvKind,            // on(kind, fn) → 取消函数：等于 BR.bus.on('net:'+kind, fn)
   leaseOf,                 // leaseOf(k) → 'me' | 'peer' | null
   requestGrab,             // requestGrab(k, kind, cb(ok, why)) → bool
-  release,                 // release(k, p) → bool
-  hand,                    // hand(k, x, y, z, a) / hand('k:'+key, x, z, yaw, steer, lift, tilt, spd)：拿着时每帧报位置
-  setPose,                 // setPose(mode, key)：'seat' | 'lie' | 'view' | 'drive'；'walk' 或空 = 清掉
+  release,                 // release(k, p) → bool（客机的 'k:' 租约已被房主按超时收走时也照发 rel，见 release 里的说明）
+  hand,                    // hand(k, x, y, z, a) / hand('k:'+key, x, z, yaw, steer, lift, tilt, spd, on?, hl?)：拿着时每帧报位置
+  setPose,                 // setPose(mode, key)：'seat' | 'lie' | 'view' | 'drive'；'walk' 或空 = 清掉。没设过时坐在叉车上自动按 ['drive', 车 key] 发
   use,                     // use(k, a, p, cb, x) → 结果对象（单机 / 房主）| null（客机，结果走 cb）
   onUse,                   // onUse(a, fn) → 取消函数：房主（单机）处理 use 的函数
-  can,                     // can(cap) → bool：'ev1' 拖动、'fx1' 使用请求与座位、'veh1' 载具、'camp1' 营地；单机恒为 true
+  can,                     // can(cap) → bool：'ev1' 拖动、'fx1' 使用请求与座位、'veh2' 叉车驾驶（'veh1' 已不代表能开车）、'camp1' 营地；单机恒为 true
   clock,                   // clock() → 秒：联机时以房主时钟为准（冷却 readyAt、开关 sinceClk、帐篷倒数 goAt 都用它）
   get peerPose() { return S.peerPose; },   // { mode, key } | null：对方姿态（这一阶段只收发）
   get peerCaps() { return S.peerCaps ? Array.from(S.peerCaps) : null; },
@@ -3821,7 +4348,16 @@ BR.coop = {
       evq: S.evq.length, peerN: Array.from(S.peerN), sentN: Array.from(S.sentN),
       stReady: Array.from(S.stReady.keys()), stBuf: S.stBuf ? [S.stBuf.got, S.stBuf.of] : null,
       taken: Array.from(S.taken, ([lv, s]) => [lv, s.size]), remoteTaken: Array.from(S.remoteTaken, ([lv, s]) => [lv, s.size]),
-      pose: S.myPose, peerPose: S.peerPose, peerH: S.peerH, clockOff: S.clkOff,
+      pose: myPoseNow(), peerPose: S.peerPose, peerH: S.peerH, clockOff: S.clkOff,
+      // 叉车（FE1）：每把 'k:' 租约 [k, by, pending, 最后位姿 {x,z,yaw,steer,lift,tilt,spd,on,t,by,lv} | null, 距今 ms]；
+      // vehResv = 房主给掉线司机留着的车 [k, 还留着吗]；avatar = 对方人形（坐车时 mode 'drive'：座椅、胯、名牌位置和透明度、制服色）
+      vehLeases: Array.from(S.holds).filter(([k]) => k[0] === 'k').map(([k, h]) => {
+        const l = S.vehLast.get(k);
+        return [k, h.by, !!h.pending, l ? Object.assign({}, l) : null, l ? Math.round(nowMs() - l.t) : null];
+      }),
+      vehLast: Array.from(S.vehLast, ([k, l]) => [k, Object.assign({}, l)]),
+      vehResv: Array.from(S.vehResv.keys()).map(k => [k, vehReserved(k)]),
+      avatar: R.dbg ? JSON.parse(JSON.stringify(R.dbg)) : null,
       voice: { vol: A.vol, gain: A.voice ? A.voice.gain.value : null, ctx: A.ctx ? A.ctx.state : null },
     };
   },

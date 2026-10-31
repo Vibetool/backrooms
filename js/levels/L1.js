@@ -571,6 +571,39 @@ function rackLoad(b, xc, y0, zc, W, D, hMax, level, s, r, st) {
   }
 }
 
+// 头顶条目（b.data.overhead，叉车升货叉 / 举着货叉开车时避让）：当前坐标系里 [x0, x1] × [z0, z1] 的矩形 → 世界坐标外接矩形，
+// y = 底面离地高（当前坐标系 y 已加上）。{ kind: 'beam'|'lamp'|'pipe'|'valve'|'gauge'|'tray'|'cable'|'drip'|'arch', minX, maxX, minZ, maxZ, y, … }。
+// 只在 buildChunk 的 env 上挂了 oh 才记（营地 BR.L1room 不记）；只读当前坐标系、不取随机数、两种画质一样
+const r4 = v => Math.round(v * 1e4) / 1e4;
+function ohAdd(b, env, kind, x0, x1, z0, z1, y, extra) {
+  if (!env || !env.oh) return;
+  const P = [b.world(x0, z0), b.world(x1, z0), b.world(x1, z1), b.world(x0, z1)];
+  const o = { kind, minX: r4(Math.min(P[0].x, P[1].x, P[2].x, P[3].x)), maxX: r4(Math.max(P[0].x, P[1].x, P[2].x, P[3].x)),
+    minZ: r4(Math.min(P[0].z, P[1].z, P[2].z, P[3].z)), maxZ: r4(Math.max(P[0].z, P[1].z, P[2].z, P[3].z)), y: r4(b._T.y + y) };
+  if (extra) Object.assign(o, extra);
+  env.oh.push(o);
+}
+// 车身高度上伸出来、却没有碰撞体的东西（柱脚、护角、墙上的消火栓箱 / 灭火器、Level 2 走廊口的管排和笼罩灯、通道里掉下来的纸箱、
+// 地牛的叉腿和把手、施工区的路锥和砂堆）：b.data.sideObs，叉车开车时当障碍（forklift.js sideList），人照旧挤得过去 ——
+// 原来就没有碰撞体，这里也不加 b.solid（golden 零变化）。
+// 当前坐标系里 [x0, x1] × [y0, y1] × [z0, z1] 的盒子 → { kind, cx, cz, hx, hz, rot, minX, maxX, minZ, maxZ, minY, maxY }（世界坐标：中心、
+// 半宽、绕 Y 的转角（转 90° 的倍数时折成 0、半宽对调），外接矩形，底 / 顶离地高）。round = true 时是竖直圆柱（cx, cz, r = 半宽，路锥、砂堆）。
+// 和 ohAdd 一样只在 buildChunk 的 env 上挂了 side 才记（营地 BR.L1room 不记）；只读当前坐标系、不取随机数、不改几何，高低画质一样
+function sideAdd(b, env, kind, x0, x1, y0, y1, z0, z1, round) {
+  if (!env || !env.side) return;
+  const T = b._T, c = b.world((x0 + x1) / 2, (z0 + z1) / 2);
+  let hx = Math.abs(x1 - x0) / 2, hz = Math.abs(z1 - z0) / 2;
+  const q = Math.round(T.rot / HALF_PI);
+  let rot = T.rot - q * HALF_PI;
+  if (q % 2) { const t = hx; hx = hz; hz = t; }
+  if (Math.abs(rot) < 1e-6) rot = 0;
+  const o = { kind, cx: r4(c.x), cz: r4(c.z), hx: r4(hx), hz: r4(hz), rot: r4(rot), minX: 0, maxX: 0, minZ: 0, maxZ: 0, minY: r4(T.y + Math.min(y0, y1)), maxY: r4(T.y + Math.max(y0, y1)) };
+  if (round) { o.round = true; o.r = r4(Math.max(hx, hz)); o.hx = o.hz = o.r; o.rot = 0; }
+  const ca = Math.abs(Math.cos(rot)), sa = Math.abs(Math.sin(rot)), ex = round ? o.r : hx * ca + hz * sa, ez = round ? o.r : hx * sa + hz * ca;
+  o.minX = r4(c.x - ex); o.maxX = r4(c.x + ex); o.minZ = r4(c.z - ez); o.maxZ = r4(c.z + ez);
+  env.side.push(o);
+}
+
 // =====================================================================
 // 结构：地面、楼板、梁、柱、主通道标线
 // =====================================================================
@@ -584,6 +617,8 @@ function buildShell(b, env) {
   for (const L of LINES) {
     bbox(b, SIZE / 2, H - BEAM_D, L, SIZE, BEAM_D, BEAM_W, bc, ['ny', 'pz', 'nz'], 0.035, 'all', 'L1:wall');
     bbox(b, L, H - BEAM_D, SIZE / 2, BEAM_W, BEAM_D, SIZE, bc, ['ny', 'px', 'nx'], 0.035, 'all', 'L1:wall');
+    ohAdd(b, env, 'beam', 0, SIZE, L - BEAM_W / 2, L + BEAM_W / 2, H - BEAM_D);
+    ohAdd(b, env, 'beam', L - BEAM_W / 2, L + BEAM_W / 2, 0, SIZE, H - BEAM_D);
   }
   // 主通道两侧的黄色标线（旧漆、断续）：区块边界两边各 4 m 是主通道，标线离柱线 0.8 m；十字路口处断开
   const lineCol = [0.8, 0.64, 0.16];
@@ -638,6 +673,7 @@ function buildPillar(b, x, z, env) {
     // 哥特段：八角柱（哥特式教堂常见的柱式）+ 八角柱础 + 喇叭口柱头
     const R = S * 0.56, RSEG = 8;
     b.cylinder(0, 0, 0, R + 0.13, 0.26, K, { segments: RSEG, caps: false, color: mulc(conc, 0.82), solid: false });
+    sideAdd(b, env, 'plinth', -(R + 0.13), R + 0.13, 0, 0.26, -(R + 0.13), R + 0.13);   // 八角柱础比柱身碰撞盒（±R）宽 13 cm
     const disc = [];
     for (let k = 0; k < RSEG; k++) { const a = k / RSEG * TAU; disc.push([Math.sin(a) * (R + 0.13), 0.26, Math.cos(a) * (R + 0.13)]); }
     facets(b, K, [disc], mulc(conc, 0.82), [0, 0, 0]);
@@ -654,6 +690,7 @@ function buildPillar(b, x, z, env) {
   // （柱脚只有 22 cm 高，竖棱看不太出来；只倒上棱 +8 面，全倒 +20 面 × 16 根，省下来给货物倒角）
   const h2 = S / 2, rp = S >= 0.8 ? 0.05 : 0.04;
   bbox(b, 0, 0, 0, S + 0.16, 0.22, S + 0.16, mulc(conc, 0.8), 'noBottom', 0.035, 'top', K);
+  sideAdd(b, env, 'plinth', -h2 - 0.08, h2 + 0.08, 0, 0.22, -h2 - 0.08, h2 + 0.08);   // 柱脚比柱身（碰撞体）每边宽 8 cm
   const round = bev(b, 0, 0, 0, S, H, S, K, { faces: 'sides', color: conc, solid: true, bevel: rp, bevelEdges: 'vertical' });
   // 下段刷漆 + 漆边一道深色线
   bbox(b, 0, 0.22, 0, S + 0.02, bandTop - 0.22, S + 0.02, paint, 'sides', round ? rp + 0.01 : 0, 'vertical', K);
@@ -692,7 +729,10 @@ function buildPillar(b, x, z, env) {
   }
   // 主通道边上的柱子：黄色护角 + 柱号牌（白底两道黑杠）。护角是包住柱角的角钢，只画朝外的两面（里面两面埋在柱身里）
   if (onAisle) {
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) dbox(b, sx * h2, 0.22, sz * h2, 0.075, 0.9, 0.075, C.yellow, [sx > 0 ? 'px' : 'nx', sz > 0 ? 'pz' : 'nz']);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      dbox(b, sx * h2, 0.22, sz * h2, 0.075, 0.9, 0.075, C.yellow, [sx > 0 ? 'px' : 'nx', sz > 0 ? 'pz' : 'nz']);
+      sideAdd(b, env, 'guard', sx * h2 - 0.0375, sx * h2 + 0.0375, 0.22, 1.12, sz * h2 - 0.0375, sz * h2 + 0.0375);   // 护角凸出柱面 3.75 cm
+    }
     const f = z === LINES[0] ? 2 : z === LINES[3] ? 0 : x === LINES[0] ? 3 : 1;
     b.push(0, 0, f * HALF_PI);
     sheet(b, 0, 2.05, h2 + 0.007, 0.34, 0.24, '+z', [0.92, 0.91, 0.86]);
@@ -736,6 +776,7 @@ function buildLamp(b, x, z, along, env, hs) {
     [[-0.65, LAMP_Y, 0.1], [0.65, LAMP_Y, 0.1], [0.65, LAMP_Y - 0.06, 0.17], [-0.65, LAMP_Y - 0.06, 0.17]],
     [[0.65, LAMP_Y, -0.1], [-0.65, LAMP_Y, -0.1], [-0.65, LAMP_Y - 0.06, -0.17], [0.65, LAMP_Y - 0.06, -0.17]],
   ], C.housing, [0, LAMP_Y + 0.5, 0]);
+  ohAdd(b, env, 'lamp', -0.65, 0.65, -0.17, 0.17, LAMP_Y - 0.06);   // 灯罩两侧反光翼的下沿最低（3.14）
   const lit = state !== 'broken';
   const base = lit ? C.tube : [0.2, 0.2, 0.2];
   const t1 = sheet(b, 0, LAMP_Y - 0.004, -0.045, 1.2, 0.035, 'down', base, 'kit:glow');
@@ -777,24 +818,37 @@ function buildPipes(b, env) {
       // 当前坐标系：管子沿本地 +x 从 0 到 32（axis z 时转了 −90°，本地 x → 世界 +z）
       b.cylinder(SIZE / 2, y, 0, P.r, SIZE, 'kit:prop', { axis: 'x', segments: 8, caps: false, color: P.color, solid: false, uv: 'stretch' });
       if (P.twin) b.cylinder(SIZE / 2, y + 0.02, 0.24, P.r * 0.55, SIZE, 'kit:prop', { axis: 'x', segments: 6, caps: false, color: mulc(P.color, 0.8), solid: false, uv: 'stretch' });
+      // 头顶条目：管身（sub 'main'，和 pipeLines 一一对应）、并排的细管、托码（比管底再低 2 cm）、法兰、阀门手轮、压力表
+      const li = { axis, idx: axis === 'x' ? b.cz : b.cx, pos: P.pos, r: P.r };
+      ohAdd(b, env, 'pipe', 0, SIZE, -P.r, P.r, y - P.r, Object.assign({ sub: 'main' }, li));
+      if (P.twin) ohAdd(b, env, 'pipe', 0, SIZE, 0.24 - P.r * 0.55, 0.24 + P.r * 0.55, y + 0.02 - P.r * 0.55, Object.assign({ sub: 'twin' }, li));
       // 吊杆 + 托码：每 8 m 一副（躲开柱线上的主梁）
       for (let k = 0; k < 4; k++) {
         const ax = 2 + k * 8;
         dbox(b, ax, y + P.r, 0, 0.02, H - y - P.r, 0.02, C.rod, 'sides');
         dbox(b, ax, y - P.r - 0.02, 0, 0.04, 0.02, P.r * 2 + 0.06, C.rod, ['ny', 'pz', 'nz']);
+        ohAdd(b, env, 'pipe', ax - 0.02, ax + 0.02, -P.r - 0.03, P.r + 0.03, y - P.r - 0.02, Object.assign({ sub: 'clamp' }, li));
       }
-      for (const fx of [0.05, 16]) b.cylinder(fx, y, 0, P.r * 1.45, 0.05, 'kit:prop', { axis: 'x', segments: 8, caps: false, color: mulc(P.color, 0.75), solid: false, uv: 'stretch' });
-      // 阀门手轮
+      for (const fx of [0.05, 16]) {
+        b.cylinder(fx, y, 0, P.r * 1.45, 0.05, 'kit:prop', { axis: 'x', segments: 8, caps: false, color: mulc(P.color, 0.75), solid: false, uv: 'stretch' });
+        ohAdd(b, env, 'pipe', fx - 0.025, fx + 0.025, -P.r * 1.45, P.r * 1.45, y - P.r * 1.45, Object.assign({ sub: 'flange' }, li));
+      }
+      // 阀门手轮（手轮是竖轴圆柱：底在 y − r − 0.19、厚 3 cm、半径 12 cm）
       const vx = 4 + P.valve * 8;
       stick(b, [vx, y - P.r, 0], [vx, y - P.r - 0.16, 0], 0.018, C.steel);
       b.cylinder(vx, y - P.r - 0.19, 0, 0.12, 0.03, 'kit:prop', { segments: 8, caps: false, color: C.red, solid: false, uv: 'stretch' });
-      if (gauges && P === lines[0]) for (const gx of [7, 23]) gauge(b, gx, y - P.r, P.r);
+      ohAdd(b, env, 'valve', vx - 0.12, vx + 0.12, -0.12, 0.12, y - P.r - 0.19, li);
+      if (gauges && P === lines[0]) for (const gx of [7, 23]) {
+        gauge(b, gx, y - P.r, P.r);
+        ohAdd(b, env, 'gauge', gx - 0.08, gx + 0.08, -0.031, 0.031, y - P.r - 0.35, li);   // 表盘中心在管底下 0.27、半径 8 cm
+      }
       b.pop();
     }
   }
   // 电缆桥架：沿主通道（区块本地 z=1.6）走 x 方向，全层每块同一位置 → 连续
   const ty = 3.35;
   dbox(b, SIZE / 2, ty, 1.6, SIZE, 0.02, 0.32, C.galv, ['py', 'ny'], 'kit:prop');
+  ohAdd(b, env, 'tray', 0, SIZE, 1.6 - 0.1675, 1.6 + 0.1675, ty);
   for (const s of [-1, 1]) dbox(b, SIZE / 2, ty, 1.6 + s * 0.16, SIZE, 0.08, 0.015, C.galv, ['pz', 'nz', 'py']);
   b.cylinder(SIZE / 2, ty + 0.05, 1.54, 0.025, SIZE, 'kit:prop', { axis: 'x', segments: 5, caps: false, color: C.dark, solid: false, uv: 'stretch' });
   b.cylinder(SIZE / 2, ty + 0.045, 1.66, 0.02, SIZE, 'kit:prop', { axis: 'x', segments: 5, caps: false, color: [0.5, 0.14, 0.1], solid: false, uv: 'stretch' });
@@ -802,6 +856,7 @@ function buildPipes(b, env) {
     const tx = 2 + k * 8;
     for (const s of [-1, 1]) dbox(b, tx, ty + 0.08, 1.6 + s * 0.17, 0.015, H - ty - 0.08, 0.015, C.rod, 'sides');
     dbox(b, tx, ty - 0.03, 1.6, 0.04, 0.03, 0.4, C.rod, ['ny', 'px', 'nx']);   // 桥架底下的横担
+    ohAdd(b, env, 'tray', tx - 0.02, tx + 0.02, 1.4, 1.8, ty - 0.03, { sub: 'hanger' });
   }
 }
 // 压力表：管底伸下一截短管，表盘朝两侧（白色表面微微发亮 + 黑指针）
@@ -1024,7 +1079,11 @@ function rackBay(b, bay, r, env, cap) {
     }
   });
   // 通道里偶尔掉下来的一个纸箱 / 一滩水
-  if (r() < 0.3) { const sx = r() < 0.5 ? -1 : 1; cartonBlock(b, (r() - 0.5) * 4, 0, sx * 2.1, 0.55, 0.4, 0.45, 1, 1, r() * 3, r); }
+  if (r() < 0.3) {
+    const sx = r() < 0.5 ? -1 : 1, cx = (r() - 0.5) * 4, crot = r() * 3;   // 取数顺序同原来（x、转角，再是 cartonBlock 里的）
+    cartonBlock(b, cx, 0, sx * 2.1, 0.55, 0.4, 0.45, 1, 1, crot, r);
+    b.push(cx, sx * 2.1, crot); sideAdd(b, env, 'carton', -0.275, 0.275, 0, 0.4, -0.225, 0.225); b.pop();
+  }
   if (r() < 0.2) { const px = (r() - 0.5) * 5, pz = (r() < 0.5 ? -1 : 1) * 2.6; kitPuddle(b, px, pz, { rx: 0.7, rz: 0.4, y: 0.009 }); markPuddle(b, px, pz); }
   b.pop();
 }
@@ -1133,13 +1192,16 @@ function stackLot(b, x, z, rot, kind, r, env) {
   return top;
 }
 
-// 地上的零碎：木块、包装泡沫、金属残骸（依据：architecture「地板散落木头碎块、包装材料、金属残骸」）
-function scatterDebris(b, r, n, span) {
+// 地上的零碎：木块、包装泡沫、金属残骸（依据：architecture「地板散落木头碎块、包装材料、金属残骸」）。
+// skip(x, z, rad)：返回 true 的那一片不画（出生保底车占地外扩 0.2 m 以内的），随机数照取 —— 后面几片的位置不变
+function scatterDebris(b, r, n, span, skip) {
   for (let q = 0; q < n; q++) {
     const x = (r() - 0.5) * 2 * span, z = (r() - 0.5) * 2 * span, k = r(), a = r() * Math.PI;
-    if (k < 0.4) dbox(b, x, 0, z, 0.3 + r() * 0.3, 0.024, 0.08, [0.55, 0.42, 0.27], 'noBottom', null, a);   // 2.4 cm 厚：顶面不和路锥底座（3 cm）共面
-    else if (k < 0.7) sack(b, x, 0, z, 0.25, 0.08, 0.2, a, [0.85, 0.85, 0.82]);
-    else stick(b, [x, 0.02, z], [x + Math.cos(a) * 0.5, 0.02, z + Math.sin(a) * 0.5], 0.012, [0.38, 0.33, 0.3]);
+    if (k < 0.4) {
+      const len = 0.3 + r() * 0.3;
+      if (!(skip && skip(x, z, Math.hypot(len / 2, 0.04)))) dbox(b, x, 0, z, len, 0.024, 0.08, [0.55, 0.42, 0.27], 'noBottom', null, a);   // 2.4 cm 厚：顶面不和路锥底座（3 cm）共面
+    } else if (k < 0.7) { if (!(skip && skip(x, z, Math.hypot(0.125, 0.1)))) sack(b, x, 0, z, 0.25, 0.08, 0.2, a, [0.85, 0.85, 0.82]); }
+    else if (!(skip && skip(x + Math.cos(a) * 0.25, z + Math.sin(a) * 0.25, 0.262))) stick(b, [x, 0.02, z], [x + Math.cos(a) * 0.5, 0.02, z + Math.sin(a) * 0.5], 0.012, [0.38, 0.33, 0.3]);
   }
 }
 // 记下水坑的世界坐标，供 level.update 做「靠近未密封水坑」接触判定（hazards：爬菌经未密封液体传播）
@@ -1156,13 +1218,24 @@ function openBayExits(b, bay, r, env) {
   bay.exits.forEach((def, q) => placeFloorExit(b, def, spots[q][0], spots[q][1], [0, HALF_PI, Math.PI, -HALF_PI][Math.floor(bay.vroll * 4)], r, env));
   b.pop();
 }
-// fill：没有出口的空地上摆一样东西（车位线/地牛/空托盘垛/叉车），再加水坑、油渍、碎屑
+// fill：没有出口的空地上摆一样东西（车位线/地牛/空托盘垛/叉车），再加水坑、油渍、碎屑。
+// 出生保底（keyDecisions[3]，bay.forceFk：只有 L1 正常生成的出生块 (0,0) 中间柱间，工坊、营地不走）：这个柱间永远有一台叉车。
+// 不看 cap 闸门；k 落在叉车区间、而且本来就放得下（triCount < cap）就照旧走 forklift()（种子 12345 就是这样，逐字节不变）；
+// 否则排在车位线 / 地牛 / 托盘垛之前，按叉车分支同样的公式取 4 次随机数，放一台保底车（forcedForklift）。后面的碎屑躲开它
 function openBay(b, bay, r, env, cap) {
   b.push(bay.x, bay.z, 0);
-  if (!bay.exits.length && triCount(b) < cap) {
+  const force = !!bay.forceFk, tri0 = triCount(b), under = tri0 < cap;
+  let forced = null;
+  if (!bay.exits.length && (force || under)) {
     const k = r();
-    if (env.sector === 'tianying' && k < 0.6) parkingLines(b, r);
-    else if (k < 0.28) palletJack(b, (r() - 0.5) * 3, (r() - 0.5) * 3, r() * TAU);
+    const fkK = env.sector === 'tianying' ? k >= 0.6 && k < 0.62 : k >= 0.5 && k < 0.62;
+    if (force && !(fkK && under)) {
+      const fx = (r() - 0.5) * 2, fz = (r() - 0.5) * 2, frot = Math.floor(r() * 4) * HALF_PI + (r() - 0.5) * 0.3;
+      forcedForklift(b, fx, fz, frot);
+      forced = fkFootprintHit(fx, fz, frot, 0.2);
+    }
+    else if (env.sector === 'tianying' && k < 0.6) parkingLines(b, r);
+    else if (k < 0.28) palletJack(b, (r() - 0.5) * 3, (r() - 0.5) * 3, r() * TAU, env);
     else if (k < 0.5) {
       const lx = (r() - 0.5) * 2.5, lz = (r() - 0.5) * 2.5;
       const hgt = stackLot(b, lx, lz, r() * 0.3, 'pallets', r, env);
@@ -1192,7 +1265,8 @@ function openBay(b, bay, r, env, cap) {
         rot: -h0[2] * TAU, color: 0x161412, opacity: 0.3, offset: FLOOR_DECAL }, 0, null, true);
     }
   }
-  if (triCount(b) < cap) scatterDebris(b, r, 4, 3.4);
+  if (triCount(b) < cap) scatterDebris(b, r, 4, 3.4, forced);
+  if (force) b.data.spawnBay = { tri: Math.round(tri0), cap: Math.round(cap), forced: !!forced };   // 自测用：进柱间时的面数、闸门
   b.pop();
 }
 // 天鹰段"更像停车场"：地上一排白色车位线 + 车轮挡（原文 wikidot 没有车辆，只留线）
@@ -1205,8 +1279,12 @@ function parkingLines(b, r) {
   }
 }
 // 手动液压搬运车（地牛）
-function palletJack(b, x, z, rot) {
+function palletJack(b, x, z, rot, env) {
   b.push(x, z, rot);
+  // 碰撞体只是车头下面 1 m 见方、0.3 m 高的一块（轴对齐，不跟着转）：叉腿、泵体、拉杆和把手按地牛自己的朝向另记
+  const n0 = env && env.side ? env.side.length : 0;
+  sideAdd(b, env, 'jack', -0.36, 0.36, 0, 0.08, -0.55, 0.775);
+  sideAdd(b, env, 'jack', -0.36, 0.36, 0, 1.17, -0.74, -0.35);
   for (const s of [-0.28, 0.28]) dbox(b, s, 0.03, 0.2, 0.16, 0.05, 1.15, [0.75, 0.2, 0.12], 'noBottom');
   dbox(b, 0, 0.03, -0.45, 0.72, 0.2, 0.2, [0.75, 0.2, 0.12], 'noBottom');
   b.cylinder(0, 0.23, -0.45, 0.07, 0.25, 'kit:prop', { segments: 8, caps: false, color: C.steel, solid: false, uv: 'stretch' });
@@ -1215,6 +1293,17 @@ function palletJack(b, x, z, rot) {
   for (const s of [-1, 1]) b.cylinder(s * 0.2, 0.08, -0.45, 0.08, 0.05, 'kit:prop', { axis: 'x', segments: 8, color: C.dark, solid: false, uv: 'stretch' });
   b.pop();
   b.solid(x - 0.5, 0, z - 0.5, x + 0.5, 0.3, z + 0.5);
+  // FE1 返修 r3：那块老碰撞体（人照旧被它挡，golden 不动）的世界坐标记在这台地牛的两个 sideObs 条目上（同一个数组）——
+  // 叉车开车、升降、甩货时跳过它（phys opts.skipBoxes），按地牛的真实形状挡，不在离地牛一拃远的空地上「哐」地停住
+  if (env && env.side && env.side.length === n0 + 2) {
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const [qx, qz] of [[x - 0.5, z - 0.5], [x + 0.5, z - 0.5], [x + 0.5, z + 0.5], [x - 0.5, z + 0.5]]) {
+      const w = b.world(qx, qz);
+      x0 = Math.min(x0, w.x); x1 = Math.max(x1, w.x); z0 = Math.min(z0, w.z); z1 = Math.max(z1, w.z);
+    }
+    const y0 = b._T.y, solid = [r4(x0), r4(y0), r4(z0), r4(x1), r4(y0 + 0.3), r4(z1)];
+    env.side[n0].solid = env.side[n0 + 1].solid = solid;
+  }
 }
 // ---------- 叉车 ----------
 // 用户 2026-10-02：「level1 的叉车车身细节不够」→ 照仓库里最常见的平衡重式叉车（内燃 · 液化气）重做；紧接着又要「叉车能开、能举东西」——
@@ -1260,11 +1349,65 @@ const FORKLIFT_GEO = {
   eye: { x: 0, y: 1.8, z: 0.16 },           // 司机眼点
   guardTop: 2.1,                            // 护顶架顶
   half: { x: 0.6, z: 1.3, h: 2.15 },        // 碰撞盒半宽 / 半长 / 高（车身，不含伸到前面的货叉）
+  // ---- 开车用（FE1）----
+  maxSteer: 1.13,                           // 后轮最大转角（65°）。可动模型（drive）的底盘、配重下半截在后轮里侧让开，打满也不插进车身
+  forkW: 0.1, forkT: 0.04,                  // 每根货叉宽、厚（水平段：叉面 = forkY + forkT = 0.055，lift = 0）
+  forkZ: [-2.1, -1.16],                     // 货叉水平段 z 范围（叉尖 → 竖直段前面）
+  tineX: [-0.28, 0.28],                     // 两根货叉中线 x
+  backrestH: 1.16,                          // 挡货架顶比货叉架下横梁底高多少（lift = 0：0.08 → 1.24；升满 1.24 + 2.6 = 3.84）
+  carriageTravel: 2.6,                      // 货叉架最大升程（= 2 × innerTravel）
+  // 升降杆（part 'liftLever' = 仪表台右边第一根操纵杆）：绕过 pivot、沿 axis 的轴转 lever 弧度，lever ∈ [−travel, travel]；
+  // lever > 0 杆头往车尾扳（升货叉），< 0 往前推（降）。pivot.x 跟着杆数变（3 根时 0.17，其余 0.19），绕 x 轴转与 x 无关
+  liftLever: { pivot: { x: 0.19, y: 1.02, z: -0.72 }, axis: [1, 0, 0], travel: 0.35 },
+  // 能上车的侧面区（本地坐标）：|x| ≥ xMin、z0 ≤ z ≤ z1（前轮前沿到后轮后沿之间），并且离座椅 (0, seat.z) 的平面距离 ≤ reach。
+  // 在货叉前面（z < z0）或车尾后面（z > z1）：「绕到侧面上车」；在侧面但离座椅 > reach：「再走近一点」
+  mountZone: { xMin: 0.6, z0: -0.95, z1: 1.05, reach: 1.5 },
+  stepPoint: { x: 0.75, y: 0.35, z: -0.19 },  // 上下车眼点路径的中间点：踏板外侧（x 取 ±，y 是在站立眼高上再抬的高度）
+  exitSide: { x: 1.0, z: 0.24 },            // 侧面下车落点：座椅两侧外 1.0 m（x 取 ±；人的半径 0.3，离车身侧面 ≥ 10 cm）
+  exitRear: { x: 0, z: 1.75 },              // 车尾下车落点：配重后面 0.5 m
+  // 驾驶舱留空（本地坐标，这里面没有任何碰撞盒）：脚下 = |x| ≤ x、z0 ≤ z ≤ zHood、yFloor ≤ y ≤ yTop；
+  // 座椅上方 = |x| ≤ x、zHood ≤ z ≤ z1、ySeat ≤ y ≤ yTop（zHood 是发动机盖前脸，座椅、方向盘、操纵杆都在留空里，不算碰撞）
+  cab: { x: 0.4, z0: -0.5, z1: 0.55, zHood: -0.1, yFloor: 0.62, ySeat: 1.16, yTop: 2.05 },
+  seatChest: { x: 0, y: 1.66, z: 0.24 },    // 坐着的人的胸口（怪看坐着的人、名牌视线检查都对准这里）
+  // 14 个部件碰撞盒（本地坐标，绕 y 不转）：{ name, cx, cy, cz, hx, hy, hz }。尺寸取各部件实际顶点（6 档并起来）的包围盒，
+  // 再让开驾驶舱留空（底盘顶压到 yFloor、护顶底抬到 yTop）；内门架整体 +pose.inner，货叉架、两根货叉 +pose.carriage。
+  // 链条算进内门架，前轮算进底盘，后轮算进配重，后视镜（只有 high 档的一块小镜子）不算。tests/forklift_l1.mjs 对照实际顶点
+  obbs(lift) {
+    const ps = FORKLIFT_GEO.pose(lift);
+    return FK_OBB.map(([name, x0, x1, y0, y1, z0, z1, m]) => {
+      const dy = m === 1 ? ps.inner : m === 2 ? ps.carriage : 0;
+      return { name, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 + dy, cz: (z0 + z1) / 2, hx: (x1 - x0) / 2, hy: (y1 - y0) / 2, hz: (z1 - z0) / 2 };
+    });
+  },
   pose(lift) {
     const d = Math.max(0, Math.min(1, +lift || 0)) * FORKLIFT_GEO.innerTravel;
     return { inner: d, carriage: 2 * d };
   },
 };
+// 部件碰撞盒：[名字, x0, x1, y0, y1, z0, z1, 跟谁动（0 不动、1 内门架、2 货叉架）]（lift = 0）
+const FK_OBB = [
+  // 底盘、侧裙、踏板、地台、前翼子板、前轮。顶压到驾驶舱地台 0.62：前翼子板顶面（0.665）有 4.5 cm 不在盒子里 ——
+  // 一个轴对齐的盒子没法只在两边抬高，人和怪在这个高度早被盒子侧面挡住了；往后只到 0.56，后面那段（后轮、窄底盘）归配重盒
+  ['chassis', -0.595, 0.595, 0, 0.62, -0.935, 0.56, 0],
+  ['hood', -0.535, 0.535, 0.4, 1.0, -0.1, 0.56, 0],              // 发动机盖 + 百叶、车身编号
+  // 配重后脸是圆角的：中间那块（|x| ≤ 0.3）伸到 1.253–1.295，两角收到 1.14–1.21。后脸压在 1.276 —— 人从后角斜着走过来离模型 ≤7 cm，
+  // 中间凸出来的那一点（mid 0.3 cm、high 档 1.9 cm，|x| ≤ 0.3、离地 0.12–1.09）不在盒子里，人和东西顶多压进去这么多（<2 cm）
+  ['counterweight', -0.55, 0.55, 0, 1.475, 0.56, 1.276, 0],      // 配重上下两截、后轮、气瓶、尾灯、牵引销
+  ['dash', -0.475, 0.475, 0.58, 1.02, -0.8, -0.56, 0],           // 仪表台 + 铭牌（操纵杆、转向柱在驾驶舱里）
+  ['postFL', -0.47, -0.39, 0.99, 2.07, -0.75, -0.52, 0],         // 左前立柱 + 大灯 + 扶手
+  ['postFR', 0.39, 0.47, 0.99, 2.07, -0.75, -0.52, 0],
+  ['postRL', -0.455, -0.405, 1.08, 2.07, 0.5, 0.65, 0],
+  ['postRR', 0.405, 0.455, 1.08, 2.07, 0.5, 0.65, 0],
+  ['roof', -0.46, 0.46, 2.05, 2.2, -0.62, 0.58, 0],              // 护顶边梁、横梁、格栅、警示灯（底抬到驾驶舱顶 2.05）
+  ['mastOuter', -0.45, 0.45, 0.06, 2.06, -1.06, -0.8, 0],        // 外门架 + 耳座 + 起升油缸缸筒 + 底座
+  ['mastInner', -0.315, 0.315, 0.1, 2.125, -1.053, -0.83, 1],    // 内门架 + 活塞杆、杆头、链轮 + 链条
+  ['carriage', -0.46, 0.46, 0.015, 1.24, -1.16, -1.035, 2],      // 货叉架、挡货架、滚轮架、货叉竖直段和挂钩
+  ['forkL', -0.33, -0.23, 0.015, 0.055, -2.1, -1.16, 2],         // 货叉水平段
+  ['forkR', 0.23, 0.33, 0.015, 0.055, -2.1, -1.16, 2],
+];
+(function deepFreeze(o) { Object.freeze(o); for (const k of Object.keys(o)) if (o[k] && typeof o[k] === 'object' && !Object.isFrozen(o[k])) deepFreeze(o[k]); })(FORKLIFT_GEO);
+for (const r of FK_OBB) Object.freeze(r);
+Object.freeze(FK_OBB);
 const FK = {
   body: [0.86, 0.66, 0.12], chassis: [0.15, 0.15, 0.16], cw: [0.17, 0.17, 0.18], black: [0.07, 0.07, 0.075],
   mast: [0.12, 0.12, 0.13], mastIn: [0.16, 0.16, 0.17], fork: [0.22, 0.22, 0.23], tire: [0.1, 0.1, 0.1], lug: [0.055, 0.055, 0.055],
@@ -1310,6 +1453,15 @@ FK_LOD.lite = Object.assign({}, FK_LOD.low, { bev: true, ch: 0.02, cwC: 0.03, ha
 FK_LOD.lowb = Object.assign({}, FK_LOD.low, { trim: true, cw: 6, wr: [6, 1], ring: [6, 2], digits: 1, tank: 6, slats: 0, back: [], levers: 0 });
 FK_LOD.min = Object.assign({}, FK_LOD.lowb, { wf: [6, 1], louvers: 0, digits: 0, lampF: null,
   cyl: 0, rods: false, column: 3, backChain: false, sprocket: 0, axle: false, heads: false, tilt: 0 });
+// drvLow：低画质下开过的车（载具网格里）一律用这一档 = lite 去掉倒角和贴花（不调 _bevelBox、端面斜角 0、没有磨损），
+// 也就是 low 加上扶手、安全带、倾斜油缸耳座，没有 trim 砍掉的面（坐在驾驶位四周看不到穿帮的缝）。只配 drive:true 用
+FK_LOD.drvLow = Object.assign({}, FK_LOD.lite, { bev: false, ch: 0, cwC: 0, decals: 0 });
+for (const k in FK_LOD) Object.freeze(FK_LOD[k]);
+Object.freeze(FK_LOD);
+// 可动模型（drive）让开后轮转向的尺寸：底盘从 chassisZ 往后收窄到半宽 chassisHalf；配重下半截前脸挪到 cwFront。
+// 后轮转向扫过的圆：主销 (±0.44, z 0.8)，半径 sqrt(0.08² + 0.23²) = 0.2435（低档胎面在 ±0.08）；打满 maxSteer 时胎面最里 x = 0.1978、
+// 最前 z = 0.5565、最后 z = 1.0435 → 三处各留 1.2–1.7 cm
+const FK_DRV = Object.freeze({ chassisZ: 0.54, chassisHalf: 0.185, cwFront: 1.06 });
 
 // ---- 叉车用的几何小工具（全部进 kit:prop、不出碰撞体）----
 // 倒角盒：这一档要倒角时直接走 kit 的切角实现（叉车在整块最后按剩余额度挑档，不再看 DETAIL_TRI_CAP）
@@ -1377,14 +1529,16 @@ function fkOffsetLine(P, t, toward) {
   });
 }
 // 两点间的圆管（油缸、活塞杆、转向柱、软管、气瓶）：侧面法线光滑；o.r1 = B 端半径（锥台），o.cap0 / o.cap1 = 画 A / B 端的盖；
-// o.arc = [k0, k1]：只画第 k0..k1 段（箍带只包气瓶露在外面的上半圈）。第 k 段从 e1 转到 e2，管轴接近水平时 e1 = 轴 × 竖直、e2 = 轴 × e1
+// o.arc = [k0, k1]：只画第 k0..k1 段（箍带只包气瓶露在外面的上半圈）。第 k 段从 e1 转到 e2，管轴接近水平时 e1 = 轴 × 竖直、e2 = 轴 × e1。
+// o.mat：材质累加器（缺省 kit:prop；可动模型的警示灯罩放进 kit:glow）
 function fkTube(b, A, B, r, seg, color, o) {
   o = o || {};
   const d = norm3(sub3(B, A)), up = Math.abs(d[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
   const e1 = norm3(cross3(d, up)), e2 = cross3(d, e1), r1 = o.r1 != null ? o.r1 : r, n = seg || 8;
   const k0 = o.arc ? o.arc[0] : 0, k1 = o.arc ? o.arc[1] : n;
   const dir = k => { const a = k / n * TAU, c = Math.cos(a), s = Math.sin(a); return [e1[0] * c + e2[0] * s, e1[1] * c + e2[1] * s, e1[2] * c + e2[2] * s]; };
-  return b._piece('kit:prop', 0, 0, 0, 0, (v, t) => {
+  const mk = o.mat || 'kit:prop';
+  return b._piece(mk, 0, 0, 0, 0, (v, t) => {
     for (let k = k0; k <= k1; k++) {
       const m = dir(k);
       v(A[0] + m[0] * r, A[1] + m[1] * r, A[2] + m[2] * r, m[0], m[1], m[2], 0, 0);
@@ -1399,7 +1553,7 @@ function fkTube(b, A, B, r, seg, color, o) {
       for (let k = 1; k + 1 < n; k++) if (sgn > 0) t(base, base + k, base + k + 1); else t(base, base + k + 1, base + k);
       base += n;
     }
-  }, { color, uv: 'stretch', solid: false });
+  }, { color, uv: mk === 'kit:glow' ? 'solid' : 'stretch', solid: false });
 }
 // 竖直的圆管（警示灯、链轮）：底面圆心 (x, y, z)、高 h；caps 同 fkTube
 function fkPost(b, x, y, z, r, h, seg, color, o) { return fkTube(b, [x, y, z], [x, y + h, z], r, seg, color, o); }
@@ -1495,10 +1649,22 @@ function fkNumber(b, num, side, xs, zc, y0, H, color) {
 }
 
 // ---- 车身（不动的部分）----
-function fkBody(b, L, o) {
-  const G = FORKLIFT_GEO, K = FK, WF = G.wheelFront, M = !!L.trim;
+// w = { body: 画车身, lever: 画升降杆（第一根操纵杆，part 'liftLever'）, drive: 可动模型, levers: 操纵杆根数, seg: 分段标记（测试量部件包围盒用，不加几何）}。
+// part='all'（drive 不开）时照原来的位置、原来的顺序画，顶点逐位不变；drive 的改动见 forkliftModel 前面的说明
+function fkBody(b, L, o, w) {
+  const G = FORKLIFT_GEO, K = FK, WF = G.wheelFront, M = !!L.trim, B = w.body, D = w.drive, S = w.seg;
+  if (B) {
+  S('chassis');
   // 底盘（深灰）：前脸 z = −0.80（外门架底座贴在这里）。顶面全被地台 / 发动机盖盖住、后头埋进配重，只画两侧和前脸
-  dbox(b, 0, 0.12, 0.13, 0.68, 0.46, 1.86, K.chassis, ['px', 'nx', 'nz']);
+  if (!D) dbox(b, 0, 0.12, 0.13, 0.68, 0.46, 1.86, K.chassis, ['px', 'nx', 'nz']);
+  else {
+    // 可动模型：后轮打方向扫过的圆柱（主销 (±0.44, z 0.8)、半径 0.244、高 0–0.46）里让开 ——
+    // 底盘 z 0.54 往后那段在两后轮里侧收窄到半宽 FK_DRV.chassisHalf（打满 maxSteer 时胎面最里 x ≈ 0.198，留 1 cm 以上）
+    const Z0 = -0.8, ZA = FK_DRV.chassisZ, Z1 = 1.06, hw = FK_DRV.chassisHalf;
+    dbox(b, 0, 0.12, (Z0 + ZA) / 2, 0.68, 0.46, ZA - Z0, K.chassis, ['px', 'nx', 'nz']);
+    for (const s of [-1, 1]) sheet(b, s * (0.34 + hw) / 2, 0.12, ZA, 0.34 - hw, 0.46, '+z', K.chassis);   // 收窄处朝后的台阶面
+    dbox(b, 0, 0.12, (ZA + Z1) / 2, 2 * hw, 0.46, Z1 - ZA, K.chassis, ['px', 'nx']);
+  }
   for (const s of [-1, 1]) {
     // 侧裙（踏板下面那段车身）：外侧、顶、前、后四面，顶上一圈棱倒 3 cm
     fkBox(b, L, s * 0.445, 0.14, 0.12, 0.21, 0.26, 0.84, K.body, M ? [s > 0 ? 'px' : 'nx', 'py'] : [s > 0 ? 'px' : 'nx', 'py', 'pz', 'nz'], 0.03, 'top');
@@ -1520,6 +1686,7 @@ function fkBody(b, L, o) {
     }
     if (L.fendP) fkPrism(b, [[FI[0][0], 0.33], FI[0], FI[1], FI[2], FI[3], [FI[3][0], 0.33]], 'x', s * 0.355, s * 0.375, K.chassis, { skip: [1, 2, 3], cap0: false });
   }
+  S('dash');
   // 仪表台（前围）：上半截宽到 ±0.47、坐在两边翼子板上（前立柱脚、操纵杆、转向柱都在它上面），斜面朝司机；下半截在两块挡泥内板之间
   const CP = [[-0.8, 0.665], [-0.56, 0.665], [-0.56, 0.86], [-0.66, 1.02], [-0.8, 1.02]];
   fkPrism(b, CP, 'x', -0.47, 0.47, K.body, { c0: L.ch, c1: L.ch, skip: [0] });
@@ -1537,19 +1704,23 @@ function fkBody(b, L, o) {
     sheet(b, 0.473, 0.77, -0.68, 0.11, 0.065, '+x', K.plate);
     for (let k = 0; k < L.plate; k++) sheet(b, 0.475, 0.783 + k * 0.016, -0.68 + (k === 0 ? 0.012 : 0), k === 0 ? 0.06 : 0.085, 0.006, '+x', K.black);
   }
+  S('hood');
   // 发动机盖：前上角斜切；底边落在侧裙 / 底盘上、后边贴着配重，这两面不画
   fkPrism(b, [[-0.1, 0.4], [0.56, 0.4], [0.56, 1.0], [-0.03, 1.0], [-0.1, 0.93]], 'x', -0.53, 0.53, K.body, { c0: L.ch && L.ch + 0.005, c1: L.ch && L.ch + 0.005, skip: [0, 1] });
   for (const s of [-1, 1]) {
     for (let k = 0; k < L.louvers; k++) sheet(b, s * 0.533, 0.72 + k * 0.055, 0.34, 0.3, 0.024, s > 0 ? '+x' : '-x', K.black);   // 散热百叶
     if (L.digits > 1 || (L.digits && s > 0)) fkNumber(b, o.number || 7, s, 0.533, 0.05, 0.5, 0.14, K.digit);                    // 车身编号（两边都喷）
   }
+  S('counterweight');
   // 配重：铸铁，俯视后角是圆的；上半截在后轮上面（顶棱倒圆），下半截在后轮后面往下一直到离地 12 cm。
   // 上半截的底面（悬在后轮上方 4 cm）和下半截的底面看不见，不画
   const CWP = L.cw > 8 ? [[-0.55, 0.56], [0.55, 0.56], [0.55, 1.05], [0.52, 1.14], [0.44, 1.21], [0.3, 1.25], [-0.3, 1.25], [-0.44, 1.21], [-0.52, 1.14], [-0.55, 1.05]]
     : L.cw > 6 ? [[-0.55, 0.56], [0.55, 0.56], [0.55, 1.05], [0.47, 1.2], [0.3, 1.25], [-0.3, 1.25], [-0.47, 1.2], [-0.55, 1.05]]
     : [[-0.55, 0.56], [0.55, 0.56], [0.55, 1.08], [0.4, 1.25], [-0.4, 1.25], [-0.55, 1.08]];
   fkPrism(b, CWP, 'y', 0.5, 1.12, K.cw, { cap0: false, c1: L.cwC });
-  fkPrism(b, CWP.slice(2), 'y', 0.12, 0.5, K.cw, { cap0: false, cap1: false, skip: L.bev ? [] : [CWP.length - 3] });
+  // 下半截。可动模型：前脸往后挪到 FK_DRV.cwFront（后轮打方向时胎面最远伸到 z ≈ 1.044，留 1 cm 以上），前脸各档都画（打方向时露出来）
+  if (!D) fkPrism(b, CWP.slice(2), 'y', 0.12, 0.5, K.cw, { cap0: false, cap1: false, skip: L.bev ? [] : [CWP.length - 3] });
+  else fkPrism(b, CWP.slice(2).map((p, i, a) => (i === 0 || i === a.length - 1) ? [p[0], Math.max(p[1], FK_DRV.cwFront)] : p), 'y', 0.12, 0.5, K.cw, { cap0: false, cap1: false });
   // 配重顶上的散热格栅（几道黑缝）、后面的黄黑警示条、两个尾灯
   for (let k = 0; k < L.grille; k++) sheet(b, 0, 1.123, 1.0 + k * 0.04, 0.48, 0.02, 'up', K.black);
   fkStripes(b, -0.28, 0.28, 0.64, 0.86, 1.253, L.bev ? 0.07 : 0.09, K.body);
@@ -1572,37 +1743,57 @@ function fkBody(b, L, o) {
       if (L.straps) fkTube(b, [s * 0.16 - 0.018, TY, TZ], [s * 0.16 + 0.018, TY, TZ], TR + 0.004, L.tank, K.black, { arc: [L.tank / 2, L.tank] });   // 箍带（上半圈）
     }
     if (L.valve) fkTube(b, [0.36, TY, TZ], [0.41, TY, TZ], 0.022, 5, K.brass, { cap1: true });
+    S('hose');
     if (L.hose) fkTube(b, [0.4, TY - 0.015, TZ], [0.37, 0.99, 0.47], 0.012, 4, K.hose);
   }
+  S('seat');
   // 座椅：减震底座、坐垫、靠背（略后仰，四周倒圆；trim 档的靠背顶上不收角）
   if (L.seatBase) dbox(b, 0, 1.0, 0.24, 0.4, 0.06, 0.36, K.black, 'sides');
   fkBox(b, L, 0, L.seatBase ? 1.06 : 1.003, 0.24, 0.5, L.seatBase ? 0.1 : 0.157, 0.44, K.seat, 'noBottom', 0.035, 'top');
   fkPrism(b, M ? [[0.4, 1.13], [0.5, 1.13], [0.54, 1.63], [0.44, 1.63]] : [[0.4, 1.13], [0.5, 1.13], [0.54, 1.6], [0.52, 1.63], [0.46, 1.63], [0.44, 1.6]],
     'x', -0.24, 0.24, K.seat, { c0: L.backC, c1: L.backC, skip: [0] });
   // 安全带：右边靠背上的卷收器 → 一条橙色带子顺着坐垫右侧斜下来；左边坐垫旁一个锁扣
-  if (L.belt) {
-    const A = [0.47, 1.44], B2 = [0.14, 1.13], du = B2[0] - A[0], dv = B2[1] - A[1], l = Math.hypot(du, dv), nu = -dv / l * 0.022, nv = du / l * 0.022;
-    fkPrism(b, [[A[0] + nu, A[1] + nv], [B2[0] + nu, B2[1] + nv], [B2[0] - nu, B2[1] - nv], [A[0] - nu, A[1] - nv]], 'x', 0.252, 0.258, K.belt, { cap0: false, cap1: L.belt > 1 });
-    if (L.belt > 2) dbox(b, 0.255, 1.4, 0.49, 0.04, 0.09, 0.07, K.black, 'noBottom');
-    if (L.belt > 1) dbox(b, -0.265, 1.08, 0.16, 0.03, 0.05, 0.06, K.steel, ['py', 'nx', 'pz', 'nz']);
+  const strap = (A, B2, x0, x1, both) => {
+    const du = B2[0] - A[0], dv = B2[1] - A[1], l = Math.hypot(du, dv), nu = -dv / l * 0.022, nv = du / l * 0.022;
+    fkPrism(b, [[A[0] + nu, A[1] + nv], [B2[0] + nu, B2[1] + nv], [B2[0] - nu, B2[1] - nv], [A[0] - nu, A[1] - nv]], 'x', x0, x1, K.belt, both);
+  };
+  if (!D) {
+    if (L.belt) {
+      strap([0.47, 1.44], [0.14, 1.13], 0.252, 0.258, { cap0: false, cap1: L.belt > 1 });
+      if (L.belt > 2) dbox(b, 0.255, 1.4, 0.49, 0.04, 0.09, 0.07, K.black, 'noBottom');
+      if (L.belt > 1) dbox(b, -0.265, 1.08, 0.16, 0.03, 0.05, 0.06, K.steel, ['py', 'nx', 'pz', 'nz']);
+    }
+  } else {
+    // 可动模型（各档一样）：两条 4.4 cm 宽的带子，两个大面都画（从驾驶座往下看得见）——
+    // 右边：卷收器 → 顺着坐垫右侧斜下来的那条；左边：从座椅底座伸上来、顶着锁扣的一截短带（锁扣高出坐垫 3 cm）
+    strap([0.47, 1.44], [0.14, 1.13], 0.252, 0.258, { cap0: true, cap1: true });
+    dbox(b, 0.255, 1.4, 0.49, 0.04, 0.09, 0.07, K.black, 'noBottom');
+    strap([0.31, 1.03], [0.17, 1.2], -0.258, -0.252, { cap0: true, cap1: true });
+    dbox(b, -0.255, 1.19, 0.16, 0.03, 0.06, 0.05, K.steel, 'noBottom');
   }
   // 护顶架（黑）：前立柱从仪表台两角、后立柱从配重顶斜着上去，顶上四根边梁 + 一排格栅横条
   for (const s of [-1, 1]) {
     const xa = s > 0 ? 0.405 : -0.455, xb = s > 0 ? 0.455 : -0.405;   // 立柱比顶上边梁窄 1 cm，侧面不和边梁共面
+    S(s > 0 ? 'postFR' : 'postFL');
     fkPrism(b, [[-0.75, 0.99], [-0.69, 0.99], [-0.52, 2.07], [-0.58, 2.07]], 'x', xa, xb, K.black, { skip: [0, 2] });
+    S(s > 0 ? 'postRR' : 'postRL');
     fkPrism(b, [[0.59, 1.08], [0.65, 1.08], [0.56, 2.07], [0.5, 2.07]], 'x', xa, xb, K.black, { skip: [0, 2] });
+    S('roof');
     dbox(b, s * 0.43, 2.04, -0.03, 0.06, 0.06, 1.18, K.black, L.guardEnds ? 'all' : 'sides');
   }
   for (const z of [-0.59, 0.53]) dbox(b, 0, 2.04, z, 0.8, 0.06, 0.06, K.black, M ? ['py', z < 0 ? 'nz' : 'pz'] : L.bev ? ['py', 'ny', 'pz', 'nz'] : ['py', 'ny', z < 0 ? 'nz' : 'pz']);
   for (let k = 0; k < L.slats; k++) dbox(b, 0, 2.07, -0.45 + k * 0.9 / (L.slats - 1), 0.8, 0.015, 0.05, K.black, L.slatF);
-  // 前大灯：两根前立柱上头朝前各一个
+  // 前大灯：两根前立柱上头朝前各一个（可动模型：镜面放进 kit:glow，只这一份，开车时点亮、熄火时由载具层压暗）
   if (L.lampF) for (const s of [-1, 1]) {
+    S(s > 0 ? 'postFR' : 'postFL');
     dbox(b, s * 0.43, 1.86, -0.645, 0.08, 0.08, 0.08, K.black, L.lampF);
-    sheet(b, s * 0.43, 1.87, -0.688, 0.06, 0.06, '-z', K.lens);
+    sheet(b, s * 0.43, 1.87, -0.688, 0.06, 0.06, '-z', K.lens, D ? 'kit:glow' : undefined);
   }
-  // 警示灯：后横梁正中，黑底座 + 黄色灯罩（顶上收小）
+  S('roof');
+  // 警示灯：后横梁正中，黑底座 + 黄色灯罩（顶上收小）。可动模型的灯罩放进 kit:glow
   if (L.beaconBase) fkPost(b, 0, 2.1, 0.53, 0.05, 0.025, L.beacon, K.black, { cap1: true });
-  if (L.beacon) fkPost(b, 0, L.beaconBase ? 2.125 : 2.1, 0.53, 0.045, 0.075, L.beacon, K.amber, { r1: 0.03, cap1: true });
+  if (L.beacon) fkPost(b, 0, L.beaconBase ? 2.125 : 2.1, 0.53, 0.045, 0.075, L.beacon, K.amber, D ? { r1: 0.03, cap1: true, mat: 'kit:glow' } : { r1: 0.03, cap1: true });
+  S('postFL');
   // 上车扶手：左前立柱后面一根黄色把手（两头各一根短撑）
   {
     const zb = y => -0.69 + (y - 0.99) / 1.08 * 0.17;   // 前立柱后面那条边
@@ -1612,24 +1803,36 @@ function fkBody(b, L, o) {
     } else if (L.handle) stick(b, [-0.43, 1.2, zb(1.2) + 0.012], [-0.43, 1.62, zb(1.62) + 0.012], 0.014, K.body);   // 中档：直接贴着立柱
   }
   // 后视镜：左前立柱外侧
+  S('mirror');
   if (L.mirror) {
     stick(b, [-0.46, 1.76, -0.6], [-0.53, 1.79, -0.655], 0.008, K.black);
     dbox(b, -0.545, 1.74, -0.655, 0.09, 0.1, 0.02, K.black, 'all');
     sheet(b, -0.545, 1.75, -0.642, 0.08, 0.08, '+z', K.glass);
   }
+  S('steer');
+  }
   // 转向柱：从仪表台里伸出来，往司机这边倒
   const SW = G.steerWheel, ca = Math.cos(SW.tilt), sa = Math.sin(SW.tilt);
   // 没有方向盘中心盖（swHub）的档：转向柱一直伸到轮圈中心、顶上封口，辐条横穿过它（方向盘不悬空）
   const cTop = L.swHub ? 0.04 : 0.004;
-  fkTube(b, [SW.x, SW.y - ca * 0.38, SW.z - sa * 0.38], [SW.x, SW.y - ca * cTop, SW.z - sa * cTop], 0.03, L.column, K.black, { cap1: !L.swHub });
-  // 液压操纵杆：仪表台右边一排（升降、前后倾……），根部一块黑色防尘罩
-  if (L.levers > 2) dbox(b, 0.235, 1.02, -0.72, 0.2, 0.015, 0.07, K.black, ['py', 'pz', 'nz', 'px', 'nx']);
-  else if (L.levers > 1) sheet(b, 0.235, 1.023, -0.72, 0.2, 0.07, 'up', K.black);
-  for (let k = 0; k < L.levers; k++) {
-    const x = L.levers > 2 ? 0.17 + k * 0.065 : 0.19 + k * 0.09;
-    stick(b, [x, 1.02, -0.72], [x, 1.22, -0.645], 0.008, K.steel);
-    if (L.knobs) dbox(b, x, 1.215, -0.645, 0.03, 0.05, 0.03, K.black, 'noBottom');
+  if (B) fkTube(b, [SW.x, SW.y - ca * 0.38, SW.z - sa * 0.38], [SW.x, SW.y - ca * cTop, SW.z - sa * cTop], 0.03, L.column, K.black, { cap1: !L.swHub });
+  // 液压操纵杆：仪表台右边一排（升降、前后倾……），根部一块黑色防尘罩。第一根（离司机最近）是升降杆 —— part 'liftLever'，
+  // 绕 FORKLIFT_GEO.liftLever.pivot 的 x 轴转（可动模型按 lever 角度挪顶点）。根数 = w.levers（可动模型传停放档的根数，至少 1 根）
+  const NL = w.levers;
+  if (B) {
+    S('levers');
+    if (NL > 2) dbox(b, 0.235, 1.02, -0.72, 0.2, 0.015, 0.07, K.black, ['py', 'pz', 'nz', 'px', 'nx']);
+    else if (NL > 1) sheet(b, 0.235, 1.023, -0.72, 0.2, 0.07, 'up', K.black);
   }
+  for (let k = 0; k < NL; k++) {
+    if (k === 0 ? !w.lever : !B) continue;
+    if (k === 0) S('liftLever'); else if (k === 1) S('levers');
+    const x = NL > 2 ? 0.17 + k * 0.065 : 0.19 + k * 0.09;
+    stick(b, [x, 1.02, -0.72], [x, 1.22, -0.645], 0.008, K.steel);
+    if (L.knobs || w.drive) dbox(b, x, 1.215, -0.645, 0.03, 0.05, 0.03, K.black, 'noBottom');   // 可动模型各档都有杆头（坐在车上看得见升降杆）
+  }
+  if (!B) return;
+  S('tilt');
   // 倾斜油缸：缸筒尾端在仪表台前脸，活塞杆伸到外门架外侧的耳座
   if (L.tilt) for (const s of [-1, 1]) {
     const A = [s * G.tiltBase.x, G.tiltBase.y, G.tiltBase.z], B2 = [s * G.tiltEye.x, G.tiltEye.y, G.tiltEye.z];
@@ -1684,10 +1887,11 @@ function fkMastOuter(b, L) {
   if (L.backChain || !M) dbox(b, 0, 1.92, -0.9625, 0.3, 0.05, 0.045, K.mast, L.backChain ? ['py', 'ny', 'nz', 'px', 'nx'] : ['py', 'nz']);   // 链条锚座
 }
 // ---- 内门架（lift = 0 的位置；升起来时整体上移 pose(lift).inner）----
-function fkMastInner(b, L) {
+// D = 可动模型：内门架升起来以后立柱的上下端、底梁底面会露出来，补上
+function fkMastInner(b, L, D) {
   const K = FK, G = FORKLIFT_GEO, sp = G.sprocket, M = !!L.trim;
   for (const s of [-1, 1]) {
-    dbox(b, s * 0.265, 0.1, -1.0, 0.1, G.mastInnerTop - 0.1, 0.07, K.mastIn, L.posts);                                        // 立柱
+    dbox(b, s * 0.265, 0.1, -1.0, 0.1, G.mastInnerTop - 0.1, 0.07, K.mastIn, D ? 'all' : L.posts);                           // 立柱
     if (L.rods) fkTube(b, [s * 0.2, 0.4, -0.865], [s * 0.2, 2.07, -0.865], 0.022, L.rod, K.chrome);                           // 起升油缸活塞杆
     if (L.heads) dbox(b, s * 0.2, 2.06, -0.8975, 0.06, 0.055, 0.135, K.mast, L.bev ? ['py', 'ny', 'px', 'nx', 'pz'] : ['py', 'px', 'nx', 'pz']);   // 杆头：顶住内门架顶梁
     // 链轮 + 链轮轴（从立柱内侧伸出来）。min：一块方的，往后伸进顶梁 2 mm（不悬空）
@@ -1698,19 +1902,24 @@ function fkMastInner(b, L) {
     } else dbox(b, s * sp.x, sp.y - sp.r, sp.z + 0.006, 0.03, 2 * sp.r, 0.082, K.steel, ['nz', 'px', 'nx', 'py']);
   }
   dbox(b, 0, G.mastInnerTop - 0.08, -0.9475, 0.43, 0.08, 0.035, K.mastIn, M ? ['py', 'nz'] : ['py', 'ny', 'pz', 'nz']);   // 顶梁
-  if (!M) dbox(b, 0, 0.16, -0.9475, 0.43, 0.08, 0.035, K.mastIn, ['py', 'pz', 'nz']);                         // 底梁
+  if (!M) dbox(b, 0, 0.16, -0.9475, 0.43, 0.08, 0.035, K.mastIn, D ? ['py', 'ny', 'pz', 'nz'] : ['py', 'pz', 'nz']);   // 底梁
 }
 // ---- 货叉架 + 挡货架 + 货叉（lift = 0 的位置；升起来时整体上移 pose(lift).carriage）----
-function fkCarriage(b, L) {
+// D = 可动模型：货叉升起来以后从下面看得见 —— 货叉水平段、竖直段、下横梁、滚轮架都补上底面（停着的车货叉贴地，底面离地 1.5 cm 看不见，不画）。
+// S = 分段标记（同 fkBody）
+function fkCarriage(b, L, D, S) {
   const K = FK, G = FORKLIFT_GEO, M = !!L.trim;
+  S('carriage');
   fkBox(b, L, 0, 0.44, -1.09, 0.92, 0.1, 0.05, K.mast, L.hook ? 'all' : M ? ['py', 'nz'] : ['py', 'ny', 'pz', 'nz'], 0.01, 'top');   // 上横梁（货叉挂在它上面）
-  dbox(b, 0, 0.08, -1.09, 0.92, 0.08, 0.05, K.mast, L.heel ? ['py', 'ny', 'pz', 'nz', 'px', 'nx'] : M ? ['py', 'nz'] : ['py', 'pz', 'nz']);   // 下横梁
+  dbox(b, 0, 0.08, -1.09, 0.92, 0.08, 0.05, K.mast, L.heel ? ['py', 'ny', 'pz', 'nz', 'px', 'nx'] : M ? ['py', 'nz'] : D ? ['py', 'ny', 'pz', 'nz'] : ['py', 'pz', 'nz']);   // 下横梁
   for (const s of [-1, 1]) {
     dbox(b, s * G.sprocket.x, 0.5, -1.052, 0.03, 0.08, 0.026, K.steel, L.hook ? ['py', 'pz', 'px', 'nx'] : ['py', 'pz']);             // 链条挂点（上横梁后面）
     dbox(b, s * 0.44, 0.54, -1.085, 0.04, 0.7, 0.03, K.mast, L.hook ? ['pz', 'nz', 'px', 'nx', 'py'] : M ? ['nz', 'pz'] : 'sides');   // 挡货架立柱
     // 滚轮架：把上下横梁连起来，后端顶到内门架立柱前脸（z −1.035，那一面不画）—— 升降时货叉架靠它沿内门架上下滑。
     // 顶比上横梁低 5 mm、前面插进两根横梁 5 mm，不和横梁的面共面
     if (L.bracket) dbox(b, s * 0.26, 0.08, -1.0525, 0.05, 0.455, 0.035, K.mast, L.bev ? ['px', 'nx', 'nz', 'py'] : ['px', 'nx', 'nz']);
+    // 可动模型：滚轮架露在下横梁后面那 3 cm 的底面（插进横梁的那 5 mm 不画，免得和横梁底面共面）
+    if (L.bracket && D) sheet(b, s * 0.26, 0.08, -1.05, 0.05, 0.03, 'down', K.mast);
   }
   dbox(b, 0, 1.2, -1.085, 0.84, 0.04, 0.03, K.mast, M ? ['pz', 'nz'] : ['pz', 'nz', 'py', 'ny']);
   if (L.midRail) dbox(b, 0, 0.88, -1.085, 0.84, 0.03, 0.03, K.mast, ['pz', 'nz', 'py']);
@@ -1720,9 +1929,11 @@ function fkCarriage(b, L) {
   for (const s of [-1, 1]) {
     const x0 = s * G.forkTip.x - 0.05, x1 = s * G.forkTip.x + 0.05, T = G.forkTip.z, zb = L.hook ? -1.12 : -1.115;
     fkPrism(b, L.heel ? [[-1.16, 0.015], [-1.135, 0.015], [-1.12, 0.03], [-1.12, 0.58], [-1.16, 0.58]] : [[-1.16, 0.015], [zb, 0.015], [zb, 0.58], [-1.16, 0.58]],
-      'x', x0, x1, K.fork, { skip: L.hook ? [0] : [0, 1] });
-    if (L.tip) fkPrism(b, [[T, 0.024], [T + 0.025, 0.015], [-1.16, 0.015], [-1.16, 0.055], [-1.97, 0.055], [T, 0.034]], 'x', x0, x1, K.fork, { skip: [1, 2] });
-    else fkPrism(b, [[T, 0.015], [-1.16, 0.015], [-1.16, 0.055], [T, 0.035]], 'x', x0, x1, K.fork, { skip: [0, 1] });
+      'x', x0, x1, K.fork, { skip: L.hook ? (D ? [] : [0]) : (D ? [1] : [0, 1]) });
+    S(s < 0 ? 'forkL' : 'forkR');
+    if (L.tip) fkPrism(b, [[T, 0.024], [T + 0.025, 0.015], [-1.16, 0.015], [-1.16, 0.055], [-1.97, 0.055], [T, 0.034]], 'x', x0, x1, K.fork, { skip: D ? [2] : [1, 2] });
+    else fkPrism(b, [[T, 0.015], [-1.16, 0.015], [-1.16, 0.055], [T, 0.035]], 'x', x0, x1, K.fork, { skip: D ? [1] : [0, 1] });
+    S('carriage');
     if (L.hook) dbox(b, s * G.forkTip.x, 0.54, -1.09, 0.1, 0.04, 0.06, K.fork, ['py', 'pz', 'px', 'nx']);
   }
 }
@@ -1762,19 +1973,38 @@ function fkWearEmit(b, L, want, ps, dec) {
   }
 }
 // 纯建模：在当前坐标系原点建一台叉车（不出碰撞体、不吃随机数）。
-// opts：{ lift: 0..1 货叉升起比例, steer: 后轮转角（弧度，正 = 车头往左偏）, part: 'all' | 'body' | 'wheelsFront' | 'wheelsRear' | 'steeringWheel'
-//         | 'mastOuter' | 'mastInner' | 'carriage' | 'chains', detail: 'high' | 'mid' | 'lite' | 'low' | 'lowb' | 'min', number: 车身编号, decal: 贴花函数（缺省不贴）}
+// opts：{ lift: 0..1 货叉升起比例, steer: 后轮转角（弧度，kit rot 约定：正 = 后轮前缘往左，前进时车头往右偏；按 A 往左打时为负）,
+//         part: 'all' | 'body' | 'liftLever' | 'wheelsFront' | 'wheelsRear' | 'wheelRearL' | 'wheelRearR' | 'steeringWheel' | 'mastOuter' | 'mastInner' | 'carriage' | 'chains',
+//         detail: 'high' | 'mid' | 'lite' | 'low' | 'lowb' | 'min' | 'drvLow', number: 车身编号, decal: 贴花函数（缺省不贴）,
+//         drive: true = 可动模型（见下）, levers: 操纵杆根数（缺省按档；可动模型传停放档的根数，至少 1 根 —— 升降杆要能扳）,
+//         seg: 分段标记回调 seg(部件名)（测试量部件包围盒用，不加几何、不改顺序）}
+// part：'body' 不含升降杆（第一根操纵杆，单独是 'liftLever'）；'wheelsRear' = 'wheelRearL'（−x，司机左手）+ 'wheelRearR'。
+// part='all' 且没开 drive 时，照原来的位置、原来的顺序画 —— 停在区块里的叉车顶点逐位不变（golden 不动）。
+// drive（只给载具网格里开过的车用；停着的车一律不开）：
+//   ① 货叉水平段、竖直段、下横梁、滚轮架、内门架补底面（升起来从下面看是实心的）；
+//   ② 后轮打方向扫过的圆柱（主销 (±0.44, z 0.8)、半径 0.244、高 0–0.46）里，底盘 z 0.54 往后收窄到半宽 FK_DRV.chassisHalf、
+//      配重下半截前脸挪到 FK_DRV.cwFront 并且各档都画 —— 0 到 ±maxSteer 胎面离车身 ≥1 cm；
+//   ③ 安全带两条（右边卷收器那条 + 左边顶着锁扣的短带），4.4 cm 宽、两个大面都画；
+//   ④ 两盏前大灯镜面、警示灯罩放进 kit:glow（只这一份，不在 kit:prop 里重复）；
+//   ⑤ 操纵杆根数按 opts.levers（至少 1）。
 function forkliftModel(b, opts) {
   const o = opts || {}, G = FORKLIFT_GEO, L = FK_LOD[o.detail] || FK_LOD.high, part = o.part || 'all';
-  const want = k => part === 'all' || part === k, ps = G.pose(o.lift), steer = +o.steer || 0;
-  if (want('body')) fkBody(b, L, o);
-  if (want('wheelsFront')) for (const s of [-1, 1]) { b.push(s * G.wheelFront.x, G.wheelFront.z, 0); fkWheel(b, L, s, true); b.pop(); }
-  if (want('wheelsRear')) for (const s of [-1, 1]) { b.push(s * G.wheelRear.x, G.wheelRear.z, steer); fkWheel(b, L, s, false); b.pop(); }
-  if (want('steeringWheel')) fkSteeringWheel(b, L, steer * G.steerRatio);
-  if (want('mastOuter')) fkMastOuter(b, L);
-  if (want('mastInner')) { b.push(0, 0, 0, ps.inner); fkMastInner(b, L); b.pop(); }
-  if (want('carriage')) { b.push(0, 0, 0, ps.carriage); fkCarriage(b, L); b.pop(); }
-  if (want('chains')) fkChains(b, L, ps);
+  const want = k => part === 'all' || part === k, ps = G.pose(o.lift), steer = +o.steer || 0, D = !!o.drive;
+  const S = typeof o.seg === 'function' ? o.seg : () => {};
+  const nl = o.levers != null && +o.levers >= 0 ? Math.min(3, +o.levers | 0) : L.levers;
+  const w = { body: want('body'), lever: want('liftLever'), drive: D, levers: D ? Math.max(1, nl) : nl, seg: S };
+  if (w.body || w.lever) fkBody(b, L, o, w);
+  if (want('wheelsFront')) { S('wheelsFront'); for (const s of [-1, 1]) { b.push(s * G.wheelFront.x, G.wheelFront.z, 0); fkWheel(b, L, s, true); b.pop(); } }
+  for (const s of [-1, 1]) {
+    if (!want('wheelsRear') && !want(s < 0 ? 'wheelRearL' : 'wheelRearR')) continue;
+    S(s < 0 ? 'wheelRearL' : 'wheelRearR');
+    b.push(s * G.wheelRear.x, G.wheelRear.z, steer); fkWheel(b, L, s, false); b.pop();
+  }
+  if (want('steeringWheel')) { S('steeringWheel'); fkSteeringWheel(b, L, steer * G.steerRatio); }
+  if (want('mastOuter')) { S('mastOuter'); fkMastOuter(b, L); }
+  if (want('mastInner')) { S('mastInner'); b.push(0, 0, 0, ps.inner); fkMastInner(b, L, D); b.pop(); }
+  if (want('carriage')) { b.push(0, 0, 0, ps.carriage); fkCarriage(b, L, D, S); b.pop(); }
+  if (want('chains')) { S('chains'); fkChains(b, L, ps); }
   if (typeof o.decal === 'function') fkWearEmit(b, L, want, ps, o.decal);
 }
 // 场景里停着的叉车（没人开）：货叉落地、轮子摆正。
@@ -1790,7 +2020,7 @@ function forkliftModel(b, opts) {
 const FK_NOMINAL = 318;                       // 改前叉车的面数（4 个倒角盒按普通盒算 + 门架 / 货叉 / 方向盘 / 4 个轮子），两种画质都是这个
 const FK_CAP = { high: 9950, low: 7950 };     // 建完叉车后整块实际面数的上限（kit 预算 10000 / 8000，留 50 的余量）
 // 挑档顺序：高画质 high → mid → lite → low → lowb → min；低画质 low → lowb → min（不倒角、不贴花）
-const FK_LADDER = { high: ['high', 'mid', 'lite', 'low', 'lowb', 'min'], low: ['low', 'lowb', 'min'] };
+const FK_LADDER = Object.freeze({ high: Object.freeze(['high', 'mid', 'lite', 'low', 'lowb', 'min']), low: Object.freeze(['low', 'lowb', 'min']) });
 const FK_PH = 'L1:forklift-pending';          // 占位累加器的 key（不是材质，不会建成 mesh）
 const fkQueue = new WeakMap(), fkCost = {};
 // 改前那台叉车的 5 个倒角盒（车身、配重、座椅、靠背、护顶）：[w, h, d, faces, 倒角, 倒哪些棱, 它前面先建了多少面（护顶前面是 4 根立柱）]
@@ -1825,34 +2055,78 @@ function fkTris(detail) {
   }
   return fkCost[detail];
 }
-// 工坊地图：kit 的 finish 在叉车之后才让工坊把自由墙、新增出口摆进这块（BR.workshop.decorate），先给它们留出面数
-// （自由墙一面 12 个三角形；出口按最费面的那种留：高画质门 250、楼梯间 224、电梯 200 → 300；低画质楼梯间 148、门 116 → 160）。
+// 工坊地图：kit 的 finish 在叉车之后才让工坊把自由墙、新增出口摆进这块（BR.workshop.decorate），先给它们留出面数。
+// 按出口种类留（工坊能加的是门 / 楼梯 / 电梯 / 区域；实测高画质门 250、楼梯间 224、电梯 200，低画质门 116、楼梯间 148、电梯 102；
+// 「区域」出口工坊不画地上发光圈，一个面都不占 → 留 0）；别的种类（手改的地图）按最费面的留。自由墙一面 12 个三角形。
 // 不在工坊地图里时是 0
-const FK_WS_EXIT = { high: 300, low: 160 };
+const FK_WS_EXIT = { high: { door: 260, stairs: 235, elevator: 210, zone: 0, other: 300 }, low: { door: 120, stairs: 150, elevator: 106, zone: 0, other: 160 } };
 function fkWsReserve(b) {
   const ws = BR.workshop && BR.workshop.active;
   if (!ws || b._wsHelper) return 0;
   const inC = o => { const x = +o.x || 0, z = +o.z || 0; return x >= b.ox && x < b.ox + b.size && z >= b.oz && z < b.oz + b.size; };
+  const T = FK_WS_EXIT[lowQ() ? 'low' : 'high'];
   let n = 0;
   for (const w of Array.isArray(ws.freeWalls) ? ws.freeWalls : []) if (w && w.len > 0 && inC(w)) n += 12;
-  for (const a of ws.exits && Array.isArray(ws.exits.added) ? ws.exits.added : []) if (a && a.to != null && inC(a)) n += FK_WS_EXIT[lowQ() ? 'low' : 'high'];
+  for (const a of ws.exits && Array.isArray(ws.exits.added) ? ws.exits.added : []) {
+    if (a && a.to != null && inC(a)) { const k = a.kind || 'door'; n += T[k] != null ? T[k] : T.other; }   // 工坊 decorate 缺省按门建
+  }
   return n;
 }
-function forklift(b, x, z, rot) {
+// 叉车的数据记录（b.data.forklifts[i]，纯数据，golden 不看）：
+//   { key: '<层>@cx,cz#v<i>', i, x, z, y, rot（世界坐标）, lx, lz（区块本地坐标）, number（车身编号）, detail（停放档；保底车 null）, tris,
+//     solid（res.solids 下标：外接 AABB，用 kit fixture 包住、显式 key = key，world 登记成 phys key 'cx,cz#v<i>'）,
+//     spans: { prop: [v0, v1], wear: [[v0, v1]…]（不含 FK_WEAR[0]）, oil: [v0, v1] | null }（kit:prop / kit:decal 累加器里的顶点段）,
+//     wearN（贴上的磨损片数，不含 FK_WEAR[0]）, runtime（保底车 true：不进区块几何，没有 spans / wearN）}
+function fkRecord(b, x, z, rot, runtime) {
   const p = b.point(x, z), w = b.world(x, z), R = b._T.rot + rot;
+  const list = b.data.forklifts || (b.data.forklifts = []);
+  const i = list.length, lv = b.level && b.level.id != null ? String(b.level.id) : '1';
+  const rec = { key: lv + '@' + b.cx + ',' + b.cz + '#v' + i, i, x: w.x, z: w.z, y: b._T.y, rot: R, lx: p.x, lz: p.z,
+    number: 1 + U.hashInts(b.seed, 'L1-forklift', Math.round(w.x * 10), Math.round(w.z * 10)) % 98, detail: null, tris: 0, solid: -1 };
+  if (!runtime) { rec.spans = { prop: null, wear: [], oil: null }; rec.wearN = 0; }
+  rec.runtime = !!runtime;
+  list.push(rec);
+  return rec;
+}
+// 外接 AABB（车身 1.2 × 2.6，不含货叉；改前就是这一个 b.solid，顺序和内容都不变），用 kit fixture 包住（显式 key、不占自动编号）
+function fkSolid(b, rec, x, z, rot) {
+  const c = Math.abs(Math.cos(rot)), s = Math.abs(Math.sin(rot));
+  const hx = 0.6 * c + 1.3 * s, hz = 0.6 * s + 1.3 * c;
+  rec.solid = b._solids.length;
+  b.fixture({ key: rec.key, kind: 'vehicle', label: '叉车', why: '叉车太重，拖不动', pivot: [x, z, rot] }, () => b.solid(x - hx, 0, z - hz, x + hx, 2.15, z + hz));
+}
+function forklift(b, x, z, rot) {
+  const rec = fkRecord(b, x, z, rot, false);
   const pend = FK_NOMINAL + fkOldExtra(b);
   if (!fkQueue.has(b)) fkQueue.set(b, []);
-  fkQueue.get(b).push({ x: p.x, z: p.z, y: b._T.y, rot: R, pend, number: 1 + U.hashInts(b.seed, 'L1-forklift', Math.round(w.x * 10), Math.round(w.z * 10)) % 98 });
-  (b.data.forklifts || (b.data.forklifts = [])).push({ x: w.x, z: w.z, rot: R, detail: null, tris: 0 });   // 世界坐标：自测找机位用，以后开叉车也从这里找
+  fkQueue.get(b).push({ x: rec.lx, z: rec.lz, y: rec.y, rot: rec.rot, pend, number: rec.number, rec });
   // 占位：先按改前那台的面数 pend 占上（见上面的说明）。账面只记 FK_NOMINAL：pend 里多出来的倒角面数和改前一样记在细节档 D 上
   let ph = b._accs.get(FK_PH);
   if (!ph) { ph = { key: FK_PH, n: 0, idx: [] }; b._accs.set(FK_PH, ph); }
   ph.idx.length += 3 * pend;
   charge(b, FK_NOMINAL - pend);
   addExtra(ext(b), pend - FK_NOMINAL);
-  const c = Math.abs(Math.cos(rot)), s = Math.abs(Math.sin(rot));
-  const hx = 0.6 * c + 1.3 * s, hz = 0.6 * s + 1.3 * c;
-  b.solid(x - hx, 0, z - hz, x + hx, 2.15, z + hz);
+  fkSolid(b, rec, x, z, rot);
+}
+// 出生保底车（keyDecisions[3]）：只出 fixture 包住的外接 AABB 和一条 runtime:true 的数据记录 —— 不建区块几何、不进 fkQueue、不记账面，
+// 所以不受面数闸门影响、也不挤掉这块别的东西；进层时载具层直接把它放进载具网格（高画质 mid、低画质 drvLow）
+function forcedForklift(b, x, z, rot) {
+  const rec = fkRecord(b, x, z, rot, true);
+  fkSolid(b, rec, x, z, rot);
+  return rec;
+}
+// 叉车占地（车身 + 货叉，当前坐标系里 (x, z, rot) 那台）外扩 pad 以内有没有碰到半径 rad 的圆：保底车那个柱间的碎屑躲开它
+function fkFootprintHit(x, z, rot, pad) {
+  const c = Math.cos(rot), s = Math.sin(rot), G = FORKLIFT_GEO;
+  const rects = [[-G.half.x, G.half.x, -G.half.z, G.half.z], [-(G.tineX[1] + G.forkW / 2), G.tineX[1] + G.forkW / 2, G.forkZ[0], -G.half.z]];
+  return (px, pz, rad) => {
+    const dx = px - x, dz = pz - z, lx = c * dx - s * dz, lz = s * dx + c * dz, e = pad + rad;
+    for (const [x0, x1, z0, z1] of rects) {
+      const qx = Math.max(x0 - lx, 0, lx - x1), qz = Math.max(z0 - lz, 0, lz - z1);
+      if (qx * qx + qz * qz <= e * e) return true;
+    }
+    return false;
+  };
 }
 // 块里不走累加器、单独挂进去的物体（出口地上的发光圈、noclip 墙片……，kit 的 b.object）的三角面：rawTri 数不到，整块合计要算上
 function fkObjTris(b) {
@@ -1869,11 +2143,24 @@ function buildForklifts(b) {
   b._accs.delete(FK_PH);
   if (!q || !q.length) return;
   fkQueue.delete(b);
-  const lad = FK_LADDER[lowQ() ? 'low' : 'high'], cap = FK_CAP[lowQ() ? 'low' : 'high'] - fkWsReserve(b);
-  const e = ext(b), cat = e.cat, T0 = b._T, t0 = rawTri(b), n = q.length, pend = q.reduce((a, f) => a + f.pend, 0);
+  const wsRes = fkWsReserve(b);
+  const lad = FK_LADDER[lowQ() ? 'low' : 'high'], cap = FK_CAP[lowQ() ? 'low' : 'high'] - wsRes;
+  const e = ext(b), cat = e.cat, T0 = b._T, t0 = rawTri(b), pend = q.reduce((a, f) => a + f.pend, 0);
   // 挑档：先定保底档 = 所有台都用同一档时放得下的最细一档（都放不下就用最省的 min），所有台都按它占上；
   // 再从第一台起逐台往细里升，放得下就升。整块合计 = 累加器里的 + 单独挂进去的物体 + 叉车
   const base = t0 + fkObjTris(b);
+  // 工坊地图（这块要给工坊的出口 / 自由墙留面数）：连 min 都放不下时，从最后一台起改成运行时车（runtime:true，不建区块几何，
+  // 载具层进层时直接以载具网格显示，和出生保底车一样），直到剩下的按 min 放得下 —— 工坊的出口摆进来以后整块仍不超预算。
+  // 不在工坊里时照旧（放不下也按 min 建，和改前逐字节一样）
+  if (wsRes > 0) {
+    const minT = fkTris(lad[lad.length - 1]);
+    while (q.length && base + q.length * minT > cap) {
+      const r = q.pop().rec;
+      r.runtime = true; r.detail = null; r.tris = 0;
+      delete r.spans; delete r.wearN;
+    }
+  }
+  const n = q.length;
   let fl = lad.length - 1;
   for (let j = 0; j < lad.length; j++) if (base + n * fkTris(lad[j]) <= cap) { fl = j; break; }
   const det = q.map(() => fl);
@@ -1888,11 +2175,29 @@ function buildForklifts(b) {
   b._T = { x: 0, y: 0, z: 0, rot: 0, c: 1, s: 0 };   // 区块本地坐标系（队列里记的就是区块本地坐标）
   const got = q.map(() => 0);
   // 先贴磨损：这块已经有贴花 mesh（低画质没有）才贴，贴花总数不过 kit 的上限
+  // 每台车在 kit:decal / kit:prop 累加器里的顶点段记进 spans（载具层升格时 kit.hideSpans 藏掉区块里这一段；车下的油渍 oil 不藏）
+  const accN = k => { const a = b._accs.get(k); return a ? a.n : 0; };
   const da = b._accs.get('kit:decal');
   if (da && da.idx && da.idx.length) {
-    const dec = o => { if ((b._decalN || 0) >= kit.budget.decalsPerChunk) return null; const pc = kit.decal(b, o); if (pc) e.decals++; return pc; };
     q.forEach((f, i) => {
-      const r0 = rawTri(b);
+      const r0 = rawTri(b), sp = f.rec.spans;
+      let k = 0, prefix = true;
+      const dec = o => {
+        const kk = k++;
+        if ((b._decalN || 0) >= kit.budget.decalsPerChunk) { if (kk > 0) prefix = false; return null; }
+        const v0 = accN('kit:decal'), pc = kit.decal(b, o);
+        if (pc) {
+          e.decals++;
+          const v1 = accN('kit:decal');
+          if (kk === 0) sp.oil = [v0, v1];
+          else {
+            const last = sp.wear[sp.wear.length - 1];
+            if (last && last[1] === v0) last[1] = v1; else sp.wear.push([v0, v1]);
+            if (prefix) f.rec.wearN++;
+          }
+        } else if (kk > 0) prefix = false;
+        return pc;
+      };
       b.push(f.x, f.z, f.rot, f.y);
       fkWearEmit(b, FK_LOD[lad[det[i]]], () => true, FORKLIFT_GEO.pose(0), dec);
       b.pop();
@@ -1900,13 +2205,14 @@ function buildForklifts(b) {
     });
   }
   q.forEach((f, i) => {
-    const r0 = rawTri(b);
+    const r0 = rawTri(b), v0 = accN('kit:prop');
     b.push(f.x, f.z, f.rot, f.y);
     forkliftModel(b, { part: 'all', lift: 0, steer: 0, detail: lad[det[i]], number: f.number });
     b.pop();
     got[i] += rawTri(b) - r0;
-    const rec = b.data.forklifts[i];
+    const rec = f.rec;
     rec.detail = lad[det[i]]; rec.tris = got[i];
+    rec.spans.prop = [v0, accN('kit:prop')];
   });
   // 占位删掉了（rawTri 少了 pend）、叉车建上了（多了 all）：账面不变，多出来的记在细节档 D 上
   const all = rawTri(b) - t0;
@@ -1962,9 +2268,14 @@ function hutShell(b, bay, env, doorX, r) {
   }
   // 推杠防火门，半开着；门上亮绿色应急灯
   kitCall(b, KIT_EST.door, () => kit.prop.door(b, doorX, R, 0, { style: 'fire', color: 0x8d9296, frameColor: 0xa4a49e, open: 0.8, sign: true }));
+  // 推开着的门扇（kit 的门扇没有碰撞体）：宽 1.0、高 2.05，绕左侧合页往屋里转 0.8 × 90°；两面推杠各凸出 7.5 cm
+  b.push(doorX, R, 0); b.push(-0.5, 0, 0.8 * HALF_PI);
+  sideAdd(b, env, 'door', 0, 1.0, 0, 2.05, -0.1, 0.1);
+  b.pop(); b.pop();
   // 门边：开关盒 + 一根线管爬上屋顶
   const sx = doorX + (doorX > 0 ? -0.95 : 0.95);
   dbox(b, sx, 1.2, R + T / 2 + 0.02, 0.09, 0.13, 0.04, [0.85, 0.84, 0.8], 'noBottom');
+  sideAdd(b, env, 'switch', sx - 0.045, sx + 0.045, 1.2, 1.33, R + T / 2, R + T / 2 + 0.04);
   dbox(b, sx, 1.33, R + T / 2 + 0.012, 0.025, HH - 1.33, 0.025, [0.7, 0.7, 0.68], 'sides');
   // 灭火器（一半的小屋有）
   if (r() < 0.5) {
@@ -1972,6 +2283,7 @@ function hutShell(b, bay, env, doorX, r) {
     drum(b, ex, 0.12, ez, 0.08, 0.48, C.red, 8);
     stick(b, [ex, 0.6, ez], [ex + 0.06, 0.66, ez + 0.03], 0.015, C.dark);
     dbox(b, ex, 0.5, R + T / 2 + 0.01, 0.06, 0.22, 0.02, C.dark, 'noBottom');
+    sideAdd(b, env, 'extinguisher', ex - 0.08, ex + 0.08, 0.12, 0.68, R + T / 2, ez + 0.08);
   }
   // 屋顶上偶尔堆着东西（远处看得见）
   if (r() < 0.4) cartonBlock(b, (r() - 0.5) * 3, HH + 0.16, (r() - 0.5) * 3, 1.0, 0.5, 0.7, 2, 1, r() * 3, r);
@@ -2228,6 +2540,7 @@ function decorateFreeSlots(b, env) {
       // 消火栓箱：红框 + 玻璃窗里的水带卷
       bbox(b, 0, 0.8, 0.1, 0.7, 0.9, 0.2, C.red, 'noBottom', 0.015);
       sheet(b, 0, 0.88, 0.203, 0.56, 0.74, '+z', [0.14, 0.16, 0.17]);
+      sideAdd(b, env, 'cabinet', -0.35, 0.35, 0.8, 1.7, 0, 0.21);
       b.cylinder(0, 1.25, 0.12, 0.2, 0.06, 'kit:prop', { axis: 'z', segments: 10, color: [0.75, 0.7, 0.55], solid: false, uv: 'stretch' });
     } else {
       // 旧告示：一张褪色的纸 + 一张歪掉的
@@ -2251,6 +2564,7 @@ function portalBay(b, bay, r, env) {
     sheet(b, s * (W / 2 - 0.003), 0, (Z0 + Z1) / 2, Z1 - Z0, HH, s > 0 ? '-x' : '+x', paleY, K);
   }
   bbox(b, 0, HH, (Z0 + Z1) / 2, W + 2 * T + 0.1, 0.25, Z1 - Z0 + 0.1, outer, 'all', 0.035, 'all', K);   // 顶板棱倒 3.5 cm
+  ohAdd(b, env, 'beam', -W / 2 - T - 0.05, W / 2 + T + 0.05, Z0 - 0.05, Z1 + 0.05, HH, { sub: 'portal' });   // 走廊顶板（底 2.8）：开进走廊口别升货叉
   sheet(b, 0, HH - 0.003, (Z0 + Z1) / 2, W, Z1 - Z0, 'down', mulc(paleY, 0.9), K);
   sheet(b, 0, 0.004, (Z0 + Z1) / 2 + 0.3, W, Z1 - Z0 - 0.6, 'up', [1.35, 1.3, 1.15], 'L1:floor');
   // 走廊深处一片漆黑（像还能一直走下去）
@@ -2260,18 +2574,28 @@ function portalBay(b, bay, r, env) {
   pipes.forEach(([py, pr, pc], q) => {
     const px = W / 2 - 0.1 - pr - (q % 2) * 0.08;
     b.cylinder(px, py, (Z0 + Z1) / 2 + 0.25, pr, Z1 - Z0 + 0.5, 'kit:prop', { axis: 'z', segments: 8, caps: false, color: pc, solid: false, uv: 'stretch' });
-    for (const fz of [2.4, -0.6]) b.cylinder(px, py, fz, pr * 1.45, 0.05, 'kit:prop', { axis: 'z', segments: 8, caps: false, color: mulc(pc, 0.7), solid: false, uv: 'stretch' });
+    sideAdd(b, env, 'pipe', px - pr, W / 2, py - pr, py + pr, Z0, Z1 + 0.5);   // 管子伸进走廊（墙上没有碰撞体）
+    for (const fz of [2.4, -0.6]) {
+      b.cylinder(px, py, fz, pr * 1.45, 0.05, 'kit:prop', { axis: 'z', segments: 8, caps: false, color: mulc(pc, 0.7), solid: false, uv: 'stretch' });
+      sideAdd(b, env, 'pipe', px - pr * 1.45, W / 2, py - pr * 1.45, py + pr * 1.45, fz - 0.025, fz + 0.025);
+    }
   });
-  for (const bz of [2.8, 1.2, -0.4, -2.0]) dbox(b, W / 2 - 0.1, 0.3, bz, 0.2, 2.2, 0.04, C.steel, ['nx', 'pz', 'nz']);
+  for (const bz of [2.8, 1.2, -0.4, -2.0]) {
+    dbox(b, W / 2 - 0.1, 0.3, bz, 0.2, 2.2, 0.04, C.steel, ['nx', 'pz', 'nz']);
+    sideAdd(b, env, 'pipe', W / 2 - 0.2, W / 2, 0.3, 2.5, bz - 0.02, bz + 0.02);   // 托架
+  }
   b.cylinder(W / 2 - 0.35, 1.35, 1.5, 0.13, 0.03, 'kit:prop', { axis: 'x', segments: 8, color: C.red, solid: false, uv: 'stretch' });
+  sideAdd(b, env, 'valve', W / 2 - 0.365, W / 2, 1.22, 1.48, 1.37, 1.63);   // 阀门手轮（到墙）
   b.push(W / 2 - 0.15, 0.3, -HALF_PI);
   gauge(b, 0, 1.25, 0.05);
+  sideAdd(b, env, 'gauge', -0.08, 0.08, 0.9, 1.25, -0.035, 0.035);
   b.pop();
   // 黄色工业灯：左墙上一盏笼罩灯
   const lampZ = 0.3;
   dbox(b, -W / 2 + 0.06, 2.2, lampZ, 0.12, 0.08, 0.12, C.dark, 'all');
   const bulb = glowBox(b, -W / 2 + 0.16, 2.08, lampZ, 0.1, 0.13, 0.1, [2.0, 1.55, 0.5]);
   for (const s of [-1, 1]) stick(b, [-W / 2 + 0.06, 2.21, lampZ + s * 0.07], [-W / 2 + 0.22, 2.06, lampZ + s * 0.07], 0.006, C.dark);
+  sideAdd(b, env, 'lamp', -W / 2, -W / 2 + 0.226, 2.05, 2.28, lampZ - 0.076, lampZ + 0.076);   // 左墙上的笼罩灯（离地 2.05，叉车护顶高 2.1）
   const src = b.light({ x: -W / 2 + 0.3, z: lampZ, y: 2.0, color: 0xffc050, intensity: 0.9, range: 5, flicker: 0 });
   b.linkGlow(bulb, src, [2.0, 1.55, 0.5]);
   // 入口：门楣上一道黄黑警示带；外面两根管子从楼板上下来钻进走廊顶，管上两块压力表
@@ -2330,6 +2654,7 @@ function buildSiteBay(b, bay, r, env) {
   // 砂堆 + 水泥袋 + 半截砖墙 + 路锥
   b.cylinder(1.9, 0, 1.9, 0.9, 0.55, 'kit:prop', { rTop: 0.08, segments: 9, caps: false, color: [0.72, 0.62, 0.45], solid: false, uv: 'stretch' });
   b.solid(1.3, 0, 1.3, 2.5, 0.4, 2.5);
+  sideAdd(b, env, 'sand', 1.03, 2.77, 0, 0.2, 1.03, 2.77, true);   // 砂堆坡脚（碰撞盒只到 ±0.6；九边形底边外接圆 0.9、内切 0.85）：r 0.87 的竖圆柱、高 0.2
   for (let q = 0; q < 5; q++) sack(b, -2.2 + (q % 3) * 0.5, Math.floor(q / 3) * 0.14, 2.0, 0.48, 0.16, 0.34, (r() - 0.5) * 0.3, [0.6, 0.6, 0.58]);
   b.solid(-2.5, 0, 1.8, -0.9, 0.3, 2.2);
   const wallH = [0.9, 1.1, 0.7, 1.3, 0.5];
@@ -2340,6 +2665,8 @@ function buildSiteBay(b, bay, r, env) {
     b.cylinder(cx, 0.03, cz, 0.16, 0.6, 'kit:prop', { rTop: 0.025, segments: 7, caps: false, color: [0.95, 0.4, 0.1], solid: false, uv: 'stretch' });
     b.cylinder(cx, 0.3, cz, 0.105, 0.1, 'kit:prop', { rTop: 0.09, segments: 7, caps: false, color: [0.95, 0.95, 0.9], solid: false, uv: 'stretch' });
     dbox(b, cx, 0, cz, 0.38, 0.03, 0.38, [0.2, 0.2, 0.2], 'noBottom');
+    sideAdd(b, env, 'cone', cx - 0.16, cx + 0.16, 0, 0.63, cz - 0.16, cz + 0.16, true);   // 路锥（竖圆柱）
+    sideAdd(b, env, 'cone', cx - 0.19, cx + 0.19, 0, 0.03, cz - 0.19, cz + 0.19);         // 底座
   }
   scatterDebris(b, r, 6, 3.2);
   b.pop();
@@ -2355,11 +2682,12 @@ function groveBay(b, bay, r, env) {
     const hs = take(r, 7);
     soft(b, { kind: 'stain', x, y: 0, z, facing: 'up', w: rr * 4.6, h: rr * 4.0, rot: hs[0] * TAU, color: mulc(C.soil, PROP_LIN), srgb: false, opacity: 0.95, offset: FLOOR_DECAL }, 5,
       () => blot(b, x, z, rr * 1.5, rr * 1.3, 7, C.soil, seq(hs)));
-    const g = new THREE.IcosahedronGeometry(rr, 0);
-    g.scale(1, 0.75 + r() * 0.4, 1);
+    const g = new THREE.IcosahedronGeometry(rr, 0), sy = 0.75 + r() * 0.4;   // 取数顺序同原来
+    g.scale(1, sy, 1);
     b.mesh(g, 'kit:prop', { x, y: rr * 0.55, z, color: mulc(C.leaf, 0.8 + r() * 0.5), uv: 'stretch' });
     g.dispose();
     b.solid(x - rr * 0.7, 0, z - rr * 0.7, x + rr * 0.7, rr * 1.2, z + rr * 0.7);
+    sideAdd(b, env, 'shrub', x - rr, x + rr, 0, rr * (0.55 + sy), z - rr, z + rr, true);   // 灌木四周的叶子伸出碰撞盒（±0.7 rr）
   }
   // 地上的苔藓：同上，软边贴花 / 低画质六边形
   for (let q = 0; q < 6; q++) {
@@ -2374,7 +2702,11 @@ function groveBay(b, bay, r, env) {
 function placeFloorExit(b, def, x, z, rot, r, env) {
   switch (def.look) {
     case 'ceilingHole': ceilingHole(b, x, z, rot, def, r); break;
-    case 'duct': ductExit(b, x, z, rot, def, r); break;
+    case 'duct':
+      ductExit(b, x, z, rot, def, r);
+      // 风管顶上接出去的那段横风管（底 3.55、宽 0.9、长 3 m）：头顶条目
+      b.push(x, z, rot); ohAdd(b, env, 'pipe', -0.45, 0.45, -0.45 - 3.0, -0.45, H - 0.45, { sub: 'duct' }); b.pop();
+      break;
     case 'tv': tvExit(b, x, z, rot, def, r); break;
     case 'tree': treeExit(b, x, z, rot, def, r); break;
     case 'cairn': cairnExit(b, x, z, rot, def, r); break;
@@ -2748,7 +3080,7 @@ function sectorInfra(b, env) {
   if (sector === 'gothic') {
     // 拱门：主通道边上两条柱线（z=4、z=28）相邻两柱之间一道弧形拱板，拱脚 2.5 m、拱顶贴梁底
     const R = env.st.pillar * 0.56;
-    for (const zl of [LINES[0], LINES[3]]) for (let k = 0; k < 3; k++) archPlate(b, LINES[k] + R, LINES[k + 1] - R, zl, mulc(env.st.concrete, 0.95));
+    for (const zl of [LINES[0], LINES[3]]) for (let k = 0; k < 3; k++) archPlate(b, LINES[k] + R, LINES[k + 1] - R, zl, mulc(env.st.concrete, 0.95), env);
   } else if (sector === 'legend') {
     // 霓虹灯管竖贴在主通道边的柱子上
     const neon = [[1.9, 0.4, 1.6], [0.35, 1.6, 1.9], [1.9, 1.3, 0.3]];
@@ -2774,25 +3106,36 @@ function sectorExtras(b, env) {
         const t = q / 6, y = 3.2 - Math.sin(t * Math.PI) * (0.6 + k * 0.15);
         const p = [x0 + (x1 - x0) * t, y, zc];
         stick(b, prev, p, 0.014, col);
+        // 垂下来的电缆：每一段一个头顶条目（方截面细杆，最低的棱比中线低 0.014·√2）
+        ohAdd(b, env, 'cable', Math.min(prev[0], p[0]) - 0.02, Math.max(prev[0], p[0]) + 0.02, zc - 0.02, zc + 0.02, Math.min(prev[1], p[1]) - 0.02);
         prev = p;
       }
     }
   } else if (sector === 'garden') {
-    // 梁上挂下来的藤蔓
+    // 梁上挂下来的藤蔓。每根实际画出来的都记进 b.data.vines（世界坐标；v = 这根在 kit:prop 累加器里的顶点段，叉车开过时拨开用）
+    const vines = b.data.vines = [];
     for (let q = 0; q < 8; q++) {
       if (triCount(b) > TRI_BUDGET - 20) break;
       const alongX = r() < 0.5, line = LINES[Math.floor(r() * 4)], a = 2 + r() * 28;
       const x = alongX ? a : line + 0.26, z = alongX ? line + 0.26 : a, len = 0.6 + r() * 1.4;
-      stick(b, [x, H - BEAM_D, z], [x + (r() - 0.5) * 0.2, H - BEAM_D - len, z + (r() - 0.5) * 0.2], 0.018, mulc(C.leaf, 0.8 + r() * 0.4));
+      const p0 = [x, H - BEAM_D, z], p1 = [x + (r() - 0.5) * 0.2, H - BEAM_D - len, z + (r() - 0.5) * 0.2], col = mulc(C.leaf, 0.8 + r() * 0.4);
+      const pa = b._accs.get('kit:prop'), v0 = pa ? pa.n : 0;
+      stick(b, p0, p1, 0.018, col);
+      const w0 = b.world(p0[0], p0[2]), w1 = b.world(p1[0], p1[2]);
+      vines.push({ top: [r4(w0.x), r4(p0[1]), r4(w0.z)], bot: [r4(w1.x), r4(p1[1]), r4(w1.z)], r: 0.018, mat: 'kit:prop', v: [v0, b._accs.get('kit:prop').n] });
     }
   } else if (sector === 'tianying') {
     // 依据：landmarks「天鹰段天花板漏水小管子」——一根细水管，接头处滴水，下面一滩水
     const zl = 8 + 8 * Math.floor(r() * 3) + (r() - 0.5) * 2.6;   // 柱间中线附近（柱线上是梁）
-    if (roomy) b.cylinder(SIZE / 2, H - 0.2, zl, 0.03, SIZE, 'kit:prop', { axis: 'x', segments: 6, caps: false, color: [0.55, 0.5, 0.42], solid: false, uv: 'stretch' });
+    if (roomy) {
+      b.cylinder(SIZE / 2, H - 0.2, zl, 0.03, SIZE, 'kit:prop', { axis: 'x', segments: 6, caps: false, color: [0.55, 0.5, 0.42], solid: false, uv: 'stretch' });
+      ohAdd(b, env, 'drip', 0, SIZE, zl - 0.03, zl + 0.03, H - 0.2 - 0.03);
+    }
     for (let q = 0; q < 2; q++) {
       const px = 6 + r() * 20;
       if (!roomy || Math.abs(((px - 4) % 8 + 8) % 8 - 4) > 3.2) continue;   // 柱线附近不滴（柱帽下面）
       b.cylinder(px, H - 0.2, zl, 0.045, 0.08, 'kit:prop', { axis: 'x', segments: 6, color: [0.45, 0.4, 0.3], solid: false, uv: 'stretch' });
+      ohAdd(b, env, 'drip', px - 0.04, px + 0.04, zl - 0.045, zl + 0.045, H - 0.2 - 0.045);   // 接头（落下来的水滴不算，水挡不住货叉）
       glowBox(b, px, H - 0.34, zl, 0.02, 0.05, 0.02, [0.45, 0.55, 0.6]);
       kitPuddle(b, px, zl, { rx: 0.7, rz: 0.5, y: 0.012 });   // 比别处水坑（9 mm）高 3 mm：碰巧叠在一起也不闪
       markPuddle(b, px, zl);
@@ -2813,10 +3156,25 @@ function sectorExtras(b, env) {
   }
 }
 // 哥特段拱板：两根柱之间、从拱脚 2.5 m 到梁底 3.55 m 的一块弧形板，前后两面 + 拱底面
-function archPlate(b, x0, x1, zl, color) {
+// env.oh：拱底按 0.25 m 一段切成台阶盒记进头顶条目（每段取这段里拱底最低处：折线是凸的，最低在两端）
+function archPlate(b, x0, x1, zl, color, env) {
   const n = 8, ys = 2.5, yt = H - BEAM_D, t = 0.2, xm = (x0 + x1) / 2, hw = (x1 - x0) / 2;
   const curve = [];
   for (let k = 0; k <= n; k++) { const u = -1 + 2 * k / n; curve.push([xm + u * hw, ys + (yt - 0.12 - ys) * Math.sqrt(Math.max(0, 1 - u * u))]); }
+  if (env && env.oh) {
+    const at = x => {
+      for (let k = 0; k < n; k++) {
+        const a = curve[k], c = curve[k + 1];
+        if (x <= c[0] + 1e-9) return a[1] + (c[1] - a[1]) * Math.max(0, Math.min(1, (x - a[0]) / (c[0] - a[0])));
+      }
+      return curve[n][1];
+    };
+    const m = Math.max(1, Math.ceil((x1 - x0) / 0.25 - 1e-9));
+    for (let i = 0; i < m; i++) {
+      const xa = x0 + (x1 - x0) * i / m, xb = x0 + (x1 - x0) * (i + 1) / m;
+      ohAdd(b, env, 'arch', xa, xb, zl - t, zl + t, Math.min(at(xa), at(xb)));
+    }
+  }
   const faces = [];
   for (let k = 0; k < n; k++) {
     const a = curve[k], c = curve[k + 1];
@@ -2873,6 +3231,11 @@ function buildChunk(ctx, cx, cz, rng) {
   const orient = isSpawn ? 'x' : rOrient < 0.5 ? 'x' : 'z';
   const bays = planBays(rng, defs, isSpawn, st);
   const env = { st, sector, orient, bays, slots: [], huts: [], walls: [], portalNear: isSpawn ? null : portalNear(seed, cx, cz) };
+  // 出生保底：只在 L1 正常生成时（工坊地图不放；营地 BR.L1room 走 roomBuild，不经过这里）
+  if (isSpawn && !(BR.workshop && BR.workshop.active)) bays[4].forceFk = true;
+  // 头顶的东西（叉车升货叉、举着货叉开车时要避开）：b.data.overhead，画的地方顺手记（不取随机数、不改几何，高低画质一样）
+  env.oh = b.data.overhead = [];
+  env.side = b.data.sideObs = [];   // 车身高度上伸出来、没有碰撞体的东西（sideAdd）
   finishLayout(env);
   env.lampOnBeam = (x, z) => LINES.indexOf(x) >= 0 || LINES.indexOf(z) >= 0;
 
@@ -2918,7 +3281,7 @@ function buildChunk(ctx, cx, cz, rng) {
 }
 
 // ---------- 层级状态与危害（enter/update/leave）----------
-const S = { timer: 0, epoch: -1, blackout: false, blackoutUntil: 0, scareAt: 0, gardenTimer: 0, warned: false };
+const S = { timer: 0, epoch: -1, blackout: false, blackoutUntil: 0, scareAt: 0, gardenTimer: 0, warned: false, warnedFk: false };
 const EPOCH_LEN = 45;          // 依据：lighting「何时开始与结束皆不可预测」——原文没给数值，取一个不算频繁的巡检间隔
 const BLACKOUT_CHANCE = 0.3;   // 判断依据：hazards「闪烁…可能是最致命现象之一」，但也不是每次巡检都发生
 const GARDEN_HOUR = (BR.itemKit && BR.itemKit.LORE_HOUR) || 60;   // 依据：landmarks「花园段停留一小时开始植物化」，1 设定小时=60 秒
@@ -2938,9 +3301,26 @@ const BLACKOUT_ENV = Object.assign({}, LEVEL_ENV, {
   ambient: { color: 0xa4acbc, intensity: 0.2 }, background: 0x0b0c0f, fogColor: 0x0b0c0f, fogNear: 1.5, fogFar: 16,
 });
 
+// 坐在开着大灯的叉车上（发动机开着、仪表台的大灯开关开着）：断电时提示换成这句（家长 2026-10 拍板，FE1 返修 r2）。
+// 大灯借的是灯池里的真光，司机在 world.lightAt 里就算被照亮（理智、怕光 / 找光的怪都看它）；关掉开关就不算了。
+// 手机上没有空格：开关靠准心对准时临时写成「关大灯」的那个键来拨，说「点「关大灯」键」（主会话 r3 裁定 ④）。
+// 原话保留（49 / 53 字），显示时长按每秒 6 个字算、不少于 6 秒（8.2 / 8.8 秒），孩子读得完
+const FK_DARK_TIP = '闪烁：叉车大灯会把你照亮，对准仪表台的大灯开关按空格可以关掉，或者下车找亮着绿色应急灯的门躲进小屋';
+const FK_DARK_TIP_TOUCH = '闪烁：叉车大灯会把你照亮，对准仪表台的大灯开关点「关大灯」键可以关掉，或者下车找亮着绿色应急灯的门躲进小屋';
+function fkDarkTip() {
+  const t = BR.input && BR.input.isTouch ? FK_DARK_TIP_TOUCH : FK_DARK_TIP;
+  BR.hud.toast(t, Math.max(6000, Math.ceil(Array.from(t).length * 1000 / 6)));
+}
+function seatLit() {
+  const V = BR.vehicles;
+  try { return !!(V && typeof V.headlightLit === 'function' && V.headlightLit()); } catch (err) { return false; }
+}
 function onBlackoutStart(ctx) {
   BR.hud.toast('灯光闪了一下……万籁俱寂', 2000);
-  if (!S.warned) { BR.hud.toast('闪烁：别开灯，找亮着绿色应急灯的门躲进小屋', 3500); S.warned = true; }
+  // 叉车这句每次断电都说（坐在亮着大灯的车上是每次都要管的事）；平常那句照旧一局只说一次
+  S.warnedFk = false;
+  if (seatLit()) { fkDarkTip(); S.warned = true; S.warnedFk = true; }
+  else if (!S.warned) { BR.hud.toast('闪烁：别开灯，找亮着绿色应急灯的门躲进小屋', 3500); S.warned = true; }
   BR.audio.play('static');
   BR.gfx.applyEnv(BLACKOUT_ENV, BR.game.settings.visibility);
   for (const c of BR.world.chunks()) for (const l of (c.lights || [])) { if (l._l1orig === undefined) l._l1orig = l.intensity; l.intensity = 0; }
@@ -3019,6 +3399,8 @@ BR.levels.register({
     if (S.blackout && S.timer >= S.blackoutUntil) { S.blackout = false; onBlackoutEnd(); }
 
     if (S.blackout) {
+      // 断电途中才上车点着火、或者把关掉的大灯又打开：大灯亮起来的那一刻补一次叉车那句（每次断电最多一次）
+      if (!S.warnedFk && seatLit()) { fkDarkTip(); S.warnedFk = true; S.warned = true; }
       // 依据：hazards「手臂：灯光熄灭时从通风管道和裂缝伸出，猎捕流浪者」——没有独立实体文件，按环境危害处理
       if (S.timer >= S.scareAt) {
         S.scareAt = S.timer + 4 + S.rng() * 3;
@@ -3044,10 +3426,11 @@ BR.levels.register({
 
     // ---------- 未密封水坑接触感染（爬菌）----------
     // 依据：hazards「水坑与漏水不宜饮用；未密封液体可能传播爬菌」——按接触算轻微 san 损耗，不给即死
+    // 坐在叉车上（BR.player.mounted，加上下车插值那 0.5 s 的 pose 'drive'）时 player.x/z 是座椅：车开过水坑不算人踩到，整段跳过
     S.puddleTimer = (S.puddleTimer || 0) + dt;
     if (S.puddleTimer >= 0.5) {
       S.puddleTimer = 0;
-      for (const c of BR.world.chunks()) {
+      if (!(BR.player && (BR.player.mounted || BR.player.pose === 'drive'))) for (const c of BR.world.chunks()) {
         const puddles = c.res && c.res.data && c.res.data.puddles;
         if (!puddles) continue;
         for (const p of puddles) {
@@ -3408,6 +3791,48 @@ BR.L1room = Object.freeze({
   mats: Object.freeze({ wall: 'L1:wall', floor: 'L1:floor', define: defineMaterials }),
   height: H,                                                   // 楼板底标高 4.0（kit.builder 的 height）；梁底 3.55
   pillarW: sector => (STYLE[sector] || STYLE.yuejin).pillar,   // 柱子边长（营地往柱面上钉挂钩要用）
+});
+
+// =====================================================================
+// BR.L1forklift：给载具层（js/game/vehicles.js、forklift.js）用的窄接口 —— 叉车的尺寸常数、按部件建模、磨损贴花、细节档
+// =====================================================================
+// 2026-10-06 FE1（孩子：「叉车能开能举东西」）：停在区块里、没人开过的叉车照旧合并在区块网格里（golden 不动）；
+// 第一次有人上车时载具层把区块里那一段藏掉，用这里的 model / wear 按部件建进全层共用的载具网格。
+//   geo                 FORKLIFT_GEO（只读）：枢轴、货叉、驾驶舱留空 cab、14 个部件碰撞盒 obbs(lift)、上下车点等，字段说明见定义处
+//   model(b, opts)      forkliftModel：opts 见定义处（part / detail / number / lift / steer / drive / levers / seg）。开过的车一律 drive: true
+//   wear(b, opts)       磨损贴花（kit.decal，只在高画质画得出来）：opts = { detail, wearN, part = 'all', lift = 0 }，
+//                       画 FK_WEAR[1..wearN]（再按这一档的 decals − 1 截断），跳过 FK_WEAR[0]（车下地上那滩油不随车动）；
+//                       part 同 model（'body' 的跟车身、'carriage' 的两道货叉刮痕跟着货叉架升 pose(lift).carriage）；
+//                       part: 'oil' 只画 FK_WEAR[0]（保底车的地面油渍，放在载具网格里不随车动的一段）。不看区块贴花上限。返回画了几片
+//   lod                 FK_LOD（只读）：high / mid / lite / low / lowb / min / drvLow
+//   ladder              FK_LADDER：停放档的挑档顺序 { high: [...], low: [...] }
+//   driveTier(q, parked) 开过的车用哪一档（keyDecisions[1]）：低画质一律 'drvLow'；高画质 = 停放档，比 lite 粗（low / lowb / min）就用 'lite'，
+//                       本机没建过这台车的原区块（parked 为 null：队友开过来的车、出生保底车）用 'mid'
+function fkWear(b, opts) {
+  const o = opts || {}, part = o.part || 'all';
+  if (part === 'oil') return kit.decal(b, FK_WEAR[0][1]) ? 1 : 0;
+  const L = FK_LOD[o.detail] || FK_LOD.mid, want = k => part === 'all' || part === k, ps = FORKLIFT_GEO.pose(o.lift);
+  const n = Math.max(0, Math.min(+o.wearN | 0, L.decals - 1, FK_WEAR.length - 1));
+  let got = 0;
+  for (let k = 1; k <= n; k++) {
+    const [p, d] = FK_WEAR[k];
+    if (!want(p)) continue;
+    if (kit.decal(b, p === 'carriage' ? Object.assign({}, d, { y: d.y + ps.carriage }) : d)) got++;
+  }
+  return got;
+}
+function fkDriveTier(quality, parked) {
+  if (quality === 'low') return 'drvLow';
+  if (parked === 'high' || parked === 'mid' || parked === 'lite') return parked;
+  return parked == null ? 'mid' : 'lite';
+}
+BR.L1forklift = Object.freeze({
+  geo: FORKLIFT_GEO,
+  model: forkliftModel,
+  wear: fkWear,
+  lod: FK_LOD,
+  ladder: FK_LADDER,
+  driveTier: fkDriveTier,
 });
 })();
 

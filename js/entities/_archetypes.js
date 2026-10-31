@@ -1140,7 +1140,7 @@ function swarmPart(o, ctx) {
   return g;
 }
 
-// 测试人/玩家外形（拟态用）：防化服 + 玩家当前皮肤色。
+// 测试人/玩家外形（拟态用）：防化服 + 玩家当前皮肤色（o.color 可指定别的制服色，联机队友坐车时用）。
 // 缺省用程序化仿制品（约 1k 三角面）：hazmat.glb 有一万八千面，拟态类实体一层刷十几只就压垮手机；
 // { full: true } 才借 test_dummy 的 build（和测试人一模一样，只适合单只特写）
 const HAZMAT_GEAR = 0x1b1b1d;   // gear 槽位基色：面罩/滤罐/手套/靴子/腰带，不随皮肤变
@@ -1163,7 +1163,10 @@ function hazmat(ctx, o) {
       catch (err) { once('hazmat', () => console.warn('[arch] 借用测试人模型失败，改用程序化防化服', err)); }
     }
   }
-  const suit = BR.skin && has(BR.skin, 'color') ? BR.skin.color() : 0xd8b21f;
+  // o.color（FE1：联机队友坐在叉车上时的坐姿人形）指定制服色，缺省仍取玩家当前皮肤色。材质走 mat.lambert 的缓存，
+  // 缓存键里带着颜色：给了别的颜色就是另一份材质，拟态实体（不传 o.color）共用的那份不受影响；几何缓存键不看颜色，照旧共享
+  const suit = o.color != null && Number.isFinite(+o.color) ? (+o.color >>> 0) & 0xffffff
+    : BR.skin && has(BR.skin, 'color') ? BR.skin.color() : 0xd8b21f;
   const hi = resolveDetail(o.detail) === 'high';
   return humanoid({
     height: 1.8, bulk: 1.35, headSize: 1.3, neck: 0.4, key: 'hazmat_lite_v2', detail: o.detail,

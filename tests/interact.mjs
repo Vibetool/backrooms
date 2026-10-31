@@ -15,7 +15,7 @@
 //   - 压着出口圈的道具（L17 去 Level 18 的床）和出口一样：不出任何提示，长按也拖不动
 //   - 返修 r1：拖动不悬空（L7 门廊推不出去、人工坑推不进去）、出口圈拖动中就挡住、木箱把地上的瓶子推开、
 //     拖动有声音、甩头掉了提示「手滑了」、售货机给出拖不动的原因、座位候选长按拖的是椅子
-// touch（手机横屏 844×390，CDP 触摸）：点「互动」拾取；按住「互动」拖木箱、另一指推摇杆后退；drive 里多出「升」「降」、点「互动」下车
+// touch（手机横屏 844×390，CDP 触摸）：点「互动」拾取；按住「互动」拖木箱、另一指推摇杆后退；drive 里多出「升」「降」、「互动」键改名「下车」，提示「点「下车」」，点它下车
 // camp（桌面 1280×720，联机营地 N1，一个人在营地 = 自己说了算）：
 //   - 帐篷门候选：站在门前通道里对准门，提示「空格 进帐篷」；短按 100 ms 自己走进去、打开「选下一站」；Esc 先走出帐篷、不进暂停
 //   - 长按 500 ms 只出「帐篷是营地的出口，拖不动」，不进拖动、不走进去、帐篷不动
@@ -904,7 +904,7 @@ async function touch(browser) {
     check('T6 按住「互动」一按就拖，另一指推摇杆后退时木箱跟着走，提示「松开「互动」放下」', st1 === 'drag' && mid.st === 'drag' && Math.hypot(mid.P.x - c.P.x, mid.P.z - c.P.z) > 0.4 && /^松开「互动」 ?放下/.test(mid.p), { st1, mid, c: c.P });
     check('T7 松开「互动」放下，写进 levelState', r.st === 'idle' && r.ls && Math.abs(r.ls.dz - r.P.dz) < 1e-3, r);
 
-    // drive：多出「升」「降」，冲刺和丢弃灰掉；点「互动」下车
+    // drive：多出「升」「降」，冲刺和丢弃灰掉；「互动」键改名「下车」，点它下车
     c = await ev(page, () => {
       __ti.stand(13.5, 13.5, 13.5, 0);
       BR.interact.setMode('drive', { key: 'test@veh', label: '叉车', onShort() { BR.interact.setMode('walk'); return true; } });
@@ -912,7 +912,8 @@ async function touch(browser) {
       return { p: __ti.prompt(), ctx: BR.input.context };
     });
     b = await ev(page, btnRects);
-    check('T8 drive：「升」「降」出现，冲刺、丢弃灰掉，提示「点「互动」下车」', c.ctx === 'drive' && !by('liftUp').hidden && !by('liftDown').hidden && by('sprint').off && by('drop').off && /^点「互动」 ?下车/.test(c.p), { c, b: b.map(x => x.n + ':' + x.text + (x.hidden ? ' hidden' : '') + (x.off ? ' off' : '')) });
+    // FE1：drive 情境里「互动」键改名「下车」（input.js CONTEXTS.drive.labels），中间提示跟着写「点「下车」」（hud 的 lead 不重复写「下车」）
+    check('T8 drive：「升」「降」出现，冲刺、丢弃灰掉，提示「点「下车」」', c.ctx === 'drive' && !by('liftUp').hidden && !by('liftDown').hidden && by('sprint').off && by('drop').off && /^点「下车」$/.test(c.p), { c, b: b.map(x => x.n + ':' + x.text + (x.hidden ? ' hidden' : '') + (x.off ? ' off' : '')) });
     await shot(page, 'touch-drive');
     const up = by('liftUp');
     await T('touchStart', [{ x: up.cx, y: up.cy }]); await step(page, 0.05);
@@ -923,7 +924,7 @@ async function touch(browser) {
     await T('touchEnd', []); await step(page, 0.05);
     r = await ev(page, () => ({ mode: BR.interact.mode, ctx: BR.input.context }));
     b = await ev(page, btnRects);
-    check('T9 按住「升」= liftUp；点「互动」下车，「升」「降」又藏起来', held === true && r.mode === 'walk' && r.ctx === 'walk' && by('liftUp').hidden && by('liftDown').hidden, { held, r });
+    check('T9 按住「升」= liftUp；点「下车」（互动键）下车，「升」「降」又藏起来', held === true && r.mode === 'walk' && r.ctx === 'walk' && by('liftUp').hidden && by('liftDown').hidden, { held, r });
   } finally {
     await ctx.close();
   }
@@ -944,12 +945,14 @@ try {
     catch (err) { check(name + ' 流程没有中断', false, String(err && err.stack || err).slice(0, 1500)); }
   }
 } finally {
-  await browser.close();
+  // 先打汇总再关浏览器（FE1 返修 r3）：Chrome 退出后遗留的 crashpad 进程会占着管道，browser.close() 有时等好几分钟都不返回，
+  // 以前汇总排在它后面，检查全过了也一直不打印（tests/all.mjs 只能等到超时判失败）。close 最多等 10 s
+  for (const e of errors) console.log('ERR ' + e);
+  console.log('\n===== 汇总 =====');
+  console.log('检查 ' + (pass + fail) + ' 项，失败 ' + fail + ' 项');
+  console.log('页面报错 ' + errors.length + ' 条');
+  if (shots.length) console.log('截图 ' + shots.length + ' 张：' + shots.join('、'));
+  await Promise.race([browser.close().catch(() => {}), sleep(10000)]);
   srv.close();
 }
-for (const e of errors) console.log('ERR ' + e);
-console.log('\n===== 汇总 =====');
-console.log('检查 ' + (pass + fail) + ' 项，失败 ' + fail + ' 项');
-console.log('页面报错 ' + errors.length + ' 条');
-if (shots.length) console.log('截图 ' + shots.length + ' 张：' + shots.join('、'));
 process.exit(fail || errors.length ? 1 : 0);

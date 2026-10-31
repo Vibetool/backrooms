@@ -152,9 +152,6 @@ async function main() {
     await mobile(browser, base);
   } catch (err) {
     check('测试流程未中断', false, String(err && err.stack || err));
-  } finally {
-    await browser.close();
-    srv.close();
   }
 
   console.log('\n===== 汇总 =====');
@@ -165,6 +162,11 @@ async function main() {
   for (const e of errors) console.log('  ' + e);
   console.log('截图 ' + shots.length + ' 张：' + path.relative(ROOT, OUT));
   process.exitCode = failed.length || errors.length ? 1 : 0;
+  // 先打汇总再关浏览器（FE1 返修 r5，照 interact.mjs）：Chrome 退出后遗留的进程会占着管道，browser.close() 有时好几分钟都不返回，
+  // 以前汇总排在它后面，检查全过了也一直不打印（tests/all.mjs 只能等到超时判失败）。close 最多等 10 s
+  await Promise.race([browser.close().catch(() => {}), new Promise(r => setTimeout(r, 10000))]);
+  srv.close();
+  process.exit(process.exitCode);
 }
 
 // =====================================================================

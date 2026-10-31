@@ -13,6 +13,8 @@
 //   回营地横幅的「同意」「不要」点得到；邀请链接卡片、「回去？」卡片在手机上看得全、点得到。
 // 数值结果写 tests/output/mobile/<设备>.json；N1 新界面（帐篷选单、回营地横幅、两张卡片）另截几张图到 tests/output/mobile/，给人亲眼看。
 // 任一检查失败或页面出现 console.error / 未捕获异常时退出码为 1。
+// FE1 叉车（2026-10-06）：drive 段在 640×360、844×390、390×844、360×640 四种尺寸上查开车时的触屏键（「升」「降」「下车」不重叠、
+//   冲刺 / 丢弃变灰、按住「升」货叉升高、点「下车」恢复），截图 tests/output/mobile/<设备>-drive.png。
 // 可选参数：设备名只跑这几台；--sec game,coop 只跑这几段（调试用，all.mjs 不带参数全跑）。
 import http from 'node:http';
 import fs from 'node:fs';
@@ -87,7 +89,11 @@ const DEVICES = {
   'iphone-l': { w: 874, h: 402, dpr: 3, ua: UA.ios, phone: true, insets: { top: 0, bottom: 21, left: 62, right: 62 } },
   // 390×844（iPhone 13/14 竖屏）：帐篷选单、两张联机卡片在最常见的竖屏手机上看得全、点得到
   'iphone13-p': { w: 390, h: 844, dpr: 3, ua: UA.ios, phone: true, insets: { top: 47, bottom: 34, left: 0, right: 0 } },
+  // 844×390（iPhone 13/14 横屏）：FE1 叉车开车时的触屏键（drive 情境）四种尺寸之一
+  'iphone13-l': { w: 844, h: 390, dpr: 3, ua: UA.ios, phone: true, insets: { top: 0, bottom: 21, left: 47, right: 47 } },
   'android-p': { w: 360, h: 640, dpr: 2, ua: UA.android, phone: true, blankFirst: true },
+  // 320×568（iPhone SE 一代竖屏）：方案要求的四种尺寸以外最窄最矮的，只跑开车那一段（FE1 返修 r2：提示行以前在这里压住物品名）
+  'se1-p': { w: 320, h: 568, dpr: 2, ua: UA.ios, phone: true, tiny: true },
   'android-l': { w: 640, h: 360, dpr: 2, ua: UA.android, phone: true },
   'ipadmini-p': { w: 744, h: 1133, dpr: 2, ua: UA.mac, ipad: true },
   'ipadair-l': { w: 1180, h: 820, dpr: 2, ua: UA.mac, ipad: true },
@@ -1372,6 +1378,55 @@ async function a1(D) {
   }
 }
 
+// A3b（FE1 返修 r7，验收员：360×640 竖屏上往货叉上丢东西的两行提示盖住了「丢弃」键和摇杆上沿）：站着（没开车）时弹两条长 toast
+// （往货叉上丢东西「这一段叉面满了，…」那句 25 个字、断电提示那句），toast 和看得见的触屏键、待机摇杆都不相交；字没被截（scrollWidth ≤ clientWidth）
+async function a3b(D) {
+  const texts = ['这一段叉面满了，东西放到旁边地上了，靠车那头还空着', '这根货叉摆满了，旁边地上也放不下'];
+  const out = [];
+  for (const t of texts) {
+    const r = await D.ev(async t => {
+      const M = __m;
+      document.querySelectorAll('.hud-toast').forEach(n => n.remove());
+      // 准心下面有两三行提示时 toast 被往下推（验收员那张图：站在叉车前、提示两行，toast 落到 y≈400，正好是「丢弃」键那一排）
+      BR.hud.prompt('叉车太重，拖不动 · 绕到侧面上车 · 这句提示故意写长一点，在窄屏上折成两三行');
+      __br.step(0.1);
+      BR.hud.toast(t, 4000);
+      __br.step(0.6);
+      // 列的 margin-top 过渡、淡入动画按墙钟走：等它们走完再量（验收员是淡入 0.5 s 以后截的图）
+      await new Promise(res => setTimeout(res, 600));
+      __br.step(0.05);
+      const L = BR.input.touchLayout();
+      const blocks = (L ? L.buttons.map(b => ({ n: b.act, l: b.l, t: b.t, r: b.r, b: b.b })) : []);
+      if (L && L.stick) blocks.push({ n: 'stick', l: L.stick.l, t: L.stick.t, r: L.stick.r2, b: L.stick.b });
+      const ts = M.qa('.hud-toast').filter(e => M.vis(e) && e.textContent === t);
+      const boxes = ts.map(e => M.box(e));
+      const hits = [];
+      for (const a of boxes) for (const b of blocks) if (M.inter(a, b, 0.5)) hits.push(b.n);
+      return { t, n: ts.length, boxes: boxes.map(b => [b.l, b.t, b.r, b.b]), hits, up: document.querySelector('.hud-toasts').classList.contains('hud-toasts-up'),
+        clip: ts.some(e => e.scrollWidth > e.clientWidth + 1), inView: boxes.every(b => M.inView(b)), prompt: M.box('.hud-prompt') };
+    }, t);
+    out.push(r);
+  }
+  // 长提示里几个词不拆到两行（返修 r7，验收员：「或者下 / 车找亮着…」「绿色应 / 急灯」「门躲 / 进小屋」）：它们整个包在不换行的 span 里，每个 span 只占一行
+  const nb = await D.ev(async () => {
+    const t = '闪烁：叉车大灯会把你照亮，对准仪表台的大灯开关点「关大灯」键可以关掉，或者下车找亮着绿色应急灯的门躲进小屋';
+    document.querySelectorAll('.hud-toast').forEach(n => n.remove());
+    BR.hud.toast(t, 6000);
+    __br.step(0.1);
+    await new Promise(res => setTimeout(res, 400));
+    const el = Array.from(document.querySelectorAll('.hud-toast')).find(e => e.textContent === t);
+    if (!el) return { found: false };
+    const spans = Array.from(el.querySelectorAll('.hud-nobr')).map(e => ({ t: e.textContent, lines: e.getClientRects().length }));
+    return { found: true, text: el.innerText.replace(/\n/g, '/'), spans };
+  });
+  D.check('A3b ' + D.dev.w + '×' + D.dev.h + ' 断电长提示里「大灯开关」「关大灯」「下车」「应急灯」「躲进小屋」都整个在一行里（' + (nb.found ? nb.text : '没找到这条 toast') + '）',
+    nb.found && ['大灯开关', '「关大灯」', '下车', '应急灯', '躲进小屋'].every(w => nb.spans.some(x => x.t === w && x.lines === 1)), nb);
+  await D.ev(() => { document.querySelectorAll('.hud-toast').forEach(n => n.remove()); BR.hud.prompt(null); __br.step(0.05); return 0; });
+  D.check('A3b ' + D.dev.w + '×' + D.dev.h + ' 站着时两条长 toast（往货叉上丢东西、货叉摆满）不压触屏键和待机摇杆、整条在视口里、字没被截' +
+    '（' + out.map(r => (r.up ? '往上长 ' : '') + JSON.stringify(r.boxes) + (r.hits.length ? ' 压着 ' + r.hits.join('/') : '')).join('；') + '）',
+    out.every(r => r.n === 1 && r.hits.length === 0 && !r.clip && r.inView), out);
+}
+
 async function a2(D) {
   const d0 = await D.ev(() => {
     const P = BR.player;
@@ -1822,6 +1877,7 @@ async function secGame(D) {
   else D.check('E4 横屏开局不出现含「横屏」的 toast', !toasts.some(t => /横屏/.test(t)), toasts);
 
   await sub(D, 'A1', () => a1(D));
+  await sub(D, 'A3b', () => a3b(D));
   if (key === 'android-p' || key === 'iphone-p') {
     await sub(D, 'A2', () => a2(D));
     await sub(D, 'A12', () => a12(D));
@@ -2876,6 +2932,184 @@ async function secWorkshop(D) {
   if (k === 'android-l' || k === 'iphone-p') await sub(D, 'D2', () => d2(D));
 }
 
+
+// =====================================================================
+// FE1 叉车（2026-10-06 叉车驾驶提前版）：开车时的触屏键（drive 情境），640×360、844×390 横屏和 390×844、360×640 竖屏各一遍
+//   DR1 对准停着的叉车提示「点「互动」上车」；点「互动」上车
+//   DR2 坐上去：「升」「降」出现，「互动」键改名「下车」，冲刺、丢弃灰掉，「使用」「暂停」照常
+//   DR3 「升」「降」「下车」「使用」「暂停」和待机摇杆的矩形两两不相交，也不压住开车提示行和中间提示；都在视口（安全区）里
+//   DR4 开车提示行是手机那句「摇杆开车 · 按住「升」「降」动货叉 · 点「下车」下车」，中间提示「点「下车」」；
+//   DR4b 每一段整段不折行（「按住「升」「降」动货叉 ·」不拆开），最多 3 行（360×640 竖屏摆不下 13px 时 hud 收到 11px）；
+//        320×568（se1-p，只跑这一段）放宽到 4 行、允许在「动货叉」前折行
+//   DR4c 手里拿着东西（物品名那一行显示着）：提示行不压住物品名和背包栏
+//   DR8 进层马上上车：「发动中」和还没淡出的大标题不叠在一起。前提（FE1 返修 r3）：上车那一刻大标题真在屏幕上 —— 测试先重播一次大标题，
+//       MutationObserver 记下它有没有被「让开」（加 hud-title-cut）；上车后 0.85 s 里每 0.1 s 量一次。通过 = 一次都没叠上，并且
+//       （看到过让开，或者状态短提示出来时大标题还在、两者不相交）；大标题在提示出来之前就自己淡完了（机器太忙，hud 15 s 的墙钟兜底
+//       计时器不受动画放慢影响）记 SKIP，不算通过，汇总单独列出跳过几项
+//   DR5 按住「升」1 s 货叉升高（和键盘 R 一样 0.45 m）；松手就停
+//   DR6 摇杆往前推，车往前开
+//   DR7 点「下车」下车：「升」「降」藏起来，「互动」恢复原名，冲刺、丢弃不再灰
+// 截图 tests/output/mobile/<设备>-drive.png
+// =====================================================================
+const FK_PHONE_LINE = '摇杆开车 · 按住「升」「降」动货叉 · 点「下车」下车';
+function driveLayout(env) {
+  const M = __m;
+  const cs = getComputedStyle(document.querySelector('.touch-root'));
+  const ins = env ? { t: env.t, r: env.r, b: env.b, l: env.l } : { t: parseFloat(cs.paddingTop) || 0, r: parseFloat(cs.paddingRight) || 0, b: parseFloat(cs.paddingBottom) || 0, l: parseFloat(cs.paddingLeft) || 0 };
+  const btn = n => {
+    const e = M.q('.touch-root .touch-btn-' + n);
+    return e ? Object.assign({ n, text: e.textContent.trim(), shown: M.vis(e), off: e.classList.contains('touch-off') }, M.box(e)) : null;
+  };
+  const B = {};
+  for (const n of ['liftUp', 'liftDown', 'interact', 'use', 'pause', 'sprint', 'drop']) B[n] = btn(n);
+  const keys = ['liftUp', 'liftDown', 'interact', 'use', 'pause'].map(n => B[n]).filter(b => b && b.shown);
+  const stick = Object.assign({ n: 'stickIdle' }, M.box('.touch-stick'));
+  const lineEl = M.qa('.hud-drive').find(e => M.vis(e));
+  const line = lineEl ? Object.assign({ n: 'driveLine', text: lineEl.innerText.replace(/\s+/g, ' ').trim() }, M.box(lineEl)) : null;
+  // 「按住「升」「降」动货叉 ·」这一段有没有被拆成两行（320 宽竖屏以外都不该拆）；用的是哪一档字号
+  if (line) {
+    const ph = lineEl.querySelector('.hud-drive-phrase'), segs = ph ? ph.querySelectorAll('.hud-drive-seg') : [];
+    line.split = segs.length > 1 && Math.round(segs[0].getBoundingClientRect().top) !== Math.round(segs[1].getBoundingClientRect().top);
+    line.mode = BR.hud.drive && BR.hud.drive.place ? BR.hud.drive.place.mode : '';
+    line.lines = new Set([...lineEl.querySelectorAll('.hud-drive-seg')].map(e => Math.round(e.getBoundingClientRect().top))).size;
+  }
+  const prEl = M.q('.hud-prompt');
+  const prompt = prEl && M.vis(prEl) ? Object.assign({ n: 'prompt', text: prEl.innerText.replace(/\s+/g, ' ').trim() }, M.box(prEl)) : null;
+  // 背包栏和上面那行物品名（「罐头食品 · 点「使用」」）：开车提示行不能压住它们（FE1 返修 r2）
+  const invHits = [];
+  if (line) for (const sel of ['.hud-inv-name', '.hud-inv-row']) { const e = M.q(sel); if (e && M.vis(e) && M.inter(line, Object.assign({ n: sel }, M.box(e)))) invHits.push(sel); }
+  if (line) line.upper = !!(BR.hud.drive && BR.hud.drive.place && BR.hud.drive.place.upper);
+  const hits = [];
+  const group = keys.concat([stick]);
+  for (let i = 0; i < group.length; i++) for (let j = i + 1; j < group.length; j++) if (M.inter(group[i], group[j])) hits.push(group[i].n + '×' + group[j].n);
+  for (const k of keys) for (const o of [line, prompt]) if (o && M.inter(k, o)) hits.push(k.n + '×' + o.n);
+  const out = keys.concat([stick]).filter(it => !M.inView(it, ins)).map(it => it.n);
+  // 测试模式右上角的「实体」入口（.test-entry）：开车时多出来的「升」「降」也不能压住它
+  const teEl = M.q('.test-entry');
+  const te = teEl && M.vis(teEl) ? Object.assign({ n: 'testEntry' }, M.box(teEl)) : null;
+  const teHits = te ? keys.filter(k => M.inter(k, te)).map(k => k.n + '×testEntry') : [];
+  return { B, stick, line, prompt, hits, out, ins, te, teHits, invHits, ctx: BR.input.context, mode: BR.interact.mode, seated: BR.vehicles && BR.vehicles.seated,
+    boxes: group.concat([line, prompt].filter(Boolean)).map(it => it.n + ' ' + [it.l, it.t, it.r, it.b].map(Math.round).join(',')) };
+}
+async function secDrive(D) {
+  const safe = !!D.dev.insets;
+  const env = safe && D.envOk ? D.env : null;
+  await goHome(D);
+  await startGame(D, { mode: 'test', levelId: '1', seed: 12345 });
+  await D.step(0.3);
+  // 出生柱间的叉车，站到它左侧 1.2 m、对准车身
+  const k = await D.ev(() => {
+    const c = BR.world.chunks().find(q => q.key === '0,0');
+    const f = ((c && c.res.data && c.res.data.forklifts) || []).find(q => q.x > 12 && q.x < 20 && q.z > 12 && q.z < 20);
+    if (!f) return null;
+    const cy = Math.cos(f.rot), sy = Math.sin(f.rot);
+    const W = (lx, lz) => ({ x: f.x + cy * lx + sy * lz, z: f.z - sy * lx + cy * lz });
+    const st = W(-1.2, 0.24), seat = W(0, 0.24);
+    BR.player.reset({ x: st.x, y: 0, z: st.z, yaw: Math.atan2(-(seat.x - st.x), -(seat.z - st.z)) }, { full: false });
+    __br.step(0.05);
+    BR.interact.aimAt(seat.x, 1.25, seat.z);
+    __br.step(0.1);
+    return f.key;
+  });
+  if (!k) throw new Error('出生柱间没有叉车');
+  const pre = await D.ev(() => { const el = document.querySelector('.hud-prompt'); const c = BR.interact.current; return { p: el && !el.hidden ? el.innerText.replace(/\s+/g, ' ').trim() : '', kind: c && c.kind }; });
+  D.check('DR1 触屏对准停着的叉车：提示「点「互动」上车」', pre.kind === 'vehicle' && /^点「互动」 ?上车/.test(pre.p) && !/空格/.test(pre.p), pre);
+  const ib = await D.ev(() => __m.box('.touch-root .touch-btn-interact'));
+  // 手里拿着一件东西（物品名那一行显示着）：提示行要让开它
+  await D.ev(() => { BR.player.addItem('canned_food', 1); const i = BR.player.inventory.findIndex(q => q && q.type === 'canned_food'); BR.player.select(i); __br.step(0.05); return 0; });
+  // DR8 的前提：上车那一刻层级大标题真在屏幕上（进层后机器一忙，5.2 s 的大标题可能已经自己淡完了，那样测不到「让开」）——
+  // 重播一次大标题（刚开始播，离自己淡出还早），再用 MutationObserver 记它有没有被「让开」（dodgeTitle 加 hud-title-cut）、有没有被收起
+  const pre8 = await D.ev(() => {
+    const t = document.querySelector('.hud-title');
+    if (!t || !BR.hud || typeof BR.hud.levelTitle !== 'function') return { on0: false };
+    BR.hud.levelTitle({ id: 'dr8-' + Date.now(), name: 'Level 1', title: '宜居地带', survivalClass: 1 });
+    // 大标题是 5.2 s 的真实时间 CSS 动画，测试推的是模拟时间：机器一忙，提示还没出来大标题就自己淡完了。把这一次的动画放慢到 1/5，
+    // 让「上车那一刻大标题还在屏幕上」这个前提在一般的忙碌下站得住；让开（hud-title-cut）走的是另一条 0.25 s 的淡出，不受影响。
+    // 放慢管不到 hud 另外那个 15 s 的墙钟兜底计时器（levelTitle 的 TITLE_SAFETY_MS）：机器极忙（负载 90 一类）、从这里到状态短提示出来
+    // 超过 15 s 时大标题照样会被收起，前提不成立，下面记 SKIP（汇总「跳过 N 项」、tests/all.mjs 表里「记 SKIP」一列单独列出，不算通过）。
+    // 重播放在点「互动」上车的前一步，中间不做别的事，尽量缩短这段墙钟时间
+    try { for (const an of t.getAnimations()) an.playbackRate = 0.2; } catch (e) { /* 老浏览器没有 getAnimations */ }
+    const w = window.__dr8 = { cut: false, hidden: false };
+    if (window.__dr8mo) window.__dr8mo.disconnect();
+    const mo = window.__dr8mo = new MutationObserver(() => { if (t.classList.contains('hud-title-cut')) w.cut = true; if (t.hidden) w.hidden = true; });
+    mo.observe(t, { attributes: true, attributeFilter: ['class', 'hidden'] });
+    return { on0: !t.hidden && t.classList.contains('hud-title-play') && !t.classList.contains('hud-title-cut') };
+  });
+  await D.t.down(21, ib.cx, ib.cy); await D.step(0.1); await D.t.up(21); await D.step(0.05);
+  // 进层没几秒就上车：起动那 0.8 s 的「发动中」和还没淡出的大标题不能叠在一起（大标题让开 / 收起）。0.85 s 里每 0.1 s 量一次
+  const tnOf = () => D.ev(() => {
+    const vis = e => !!e && !e.hidden && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden' && +getComputedStyle(e).opacity > 0.05;
+    const t = document.querySelector('.hud-title'), n = document.querySelector('.hud-drive-note');
+    const r = e => { const b = e.getBoundingClientRect(); return { l: Math.round(b.left), t: Math.round(b.top), r: Math.round(b.right), b: Math.round(b.bottom) }; };
+    const tv = vis(t) && !t.classList.contains('hud-title-cut'), nv = vis(n);
+    const a = tv ? r(t) : null, b = nv ? r(n) : null;
+    return { tv, nv, cut: !!t && t.classList.contains('hud-title-cut'), title: a, note: b, text: nv ? n.textContent : '', hit: !!a && !!b && a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b };
+  });
+  const tns = [];
+  for (let i = 0; i < 9; i++) { await D.step(i < 8 ? 0.1 : 0.05); tns.push(await tnOf()); }
+  const tn = tns[tns.length - 1];
+  const obs8 = await D.ev(() => {
+    if (window.__dr8mo) window.__dr8mo.disconnect();
+    window.__dr8mo = null;
+    const t = document.querySelector('.hud-title');
+    try { if (t) for (const an of t.getAnimations()) an.playbackRate = 1; } catch (e) { /* 同上 */ }
+    return window.__dr8 || null;
+  });
+  await D.step(0.75);
+  const lay = await D.ev(driveLayout, env);
+  D.data.drive = lay;
+  D.check('DR1 点「互动」上车：drive 情境、坐在车上', lay.ctx === 'drive' && lay.mode === 'drive' && lay.seated === k, { ctx: lay.ctx, mode: lay.mode, seated: lay.seated });
+  const B = lay.B;
+  D.check('DR2 坐上去：「升」「降」出现，「互动」键改名「下车」，冲刺、丢弃灰掉，「使用」「暂停」照常',
+    !!B.liftUp && B.liftUp.shown && !!B.liftDown && B.liftDown.shown && B.liftUp.text === '升' && B.liftDown.text === '降' && !!B.interact && B.interact.text === '下车' &&
+    !!B.sprint && B.sprint.off && !!B.drop && B.drop.off && !!B.use && B.use.shown && !B.use.off && !!B.pause && B.pause.shown && !B.pause.off, B);
+  D.check('DR3 「升」「降」「下车」「使用」「暂停」和待机摇杆两两不相交，也不压住开车提示行、中间提示', lay.hits.length === 0, { hits: lay.hits, boxes: lay.boxes });
+  if (lay.te) D.check('DR3 测试模式右上角的「实体」入口不被「升」「降」等键压住', lay.teHits.length === 0, { teHits: lay.teHits, te: lay.te, boxes: lay.boxes });
+  if (safe && !D.envOk) D.skip('DR3 这些键和摇杆都在视口安全区内', D.envWhy);
+  D.check('DR3 这些键和摇杆都在视口' + (env ? '安全区' : '') + '内', lay.out.length === 0, { out: lay.out, ins: lay.ins });
+  D.check('DR4 开车提示行「' + FK_PHONE_LINE + '」，中间提示「点「下车」」', !!lay.line && lay.line.text === FK_PHONE_LINE && !!lay.prompt && /^点「下车」$/.test(lay.prompt.text), { line: lay.line && lay.line.text, prompt: lay.prompt && lay.prompt.text });
+  if (D.dev.tiny) D.check('DR4b 320 宽竖屏：开车提示行最多 4 行（这里允许「按住「升」「降」」和「动货叉」之间折行）', !!lay.line && lay.line.lines <= 4, { split: lay.line && lay.line.split, lines: lay.line && lay.line.lines, mode: lay.line && lay.line.mode, upper: lay.line && lay.line.upper });
+  else D.check('DR4b 开车提示行每一段整段不折行（「按住「升」「降」动货叉 ·」不拆成两行），最多 3 行', !!lay.line && !lay.line.split && lay.line.lines <= 3, { split: lay.line && lay.line.split, lines: lay.line && lay.line.lines, mode: lay.line && lay.line.mode });
+  D.check('DR4c 手里拿着东西开车：提示行不压住物品名那一行和背包栏（字不叠字）', !!lay.line && lay.invHits.length === 0, { invHits: lay.invHits, line: lay.line && [lay.line.l, lay.line.t, lay.line.r, lay.line.b].map(Math.round), mode: lay.line && lay.line.mode, upper: lay.line && lay.line.upper });
+  {
+    const hits = tns.filter(q => q.hit), noteSeen = tns.some(q => q.nv), together = tns.some(q => q.nv && q.tv);
+    const dodged = !!obs8 && obs8.cut;
+    const lost = !!obs8 && obs8.hidden && !obs8.cut && !together;   // 提示出来之前大标题就自己淡完了：前提没了
+    if (!pre8.on0) D.skip('DR8 进层马上上车：「发动中」和大标题不叠在一起', '上车前没能让大标题出现在屏幕上，量不到');
+    else if (lost && !hits.length) D.skip('DR8 进层马上上车：「发动中」和大标题不叠在一起', '机器太忙：状态短提示出来之前大标题已经自己淡完了（没让开过，也没同时在屏幕上），这一项没测到');
+    else D.check('DR8 进层马上上车（上车时大标题在屏幕上）：「' + (tn.text || '发动中') + '」和大标题一次都没叠上（量 ' + tns.length + ' 次）；' + (dodged ? '大标题让开了（hud-title-cut）' : '两者同时在屏幕上、互不相交'),
+      noteSeen && !hits.length && (dodged || together), { pre8, obs8, hits: hits.slice(0, 2), last: tn, together, n: tns.length });
+  }
+  await shotTo(D, 'drive');
+  // 按住「升」1 s
+  const l0 = await D.ev(k => { const v = BR.vehicles.byKey(k); return v ? v.pose.lift : null; }, k);
+  const up = B.liftUp;
+  await D.t.down(22, up.cx, up.cy);
+  await D.step(1.0);
+  const held = await D.ev(k => ({ held: BR.input.held('liftUp'), lift: BR.vehicles.byKey(k).pose.lift }), k);
+  await D.t.up(22); await D.step(0.05);
+  const l2 = await D.ev(k => { __br.step(0.3); return BR.vehicles.byKey(k).pose.lift; }, k);
+  const geoT = await D.ev(() => (BR.L1forklift && BR.L1forklift.geo && BR.L1forklift.geo.carriageTravel) || 2.6);
+  const rise = (held.lift - l0) * geoT;
+  D.check('DR5 按住「升」1 s：货叉升高 ' + rise.toFixed(3) + ' m（0.45±0.03），松手就停', held.held === true && Math.abs(rise - 0.45) <= 0.03 && Math.abs(l2 - held.lift) < 1e-6, { l0, held, l2 });
+  // 摇杆往前推：车往前开（叉车正对小屋门，前面有 2 m 空地，推 0.6 s）
+  const p0 = await D.ev(k => { const p = BR.vehicles.byKey(k).pose; return { x: p.x, z: p.z }; }, k);
+  const st = lay.stick;
+  await D.t.down(23, st.cx, st.cy);
+  await D.t.move(23, st.cx, st.cy - 30); await D.t.move(23, st.cx, st.cy - 60);
+  await D.step(0.8);
+  const p1 = await D.ev(k => { const p = BR.vehicles.byKey(k).pose; return { x: p.x, z: p.z, spd: p.spd }; }, k);
+  await D.t.up(23); await D.step(1.0);
+  D.check('DR6 摇杆往前推：车往前开', Math.hypot(p1.x - p0.x, p1.z - p0.z) > 0.1 && p1.spd >= 0, { p0, p1 });
+  // 点「下车」
+  const ib2 = await D.ev(() => __m.box('.touch-root .touch-btn-interact'));
+  await D.t.down(24, ib2.cx, ib2.cy); await D.step(0.1); await D.t.up(24); await D.step(0.05);
+  await D.step(1.0);
+  const aft = await D.ev(driveLayout, env);
+  D.check('DR7 点「下车」下车：「升」「降」藏起来，「互动」恢复原名，冲刺、丢弃不再灰，提示行收起',
+    aft.ctx === 'walk' && !aft.seated && !(aft.B.liftUp && aft.B.liftUp.shown) && !(aft.B.liftDown && aft.B.liftDown.shown) && !!aft.B.interact && aft.B.interact.text === '互动' && !aft.B.sprint.off && !aft.B.drop.off && !aft.line, { ctx: aft.ctx, B: aft.B, line: aft.line });
+  await goHome(D);
+}
 // =====================================================================
 // 每台设备跑哪些段（同一项检查只在计划点名的设备上跑，控制总时长）
 // =====================================================================
@@ -2888,6 +3122,7 @@ const PLANS = {
     ['history', secGameBack],                                                                        // E1 E2
     ['guest', secGuestBack],                                                                         // 客机：卡片「加入」→ 营地 → 帐篷返回键 → 出发 → 离开联机
     ['game', secGame],                                                                               // E3 E4 A1 A3 A2 A12
+    ['drive', secDrive],                                                                             // FE1 叉车 360×640：DR1–DR7
     ['workshop', secWorkshop],                                                                       // D6 D12
   ],
   'android-l': [
@@ -2904,6 +3139,7 @@ const PLANS = {
     ['test', secTest],                                                                               // A4 A10 A11
     ['toast', secToastL16],                                                                          // A9
     ['sanity', secSanity],                                                                           // E7
+    ['drive', secDrive],                                                                             // FE1 叉车 640×360：DR1–DR7
     ['workshop', secWorkshop],                                                                       // D6 D9 D5 D1 D2
   ],
   'iphone-p': [
@@ -2926,6 +3162,13 @@ const PLANS = {
   'iphone13-p': [
     ['tent', secTent],                                                                               // 帐篷 390×844：T1–T7，回营地横幅 T8–T11
     ['cards', secCards],                                                                             // K1–K3
+    ['drive', secDrive],                                                                             // FE1 叉车 390×844：DR1–DR7
+  ],
+  'iphone13-l': [
+    ['drive', secDrive],                                                                             // FE1 叉车 844×390：DR1–DR7
+  ],
+  'se1-p': [
+    ['drive', secDrive],                                                                             // FE1 叉车 320×568：DR1–DR8（DR4b 放宽到 4 行、段可以拆开）
   ],
   'ipadmini-p': [
     ['basics', secBasics],
@@ -2985,7 +3228,8 @@ async function main() {
   } catch (err) {
     check('-', '测试流程未中断', false, String(err && err.stack || err));
   } finally {
-    await browser.close().catch(() => {});
+    // browser.close() 偶尔要等好几分钟（Chrome 退出后遗留的 crashpad 进程占着管道，见 tests/kit.mjs、tests/all.mjs）：最多等 10 s，汇总照常打印
+    await Promise.race([browser.close().catch(() => {}), new Promise(r => setTimeout(r, 10000))]);
     srv.close();
   }
 
@@ -3001,6 +3245,8 @@ async function main() {
   for (const e of errors) console.log('  ' + e.slice(0, 600));
   console.log('耗时 ' + Math.round((Date.now() - t0) / 1000) + 's；数值结果：' + path.relative(ROOT, OUT) + '/<设备>.json');
   process.exitCode = failed.length || errors.length ? 1 : 0;
+  // 关浏览器最多等了 10 s：没关干净的 Chrome 子进程会占着句柄，node 自己不退出
+  setTimeout(() => process.exit(process.exitCode), 200);
 }
 
 main();

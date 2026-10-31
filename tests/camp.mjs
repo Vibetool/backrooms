@@ -20,7 +20,8 @@
 //   M 低画质：桌面纸（CanvasTexture）在、可见，从站位看过去第一眼就是它
 // 截图和日志写 tests/output/camp/。任一检查失败或页面出现 console.error / 未捕获异常时退出码为 1。
 // 营地不进入库 golden；之后改 L1 构件的阶段（A2、D1、B1、F1、D3、C2）要看营地变没变，用快照：
-//   node tests/camp.mjs --tag <名>      改动前把布局、几何签名拍到 tests/output/golden-tags/<名>/coopcamp.json
+//   node tests/camp.mjs --tag <名>      改动前把布局、几何签名拍到 tests/output/golden-tags/<名>/camp-coopcamp.json（不和 golden.mjs 的 coopcamp.json 撞名；
+//                                       比对时也认营地格式的旧名 coopcamp.json，比如 N1-final）
 //   node tests/camp.mjs --against <名>  改动后和那份比（L5：布局签名、几何签名逐块对比，变了的块列出来）
 // 调试：CAMP_ONLY=F,L 只跑这几节（「进营地」总会跑）
 import http from 'node:http';
@@ -52,7 +53,18 @@ const ROOM = { x0: 4, z0: 4, x1: 28, z1: 28 };
 const argv = process.argv.slice(2);
 const argOf = n => { const i = argv.indexOf('--' + n); return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : null; };
 const TAG = argOf('tag'), AGAINST = argOf('against');
-const tagFile = n => path.join(ROOT, 'tests', 'output', 'golden-tags', n, 'coopcamp.json');
+// 营地自己的快照文件名是 camp-coopcamp.json：tests/golden.mjs --tag 也往同一个目录写 coopcamp.json（格式不同），以前两个脚本拍同名快照会互相覆盖。
+// 读的时候先找新名字，没有再认旧名字 coopcamp.json —— 只认营地格式（有 high.layout）的那份，golden 的那份当作没有（FE1 返修 r2）
+const tagFile = n => path.join(ROOT, 'tests', 'output', 'golden-tags', n, 'camp-coopcamp.json');
+const tagFileOld = n => path.join(ROOT, 'tests', 'output', 'golden-tags', n, 'coopcamp.json');
+function readTag(n) {
+  for (const f of [tagFile(n), tagFileOld(n)]) {
+    let j = null;
+    try { j = JSON.parse(fs.readFileSync(f, 'utf8')); } catch (err) { j = null; }
+    if (j && j.high && j.high.layout && j.low && j.low.layout) return { base: j, file: f };
+  }
+  return { base: null, file: tagFile(n) };
+}
 
 // ---------- 静态服务（同 smoke.mjs） ----------
 const MIME = {
@@ -887,10 +899,10 @@ async function run(browser, base) {
       info('营地签名快照写到 ' + path.relative(ROOT, tagFile(TAG)));
     }
     if (AGAINST) {
-      let base = null;
-      try { base = JSON.parse(fs.readFileSync(tagFile(AGAINST), 'utf8')); } catch (err) { base = null; }
-      if (!base) check('L5 和快照 ' + AGAINST + ' 比对：快照文件在', false, path.relative(ROOT, tagFile(AGAINST)));
+      const { base, file } = readTag(AGAINST);
+      if (!base) check('L5 和快照 ' + AGAINST + ' 比对：快照文件在（camp-coopcamp.json，或者营地格式的旧名 coopcamp.json）', false, path.relative(ROOT, file));
       else {
+        info('营地快照 ' + path.relative(ROOT, file));
         const diff = [];
         for (const q of ['high', 'low']) for (const kind of ['layout', 'geom']) for (const k of Object.keys(snap[q][kind])) {
           const a = base[q] && base[q][kind] && base[q][kind][k], b = snap[q][kind][k];
@@ -911,9 +923,6 @@ async function main() {
     await run(browser, base);
   } catch (err) {
     check('测试流程未中断', false, String(err && err.stack || err));
-  } finally {
-    await browser.close().catch(() => {});
-    srv.close();
   }
   console.log('\n===== 汇总 =====');
   const failed = results.filter(r => !r.ok);
@@ -923,5 +932,10 @@ async function main() {
   console.log('页面报错 ' + errors.length + ' 条');
   for (const e of errors.slice(0, 20)) console.log('  ' + e);
   process.exitCode = failed.length || errors.length ? 1 : 0;
+  // 先打汇总再关浏览器（FE1 返修 r5，照 interact.mjs）：Chrome 退出后遗留的进程会占着管道，browser.close() 有时好几分钟都不返回，
+  // 以前汇总排在它后面，检查全过了也一直不打印（tests/all.mjs 只能等到超时判失败）。close 最多等 10 s
+  await Promise.race([browser.close().catch(() => {}), new Promise(r => setTimeout(r, 10000))]);
+  srv.close();
+  process.exit(process.exitCode);
 }
 main();
