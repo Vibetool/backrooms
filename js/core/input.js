@@ -27,14 +27,20 @@
 //     'walk'   默认
 //     'seat'   坐着：冲刺不可用（坐下、起身由 BR.interact 处理：空格短按起身）
 //     'view'   看屏幕：冲刺不可用（换画面由 BR.interact 处理）
-//     'drive'  开车：W/S/A/D 照旧进 move，由 BR.vehicles 读成油门和方向；冲刺、丢弃不可用；
+//     'drive'  开车：W/S/A/D 照旧进 move，由 BR.vehicles 读成油门和方向（这个情境里 move.x / move.y 各自限在 ±1、不按长度归一，
+//              W+A 是全油门加打满方向）；冲刺、丢弃不可用；
 //              多两个开车专用动作 liftUp（KeyR）/ liftDown（KeyC），手机上只在这个情境多显示「升」「降」两个触屏键。
-//              下车 = 空格短按（BR.interact 处理）
+//              下车 = 空格短按（BR.interact 处理）；触屏「互动」键在这个情境里写「下车」（CONTEXTS.drive.labels，FE1）
 //     liftUp / liftDown 只在 drive 里有效，别的情境按 R、C 什么都不发生
+//   情境自带的键名（CONTEXTS[ctx].labels）：setContext 切进来就套上、切走就恢复默认，不经过 setButtons 的覆盖，
+//     所以 setButtons(null) 或者调用方清自己的覆盖不会把它清掉。优先级：setButtons 的 label > 情境键名 > 默认文字
 //   setButtons(map)：改触屏键的文字和可用状态，map = { interact|use|sprint|drop|liftUp|liftDown: { label, disabled } | null }
-//     label 为 null / '' 恢复默认文字；disabled 为 true = 这个动作现在不可用（键灰掉，键盘也不响应），'pause' 不能禁用；
+//     label 为 null / '' 恢复成情境键名或默认文字；disabled 为 true = 这个动作现在不可用（键灰掉，键盘也不响应），'pause' 不能禁用；
 //     某个键给 null 清掉它的覆盖；setButtons(null) 全部清掉。换情境时覆盖一并清掉（同一情境重复 setContext 不清）
-//   buttonLabel(a)：触屏键现在显示的文字（HUD 写「点「互动」…」时可以跟着它）
+//   buttonLabel(a)：触屏键现在显示的文字（HUD 写「点「互动」…」时跟着它：开车时是「点「下车」」）
+//   touchLayout()：触屏控件现在的位置（HUD 给开车提示行找空位用），触屏层没显示时为 null。
+//     { W, H, safe:{t,r,b,l}, stick:{x,y,r,l,t,r2,b}（待机摇杆的圆心、半径和外接框；按住时摇杆跟着手指走，这里永远给待机位置）,
+//       buttons:[{ act, l, t, r, b }]（显示着的键，灰掉的也算） }
 (function () {
 'use strict';
 const BR = window.BR;
@@ -104,7 +110,8 @@ const CONTEXTS = {
   walk: { off: LIFT_OFF, show: {} },
   seat: { off: Object.assign({ sprint: 1 }, LIFT_OFF), show: {} },
   view: { off: Object.assign({ sprint: 1 }, LIFT_OFF), show: {} },
-  drive: { off: { sprint: 1, drop: 1 }, show: { liftUp: 1, liftDown: 1 } },
+  // labels：这个情境里触屏键的文字（setContext 套上、切走恢复；setButtons 的 label 仍然优先）
+  drive: { off: { sprint: 1, drop: 1 }, show: { liftUp: 1, liftDown: 1 }, labels: { interact: '下车' } },
 };
 const HIDDEN_UNLESS_SHOWN = { liftUp: 1, liftDown: 1 };
 
@@ -286,9 +293,15 @@ function updateMove() {
   if (S.enabled) {
     x = (keyHeld('right') ? 1 : 0) - (keyHeld('left') ? 1 : 0) + T.stick.jx;
     y = (keyHeld('fwd') ? 1 : 0) - (keyHeld('back') ? 1 : 0) + T.stick.jy;
-    // 斜向键盘移动和"键盘+摇杆"叠加都不能超过 1，否则斜着走更快
-    const m = Math.sqrt(x * x + y * y);
-    if (m > 1) { x /= m; y /= m; }
+    if (S.ctx === 'drive') {
+      // 开车：油门（y）和方向（x）是两根独立的轴，各自限在 ±1 —— W+A 要能全油门加打满方向（摇杆照样是模拟量）
+      x = x > 1 ? 1 : x < -1 ? -1 : x;
+      y = y > 1 ? 1 : y < -1 ? -1 : y;
+    } else {
+      // 斜向键盘移动和"键盘+摇杆"叠加都不能超过 1，否则斜着走更快
+      const m = Math.sqrt(x * x + y * y);
+      if (m > 1) { x /= m; y /= m; }
+    }
   }
   move.x = x;
   move.y = y;
@@ -509,9 +522,13 @@ const TOUCH_CSS = [
   btnCss('liftDown', 54, 120, 168, false, 'font-size:16px'),
   // 竖屏（与 css/game.css 背包改两排的断点相同）：左下物品名标签和互动、冲刺同一高度带，长名字会伸到丢弃键底下，
   // 丢弃键挪到冲刺键正上方；升降键接着摞在丢弃键上面（右边一列）：互动键上方是长物品名，屏幕中间是提示，
-  // 开车时的提示只有「下车」这类短字，居中放得下
+  // 开车时的提示只有「下车」这类短字，居中放得下。升降键 48px、间距 5px，升键顶边压在 bottom 346：
+  // 测试模式右侧中间的「实体」入口（js/game/testmode.js，垂直中心在 50% − 59px）在 360×640 竖屏下底边是 bottom 353，不重叠
   '@media (max-width:559px){' + btnCss('drop', 52, 35, 188, false) +
-    btnCss('liftDown', 50, 36, 252, false) + btnCss('liftUp', 50, 36, 308, false) + '}',
+    btnCss('liftDown', 48, 37, 245, false) + btnCss('liftUp', 48, 37, 298, false) + '}',
+  // 又窄又矮的竖屏（320×568 这类，高 ≤600）：「实体」入口的底边落到 bottom 317，会压住升键上半截（点升键点到的是实体列表）。
+  // 升键挪到入口那一列的左边（右边距 69 = 入口右边距 12 + 宽 52 + 间距 5），高度不变；降键还在丢弃键正上方（FE1 返修 r2）
+  '@media (max-width:559px) and (max-height:600px){' + btnCss('liftUp', 48, 69, 298, false) + '}',
 ].join('\n');
 
 function injectStyle() {
@@ -558,6 +575,15 @@ function buildTouchUI() {
   layoutStickIdle();
 }
 
+// 触屏键现在该写什么：setButtons 的覆盖 > 情境键名 > 默认
+function labelOf(act) {
+  const o = S.btnOverride[act];
+  if (o && o.label) return o.label;
+  const c = CONTEXTS[S.ctx];
+  const l = c && c.labels && c.labels[act];
+  return l || BTN_DEFAULT[act] || '';
+}
+
 function btnShown(act) {
   if (!HIDDEN_UNLESS_SHOWN[act]) return true;
   const c = CONTEXTS[S.ctx];
@@ -570,8 +596,7 @@ function applyButtons() {
   for (const act in BTN_DEFAULT) {
     const el = T.btns[act];
     if (!el) continue;
-    const o = S.btnOverride[act];
-    const label = (o && o.label) || BTN_DEFAULT[act];
+    const label = labelOf(act);
     if (el.textContent !== label) {
       el.textContent = label;
       el.setAttribute('aria-label', label);
@@ -593,6 +618,7 @@ function setContext(ctx) {
   S.ctx = ctx;
   S.btnOverride = {};
   applyButtons();
+  updateMove();   // 开车和走路的 move 合成规则不同（见 updateMove），切情境时按住的键要按新规则重算
   return true;
 }
 
@@ -619,8 +645,7 @@ function setButtons(map) {
 }
 
 function buttonLabel(act) {
-  const o = S.btnOverride[act];
-  return (o && o.label) || BTN_DEFAULT[act] || '';
+  return labelOf(act);
 }
 
 function haptic(ms) {
@@ -671,15 +696,40 @@ function drawStick(cx, cy, kx, ky) {
   T.knobEl.style.transform = 'translate3d(' + kx + 'px,' + ky + 'px,0)';
 }
 
+// 待机摇杆的圆心和半径（touchLayout 也用它：按住时摇杆在手指下面，HUD 避让只看待机位置）
+function idleStick(ins) {
+  const r = stickRadius(), W = window.innerWidth, H = window.innerHeight;
+  // 竖屏背包是左下两排格子 + 物品名，约 146px 高（断点与 css/game.css 的 max-width:559px 一致），圈要整个画在它上面
+  const floor = W < 560 ? r + 146 : 0;
+  return { x: ins.l + Math.max(r + 28, W * 0.13), y: H - ins.b - Math.max(r + 40, H * 0.24, floor), r };
+}
+
 // 没按住时在左下角留一个半透明摇杆，告诉玩家这里能拖
 function layoutStickIdle() {
   if (!T.stickEl || T.stick.id !== null) return;
-  sizeStick(stickRadius());
-  const ins = safeInsets(), r = T.stick.r, W = window.innerWidth, H = window.innerHeight;
-  // 竖屏背包是左下两排格子 + 物品名，约 146px 高（断点与 css/game.css 的 max-width:559px 一致），圈要整个画在它上面
-  const floor = W < 560 ? r + 146 : 0;
-  drawStick(ins.l + Math.max(r + 28, W * 0.13), H - ins.b - Math.max(r + 40, H * 0.24, floor), 0, 0);
+  const p = idleStick(safeInsets());
+  sizeStick(p.r);
+  drawStick(p.x, p.y, 0, 0);
   T.stickEl.classList.remove('touch-on');
+}
+
+function touchLayout() {
+  if (!T.root || T.root.hidden || !document.body.contains(T.root)) return null;
+  const ins = safeInsets();
+  const p = idleStick(ins);
+  const buttons = [];
+  // 用布局框（offset*）而不是 getBoundingClientRect：按下时键有 scale(.93) 的动画，外框会缩一点，不该让 HUD 重新摆
+  for (const act in T.btns) {
+    const el = T.btns[act];
+    if (!el || el.hidden || !el.offsetWidth || !el.offsetHeight) continue;
+    const l = el.offsetLeft, t = el.offsetTop;
+    buttons.push({ act, l, t, r: l + el.offsetWidth, b: t + el.offsetHeight });
+  }
+  return {
+    W: window.innerWidth, H: window.innerHeight, safe: ins,
+    stick: { x: p.x, y: p.y, r: p.r, l: p.x - p.r, t: p.y - p.r, r2: p.x + p.r, b: p.y + p.r },
+    buttons,
+  };
 }
 
 function startStick(t) {
@@ -1181,6 +1231,7 @@ BR.input = {
   get context() { return S.ctx; },
   setButtons,
   buttonLabel,
+  touchLayout,
 
   lock,
 

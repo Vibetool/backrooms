@@ -344,7 +344,9 @@ A.parts.halo({ size: 0.8, color, own, y }) → Sprite    加法混合光晕（�
 A.parts.decal({ radius: 1, color, opacity: 0.9, wall: false, lumps: 9, seed: 1, look: 'lambert'|'glow' }) → Mesh   地面/墙面不规则斑块
 A.parts.swarm({ unit: 'bug'|'moth'|'rat'|'mote', geometry, material, count: 24（≤120）, radius: 1.4, height: 1.3, flying: true, scale: 1, color, flap, flapHz }, ctx) → Group
     一个 InstancedMesh；个体围着实体中心绕、攻击时收拢、数量随 hp 比例减少
-A.parts.hazmat(ctx, { full: false, detail: null }) → Object3D   测试人/玩家外形（防化服 + 玩家当前皮肤色），拟态用
+A.parts.hazmat(ctx, { full: false, detail: null, color: null }) → Object3D   测试人/玩家外形（防化服 + 玩家当前皮肤色），拟态用
+    color（2026-10-06 FE1）：指定制服色（0xRRGGBB），缺省 null = 玩家当前皮肤色（BR.skin.color()）。联机队友坐在叉车上的坐姿人形传他自己选的制服色；
+    材质按颜色另缓存一份，拟态实体（不传 color）共用的那份不受影响，几何照旧共享
     缺省是程序化仿制品（约 1k 面，detail:'high' 时另加兜帽轮廓/目镜/两侧滤罐/胸前拉链条/腕踝胶带环/腰带小包/靴底，约 1.6k 面）；
     full: true 直接用测试人的 hazmat.glb（约 1.8 万面，超预算，只适合同屏最多一两只的实体）
     制服颜色槽位（body/head）保持可被 BR.skin 改色；面罩/滤罐/手套/靴子/腰带/胶带环固定在 gear 槽位，颜色不随皮肤变

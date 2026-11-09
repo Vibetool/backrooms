@@ -1,8 +1,14 @@
-// 后室 · 全量回归：node tests/all.mjs [--quick] [--only a,b] [--skip a,b] [--timeout-min N] [--verbose] [--list]
+// 后室 · 全量回归：node tests/all.mjs [--quick] [--only a,b] [--skip a,b] [--jobs N] [--timeout-min N] [--verbose] [--list]
 //
 // 为什么要有它：后面每个里程碑发布前都要"全量测试"，十几个脚本一个个手敲、再逐个翻日志看过没过太费额度。
-// 这里串行跑完全部回归（SwiftShader 很吃 CPU，并行跑会让 coop 握手、计时类检查互相拖垮），每个子进程输出写进
+// 缺省串行跑完全部回归（SwiftShader 很吃 CPU，并行跑会让 coop 握手、计时类检查互相拖垮），每个子进程输出写进
 // tests/output/all/<名称>.log，最后打印一张汇总表，并写 tests/output/all/summary.txt / summary.json。
+// --jobs N：同时跑 N 项（缺省 1）。叉车测试（forklift-<组>）全靠 __br.step 推模拟时间、不看墙钟，分组并行不影响结果；
+//   coop / camp 这类真等计时的，机器忙时可能偶发超时（coop 照旧失败重跑一次），要稳就别和它们一起开太多。
+// 叉车（FE1，2026-10-06）：tests/forklift.mjs 按组拆成 forklift-data、forklift-mount … forklift-perf 十三项（含 side）（每项 --group <组>），
+//   外加 forklift-selftest（--selftest：甩货逐帧检查的变异自检，返修 r10；r12 加了第 5 种 pop），
+//   和 forklift-timing（--group timing --strict-timing：计时类检查，全量跑完、负载降到核数一半以下再单独跑、真判，返修 r12）
+//   dark、perf 两组要截图量像素，算截图类（--quick 跳过）；tests/forklift_probe.mjs 是只读探针（出表给主会话和家长看），不自动跑。
 //
 // 跑哪些（按这个顺序）：
 //   1. tests/ 下的回归脚本：phys.test.js、smoke、kit、items、coop、camp、settings、workshop、workshop_core、workshop_ui、infection、visualhooks，
@@ -11,15 +17,23 @@
 //   3. preview.mjs --arch
 //   4. preview.mjs --scale <id>：id 取 js/core/base.js 里的 BR.LEVEL_ORDER（首期 23 层，不含 dev）
 // 规则：
-//   - coop 失败自动重跑一次（大厅握手在机器高负载时偶发超时），表里标"重试"；首次日志留在 coop.try1.log
+//   - interact、smoke、coop、camp（有墙钟 / 计时类检查）失败了先不判：别的都跑完、1 分钟负载降到核数一半以下（最多等 15 分钟）再单独跑一遍，按这一遍真判，
+//     表里标"重试"，首次日志留在 <名称>.try1.log、补测日志 <名称>.low.log（返修 r13 裁定 G；以前 coop 是失败后紧接着重跑，不等负载降下来）；
+//     mobile 记了 SKIP 的，低负载时只补那几台设备（mobile.low.log），补测还记 SKIP 算失败；叉车各组有 page.evaluate 超过 60 s 的（只打 WARN），
+//     低负载时带 --strict-timing 再跑一遍这一组，超过 60 s 判失败
+//   - 叉车各组（forklift-<组>）超时放宽到 45 分钟；失败 / 超时先不判，等这一轮别的项都跑完、机器空下来以后单独重跑一次再判
+//     （FE1 返修 r3：几个代理同时跑、负载 70–115 时，能过的组会撞上 25 分钟上限被判超时）。--jobs 1 时就是紧接着重跑
 //   - --quick：跳过源码里调用了 .screenshot( 的截图类脚本；golden、--arch、--scale 始终保留
 //   - 单项超时（缺省 25 分钟；coop 40 分钟——联机营地起每一步都多进一次营地、还有冻结 45 s、断网 10 s、等重连超时这些真等的步骤；
 //     --scale 5 分钟；--timeout-min 统一改）先 SIGTERM 让 Playwright 关掉浏览器，10 秒后 SIGKILL
 //   - 子进程打印完自己的汇总后 20 秒还没退出，就结束它、按汇总行判定结果：Chrome 退出后遗留的 crashpad 进程会占着
 //     stdio 管道，Playwright 的 browser.close() 要等管道关上才返回，实测能把 18 秒的脚本拖到 5 分钟（表里记"退出拖延"）
+//   - --jobs N > 1 时，开新的一项之前看一眼负载：1 分钟平均负载超过 CPU 核数的 1.5 倍就先等（每 5 s 看一次，最多等 10 分钟），
+//     正在跑的照常跑（FE1 返修 r6：负载 60–140 时 SwiftShader 一个 page.evaluate 会超过 120 s，整组中断）
 //   - 任何一项失败 / 超时，退出码 1
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +57,7 @@ const VERBOSE = !!arg('verbose', false);
 const ONLY = csv(arg('only', null));
 const SKIP = csv(arg('skip', null)) || [];
 const TIMEOUT_MIN = arg('timeout-min', null) && arg('timeout-min') !== true ? +arg('timeout-min') : null;
+const JOBS = Math.max(1, Math.min(8, arg('jobs', null) && arg('jobs') !== true ? (+arg('jobs') | 0) || 1 : 1));
 
 // ---------- 层级顺序：直接跑 base.js 读 BR.LEVEL_ORDER，和游戏里同一份来源，以后加层不用改这里 ----------
 function levelOrder() {
@@ -57,26 +72,55 @@ function levelOrder() {
 
 // ---------- 测试清单 ----------
 // camp.mjs：联机营地（隐藏层 coopcamp）的单页检查，紧跟 coop；营地不在 LEVEL_ORDER，不跑 --scale、不进入库 golden
-const KNOWN = ['phys.test.js', 'smoke.mjs', 'mobile.mjs', 'kit.mjs', 'items.mjs', 'coop.mjs', 'camp.mjs', 'settings.mjs', 'workshop.mjs', 'workshop_core.mjs', 'workshop_ui.mjs', 'infection.mjs', 'visualhooks.mjs'];
-const TIMEOUT_OF = { 'coop.mjs': 40 };   // 分钟；没列的按 25
-const SPECIAL = new Set(['all.mjs', 'online.mjs', 'golden.mjs', 'preview.mjs']);
+const KNOWN = ['phys.test.js', 'smoke.mjs', 'mobile.mjs', 'kit.mjs', 'items.mjs', 'coop.mjs', 'camp.mjs', 'forklift_l1.mjs', 'forklift.mjs', 'settings.mjs', 'workshop.mjs', 'workshop_core.mjs', 'workshop_ui.mjs', 'infection.mjs', 'visualhooks.mjs'];
+const TIMEOUT_OF = { 'coop.mjs': 50 };   // 分钟；没列的按 25。coop 从 FE1 起最后多一段叉车联机（再进一次营地、出发进 L1）
+const LOW_RETRY = new Set(['interact.mjs', 'smoke.mjs', 'coop.mjs', 'camp.mjs']);   // 失败了等负载降下来单独重跑一遍真判（返修 r13）
+// forklift_probe.mjs：叉车只读探针（第三层货架头顶遮挡比例、出生车附近能叉的货的可达性），只出表、不判过不过，不自动跑
+const SPECIAL = new Set(['all.mjs', 'online.mjs', 'golden.mjs', 'preview.mjs', 'forklift_probe.mjs']);
+// tests/forklift.mjs 按组拆开登记（每组一个新浏览器上下文、互不依赖）；SHOT 里的组要截图量像素，算截图类
+const FORKLIFT_GROUPS = ['data', 'mount', 'drive', 'crash', 'side', 'lift', 'items', 'exits', 'life', 'pause', 'nightmare', 'dark', 'perf'];
+const FORKLIFT_SHOT = new Set(['dark', 'perf']);
 // "汇总已打印"的标志：各脚本只在最后的汇总段里打印这些行。preview 单独给，因为 --arch 中途也会打 PASS/FAIL
 const DONE_DEFAULT = /页面报错 \d+ 条|\d+ 条页面错误|^phys: \d+ 通过/m;
 
 function buildItems() {
   const files = fs.readdirSync(TESTS).filter(f => /(\.mjs|\.test\.js)$/.test(f) && !SPECIAL.has(f) && !f.startsWith('_') && fs.statSync(path.join(TESTS, f)).isFile());
   const ordered = KNOWN.filter(f => files.includes(f)).concat(files.filter(f => !KNOWN.includes(f)).sort());
-  const items = ordered.map(f => {
+  const items = [];
+  for (const f of ordered) {
+    if (f === 'forklift.mjs') {
+      for (const g of FORKLIFT_GROUPS) items.push({ name: 'forklift-' + g, args: ['tests/forklift.mjs', '--group', g], shots: FORKLIFT_SHOT.has(g), retry: 0, retryAlone: 1, timeoutMin: 45, doneMark: DONE_DEFAULT });
+      // 逐帧检查的变异自检（返修 r10）：四份改坏的 vehicles.js（半空冻结、匀速下落、横向漂移、落地瞬移），要求 F.hover 都报出来
+      items.push({ name: 'forklift-selftest', args: ['tests/forklift.mjs', '--selftest'], shots: false, retry: 0, retryAlone: 1, timeoutMin: 20, doneMark: DONE_DEFAULT });
+      // 计时类检查低负载重跑（返修 r12 裁定 G）：别的项（含单独重跑的）全跑完以后，等 1 分钟平均负载降到核数一半以下（最多等 15 分钟）再单独跑，
+      // --strict-timing 真判（算一次甩货 ≤8 ms、_step ≤0.6 ms），不因负载高只记 WARN
+      items.push({ name: 'forklift-timing', args: ['tests/forklift.mjs', '--group', 'timing', '--strict-timing'], shots: false, retry: 0, timeoutMin: 15, doneMark: DONE_DEFAULT, lowLoad: true });
+      continue;
+    }
+    if (f === 'forklift_l1.mjs') {
+      // L1 叉车数据与可动模型：--quick 只跑 10 个种子；本机有开工前的快照（tests/output/golden-tags/FE1-before/forklift_l1.json，gitignore）
+      // 就带 --against FE1-before 逐项比对，没有就只跑不依赖快照的检查（快照怎么重拍见 forklift_l1.mjs 文件头）
+      const args = ['tests/forklift_l1.mjs'];
+      if (QUICK) args.push('--quick');
+      if (fs.existsSync(path.join(TESTS, 'output', 'golden-tags', 'FE1-before', 'forklift_l1.json'))) args.push('--against', 'FE1-before');
+      items.push({ name: 'forklift_l1', args, shots: false, retry: 0, timeoutMin: 25, doneMark: DONE_DEFAULT });
+      continue;
+    }
     const src = fs.readFileSync(path.join(TESTS, f), 'utf8');
-    return {
+    items.push({
       name: f.replace(/\.test\.js$|\.mjs$/, ''),
       args: ['tests/' + f],
       shots: /\.screenshot\(/.test(src),
-      retry: f === 'coop.mjs' ? 1 : 0,
+      retry: 0,
+      // 有墙钟 / 计时类检查的（返修 r13，验收员 tests：interact C20、smoke「暂停→回主页」、coop V0 / 4b3–4e 负载高时会挂）：失败了先不判，
+      // 等别的都跑完、负载降到核数一半以下单独再跑一遍，按这一遍真判（coop 以前是失败后紧接着重跑，不等负载降下来）
+      lowRetry: LOW_RETRY.has(f),
+      // mobile 负载高时记 SKIP（前提不成立，没真测到）：低负载时只补记了 SKIP 的那几台设备，补测里还有 SKIP 算失败
+      skipRetry: f === 'mobile.mjs',
       timeoutMin: TIMEOUT_OF[f] || 25,
       doneMark: DONE_DEFAULT,
-    };
-  });
+    });
+  }
   items.push({
     name: 'golden', args: ['tests/golden.mjs'], shots: false, retry: 0, timeoutMin: 25, doneMark: DONE_DEFAULT,
     // 基线要等出图工具拍完 base 图后统一入库；没有基线时跑了也只能全 SKIP，直接标出来省一次浏览器启动
@@ -93,7 +137,7 @@ function buildItems() {
 }
 
 // ---------- 子进程 ----------
-let current = null;
+const running = new Set();   // 正在跑的子进程（--jobs 时可能有好几个）
 function killTree(child) {
   // detached 让子进程自成进程组：SIGTERM 发给整组，Playwright 收到后会关掉自己拉起的 Chrome
   try { process.kill(-child.pid, 'SIGTERM'); } catch (e) { /* 已退出 */ }
@@ -111,12 +155,12 @@ function runOne(item, logFile) {
     let afterSummary = false;
     let graceTimer = null;
     const child = spawn(process.execPath, item.args, { cwd: ROOT, detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
-    current = child;
+    running.add(child);
     const onData = d => {
       const s = d.toString();
       text += s;
       out.write(s);
-      if (VERBOSE) process.stdout.write(s);
+      if (VERBOSE && JOBS === 1) process.stdout.write(s);
       // 只看尾部：日志可能几百 KB，每块数据都全文匹配没必要
       if (!graceTimer && item.doneMark && item.doneMark.test(text.slice(-8000))) {
         graceTimer = setTimeout(() => { afterSummary = true; killTree(child); }, EXIT_GRACE_MS);
@@ -132,7 +176,7 @@ function runOne(item, logFile) {
       settled = true;
       clearTimeout(timer);
       if (graceTimer) clearTimeout(graceTimer);
-      current = null;
+      running.delete(child);
       const ms = Date.now() - t0;
       if (spawnErr) text += '\n' + spawnErr;
       const note = timedOut ? ' 超时' : afterSummary ? ' 汇总后 ' + EXIT_GRACE_MS / 1000 + 's 仍未退出，已结束进程' : '';
@@ -147,7 +191,7 @@ function runOne(item, logFile) {
 
 // ---------- 解析各脚本自己的汇总行 ----------
 function lastMatch(text, re) {
-  const g = new RegExp(re.source, 'g');
+  const g = new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g');   // 保留 m 这类标志（「跳过 N 项」按行首行尾匹配）
   let m, r = null;
   while ((m = g.exec(text))) r = m;
   return r;
@@ -165,7 +209,9 @@ function parse(text) {
     if (pass + fail) { total = pass + fail; failed = fail; }
   }
   if ((m = lastMatch(text, /页面报错 (\d+) 条/))) errs = +m[1];
-  return { total, failed, errs };
+  // 前提不成立（机器太忙）记了 SKIP 的检查：脚本汇总里「跳过 N 项」那一行（mobile、coop）。不算失败，表里单独一列，免得全过却实际没测到
+  const skips = (m = lastMatch(text, /^跳过 (\d+) 项$/m)) ? +m[1] : 0;
+  return { total, failed, errs, skips };
 }
 
 // ---------- 表格 ----------
@@ -195,10 +241,11 @@ function report() {
     r.errs != null ? r.errs : '—',
     fmtMs(r.ms) + (r.afterSummary ? '*' : ''),
     r.retried ? '重试' : '',
+    r.skips ? String(r.skips) : '',
   ]);
   const bad = summary.filter(r => r.status === 'fail' || r.status === 'timeout');
   const lagged = summary.filter(r => r.afterSummary).length;
-  const head = ['名称', '结果', '通过/总数', '失败', '页面报错', '耗时', '是否重试'];
+  const head = ['名称', '结果', '通过/总数', '失败', '页面报错', '耗时', '是否重试', '记 SKIP'];
   const lines = [
     '',
     `===== tests/all.mjs 汇总${QUICK ? '（--quick）' : ''} =====`,
@@ -207,6 +254,8 @@ function report() {
     `共 ${summary.length} 项：通过 ${summary.filter(r => r.status === 'pass').length}，失败 ${bad.length}，跳过 ${summary.filter(r => r.status === 'quick' || r.status === 'nobase').length}；总耗时 ${fmtMs(Date.now() - t0)}`,
   ];
   if (lagged) lines.push(`* ${lagged} 项打印完汇总后 ${EXIT_GRACE_MS / 1000}s 仍未退出（浏览器关闭被拖住），已结束进程、按汇总行判定`);
+  const sk = summary.filter(r => r.skips > 0);
+  if (sk.length) lines.push(`记 SKIP 的检查（前提不成立，没真测到，见各自日志里的 SKIP 行）：${sk.map(r => r.name + ' ' + r.skips + ' 项').join('，')}`);
   lines.push(bad.length ? '失败项日志：' + bad.map(r => path.relative(ROOT, r.log)).join('  ') : '全部通过');
   const txt = lines.join('\n');
   console.log(txt);
@@ -218,8 +267,8 @@ function report() {
 }
 
 process.on('SIGINT', () => {
-  console.log('\n收到 Ctrl-C，停止当前子进程');
-  if (current) killTree(current);
+  console.log('\n收到 Ctrl-C，停止正在跑的子进程');
+  for (const c of running) killTree(c);
   report();
   process.exit(130);
 });
@@ -228,7 +277,7 @@ async function main() {
   fs.mkdirSync(LOG_DIR, { recursive: true });
   let items = buildItems();
   if (arg('list', false)) {
-    for (const it of items) console.log(pad(it.name, 16) + ' node ' + it.args.join(' ') + (it.shots ? '   [截图类，--quick 跳过]' : '') + (it.retry ? '   [失败重跑 ' + it.retry + ' 次]' : ''));
+    for (const it of items) console.log(pad(it.name, 16) + ' node ' + it.args.join(' ') + (it.shots ? '   [截图类，--quick 跳过]' : '') + (it.retry ? '   [失败重跑 ' + it.retry + ' 次]' : '') + (it.retryAlone ? '   [失败等别的跑完单独重跑 ' + it.retryAlone + ' 次]' : '') + (it.lowRetry ? '   [失败等负载降下来单独重跑一遍真判]' : '') + (it.skipRetry ? '   [记 SKIP 的设备负载降下来补测]' : '') + (it.lowLoad ? '   [最后等负载降下来单独跑、真判]' : ''));
     return;
   }
   const all = items.length;
@@ -237,16 +286,25 @@ async function main() {
   if (SKIP.length) items = items.filter(it => !hit(SKIP, it.name));
   if (items.length < all) console.log(`（--only / --skip 过滤掉 ${all - items.length} 项）`);
 
-  for (let i = 0; i < items.length; i++) {
+  // 每一项：跑、按汇总行判定、失败按 retry 重跑；结果按清单顺序写进 summary（并行时也是这个顺序）
+  const recs = new Array(items.length);
+  const deferred = [];   // 失败 / 超时、等这一轮别的都跑完再单独重跑的（retryAlone）
+  const lowQ = [];       // 负载降下来以后再单独跑一遍、按那一遍真判的（返修 r13：lowRetry 失败的、mobile 记了 SKIP 的、叉车组 page.evaluate 超过 60 s 的）
+  // alone：别的都跑完以后单独跑（失败等着单独重跑的 retryAlone 算「重试」）；low：最后等负载降下来单独跑的那一项（forklift-timing），是它唯一的一遍，不算重试（返修 r14）
+  async function runItem(i, alone, low) {
     const it = items[i];
     const tag = `[${String(i + 1).padStart(2)}/${items.length}] ${it.name}`;
     const log = path.join(LOG_DIR, it.name + '.log');
-    if (QUICK && it.shots) { summary.push({ name: it.name, status: 'quick' }); console.log(`${tag}  跳过（截图类，--quick）`); continue; }
-    if (it.noBaseline && it.noBaseline()) { summary.push({ name: it.name, status: 'nobase' }); console.log(`${tag}  无基线跳过（tests/golden/ 下没有 JSON）`); continue; }
+    if (!alone && QUICK && it.shots) { recs[i] = { name: it.name, status: 'quick' }; console.log(`${tag}  跳过（截图类，--quick）`); return; }
+    if (!alone && it.noBaseline && it.noBaseline()) { recs[i] = { name: it.name, status: 'nobase' }; console.log(`${tag}  无基线跳过（tests/golden/ 下没有 JSON）`); return; }
+    // 机器空下来以后单独重跑（alone）：允许的重跑次数就是 retryAlone；--jobs 1 时本来就是单独跑，失败了紧接着重跑
+    const maxRetry = alone ? 0 : it.retry + (JOBS === 1 ? (it.retryAlone || 0) : 0);
 
-    let attempt = 0, rec;
+    let attempt = alone && !low ? 1 : 0, rec;
+    const how = () => (attempt ? '（重试）' : low ? '（负载降下来单独跑）' : '');
     while (true) {
-      process.stdout.write(`${tag}  运行中${attempt ? '（重试）' : ''}… `);
+      if (JOBS === 1) process.stdout.write(`${tag}  运行中${how()}… `);
+      else console.log(`${tag}  开始${how()}`);
       const r = await runOne(it, log);
       const p = parse(r.text);
       let status;
@@ -257,8 +315,31 @@ async function main() {
       else if (r.code === 0 && !(p.failed > 0)) status = 'pass';
       else status = 'fail';
       rec = { name: it.name, status, code: r.code, ...p, ms: r.ms, retried: attempt > 0, afterSummary: r.afterSummary, log };
-      console.log(`${LABEL[status]}  ${p.total != null ? (p.total - (p.failed || 0)) + '/' + p.total : ''}${p.errs ? '  页面报错 ' + p.errs : ''}  ${fmtMs(r.ms)}${r.afterSummary ? '（退出拖延，已结束进程）' : ''}  → ${path.relative(ROOT, log)}`);
-      if ((status === 'fail' || status === 'timeout') && attempt < it.retry) {
+      console.log(`${JOBS === 1 ? '' : tag + '  '}${LABEL[status]}  ${p.total != null ? (p.total - (p.failed || 0)) + '/' + p.total : ''}${p.errs ? '  页面报错 ' + p.errs : ''}${p.skips ? '  记 SKIP ' + p.skips + ' 项' : ''}  ${fmtMs(r.ms)}${r.afterSummary ? '（退出拖延，已结束进程）' : ''}  → ${path.relative(ROOT, log)}`);
+      if ((status === 'fail' || status === 'timeout') && !alone && JOBS > 1 && it.retryAlone && attempt >= it.retry) {
+        // 并行跑时失败：先不判，日志留档，等这一轮别的都跑完单独重跑
+        fs.renameSync(log, path.join(LOG_DIR, it.name + '.try' + (attempt + 1) + '.log'));
+        console.log(`${tag}  先记下，等别的项跑完单独重跑一次`);
+        deferred.push(i);
+        break;
+      }
+      if (!alone && attempt === 0) {
+        // 低负载补测（返修 r13 裁定 G）：放进 lowQ，别的都跑完、负载降到核数一半以下再单独跑，按补测真判
+        if (it.lowRetry && (status === 'fail' || status === 'timeout')) {
+          fs.renameSync(log, path.join(LOG_DIR, it.name + '.try1.log'));
+          console.log(`${tag}  先记下（负载 ${os.loadavg()[0].toFixed(1)}），等别的项跑完、负载降下来单独重跑一遍真判`);
+          lowQ.push({ i, args: it.args, why: '失败重跑' });
+        } else if (it.skipRetry && status === 'pass' && p.skips > 0) {
+          const devs = [...new Set((r.text.match(/^\s*SKIP \[([^\]]+)\]/gm) || []).map(x => x.replace(/^\s*SKIP \[|\]$/g, '')))];
+          console.log(`${tag}  记了 ${p.skips} 项 SKIP（${devs.join(' ')}），负载降下来以后只补这几台设备`);
+          if (devs.length) lowQ.push({ i, args: it.args.concat([devs.join(',')]), why: '补 SKIP', strictSkip: true, first: { total: p.total, failed: p.failed } });
+        } else if (/^forklift-/.test(it.name) && status === 'pass' && /^WARN page\.evaluate 超过 60 s/m.test(r.text)) {
+          // 单次 page.evaluate 超过 60 s（返修 r6 裁定 ⑥ 的上限）：负载降下来以后带 --strict-timing 再跑一遍这一组，超过 60 s 就判失败
+          console.log(`${tag}  有 page.evaluate 超过 60 s，负载降下来以后带 --strict-timing 再跑一遍真判`);
+          lowQ.push({ i, args: it.args.concat(['--strict-timing']), why: 'page.evaluate 超过 60 s' });
+        }
+      }
+      if ((status === 'fail' || status === 'timeout') && attempt < maxRetry) {
         // 首次失败的日志留档：重试过了也要能回头查是哪一步超时
         fs.renameSync(log, path.join(LOG_DIR, it.name + '.try' + (attempt + 1) + '.log'));
         attempt++;
@@ -266,8 +347,48 @@ async function main() {
       }
       break;
     }
-    summary.push(rec);
+    recs[i] = rec;
   }
+  if (JOBS > 1) console.log(`（--jobs ${JOBS}：同时跑 ${JOBS} 项）`);
+  let next = 0;
+  const busy = () => os.loadavg()[0] > os.cpus().length * 1.5;
+  const waitLoad = async () => {
+    if (!busy()) return;
+    const t0 = Date.now();
+    console.log(`（负载 ${os.loadavg()[0].toFixed(1)}，超过 CPU 核数的 1.5 倍，等一会儿再开下一项）`);
+    while (busy() && Date.now() - t0 < 600000) await new Promise(r => setTimeout(r, 5000));
+  };
+  const lowLoad = [];   // 最后等机器空下来再单独跑的（forklift-timing）
+  const worker = async () => { while (next < items.length) { const i = next++; if (items[i].lowLoad) { lowLoad.push(i); continue; } if (JOBS > 1 && running.size) await waitLoad(); await runItem(i); } };
+  await Promise.all(Array.from({ length: Math.min(JOBS, items.length) }, worker));
+  if (deferred.length) console.log(`（单独重跑 ${deferred.length} 项：${deferred.map(i => items[i].name).join(' ')}）`);
+  for (const i of deferred) await runItem(i, true);
+  const waitLow = async name => {
+    const half = os.cpus().length * 0.5, t0 = Date.now();
+    if (os.loadavg()[0] > half) console.log(`（${name}：等负载降到 ${half.toFixed(1)} 以下再跑，现在 ${os.loadavg()[0].toFixed(1)}）`);
+    while (os.loadavg()[0] > half && Date.now() - t0 < 900000) await new Promise(r => setTimeout(r, 5000));
+    console.log(`（${name}：负载 ${os.loadavg()[0].toFixed(1)}，开始单独跑、真判）`);
+  };
+  for (const i of lowLoad) {
+    await waitLow(items[i].name);
+    await runItem(i, true, true);
+  }
+  // 低负载补测（返修 r13 裁定 G）：按补测这一遍判
+  for (const q of lowQ) {
+    const it = items[q.i], log = path.join(LOG_DIR, it.name + '.low.log');
+    await waitLow(it.name + '（' + q.why + '）');
+    const r = await runOne(Object.assign({}, it, { args: q.args }), log);
+    const p = parse(r.text);
+    let status = r.timedOut ? 'timeout' : r.afterSummary ? (p.total != null && !(p.failed > 0) && !(p.errs > 0) ? 'pass' : 'fail') : (r.code === 0 && !(p.failed > 0) ? 'pass' : 'fail');
+    if (q.strictSkip && p.skips > 0) status = 'fail';   // 低负载补测还记 SKIP：没真测到，算失败
+    const prev = recs[q.i] || {};
+    // 补 SKIP 的（返修 r14，验收员 tests）：补测里失败的和还记 SKIP 的都算进「失败」，表里的通过 / 总数跟着变；失败项日志指向补测那份（<名称>.low.log），不是首次那份
+    recs[q.i] = q.strictSkip
+      ? Object.assign({}, prev, { status, failed: (prev.failed || 0) + (p.failed || 0) + (p.skips > 0 ? p.skips : 0), errs: Math.max(prev.errs || 0, p.errs || 0), skips: p.skips, retried: true, log, firstLog: prev.log })
+      : { name: it.name, status, code: r.code, ...p, ms: r.ms, retried: true, afterSummary: r.afterSummary, log };
+    console.log(`[低负载补测] ${it.name}（${q.why}）  ${LABEL[status]}  ${p.total != null ? (p.total - (p.failed || 0)) + '/' + p.total : ''}${p.skips ? '  仍记 SKIP ' + p.skips + ' 项' : ''}  ${fmtMs(r.ms)}  → ${path.relative(ROOT, log)}`);
+  }
+  for (const r of recs) if (r) summary.push(r);
   process.exitCode = report() ? 1 : 0;
 }
 

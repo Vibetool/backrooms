@@ -538,7 +538,9 @@ b.pop();
 
 **key**（字符串，和画质无关）
 - 顶层道具 `${层级 id}@${cx},${cz}#p${n}`；嵌套在别的道具里的 `${父 key}.${m}`；设备 `…#f${n}`；容器 `…#c${n}`；部件 `${所属 key}#k${n}`。三个计数器各自独立。
-- `meta.key` 可以直接给（例如 L3 发电机 `'L3:g:<cx>,<cz>:ns'`）。
+- `meta.key` 可以直接给（例如 L3 发电机 `'L3:g:<cx>,<cz>:ns'`、L1 叉车 `'1@cx,cz#v<i>'`）。**显式 key 不占自动编号**（2026-10-06 FE1）：记录的 `n` 记 0，
+  后面自动编号的 `#p` / `#f` / `#c`（和子道具的 `.n`）照旧连着往下数 —— 给已经有的东西补一个显式 key 包起来，别的道具的 key 一个都不变（联机、存档只靠 key 对上）。
+  显式 key 撞上别的记录（自动编号的或另一个显式的）会在控制台提醒一次：后一个覆盖前一个，按 key 找会找错，是层级写错了。
 - 碰撞 key（`rec.skey`）= 道具 key 去掉 `层级@`，即 `${cx},${cz}#p${n}`：world 用它单独登记这件道具的碰撞体；`BR.phys.raycast/moveBox` 的 `ignoreKey` 两种写法都认。
 
 **meta**（所有坐标都在作用域的枢轴坐标系里 = 开作用域时的当前坐标系；`pivot: [x, z, rot, y]` 可另给）
@@ -568,6 +570,9 @@ b.pop();
 | `kit.propByKey(res, key)` | 按 key 找本块的道具/设备/容器记录 |
 | `kit.propTree(rec)` → `[rec, …子道具]` | 拖父道具时，子道具的碰撞体也要按各自的 `skey` 用 `propSolids` 重登 |
 | `kit.propHasLights(rec)` → bool | 这件道具（连同子道具）的作用域里登记过灯：`moveProp` 会改灯描述的 x/z，world 据此重排动态灯 |
+| `b.mark()` → `{ 材质 key: 顶点数 }`（2026-10-06 FE1） | 各材质累加器现在的顶点数，只读数、不加几何、不吃 rng。画某样东西前后各调一次，`[前, 后)` 就是它在那个材质网格里的顶点段（叉车按部件量顶点段、记进 `b.data`）。这之后才第一次用到的材质不在前一次的结果里，按 0 算；kit 构件的磨损贴花晚到 finish 才画，不会落在两次 mark 之间 |
+| `kit.hideSpans(res, spans)` / `kit.showSpans(res, spans)` → 顶点数 | 把一段顶点（`[{ mat, v0, v1 }]` 或 `{ 材质: [v0, v1] }`）整段叠到段首一点藏起来 / 逐位放回，只上传那几段。藏着期间对这段调 `moveProp`、`Piece.setVisible` 改的是存着的原值，`showSpans` 后出现在该在的样子。开过的叉车从区块网格里整台藏掉用它（车下油渍不藏）；`kit.spanHidden(res, mat, [v0, v1])` 查是不是整段藏着 |
+| `kit.spanEdit(res, mat, [v0, v1], fn(pos, nrm, orig))` / `kit.spanRestore(res, mat, [v0, v1]?)` | 把一段的 position、normal 交给 `fn` 直接改（只上传这一段），第一次调用时存下原值 `orig`，每帧按原值重算不会越改越歪；`spanRestore` 逐位放回（不给段 = 这个网格上所有改过的段）。段里有一部分被 `hideSpans` 藏着时不改、返回 false。花园段藤蔓被叉车拨开再摆回用它（纯表现，不同步） |
 
 **kit 构件已经自己登记**（`opts.prop = false` 关掉、或传对象覆盖缺省字段；`opts.container` 同理）：
 

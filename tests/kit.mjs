@@ -7,6 +7,14 @@
 //   5. world 出口：未开放出口进圈 toast 一次、站着一直提示、出圈收起、不换层；目标在范围内但未注册同样提示；
 //      active=false 的出口跳过；切出（noclip）换层带 'noclip' 音效与闪白
 //   6. 截图：出生房间（切出墙、未开放电梯）、构件展示间、区块俯视图（碰撞体/刷新点/出口）
+//   7. 道具登记（A1）：合成场景 + kit 构件；8. 26 层出生点 3×3 块高低画质的登记逐项一致
+//   9. FE1（2026-10-06，--only fe1）：kit.hideSpans / showSpans 往返逐位恢复、重复调用幂等、和 moveProp / Piece.setVisible 叠着用往返逐位恢复、
+//      只上传那一段；kit.spanEdit / spanRestore 逐位恢复、只上传那一段；显式 meta.key 不占自动编号 #p/#f/#c（合成层）；
+//      区块外的 kit.builder（ctx 里没有层级）能建模型、finish 不跑工坊 decorate，b.mark() 的数字和累加器、finish 出的网格一致
+//  10. FE1（--only keys）：L1（种子 12345 的出生 5×5、另两个种子出生块以外的 24 块，含小屋家具）、Ldev、营地的自动 key 列表和改动前的快照一致；
+//      比对时每个区块 builder 开头先插 3 条显式 key 的空道具/设备/容器 —— 显式 key 要是占了自动编号，整块的 key 都会错位，一定抓得到。
+//      快照：node tests/kit.mjs --only keys --root <改动前的代码目录> --tag FE1-before（写到 tests/output/kit-tags/<名>/keys.json）；
+//      比对：node tests/kit.mjs --only keys --against FE1-before（不给 --against 时有 FE1-before 就比，没有只出 WARN）
 // 任一检查失败或页面出现 console.error / 未捕获异常时退出码为 1。截图写 tests/output/kit-*.png
 import http from 'node:http';
 import fs from 'node:fs';
@@ -31,6 +39,12 @@ const LEVELS_ARG = argOf('levels');
 // 隐藏层：不在 LEVEL_ORDER、主页和测试模式的层级列表里都没有，但联机两边画质可以不同，道具登记一样要逐项对得上
 // （营地的折叠椅、睡袋靠 key 同步拖动位置；座位 seats、躺位 beds 以后 D2 坐下 / 躺下也只靠它们对上）
 const HIDDEN_LEVELS = ['coopcamp'];
+// --root <目录>：页面代码从这个目录出（拍改动前的快照：git archive 导出的旧代码）；测试脚本、快照目录仍按本仓库
+const SERVE_ROOT = argOf('root') ? path.resolve(argOf('root')) : ROOT;
+// --tag <名> / --against <名>：keys 段的快照（tests/output/kit-tags/<名>/keys.json）
+const KEY_TAG = argOf('tag'), KEY_AGAINST = argOf('against');
+const KEY_DEFAULT = 'FE1-before';
+const keyTagFile = n => path.join(ROOT, 'tests', 'output', 'kit-tags', String(n), 'keys.json');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -40,8 +54,8 @@ function startServer() {
   const srv = http.createServer((req, res) => {
     let u;
     try { u = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch (e) { res.writeHead(400); res.end(); return; }
-    const f = path.join(ROOT, u === '/' ? 'index.html' : u);
-    if (!f.startsWith(ROOT) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); res.end('not found'); return; }
+    const f = path.join(SERVE_ROOT, u === '/' ? 'index.html' : u);
+    if (!f.startsWith(SERVE_ROOT) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); res.end('not found'); return; }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
     fs.createReadStream(f).pipe(res);
   });
@@ -96,7 +110,7 @@ function sampleWhite() {
 async function main() {
   const srv = await startServer();
   const base = 'http://127.0.0.1:' + srv.address().port + '/';
-  console.log('static server ' + base);
+  console.log('static server ' + base + (SERVE_ROOT !== ROOT ? '  （代码目录 ' + SERVE_ROOT + '）' : ''));
   const browser = await chromium.launch({
     executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
     headless: true,
@@ -108,20 +122,24 @@ async function main() {
     if (want('world')) await inWorld(browser, base);
     if (want('reg')) await registry(browser, base);
     if (want('levels')) await levelRegistry(browser, base);
+    if (want('fe1')) await fe1Kit(browser, base);
+    if (want('keys')) await autoKeys(browser, base);
   } catch (err) {
     check('测试流程未中断', false, String(err && err.stack || err));
-  } finally {
-    await browser.close();
-    srv.close();
   }
+  // 先出汇总再关浏览器：Chrome 退出后遗留的 crashpad 进程会占着管道，browser.close() 有时要等好几分钟（见 tests/all.mjs）；
+  // 关浏览器最多等 10 s，然后直接退出
   console.log('\n===== 汇总 =====');
   const failed = results.filter(r => !r.ok);
   console.log('检查 ' + results.length + ' 项，失败 ' + failed.length + ' 项');
   for (const f of failed) console.log('  FAIL ' + f.name + '  ' + JSON.stringify(f.detail));
-  console.log('页面报错 ' + errors.length + ' 条');
-  for (const e of errors) console.log('  ' + e);
   console.log('截图 ' + shots.length + ' 张：' + path.relative(ROOT, OUT));
-  process.exitCode = failed.length || errors.length ? 1 : 0;
+  for (const e of errors) console.log('  ' + e);
+  console.log('页面报错 ' + errors.length + ' 条');
+  const code = failed.length || errors.length ? 1 : 0;
+  await Promise.race([browser.close().catch(() => {}), new Promise(r => setTimeout(r, 10000))]);
+  srv.close();
+  process.exit(code);
 }
 
 // =====================================================================
@@ -878,6 +896,514 @@ async function levelRegistry(browser, base) {
   console.log('     层  出生块  道具 能拖 设备 容器 部件 座位 躺位');
   for (const s of summary) console.log('     ' + s.map(v => String(v).padStart(4)).join(' '));
   await ctx.close();
+}
+
+// =====================================================================
+// 9. FE1（2026-10-06）：按顶点段藏起 / 改形、显式 key 不占自动编号、区块外的 builder 和 b.mark()
+// =====================================================================
+async function fe1Kit(browser, base) {
+  const ctx = await browser.newContext({ viewport: { width: 640, height: 360 } });
+  const page = await ctx.newPage();
+  watch(page, 'fe1');
+  await boot(page, base);
+  const missing = await ev(page, () => ['hideSpans', 'showSpans', 'spanHidden', 'spanEdit', 'spanRestore'].filter(k => typeof BR.kit[k] !== 'function'));
+  check('FE1：kit 有 hideSpans / showSpans / spanHidden / spanEdit / spanRestore', missing.length === 0, { missing });
+  if (missing.length) { await ctx.close(); return; }
+
+  const r = await ev(page, () => {
+    const kit = BR.kit, lv = BR.levels.get('dev'), U = BR.util;
+    const out = {};
+    const q0 = BR.game.settings.quality;
+    BR.game.settings.quality = 'high';                 // 贴花只在高画质画：道具的段要跨 kit:prop 和 kit:decal 两个网格
+    const dk = kit.decalKinds[0];
+    // 合成区块：一面墙、木箱 A（3 件 + 一片贴花，A1/A2 会单独 setVisible）、纸箱 B、两根不登记的杆子 W/W2（藤蔓那种）
+    const make = () => {
+      const b = kit.builder({ level: lv, levelSeed: 5 }, 1, 2, U.rng(5, 1, 2));
+      const pcs = {};
+      b.box(0.5, 0, 0.5, 6, 2.8, 0.2, 'kit:prop', { color: 0x777777 });
+      const A = b.prop({ kind: 'crate', label: '木箱', pivot: [5, 5, 0.3] }, () => {
+        b.push(5, 5, 0.3);
+        pcs.A0 = b.box(0, 0, 0, 0.8, 0.6, 0.8, 'kit:prop', { color: 0x8a6a42 });
+        pcs.A1 = b.box(0, 0.6, 0, 0.3, 0.2, 0.3, 'kit:prop', { color: 0x555555, solid: false });
+        pcs.A2 = b.box(0.2, 0.6, 0.2, 0.1, 0.1, 0.1, 'kit:prop', { color: 0x333333, solid: false });
+        pcs.Ad = kit.decal(b, { kind: dk, x: 0, y: 0.3, z: 0.403, facing: '+z', w: 0.3 });
+        b.pop();
+      });
+      const B = b.prop({ kind: 'box', label: '纸箱' }, () => { pcs.B0 = b.box(9, 0, 9, 0.5, 0.5, 0.5, 'kit:prop', {}); });
+      pcs.W = b.box(12, 0, 3, 0.3, 1, 0.3, 'kit:prop', { solid: false });
+      pcs.W2 = b.box(14, 0, 3, 0.3, 1.2, 0.3, 'kit:prop', { solid: false });
+      const res = b.finish();
+      const mesh = {};
+      for (const m of res.group.children) mesh[m.name] = m;
+      return { res, A, B, pcs, mesh };
+    };
+    const cp = a => Float32Array.from(a);
+    const bitsEq = (a, b) => {
+      if (!a || !b || a.length !== b.length) return false;
+      const ua = new Uint32Array(a.buffer, a.byteOffset, a.length), ub = new Uint32Array(b.buffer, b.byteOffset, b.length);
+      for (let i = 0; i < ua.length; i++) if (ua[i] !== ub[i]) return false;
+      return true;
+    };
+    const resetUR = at => { at.updateRange.offset = 0; at.updateRange.count = -1; };
+    const ur = at => [at.updateRange.offset, at.updateRange.count];
+
+    // ---------- 9a. hideSpans → showSpans ----------
+    const X = make();
+    out.hasDecal = !!(X.pcs.Ad && X.mesh['kit:decal']);
+    const P = X.mesh['kit:prop'].geometry.attributes.position, D = X.mesh['kit:decal'].geometry.attributes.position;
+    const P0 = cp(P.array), D0 = cp(D.array);
+    const spansA = X.A.spans.map(s => ({ mat: s.mat, v0: s.v0, v1: s.v1 }));
+    const gP = spansA.filter(g => g.mat === 'kit:prop'), gD = spansA.filter(g => g.mat === 'kit:decal');
+    out.spansA = spansA;
+    resetUR(P); resetUR(D);
+    const nHid = kit.hideSpans(X.res, X.A.spans);
+    let collapsed = true, outside = 0;
+    for (const g of spansA) {
+      const arr = g.mat === 'kit:decal' ? D.array : P.array, B0 = g.mat === 'kit:decal' ? D0 : P0;
+      for (let i = g.v0; i < g.v1; i++) for (let c = 0; c < 3; c++) if (arr[i * 3 + c] !== B0[g.v0 * 3 + c]) collapsed = false;
+    }
+    for (let i = 0; i < P.count; i++) {
+      if (gP.some(g => i >= g.v0 && i < g.v1)) continue;
+      for (let c = 0; c < 3; c++) if (P.array[i * 3 + c] !== P0[i * 3 + c]) outside++;
+    }
+    out.hide = {
+      n: nHid, total: spansA.reduce((s, g) => s + g.v1 - g.v0, 0), collapsed, outside,
+      urP: ur(P), wantP: [gP[0].v0 * 3, (gP[0].v1 - gP[0].v0) * 3], urD: ur(D), wantD: [gD[0].v0 * 3, (gD[0].v1 - gD[0].v0) * 3],
+      hidden: kit.spanHidden(X.res, 'kit:prop', [gP[0].v0, gP[0].v1]) && kit.spanHidden(X.res, 'kit:decal', [gD[0].v0, gD[0].v1]),
+      bHidden: kit.spanHidden(X.res, 'kit:prop', [X.B.spans[0].v0, X.B.spans[0].v1]),
+    };
+    // 重复调用：网格不变、不上传（version 不涨、updateRange 不动）
+    const H1 = cp(P.array), ver = P.version;
+    resetUR(P);
+    out.idem = { n: kit.hideSpans(X.res, X.A.spans), same: bitsEq(P.array, H1), ur: ur(P), ver: P.version === ver };
+    resetUR(P);
+    const nShow = kit.showSpans(X.res, X.A.spans);
+    out.show = { n: nShow, P: bitsEq(P.array, P0), D: bitsEq(D.array, D0), urP: ur(P), hidden: kit.spanHidden(X.res, 'kit:prop', [gP[0].v0, gP[0].v1]) };
+    const ver2 = P.version;
+    out.show.n2 = kit.showSpans(X.res, X.A.spans);
+    out.show.same2 = bitsEq(P.array, P0) && P.version === ver2;
+    // 方案接口的写法 { 'kit:prop': [v0, v1], 'kit:decal': [[v0, v1]] }
+    const map = { 'kit:prop': [gP[0].v0, gP[0].v1], 'kit:decal': gD.map(g => [g.v0, g.v1]) };
+    const nMap = kit.hideSpans(X.res, map);
+    out.map = { n: nMap, hidden: kit.spanHidden(X.res, 'kit:prop', map['kit:prop']) && kit.spanHidden(X.res, 'kit:decal', map['kit:decal'][0]) };
+    kit.showSpans(X.res, map);
+    out.map.back = bitsEq(P.array, P0) && bitsEq(D.array, D0);
+
+    // ---------- 9b. 和 moveProp 叠着用 ----------
+    const Y = make();                                   // 对照：同一块只挪不藏
+    const PY = Y.mesh['kit:prop'].geometry.attributes.position, DY = Y.mesh['kit:decal'].geometry.attributes.position;
+    out.twinSame = bitsEq(PY.array, P0) && bitsEq(DY.array, D0);
+    kit.moveProp(Y.res, Y.A, { dx: 1, dz: -2 });
+    const W1 = cp(PY.array), WD1 = cp(DY.array);
+    // 藏着挪：网格不变；放出来在挪过的位置（和对照逐位一样）；挪回 0 逐位回到生成时
+    kit.hideSpans(X.res, X.A.spans);
+    const Hx = cp(P.array), HxD = cp(D.array);
+    kit.moveProp(X.res, X.A, { dx: 1, dz: -2 });
+    out.mv = { stillHidden: bitsEq(P.array, Hx) && bitsEq(D.array, HxD) };
+    kit.showSpans(X.res, X.A.spans);
+    out.mv.shown = bitsEq(P.array, W1) && bitsEq(D.array, WD1);
+    kit.moveProp(X.res, X.A, { dx: 0, dz: 0 });
+    out.mv.back = bitsEq(P.array, P0) && bitsEq(D.array, D0);
+    // 挪了再藏、藏着挪回、放出来：逐位回到生成时
+    kit.moveProp(X.res, X.A, { dx: 2, dz: 1 });
+    kit.hideSpans(X.res, X.A.spans);
+    kit.moveProp(X.res, X.A, { dx: 0, dz: 0 });
+    kit.showSpans(X.res, X.A.spans);
+    out.mv.back2 = bitsEq(P.array, P0) && bitsEq(D.array, D0);
+    // 件藏着（setVisible false）+ 段藏着 + 挪：放出段、再显示件，和对照逐位一样
+    X.pcs.A1.setVisible(false);
+    kit.hideSpans(X.res, X.A.spans);
+    kit.moveProp(X.res, X.A, { dx: 1, dz: -2 });
+    kit.showSpans(X.res, X.A.spans);
+    out.mv.pieceStillHidden = !X.pcs.A1.visible;
+    X.pcs.A1.setVisible(true);
+    out.mv.triple = bitsEq(P.array, W1) && bitsEq(D.array, WD1);
+    kit.moveProp(X.res, X.A, { dx: 0, dz: 0 });
+    kit.settleProp(X.A);
+    out.mv.back3 = bitsEq(P.array, P0) && bitsEq(D.array, D0);
+
+    // ---------- 9c. 和 Piece.setVisible 叠着用 ----------
+    const a1 = X.pcs.A1, a2 = X.pcs.A2;
+    a1.setVisible(false);
+    const S1 = cp(P.array);
+    kit.hideSpans(X.res, X.A.spans);
+    const H2 = cp(P.array);
+    resetUR(P);
+    a1.setVisible(true);                                // 段藏着：件"显示"只改底下那层，网格不变、不上传
+    const pa = bitsEq(P.array, H2) && P.updateRange.count === -1;
+    a2.setVisible(false);
+    const pb = bitsEq(P.array, H2) && P.updateRange.count === -1;
+    kit.showSpans(X.res, X.A.spans);
+    const S2 = cp(P0);                                  // 期望：A1 显示、A2 叠在自己的第一个顶点
+    for (let i = a2.start; i < a2.start + a2.count; i++) for (let c = 0; c < 3; c++) S2[i * 3 + c] = P0[a2.start * 3 + c];
+    const pc = bitsEq(P.array, S2) && a1.visible && !a2.visible;
+    a2.setVisible(true);
+    const pd = bitsEq(P.array, P0);
+    // 件先藏、段再藏又放：件仍藏着（和段藏之前逐位一样），再显示件回到生成时
+    kit.hideSpans(X.res, X.A.spans);
+    kit.showSpans(X.res, X.A.spans);
+    const pe = bitsEq(P.array, P0);
+    a1.setVisible(false);
+    const S3 = cp(P.array);
+    kit.hideSpans(X.res, X.A.spans);
+    kit.showSpans(X.res, X.A.spans);
+    const pf = bitsEq(P.array, S3) && bitsEq(P.array, S1);
+    a1.setVisible(true);
+    out.pc = { pa, pb, pc, pd, pe, pf, pg: bitsEq(P.array, P0) };
+
+    // ---------- 9d. 部分重叠、分段放出 ----------
+    const g0 = gP[0], mid = (g0.v0 + g0.v1) >> 1;
+    kit.hideSpans(X.res, { 'kit:prop': [g0.v0, mid] });
+    const nOver = kit.hideSpans(X.res, { 'kit:prop': [mid - 4, g0.v1] });
+    const whole = kit.spanHidden(X.res, 'kit:prop', [g0.v0, g0.v1]);
+    kit.showSpans(X.res, { 'kit:prop': [g0.v0, mid - 6] });
+    let firstBack = true;
+    for (let i = g0.v0 * 3; i < (mid - 6) * 3; i++) if (P.array[i] !== P0[i]) firstBack = false;
+    const restHidden = kit.spanHidden(X.res, 'kit:prop', [mid - 6, g0.v1]) && !kit.spanHidden(X.res, 'kit:prop', [g0.v0, g0.v1]);
+    kit.showSpans(X.res, { 'kit:prop': [g0.v0, g0.v1] });
+    out.part = { nOver, wantOver: g0.v1 - mid, whole, firstBack, restHidden, back: bitsEq(P.array, P0) };
+
+    // ---------- 9e. spanEdit / spanRestore（杆子 W、W2 不属于任何道具） ----------
+    const Z = make();
+    const PZ = Z.mesh['kit:prop'].geometry.attributes.position, NZ = Z.mesh['kit:prop'].geometry.attributes.normal;
+    const p0 = cp(PZ.array), n0 = cp(NZ.array);
+    const w = Z.pcs.W, R = [w.start, w.start + w.count], w2 = Z.pcs.W2, R2 = [w2.start, w2.start + w2.count];
+    resetUR(PZ); resetUR(NZ);
+    let orig1 = null, lens = null;
+    const ok1 = kit.spanEdit(Z.res, 'kit:prop', R, (pos, nrm, orig) => {
+      orig1 = orig; lens = [pos.length, nrm.length];
+      for (let i = 0; i < pos.length; i += 3) pos[i + 1] += 0.25;
+      for (let i = 0; i < nrm.length; i += 3) { const x = nrm[i]; nrm[i] = nrm[i + 2]; nrm[i + 2] = -x; }
+    });
+    let inside = 0, outsideE = 0;
+    for (let i = 0; i < PZ.count; i++) {
+      const inR = i >= R[0] && i < R[1];
+      for (let c = 0; c < 3; c++) if (PZ.array[i * 3 + c] !== p0[i * 3 + c] || NZ.array[i * 3 + c] !== n0[i * 3 + c]) { if (inR) inside++; else outsideE++; }
+    }
+    out.e1 = { ok: ok1, lens, wantLen: (R[1] - R[0]) * 3, inside, outside: outsideE, urP: ur(PZ), urN: ur(NZ), want: [R[0] * 3, (R[1] - R[0]) * 3] };
+    // 第二次调用：原值还是第一次存的（没被第一次的改动污染），按原值算不累积
+    kit.spanEdit(Z.res, 'kit:prop', R, (pos, nrm, orig) => { for (let i = 0; i < pos.length; i++) pos[i] = orig.pos[i] + (i % 3 === 1 ? 0.5 : 0); });
+    out.e2 = {
+      dy: +(PZ.array[R[0] * 3 + 1] - p0[R[0] * 3 + 1]).toFixed(5),
+      origPos: !!orig1 && bitsEq(orig1.pos, p0.subarray(R[0] * 3, R[1] * 3)), origNrm: !!orig1 && bitsEq(orig1.nrm, n0.subarray(R[0] * 3, R[1] * 3)),
+    };
+    resetUR(PZ); resetUR(NZ);
+    const r1 = kit.spanRestore(Z.res, 'kit:prop', R);
+    out.e3 = { r1, P: bitsEq(PZ.array, p0), N: bitsEq(NZ.array, n0), urP: ur(PZ), urN: ur(NZ), r2: kit.spanRestore(Z.res, 'kit:prop', R) };
+    // 藏着的段不改
+    kit.hideSpans(Z.res, { 'kit:prop': R });
+    const Hz = cp(PZ.array);
+    const ok4 = kit.spanEdit(Z.res, 'kit:prop', R, pos => { pos[0] += 1; });
+    out.e4 = { ok: ok4, same: bitsEq(PZ.array, Hz) };
+    kit.showSpans(Z.res, { 'kit:prop': R });
+    // 改着 → 藏 → 复原 → 放出：逐位原样（复原写进藏着的那层，期间网格仍叠着）
+    kit.spanEdit(Z.res, 'kit:prop', R, pos => { for (let i = 1; i < pos.length; i += 3) pos[i] += 0.3; });
+    kit.hideSpans(Z.res, { 'kit:prop': R });
+    const Hz2 = cp(PZ.array);
+    kit.spanRestore(Z.res, 'kit:prop', R);
+    const stillHid = bitsEq(PZ.array, Hz2);
+    kit.showSpans(Z.res, { 'kit:prop': R });
+    out.e5 = { stillHid, P: bitsEq(PZ.array, p0), N: bitsEq(NZ.array, n0) };
+    // 三段互相重叠地改，不传 range 一次全复原
+    const R3 = [R[0] + 4, R2[0] + 4];
+    kit.spanEdit(Z.res, 'kit:prop', R, pos => { for (let i = 0; i < pos.length; i += 3) pos[i] += 0.1; });
+    kit.spanEdit(Z.res, 'kit:prop', R3, (pos, nrm) => { for (let i = 2; i < pos.length; i += 3) pos[i] -= 0.2; nrm.fill(0); });
+    kit.spanEdit(Z.res, 'kit:prop', R2, pos => { for (let i = 1; i < pos.length; i += 3) pos[i] *= 1.5; });
+    const changed = !bitsEq(PZ.array, p0);
+    const rAll = kit.spanRestore(Z.res, 'kit:prop');
+    out.e6 = { changed, rAll, P: bitsEq(PZ.array, p0), N: bitsEq(NZ.array, n0) };
+
+    // ---------- 9f. 显式 meta.key 不占自动编号 ----------
+    const build = withX => {
+      const b = kit.builder({ level: lv, levelSeed: 9 }, 3, 4, U.rng(9, 3, 4));
+      const X2 = {};
+      b.prop({ kind: 'box' }, () => b.box(1, 0, 1, 0.5, 0.5, 0.5, 'kit:prop', {}));
+      if (withX) X2.v = b.fixture({ key: '1@3,4#v0', kind: 'vehicle', label: '叉车', why: '叉车太重，拖不动' }, () => { b.solid(5, 0, 5, 6.2, 2.15, 7.6); });
+      b.prop({ kind: 'box' }, () => b.box(2, 0, 1, 0.5, 0.5, 0.5, 'kit:prop', {}));
+      if (withX) X2.p = b.prop({ key: 'dev@3,4#lt1', kind: 'pallet' }, () => b.box(3, 0, 1, 0.5, 0.5, 0.5, 'kit:prop', {}));
+      b.fixture({ kind: 'vend' }, () => b.box(4, 0, 3, 0.5, 1, 0.5, 'kit:prop', {}));
+      if (withX) X2.c = b.container({ key: 'dev@3,4#cx1', kind: 'crate' }, () => b.box(6, 0, 3, 0.5, 0.5, 0.5, 'kit:prop', { solid: false }));
+      b.container({ kind: 'crate' }, () => b.box(7, 0, 3, 0.5, 0.5, 0.5, 'kit:prop', { solid: false }));
+      const par = b.prop({ kind: 'rack' }, () => {
+        b.box(10, 0, 10, 2, 2, 0.6, 'kit:prop', {});
+        b.prop({ kind: 'load' }, () => b.box(10, 2, 10, 0.4, 0.3, 0.4, 'kit:prop', { solid: false }));
+        if (withX) X2.k = b.prop({ key: 'dev@3,4#rk1.a00', kind: 'load' }, () => b.box(10.5, 2, 10, 0.4, 0.3, 0.4, 'kit:prop', { solid: false }));
+        b.prop({ kind: 'load' }, () => b.box(11, 2, 10, 0.4, 0.3, 0.4, 'kit:prop', { solid: false }));
+      });
+      b.fixture({ kind: 'tv' }, () => b.box(14, 0, 3, 0.5, 0.5, 0.2, 'kit:prop', {}));
+      b.container({ kind: 'carton' }, () => b.box(15, 0, 3, 0.5, 0.5, 0.5, 'kit:prop', { solid: false }));
+      const res = b.finish();
+      const K = res.kit;
+      const all = K.props.concat(K.fixtures, K.containers).map(q => q.key);
+      const xk = Object.values(X2).map(q => q.key);
+      const o = {
+        all, auto: all.filter(k => xk.indexOf(k) < 0), xn: Object.values(X2).map(q => q.n), children: par.children,
+        split: kit.splitSolids(res).owners.map(q => q.key),
+      };
+      if (X2.v) o.v = { skey: X2.v.skey, kind: X2.v.kind, why: X2.v.why, draggable: X2.v.draggable, byKey: kit.propByKey(res, '1@3,4#v0') === X2.v };
+      res.group.traverse(m => { if (m.geometry) m.geometry.dispose(); });
+      return o;
+    };
+    out.keys = { x: build(true), n: build(false) };
+
+    // ---------- 9g. 区块外的 builder：不跑工坊 decorate；b.mark() ----------
+    const ws = BR.workshop, origDec = ws && ws.decorate;
+    let calls = 0;
+    if (ws) ws.decorate = function () { calls++; };
+    try {
+      const h0 = kit.builder();
+      const h1 = kit.builder({}, 0, 0, () => 0, { height: 4 });
+      const c0 = kit.builder({ level: lv, levelSeed: 2 }, 0, 0, U.rng(2, 0, 0));
+      const c1 = kit.builder({ level: lv, levelSeed: 2 }, 0, 0, U.rng(2, 0, 0), { helper: true });
+      out.flags = [h0._wsHelper, h1._wsHelper, c0._wsHelper, c1._wsHelper];
+      const m = [h1.mark()];
+      const pA = h1.box(0, 0, 0, 1.1, 0.75, 1.9, 'kit:prop', { color: 0xd8a320, solid: false });
+      const pA2 = h1.cylinder(0.5, 0.75, 0.5, 0.1, 0.5, 'kit:prop', { solid: false });
+      m.push(h1.mark());
+      const pG = h1.box(0, 2, 0, 0.2, 0.05, 0.1, 'kit:glow', { uv: 'solid', solid: false });
+      m.push(h1.mark());
+      const pD = kit.decal(h1, { kind: dk, x: 0, y: 0.3, z: 0.953, facing: '+z', w: 0.3 });
+      m.push(h1.mark());
+      const accN = {};
+      h1._accs.forEach((a, k) => { if (typeof k === 'string' && a.pos !== undefined) accN[k] = a.n; });
+      const res = h1.finish();
+      const cnt = {};
+      for (const mm of res.group.children) cnt[mm.name] = mm.geometry.attributes.position.count;
+      out.mark = {
+        m, accN, cnt, meshes: res.group.children.length, pos: [res.group.position.x, res.group.position.z], kit: !!res.kit,
+        A: [pA.start, pA.start + pA.count, pA2.start + pA2.count], G: [pG.start, pG.start + pG.count], D: pD ? [pD.start, pD.start + pD.count] : null,
+        solids: res.solids.length,
+      };
+      res.group.traverse(o2 => { if (o2.geometry) o2.geometry.dispose(); });
+      for (const hb of [h0, c1]) { hb.box(1, 0, 1, 1, 1, 1, 'kit:prop', {}); hb.finish().group.traverse(o2 => { if (o2.geometry) o2.geometry.dispose(); }); }
+      const helperCalls = calls;
+      c0.box(1, 0, 1, 1, 1, 1, 'kit:prop', {});
+      c0.finish().group.traverse(o2 => { if (o2.geometry) o2.geometry.dispose(); });
+      out.decorate = [helperCalls, calls];
+      // 有 BR.L1forklift（FE1-L1）时：按部件夹 mark 建一台，逐段拼起来和整台一次建的逐位一样
+      const FL = BR.L1forklift;
+      if (FL && typeof FL.model === 'function') {
+        const PARTS = ['body', 'liftLever', 'wheelsFront', 'wheelsRear', 'steeringWheel', 'mastOuter', 'mastInner', 'carriage', 'chains'];
+        const fa = kit.builder({}, 0, 0, () => 0, { height: 4 }), fp = kit.builder({}, 0, 0, () => 0, { height: 4 });
+        FL.model(fa, { part: 'all', detail: 'mid', number: 7, lift: 0.3 });
+        const segs = [];
+        let prev = fp.mark();
+        for (const part of PARTS) {
+          FL.model(fp, { part, detail: 'mid', number: 7, lift: 0.3 });
+          const cur = fp.mark();
+          segs.push([part, prev['kit:prop'] || 0, cur['kit:prop'] || 0]);
+          prev = cur;
+        }
+        const ra = fa.finish(), rp = fp.finish();
+        const ma = ra.group.children.find(q => q.name === 'kit:prop'), mp = rp.group.children.find(q => q.name === 'kit:prop');
+        let contiguous = true;
+        for (let i = 1; i < segs.length; i++) if (segs[i][1] !== segs[i - 1][2]) contiguous = false;
+        out.fork = {
+          segs, contiguous, total: prev['kit:prop'], meshVerts: mp ? mp.geometry.attributes.position.count : -1,
+          same: !!ma && !!mp && bitsEq(ma.geometry.attributes.position.array, mp.geometry.attributes.position.array),
+        };
+        for (const rr of [ra, rp]) rr.group.traverse(o2 => { if (o2.geometry) o2.geometry.dispose(); });
+      } else out.fork = null;
+    } finally {
+      if (ws) ws.decorate = origDec;
+    }
+    for (const T of [X, Y, Z]) T.res.group.traverse(o2 => { if (o2.geometry) o2.geometry.dispose(); });
+    BR.game.settings.quality = q0;
+    return out;
+  });
+
+  // ---------- 判定 ----------
+  check('FE1 合成块：木箱的段跨 kit:prop 和 kit:decal 两个网格（贴花画出来了）', r.hasDecal && r.spansA.length === 2, r.spansA);
+  const h = r.hide;
+  check('hideSpans：整段叠到段首一点、返回藏起来的顶点数、别的顶点一位不动、只上传这一段（两个网格各自）、spanHidden 认得',
+    h.n === h.total && h.collapsed && h.outside === 0 && h.urP.join() === h.wantP.join() && h.urD.join() === h.wantD.join() && h.hidden && !h.bHidden, h);
+  check('hideSpans 重复调用幂等：返回 0、网格逐位不变、不上传', r.idem.n === 0 && r.idem.same && r.idem.ur[1] === -1 && r.idem.ver, r.idem);
+  check('showSpans：逐位恢复（kit:prop、kit:decal）、只上传这一段；重复调用返回 0、不动网格',
+    r.show.n === h.total && r.show.P && r.show.D && r.show.urP.join() === h.wantP.join() && !r.show.hidden && r.show.n2 === 0 && r.show.same2, r.show);
+  check('hideSpans / showSpans 认方案接口的写法 { "kit:prop": [v0, v1], "kit:decal": [[v0, v1]] }', r.map.n === h.total && r.map.hidden && r.map.back, r.map);
+  const mv = r.mv;
+  check('和 moveProp 叠着用：藏着挪网格不变；放出来在挪过的位置（和只挪不藏的对照逐位一样）；挪回 0 逐位回到生成时',
+    r.twinSame && mv.stillHidden && mv.shown && mv.back, mv);
+  check('和 moveProp 叠着用：先挪再藏、藏着挪回、放出来 → 逐位回到生成时', mv.back2, mv);
+  check('件藏着 + 段藏着 + 挪：放出段时件仍藏着，再显示件和对照逐位一样；挪回 0 逐位回到生成时', mv.pieceStillHidden && mv.triple && mv.back3, mv);
+  check('和 Piece.setVisible 叠着用：段藏着时件显示/隐藏不改网格、不上传；放出来后件的状态对、逐位一样；件先藏再段藏放往返逐位不变',
+    Object.values(r.pc).every(Boolean), r.pc);
+  check('部分重叠地藏（只藏新的那部分）、分段放出，最后逐位恢复', r.part.nOver === r.part.wantOver && r.part.whole && r.part.firstBack && r.part.restHidden && r.part.back, r.part);
+  const e = r.e1;
+  check('spanEdit：fn 拿到这一段的 position / normal 视图，只改这一段、只上传这一段（position、normal 各自）',
+    e.ok && e.lens && e.lens[0] === e.wantLen && e.lens[1] === e.wantLen && e.inside > 0 && e.outside === 0 && e.urP.join() === e.want.join() && e.urN.join() === e.want.join(), e);
+  check('spanEdit：原值第一次调用时存下，第二次调用拿到的 orig 还是生成时的值（按原值算不累积）', r.e2.dy === 0.5 && r.e2.origPos && r.e2.origNrm, r.e2);
+  check('spanRestore：position、normal 逐位恢复，只上传这一段；重复调用返回 false',
+    r.e3.r1 && r.e3.P && r.e3.N && r.e3.urP.join() === e.want.join() && r.e3.urN.join() === e.want.join() && r.e3.r2 === false, r.e3);
+  check('spanEdit：段被 hideSpans 藏着时不改、返回 false', r.e4.ok === false && r.e4.same, r.e4);
+  check('spanEdit 改着 → hideSpans → spanRestore（网格仍叠着）→ showSpans：逐位原样', r.e5.stillHid && r.e5.P && r.e5.N, r.e5);
+  check('三段互相重叠地 spanEdit，spanRestore 不传 range 一次全复原：逐位原样', r.e6.changed && r.e6.rAll && r.e6.P && r.e6.N, r.e6);
+  const kx = r.keys.x, kn = r.keys.n;
+  const wantAuto = ['dev@3,4#p1', 'dev@3,4#p2', 'dev@3,4#p3', 'dev@3,4#p3.1', 'dev@3,4#p3.2', 'dev@3,4#f1', 'dev@3,4#f2', 'dev@3,4#c1', 'dev@3,4#c2'];
+  check('显式 meta.key 不占自动编号：夹着显式 key 的道具/设备/容器/子道具，自动 key 和没有显式 key 时逐个一样（#p1 #p2 #p3 .1 .2 #f1 #f2 #c1 #c2）',
+    JSON.stringify(kx.auto) === JSON.stringify(wantAuto) && JSON.stringify(kn.all) === JSON.stringify(wantAuto) && kx.all.length === wantAuto.length + 4,
+    { withExplicit: kx.all, without: kn.all });
+  check('显式 key 原样当 key（n 记 0），子道具也一样；碰撞 key 去掉层级前缀 → "3,4#v0"；能按 key 查到；包住的碰撞体按显式 key 单独拆出',
+    kx.xn.every(n => n === 0) && JSON.stringify(kx.children) === JSON.stringify(['dev@3,4#p3.1', 'dev@3,4#rk1.a00', 'dev@3,4#p3.2']) &&
+    kx.v.skey === '3,4#v0' && kx.v.kind === 'vehicle' && kx.v.why === '叉车太重，拖不动' && kx.v.draggable === false && kx.v.byKey &&
+    kx.split.includes('3,4#v0') && JSON.stringify(kx.split.filter(k => k !== '3,4#v0' && k !== '3,4#lt1')) === JSON.stringify(kn.split),
+    { xn: kx.xn, children: kx.children, v: kx.v, split: kx.split, splitN: kn.split });
+  check('区块外的 kit.builder：ctx 里没有层级（或 opts.helper）→ _wsHelper；正常区块 builder 不是', JSON.stringify(r.flags) === JSON.stringify([true, true, false, true]), r.flags);
+  check('区块外的 builder finish 不跑工坊 decorate（正常区块 builder 照跑）', r.decorate[0] === 0 && r.decorate[1] === 1, r.decorate);
+  const mk = r.mark;
+  const m = mk.m;
+  check('b.mark()：{ 材质: 当前顶点数 }，夹在两次 mark 之间画的件正好落在 [前, 后)；最后一次和累加器、finish 出的网格顶点数一致',
+    Object.keys(m[0]).length === 0 && m[1]['kit:prop'] === mk.A[2] && mk.A[0] === 0 && m[1]['kit:glow'] === undefined &&
+    m[2]['kit:prop'] === m[1]['kit:prop'] && m[2]['kit:glow'] === mk.G[1] && mk.G[0] === 0 &&
+    !!mk.D && m[3]['kit:decal'] === mk.D[1] && mk.D[0] === 0 && m[3]['kit:prop'] === m[2]['kit:prop'] &&
+    JSON.stringify(m[3]) === JSON.stringify(mk.accN) && ['kit:prop', 'kit:glow', 'kit:decal'].every(k => mk.cnt[k] === m[3][k]),
+    mk);
+  check('区块外的 builder 能建模型：3 个网格、整组在原点、有 res.kit、不出碰撞体', mk.meshes === 3 && mk.pos[0] === 0 && mk.pos[1] === 0 && mk.kit && mk.solids === 0, mk);
+  if (r.fork) {
+    // kit 这边只管 mark 的读数对得上；"拼起来和整台一次建逐位一样"取决于 L1 的部件划分（part='all' 是不是正好按这 8 个部件的顺序），只打出来看
+    check('BR.L1forklift.model 按部件夹 b.mark() 建（区块外的 builder）：各段首尾相接、至少 6 个部件有几何、总数和 finish 出的网格一致',
+      r.fork.contiguous && r.fork.total === r.fork.meshVerts && r.fork.segs.filter(s => s[2] > s[1]).length >= 6, r.fork);
+    console.log('     INFO 按部件拼起来和 part=all 一次建的逐位一样：' + r.fork.same);
+  } else console.log('SKIP BR.L1forklift 还没有（FE1-L1 合进来后这条会跑：按部件夹 mark 建叉车）');
+  await ctx.close();
+}
+
+// =====================================================================
+// 10. FE1：自动 key 和改动前一致（显式 key 不占自动编号之后，L1 叉车包成显式 key 的 fixture，别的 key 一个都不能变）
+// =====================================================================
+// L1 种子 12345：出生块不触发保底叉车，5×5 全比；别的种子出生块会换成保底叉车（FE1-L1 允许的生成变化），比出生块以外的 24 块
+const KEY_CASES = [
+  { name: 'L1 种子 12345 出生 5×5', id: '1', seed: 12345, around: 2, skipSpawn: false },
+  { name: 'L1 种子 20260913 出生块以外', id: '1', seed: 20260913, around: 2, skipSpawn: true },
+  { name: 'L1 种子 4242 出生块以外', id: '1', seed: 4242, around: 2, skipSpawn: true },
+  { name: 'Ldev 出生 3×3', id: 'dev', seed: SEED, around: 1, skipSpawn: false },
+  { name: '营地 出生 3×3', id: 'coopcamp', seed: SEED, around: 1, skipSpawn: false },
+];
+function pageKeyList({ id, quality, around, skipSpawn, probe }) {
+  const G = window.__kitLv, lv = BR.levels.get(id), U = BR.util;
+  if (G.orig) { lv.buildChunk = G.orig; G.orig = null; }
+  if (BR.game.levelId !== id || !BR.world.current) return { ok: false, error: '没能进入层级 ' + id };
+  if (BR.game.settings.quality !== quality) return { ok: false, error: '画质不对 ' + BR.game.settings.quality };
+  const levelSeed = BR.world.levelSeed, S = BR.world.chunkSize;
+  const ctx = G.ctx || { THREE, BR, level: BR.world.current, levelSeed, assets: BR.assets, game: BR.game, scene: BR.gfx && BR.gfx.scene };
+  const sp = typeof lv.spawn === 'function' ? lv.spawn(ctx) : null;
+  const px = sp && Number.isFinite(sp.x) ? sp.x : BR.player.x, pz = sp && Number.isFinite(sp.z) ? sp.z : BR.player.z;
+  const ccx = Math.floor(px / S), ccz = Math.floor(pz / S);
+  // 自动编号的 key：'<层>@cx,cz#p3'、'#p3.1'、'#f2'、'#c4'；显式 key（'#v0'、'#lt1'、'#rk1.a00'……）不比
+  const AUTO = /^[^@]*@-?\d+,-?\d+#[pfc]\d+(\.\d+)*$/;
+  const out = { ok: true, spawn: [ccx, ccz], chunks: {}, explicit: [], kinds: {}, probed: 0 };
+  // probe：每个区块 builder 一开头先登记 3 条显式 key 的空道具 / 设备 / 容器（不画几何、不吃 rng、不出碰撞体）。
+  // 显式 key 不占自动编号时，后面所有自动 key 和快照逐个一样；占了的话整块的 #p/#f/#c 全往后错一位 —— 比对一定抓得到
+  const kitB = BR.kit.builder;
+  if (probe) {
+    BR.kit.builder = function (ctx2) {
+      const b = kitB.apply(this, arguments);
+      if (ctx2 && ctx2.level) {
+        b.prop({ key: 'probe@prop', kind: 'probe' }, () => {});
+        b.fixture({ key: 'probe@fixture', kind: 'probe' }, () => {});
+        b.container({ key: 'probe@container', kind: 'probe' }, () => {});
+        out.probed++;
+      }
+      return b;
+    };
+  }
+  try {
+    for (let dz = -around; dz <= around; dz++) for (let dx = -around; dx <= around; dx++) {
+      if (skipSpawn && dx === 0 && dz === 0) continue;
+      const cx = ccx + dx, cz = ccz + dz, ck = cx + ',' + cz;
+      let res = null;
+      try { res = lv.buildChunk(ctx, cx, cz, U.rng(levelSeed, cx, cz)); } catch (err) { out.chunks[ck] = { error: String(err && err.message || err) }; continue; }
+      const K = (res && res.kit) || {};
+      const recs = [], parts = [];
+      for (const [list, t] of [[K.props || [], 'p'], [K.fixtures || [], 'f'], [K.containers || [], 'c']]) {
+        for (const r of list) {
+          if (!AUTO.test(r.key)) { if (r.key.indexOf('probe@') !== 0) out.explicit.push(r.key); continue; }
+          recs.push([r.key, t, r.kind]);
+          out.kinds[r.kind] = (out.kinds[r.kind] || 0) + 1;
+          for (const p of r.parts || []) parts.push([p.key, p.type, p.name]);
+        }
+      }
+      out.chunks[ck] = { recs, parts };
+      if (res && res.group) res.group.traverse(m => { if (m.geometry && !(m.geometry.userData && m.geometry.userData.shared)) m.geometry.dispose(); });
+      if (res && typeof res.dispose === 'function') { try { res.dispose(); } catch (e) { /* 不影响数据 */ } }
+    }
+  } finally {
+    BR.kit.builder = kitB;
+  }
+  return out;
+}
+async function autoKeys(browser, base) {
+  const ctx = await browser.newContext({ viewport: { width: 640, height: 360 } });
+  const page = await ctx.newPage();
+  watch(page, 'keys');
+  await boot(page, base);
+  const got = {};
+  for (const C of KEY_CASES) {
+    for (const quality of ['high', 'low']) {
+      const tag = C.name + ' | ' + quality;
+      if (!(await ev(page, lid => BR.levels.has(lid), C.id))) { got[tag] = { ok: false, error: '没有注册层级 ' + C.id }; continue; }
+      if (await ev(page, () => BR.game.screen !== 'home')) {
+        await ev(page, () => BR.bus.emit('game:home'));
+        await page.waitForFunction(() => BR.game.screen === 'home', null, { timeout: 15000 });
+      }
+      const en = await ev(page, pageEnterLv, { id: C.id, seed: C.seed, quality });
+      if (!en.ok) { got[tag] = en; continue; }
+      try {
+        await page.waitForFunction(lid => BR.game.screen === 'playing' && BR.game.levelId === lid && BR.world && BR.world.current, C.id, { timeout: 60000 });
+      } catch (err) { got[tag] = { ok: false, error: String(err.message || err) }; continue; }
+      got[tag] = await ev(page, pageKeyList, { id: C.id, quality, around: C.around, skipSpawn: C.skipSpawn, probe: !KEY_TAG });
+    }
+  }
+  if (await ev(page, () => BR.game.screen !== 'home')) await ev(page, () => BR.bus.emit('game:home'));
+  await ctx.close();
+
+  // 本次自检：都生成成功、有自动 key；高低画质的自动 key 逐块一致；L1 里摆到了小屋家具（办公桌 / 椅子）
+  for (const C of KEY_CASES) {
+    const hi = got[C.name + ' | high'], lo = got[C.name + ' | low'];
+    const errs = [hi, lo].filter(x => !x || !x.ok).map(x => x && x.error);
+    const chunkErr = [hi, lo].filter(x => x && x.ok).flatMap(x => Object.entries(x.chunks).filter(([, v]) => v.error).map(([k, v]) => k + ' ' + v.error));
+    const n = hi && hi.ok ? Object.values(hi.chunks).reduce((s, v) => s + (v.recs ? v.recs.length : 0), 0) : 0;
+    // 比对时每块都插了 probe（3 条显式 key 的空记录）：插进去了才算数
+    const probedOk = KEY_TAG || ([hi, lo].every(x => x && x.ok && x.probed >= Object.keys(x.chunks).length));
+    check('自动 key（' + C.name + '）：生成无异常、有自动 key、高低画质逐块一致' + (KEY_TAG ? '' : '（每块开头插了 3 条显式 key 的空记录）'),
+      !errs.length && !chunkErr.length && n > 0 && JSON.stringify(hi.chunks) === JSON.stringify(lo.chunks) && probedOk,
+      errs.length || chunkErr.length ? { errs, chunkErr: chunkErr.slice(0, 3) } : { autoKeys: n, explicit: hi.explicit.length, probed: hi.probed, kinds: hi.kinds });
+  }
+  const l1 = got['L1 种子 12345 出生 5×5 | high'];
+  if (l1 && l1.ok) check('L1 自动 key 里有小屋家具（办公桌、椅子）', (l1.kinds.desk || 0) > 0 && (l1.kinds.chair || 0) > 0, l1.kinds);
+
+  const snap = { schema: 1, made: new Date().toISOString(), root: path.relative(ROOT, SERVE_ROOT) || '.', cases: {} };
+  for (const [k, v] of Object.entries(got)) if (v && v.ok) snap.cases[k] = { spawn: v.spawn, chunks: v.chunks };
+  if (KEY_TAG) {
+    const f = keyTagFile(KEY_TAG);
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, JSON.stringify(snap));
+    console.log('     自动 key 快照写到 ' + path.relative(ROOT, f) + '（' + Object.keys(snap.cases).length + ' 组）');
+    return;
+  }
+  const name = KEY_AGAINST || KEY_DEFAULT, f = keyTagFile(name);
+  if (!fs.existsSync(f)) {
+    if (KEY_AGAINST) check('自动 key 快照 ' + name + ' 存在', false, path.relative(ROOT, f));
+    else console.log('WARN 没有自动 key 快照 ' + path.relative(ROOT, f) + '，跳过和改动前的比对（先用 --root <改动前代码> --tag ' + KEY_DEFAULT + ' 拍）');
+    return;
+  }
+  const old = JSON.parse(fs.readFileSync(f, 'utf8'));
+  for (const [k, cur] of Object.entries(snap.cases)) {
+    const was = old.cases && old.cases[k];
+    if (!was) { check('自动 key 和快照 ' + name + ' 一致：' + k, false, '快照里没有这一组'); continue; }
+    let diff = null;
+    const keys = Array.from(new Set(Object.keys(was.chunks).concat(Object.keys(cur.chunks))));
+    for (const ck of keys) {
+      const a = JSON.stringify(was.chunks[ck] || null), b = JSON.stringify(cur.chunks[ck] || null);
+      if (a === b) continue;
+      const A = was.chunks[ck] || { recs: [], parts: [] }, B = cur.chunks[ck] || { recs: [], parts: [] };
+      let i = 0;
+      while (i < Math.max(A.recs.length, B.recs.length) && JSON.stringify(A.recs[i]) === JSON.stringify(B.recs[i])) i++;
+      diff = { chunk: ck, recs: [A.recs.length, B.recs.length], firstRec: { i, was: A.recs[i], now: B.recs[i] }, parts: [A.parts.length, B.parts.length] };
+      break;
+    }
+    check('自动 key 和快照 ' + name + ' 一致：' + k, !diff && JSON.stringify(was.spawn) === JSON.stringify(cur.spawn), diff || { chunks: keys.length });
+  }
 }
 
 main();

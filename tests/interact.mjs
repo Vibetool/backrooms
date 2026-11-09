@@ -1,4 +1,4 @@
-// 后室 · 准心交互回归（交互方案 A1）：node tests/interact.mjs [--only desk,touch,camp]
+// 后室 · 准心交互回归（交互方案 A1）：node tests/interact.mjs [--only desk,touch,camp,clutter]
 // 起本地静态服务（随机端口）+ 无头 Chrome（SwiftShader），拦截 api.ovobot.ai 和一切外部请求。
 // 测试模式、__br.setAuto(false) 用 step 精确推进模拟时间（interact.js 这时只看模拟时间判短按 / 长按）。
 //
@@ -15,7 +15,7 @@
 //   - 压着出口圈的道具（L17 去 Level 18 的床）和出口一样：不出任何提示，长按也拖不动
 //   - 返修 r1：拖动不悬空（L7 门廊推不出去、人工坑推不进去）、出口圈拖动中就挡住、木箱把地上的瓶子推开、
 //     拖动有声音、甩头掉了提示「手滑了」、售货机给出拖不动的原因、座位候选长按拖的是椅子
-// touch（手机横屏 844×390，CDP 触摸）：点「互动」拾取；按住「互动」拖木箱、另一指推摇杆后退；drive 里多出「升」「降」、点「互动」下车
+// touch（手机横屏 844×390，CDP 触摸）：点「互动」拾取；按住「互动」拖木箱、另一指推摇杆后退；drive 里多出「升」「降」、「互动」键改名「下车」，提示「点「下车」」，点它下车
 // camp（桌面 1280×720，联机营地 N1，一个人在营地 = 自己说了算）：
 //   - 帐篷门候选：站在门前通道里对准门，提示「空格 进帐篷」；短按 100 ms 自己走进去、打开「选下一站」；Esc 先走出帐篷、不进暂停
 //   - 长按 500 ms 只出「帐篷是营地的出口，拖不动」，不进拖动、不走进去、帐篷不动
@@ -23,6 +23,8 @@
 //   - 桌上的层级地图「空格 看地图」直接开选单；柱子上的制服挂钩「空格 换制服」短按换下一种颜色、长按只给原因
 //   - 客机（BR.coop 换成客机身份的替身）短按也能进帐篷，进 / 出都走 BR.coop.use('coopcamp:tent', 'tent', …)
 //   - 一路上 HUD 没有「动词不在动词表里」的 console.warn，提示里不出现 E
+// clutter（FE1 返修 r12 裁定 E；r13 对准后走整帧 1/30 s）：L1 地上 9 种物资挤成 3×3（间距 9 cm），6 个站位 200 个以上准心点：高亮的 = 准心射线最先打中的模型那件，0 个不一致；
+//   真按空格捡起来的也是那一件
 // 截图写 tests/output/interact-*.png。任一检查失败或页面出现 console.error / 未捕获异常时退出码为 1
 import http from 'node:http';
 import fs from 'node:fs';
@@ -215,6 +217,38 @@ async function desk(browser) {
     c = await ev(page, () => __ti.spawnFront('almond_water', 't/e', 1.4));
     await page.keyboard.press('KeyE'); await step(page, 0.05);
     check('D7 E 隐藏别名短按也能拾取', await ev(page, () => BR.player.countOf('almond_water') === 1 && !BR.items.find('t/e')), c);
+
+    // D53 挤在一起的物资（返修 r10，验收员 play：叉车甩出去的混装隔 1.2–1.4 cm，准心对着罐头却捡到旁边更高、命中球更大的水瓶）：
+    // 罐头和水瓶静静摆在地上隔 1.3 cm，人站在水瓶那一侧斜前方（水瓶离人更近），准心对准罐头的模型中心 —— 选中的是罐头，短按捡到罐头；对准水瓶选中水瓶
+    {
+      const r = await ev(page, () => {
+        for (const id of ['t/d53c', 't/d53w']) if (BR.items.find(id)) BR.items.remove(id);
+        const g = BR.phys.groundY(13.5, 10.5);
+        const can = BR.items.spawn('canned_food', 13.5, g, 10.5, { id: 't/d53c', dropped: true, still: true, rotY: 0 });
+        __br.step(0.001);
+        const R = v => { let m = 0; for (const n of [v]) n.obj.traverse(q => { const pos = q.isMesh && q.geometry.attributes.position; if (!pos) return; q.updateMatrixWorld(true); const e = q.matrixWorld.elements; for (let i = 0; i < pos.count; i++) { const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i); m = Math.max(m, Math.hypot(e[0] * x + e[4] * y + e[8] * z + e[12] - v.x, e[2] * x + e[6] * y + e[10] * z + e[14] - v.z)); } }); return m; };
+        const rc = R(can);
+        const w = BR.items.spawn('water_bottle', 13.5 + 0.2, g, 10.5, { id: 't/d53w', dropped: true, still: true, rotY: 0 });
+        __br.step(0.001);
+        const rw = R(w);
+        BR.items.move('t/d53w', 13.5 + rc + rw + 0.013, g, 10.5);
+        __ti.stand(13.5 + 0.95, 10.5 + 0.75, 13.5, 10.5);
+        __br.step(0.2);
+        const mid = id => { const q = BR.items.find(id), b = new THREE.Box3().setFromObject(q.obj, true); const c = b.getCenter(new THREE.Vector3()); return [c.x, c.y, c.z]; };
+        const mc = mid('t/d53c'), mw = mid('t/d53w');
+        BR.interact.aimAt(mc[0], mc[1], mc[2]); __br.step(1 / 30); __br.step(1 / 30);
+        const onCan = __ti.cur(), pCan = __ti.prompt();
+        BR.interact.aimAt(mw[0], mw[1], mw[2]); __br.step(1 / 30); __br.step(1 / 30);
+        const onW = __ti.cur();
+        BR.interact.aimAt(mc[0], mc[1], mc[2]); __br.step(1 / 30); __br.step(1 / 30);
+        return { gap: +(13.5 + rc + rw + 0.013 - 13.5 - rc - rw).toFixed(4), onCan: onCan && onCan.key, pCan, onW: onW && onW.key, n0: BR.player.countOf('canned_food'), w0: BR.player.countOf('water_bottle') };
+      });
+      await tap(page, 'Space', 0.1);
+      const after = await ev(page, () => ({ n: BR.player.countOf('canned_food'), w: BR.player.countOf('water_bottle'), can: !!BR.items.find('t/d53c'), bottle: !!BR.items.find('t/d53w') }));
+      check('D53 罐头和水瓶隔 1.3 cm 摆在地上、水瓶离人更近：准心对准罐头选中罐头（' + r.onCan + '，「' + r.pCan + '」），对准水瓶选中水瓶（' + r.onW + '）；短按捡到的是罐头（水瓶还在地上）',
+        r.onCan === 't/d53c' && r.onW === 't/d53w' && /罐头/.test(r.pCan) && after.n === r.n0 + 1 && after.w === r.w0 && !after.can && after.bottle, { r, after });
+      await ev(page, () => { for (const id of ['t/d53c', 't/d53w']) if (BR.items.find(id)) BR.items.remove(id); return 0; });
+    }
 
     // 500 ms：进拖动；没挪就松手 = 拾取（pickSlop 只对物资）
     c = await ev(page, () => __ti.spawnFront('almond_water', 't/slop', 1.4));
@@ -904,7 +938,7 @@ async function touch(browser) {
     check('T6 按住「互动」一按就拖，另一指推摇杆后退时木箱跟着走，提示「松开「互动」放下」', st1 === 'drag' && mid.st === 'drag' && Math.hypot(mid.P.x - c.P.x, mid.P.z - c.P.z) > 0.4 && /^松开「互动」 ?放下/.test(mid.p), { st1, mid, c: c.P });
     check('T7 松开「互动」放下，写进 levelState', r.st === 'idle' && r.ls && Math.abs(r.ls.dz - r.P.dz) < 1e-3, r);
 
-    // drive：多出「升」「降」，冲刺和丢弃灰掉；点「互动」下车
+    // drive：多出「升」「降」，冲刺和丢弃灰掉；「互动」键改名「下车」，点它下车
     c = await ev(page, () => {
       __ti.stand(13.5, 13.5, 13.5, 0);
       BR.interact.setMode('drive', { key: 'test@veh', label: '叉车', onShort() { BR.interact.setMode('walk'); return true; } });
@@ -912,7 +946,8 @@ async function touch(browser) {
       return { p: __ti.prompt(), ctx: BR.input.context };
     });
     b = await ev(page, btnRects);
-    check('T8 drive：「升」「降」出现，冲刺、丢弃灰掉，提示「点「互动」下车」', c.ctx === 'drive' && !by('liftUp').hidden && !by('liftDown').hidden && by('sprint').off && by('drop').off && /^点「互动」 ?下车/.test(c.p), { c, b: b.map(x => x.n + ':' + x.text + (x.hidden ? ' hidden' : '') + (x.off ? ' off' : '')) });
+    // FE1：drive 情境里「互动」键改名「下车」（input.js CONTEXTS.drive.labels），中间提示跟着写「点「下车」」（hud 的 lead 不重复写「下车」）
+    check('T8 drive：「升」「降」出现，冲刺、丢弃灰掉，提示「点「下车」」', c.ctx === 'drive' && !by('liftUp').hidden && !by('liftDown').hidden && by('sprint').off && by('drop').off && /^点「下车」$/.test(c.p), { c, b: b.map(x => x.n + ':' + x.text + (x.hidden ? ' hidden' : '') + (x.off ? ' off' : '')) });
     await shot(page, 'touch-drive');
     const up = by('liftUp');
     await T('touchStart', [{ x: up.cx, y: up.cy }]); await step(page, 0.05);
@@ -923,7 +958,110 @@ async function touch(browser) {
     await T('touchEnd', []); await step(page, 0.05);
     r = await ev(page, () => ({ mode: BR.interact.mode, ctx: BR.input.context }));
     b = await ev(page, btnRects);
-    check('T9 按住「升」= liftUp；点「互动」下车，「升」「降」又藏起来', held === true && r.mode === 'walk' && r.ctx === 'walk' && by('liftUp').hidden && by('liftDown').hidden, { held, r });
+    check('T9 按住「升」= liftUp；点「下车」（互动键）下车，「升」「降」又藏起来', held === true && r.mode === 'walk' && r.ctx === 'walk' && by('liftUp').hidden && by('liftDown').hidden, { held, r });
+  } finally {
+    await ctx.close();
+  }
+}
+
+// =====================================================================
+// clutter（FE1 返修 r12 裁定 E）：L1 地上挤在一起的混装（9 种物资 3×3、间距 9 cm，和按 Q 丢下的一样浮着转圈），从 6 个站位把准心放到每件看得见的表面上
+// （从相机打一条射线，最先打中的就是这件的点；每个站位每件最多 5 个点，一共 200 个以上）。每个点上：准心高亮（BR.interact.current）= 自己从相机中心
+// 打的射线最先打中的模型那件，0 个不一致；再在第一个站位上对准每件看得见的点真按空格，捡进背包的就是射线先打中的那件（高亮的那件）
+async function clutter(browser) {
+  const { ctx, page } = await boot(browser, { viewport: { width: 1280, height: 720 } }, 'clutter');
+  try {
+    await ev(page, () => { __br.setAuto(true); __br.start({ mode: 'test', levelId: '1', seed: 12345, settings: { quality: 'high' } }); });
+    await page.waitForFunction(() => BR.game.screen === 'playing' && !BR.world.transitioning && String(BR.game.levelId) === '1', null, { timeout: 90000 });
+    await ev(page, () => { __br.setAuto(false); __br.step(0.5); });
+    // 负对照（返修 r13）：CLUTTER_NC=1 时把 main.js 每帧的 interact.refresh 换成空的（回到「选目标比画面晚一帧」），E1 / E2 应该报不一致
+    if (process.env.CLUTTER_NC) await ev(page, () => { BR.interact.refresh = () => {}; });
+    const TYPES = ['canned_food', 'water_bottle', 'canned_tuna', 'soft_drink', 'almond_water', 'candy', 'hot_chocolate', 'moth_jelly', 'ptg_b'];
+    const C0 = { x: 37.5, z: 13.2 };
+    const ids = await ev(page, a => {
+      for (const v of BR.vehicles.list()) BR.vehicles.setPose(v.key, { x: 37.5, z: 18.05, yaw: 0, steer: 0, lift: 0, spd: 0 });
+      __br.step(0.1);
+      const out = [];
+      a.T.forEach((t, i) => {
+        const x = a.C.x + ((i % 3) - 1) * 0.09, z = a.C.z + (Math.floor(i / 3) - 1) * 0.09;
+        const p = BR.items.spawn(t, x, BR.phys.groundY(x, z), z, { id: 'clut-' + i, dropped: true });
+        out.push(p ? p.id : null);
+      });
+      __br.step(0.05);
+      const T = window.__ti;
+      T.itemOf = o => { while (o) { const p = BR.items.list.find(q => q.obj === o); if (p) return p; o = o.parent; } return null; };
+      T.rayFirst = () => {
+        const cam = BR.gfx.camera; cam.updateMatrixWorld(true);
+        const rc = new THREE.Raycaster(), dir = new THREE.Vector3(); cam.getWorldDirection(dir); rc.set(cam.getWorldPosition(new THREE.Vector3()), dir); rc.far = 4;
+        const hits = rc.intersectObjects(BR.items.list.filter(p => p.obj && !p.owner).map(p => p.obj), true).filter(h => h.object.visible !== false);
+        if (!hits.length) return null;
+        const it = T.itemOf(hits[0].object), second = hits.find(h => T.itemOf(h.object) !== it);
+        return { id: it && it.id, d: +hits[0].distance.toFixed(4), next: second ? [T.itemOf(second.object).id, +second.distance.toFixed(4)] : null };
+      };
+      // 这件从相机看得见的表面点（顶点往包围盒中心收 6%，从相机打过去最先打中的是它）
+      T.visPts = (id, k) => {
+        const p = BR.items.find(id); if (!p || !p.obj) return [];
+        p.obj.updateMatrixWorld(true);
+        const cam = BR.gfx.camera; cam.updateMatrixWorld(true);
+        const cp = cam.getWorldPosition(new THREE.Vector3()), c = new THREE.Box3().setFromObject(p.obj).getCenter(new THREE.Vector3()), V = [c.clone()], v = new THREE.Vector3();
+        p.obj.traverse(nd => { const pos = nd.isMesh && nd.geometry && nd.geometry.attributes.position; if (!pos) return; const st = Math.max(1, Math.floor(pos.count / 60)); for (let i = 0; i < pos.count; i += st) { v.fromBufferAttribute(pos, i).applyMatrix4(nd.matrixWorld); V.push(v.clone().lerp(c, 0.06)); } });
+        const rc = new THREE.Raycaster(), objs = BR.items.list.filter(q => q.obj && !q.owner).map(q => q.obj), ok = [];
+        for (const P of V) {
+          const dir = P.clone().sub(cp), L = dir.length(); dir.normalize(); rc.set(cp, dir); rc.far = L + 0.05;
+          const h = rc.intersectObjects(objs, true);
+          if (!h.length || T.itemOf(h[0].object) !== p) continue;
+          ok.push([P.x, P.y, P.z]);
+        }
+        const out = []; if (!ok.length) return out;
+        for (let i = 0; i < k; i++) out.push(ok[Math.min(ok.length - 1, Math.round(i * (ok.length - 1) / Math.max(1, k - 1)))]);
+        return out;
+      };
+      return out;
+    }, { T: TYPES, C: C0 });
+    check('E0 L1 地上摆好 3×3 混装（9 种，间距 9 cm）', ids.every(Boolean), ids);
+    const spots = [[0, 1.05], [1.0, 0.45], [-1.0, 0.45], [0.75, -0.8], [-0.7, -0.75], [0, 1.6]];
+    let tot = 0, none = 0;
+    const bad = [];
+    for (const [sx, sz] of spots) {
+      await ev(page, a => { BR.player.reset({ x: a.x, y: 0, z: a.z, yaw: 0 }, { full: false }); __br.step(0.1); }, { x: C0.x + sx, z: C0.z + sz });
+      for (const id of ids) {
+        const pts = await ev(page, id => { const p = BR.items.find(id); BR.interact.aimAt(p.x, p.y + 0.05, p.z); __br.step(0.001); return __ti.visPts(id, 5); }, id);
+        for (const P of pts) {
+          // 对准以后游戏照常走一整帧（1/30 s，浮着的物资照常上下浮、转圈；返修 r13 验收员 play：以前只走 0.001 s，测不出提示比画面晚一帧），
+          // 再拿这一帧画出来的样子比：提示写的那件 = 从相机中心打的射线先打中的那件
+          const r = await ev(page, P => {
+            BR.interact.aimAt(P[0], P[1], P[2]); __br.step(1 / 30);
+            const c = BR.interact.current;
+            return { ray: __ti.rayFirst(), tg: c ? { key: c.key, kind: c.kind, label: c.label } : null };
+          }, P);
+          if (!r.ray) continue;
+          tot++;
+          if (!r.tg) { none++; bad.push([sx, sz, 'ray', r.ray.id, r.ray.d, 'none']); continue; }
+          if (r.ray.id !== r.tg.key) bad.push([sx, sz, 'ray', r.ray.id, r.ray.d, 'game', r.tg.key, 'next', r.ray.next]);
+        }
+      }
+    }
+    check('E1 挤在一起的混装，6 个站位 ' + tot + ' 个准心点：高亮的 = 准心射线最先打中的那件模型，不一致 ' + bad.length + ' 个（没高亮 ' + none + ' 个）', tot >= 200 && bad.length === 0, bad.slice(0, 20));
+    // 真按空格捡：第一个站位，对准每件看得见的一点
+    await ev(page, a => { BR.player.reset({ x: a.x, y: 0, z: a.z, yaw: 0 }, { full: false }); __br.step(0.1); }, { x: C0.x, z: C0.z + 0.95 });
+    const picks = [];
+    for (const id of ids.slice().reverse()) {
+      const pts = await ev(page, id => { const p = BR.items.find(id); if (!p) return []; BR.interact.aimAt(p.x, p.y + 0.05, p.z); __br.step(0.001); return __ti.visPts(id, 3); }, id);
+      if (!pts.length) continue;
+      // 背包先腾空（5 格，捡满了后面的就进不去了）
+      const r = await ev(page, P => {
+        for (let i = 0; i < BR.player.inventory.length; i++) BR.player.inventory[i] = null;
+        BR.interact.aimAt(P[0], P[1], P[2]); __br.step(1 / 30);
+        const c = BR.interact.current, ray = __ti.rayFirst(), it = ray && BR.items.find(ray.id);
+        return { ray, rayType: it ? it.type : null, tg: c ? c.key : null };
+      }, pts[1 % pts.length]);
+      // 按下、松开都按 1/30 s 一帧走（物资照常浮动）
+      await page.keyboard.down('Space'); await step(page, 1 / 30); await page.keyboard.up('Space'); await step(page, 1 / 30);
+      const after = await ev(page, a => ({ goneRay: a.ray ? !BR.items.find(a.ray) : null, goneTg: a.tg ? !BR.items.find(a.tg) : null, inv: BR.player.inventory.filter(Boolean).map(s => s.type) }), { ray: r.ray && r.ray.id, tg: r.tg });
+      picks.push({ id, ray: r.ray && r.ray.id, rayType: r.rayType, tg: r.tg, goneRay: after.goneRay, goneTg: after.goneTg, inv: after.inv });
+    }
+    const wrong = picks.filter(q => !q.ray || q.ray !== q.tg || !q.goneRay || q.inv.length !== 1 || q.inv[0] !== q.rayType);
+    check('E2 第一个站位对准每件真按空格 ' + picks.length + ' 次：捡起来的就是准心射线先打中、也是高亮的那件（不一致 ' + wrong.length + ' 次）', picks.length >= 6 && wrong.length === 0, picks);
   } finally {
     await ctx.close();
   }
@@ -938,18 +1076,20 @@ const browser = await chromium.launch({
   args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'],
 });
 try {
-  for (const [name, fn] of [['desk', desk], ['touch', touch], ['camp', camp]]) {
+  for (const [name, fn] of [['desk', desk], ['touch', touch], ['camp', camp], ['clutter', clutter]]) {
     if (!want(name)) continue;
     try { await fn(browser); }
     catch (err) { check(name + ' 流程没有中断', false, String(err && err.stack || err).slice(0, 1500)); }
   }
 } finally {
-  await browser.close();
+  // 先打汇总再关浏览器（FE1 返修 r3）：Chrome 退出后遗留的 crashpad 进程会占着管道，browser.close() 有时等好几分钟都不返回，
+  // 以前汇总排在它后面，检查全过了也一直不打印（tests/all.mjs 只能等到超时判失败）。close 最多等 10 s
+  for (const e of errors) console.log('ERR ' + e);
+  console.log('\n===== 汇总 =====');
+  console.log('检查 ' + (pass + fail) + ' 项，失败 ' + fail + ' 项');
+  console.log('页面报错 ' + errors.length + ' 条');
+  if (shots.length) console.log('截图 ' + shots.length + ' 张：' + shots.join('、'));
+  await Promise.race([browser.close().catch(() => {}), sleep(10000)]);
   srv.close();
 }
-for (const e of errors) console.log('ERR ' + e);
-console.log('\n===== 汇总 =====');
-console.log('检查 ' + (pass + fail) + ' 项，失败 ' + fail + ' 项');
-console.log('页面报错 ' + errors.length + ' 条');
-if (shots.length) console.log('截图 ' + shots.length + ' 张：' + shots.join('、'));
 process.exit(fail || errors.length ? 1 : 0);

@@ -12,7 +12,10 @@
      65 横幅（.hud-notices，BR.hud.notice：「想回营地」「正在重连」，暂停、结算、黑幕时也看得见）
      70 皮肤色板（css/home.css）
    触屏避让（input.js 的控件位置）：右上 48px 暂停键 → 顶部状态条左右各留 72px；
-   右下动作按钮最左到 right:174px、最高到 bottom:178px → 背包栏右缘留 190px */
+   右下动作按钮最左到 right:174px、最高到 bottom:178px → 背包栏右缘留 190px；
+   开车（drive 情境）多两个升降键：横屏摞在丢弃键正上方 right:120–174、bottom 168–288（降 168–222、升 234–288），
+   竖屏（≤559px 宽）摞在丢弃键上面那一列 right:37–85、bottom 245–346 —— 都在背包栏右缘 190px 以右，背包不用再让。
+   开车提示行（.hud-drive）不靠固定位置让开它们：hud.js 每次布局变了用 BR.input.touchLayout() 量按钮和待机摇杆，现找空位摆 */
 
 /* ========== 公共 ========== */
 .hud-root,
@@ -613,6 +616,10 @@
   100% { opacity: 0; transform: none; }
 }
 
+/* 进层 5 秒内就上车：开车状态短提示压到大标题时，大标题 0.25 s 淡出（hud.js dodgeTitle 加 .hud-title-cut，0.3 s 后收起）。写在 .hud-title-play 后面才盖得住 */
+.hud-title.hud-title-cut { animation: hud-title-cut 0.25s ease-out forwards; }
+@keyframes hud-title-cut { to { opacity: 0; } }
+
 @media (max-height: 520px) {
   .hud-title { top: 26%; }
   .hud-title-name { font-size: 30px; }
@@ -785,9 +792,112 @@
   }
 }
 
+/* ========== 开车（FE1）：常驻提示行 + 状态短提示 ==========
+   常驻提示行：屏幕下方、准心提示下面、背包栏（连同物品名那一行）上面。没摆过时按这里的默认位置（背包栏上方 104px 居中）；
+   hud.js 量好空位后加 .hud-drive-placed，直接写 left / top / width。每段（「W/S 前进后退 ·」）不在段里折行 */
+.hud-drive {
+  position: absolute;
+  left: 50%;
+  bottom: 104px;
+  bottom: calc(104px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  max-width: calc(100vw - 24px);
+  padding: 3px 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: center;
+  white-space: normal;
+  color: var(--hud-fg);
+  background: var(--hud-panel);
+  border: 1px solid var(--hud-line);
+  border-radius: 3px;
+}
+
+.hud-drive.hud-drive-placed { transform: none; }
+
+.hud-drive-seg {
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.hud-drive-dot { color: var(--hud-dim); }
+
+/* 触屏的「按住「升」「降」动货叉 ·」：两块包在一起整段不折行；hud.js 的最后一档（.hud-drive-split，320 宽竖屏）才放开两块之间 */
+.hud-drive-phrase { white-space: nowrap; }
+.hud-drive.hud-drive-split .hud-drive-phrase { white-space: normal; }
+/* 放不下时 hud.js 依次收字号：t1 12px、t2 11px（360 宽竖屏摇杆和右边那列键之间只有 130 来 px，整段放得下就不在段里折行） */
+.hud-touch .hud-drive.hud-drive-t1,
+.hud-touch .hud-drive.hud-drive-split { padding: 2px 6px; font-size: 12px; line-height: 1.3; }
+.hud-touch .hud-drive.hud-drive-t2 { padding: 2px 5px; font-size: 11px; line-height: 1.3; }
+
+/* 电脑版的键：小键帽，和准心提示的「空格」同一种样子，矮一点 */
+.hud-drive-key {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 4px;
+  font-family: var(--hud-mono);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+  color: var(--hud-accent-hi);
+  text-shadow: none;
+  background: rgba(242, 231, 180, 0.08);
+  border: 1px solid rgba(242, 231, 180, 0.6);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+}
+
+/* 横屏手机准心提示到背包栏之间只有两行高：字收小一号，行距收紧 */
+@media (max-height: 420px) {
+  .hud-touch .hud-drive {
+    padding: 2px 8px;
+    font-size: 12px;
+    line-height: 1.3;
+  }
+}
+
+/* 320 宽的竖屏：摇杆和右边那一列键之间只剩 100px，最长一段「按住「升」「降」」要塞得进去 */
+@media (max-width: 359px) {
+  .hud-touch .hud-drive {
+    padding: 2px 5px;
+    font-size: 12px;
+    line-height: 1.3;
+  }
+}
+
+/* 状态短提示（BR.hud.driveNote）：准心正上方一行，新的一句直接替换。和 toast 一个样式（左边一道黄边），字大一点 */
+.hud-drive-note {
+  position: absolute;
+  left: 50%;
+  bottom: 50%;
+  margin-bottom: 30px;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 32px);
+  padding: 4px 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--hud-accent-hi);
+  background: rgba(16, 13, 5, 0.8);
+  border: 1px solid var(--hud-line);
+  border-left: 3px solid var(--hud-accent);
+  border-radius: 2px;
+}
+
+.hud-drive-note.hud-drive-note-bump { animation: hud-drive-note-bump 0.3s ease-out; }
+
+@keyframes hud-drive-note-bump {
+  0% { background-color: rgba(84, 66, 14, 0.92); border-color: #f3d266; }
+}
+
 /* 死亡时 HUD 还在结算层下面：准星和提示收掉，背包压暗且不可点 */
 .hud-dead .hud-cross,
 .hud-dead .hud-prompt,
+.hud-dead .hud-drive,
+.hud-dead .hud-drive-note,
 .hud-dead .hud-inv-name {
   display: none;
 }
@@ -825,6 +935,9 @@
   border-radius: 2px;
   animation: hud-toast-in 0.18s ease-out;
 }
+
+/* 「…」里的按钮名不断行（hud.js toastNode） */
+.hud-toast .hud-nobr { white-space: nowrap; }
 
 .hud-toast.hud-toast-bump { animation: hud-toast-bump 0.3s ease-out; }
 /* 时长与 hud.js 的 TOAST_OUT_MS（280ms）一致；写在 bump 后面，同优先级时后者生效 */
@@ -877,6 +990,24 @@
     max-width: calc(100vw - 432px);
     max-width: min(42vw, calc(100vw - 432px - env(safe-area-inset-left, 0px)));
   }
+}
+
+/* 开车时「往上长」（hud.js avoidDrive）：准心提示和开车提示行之间连一条都放不下，或者矮横屏（右上那一列正好压着「升」「降」键），
+   toast 改成居中、底边贴着准心上方状态短提示那一格（--hud-toast-up = 离屏幕底多少 px），新的一条在最下面、离准心最近；
+   列宽（--hud-toast-w）收窄到两边的信息块、触屏键以内，往上放不下的由 hud.js 提前收掉。写在上面几条后面：同样的优先级，这一条生效 */
+.hud-toasts.hud-toasts-up {
+  top: auto;
+  bottom: 60%;
+  bottom: var(--hud-toast-up, 60%);
+  margin-top: 0;
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  width: 520px;
+  width: var(--hud-toast-w, 520px);
+  max-width: calc(100vw - 32px);
+  align-items: center;
+  transition: none;
 }
 
 /* ========== 暂停菜单 ========== */
@@ -1808,6 +1939,7 @@
   .hud-toast,
   .hud-toast.hud-toast-bump,
   .hud-toast.hud-toast-out,
+  .hud-drive-note.hud-drive-note-bump,
   .hud-stat.hud-hit,
   .hud-stat.hud-blink .hud-stat-label,
   .hud-stat.hud-blink .hud-stat-val,

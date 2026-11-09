@@ -10,6 +10,8 @@
 //     parentKeys：调用方已知的父链（准心遮挡用），和按 owner 现查的父链合并
 //   记录多了 r（包围球半径）、hh（半高）、still、rotY、owner、held
 //   move(id, x, y, z)、hold(id, bool)：拖动用。被抓住时停掉浮动和旋转，松手时把新位置写进 BR.levelState
+//   floorLift(id)（FE1 返修 r14）：放在地上时原点比地面高多少 —— 静静躺着的 = −rest(type).bot（放得稳的样子最低顶点贴地），浮着的 = 0；
+//     move 不给 y 时按它落地，interact 拖地上的物资按它跟着地面走（以前直接放到地面高度，火盐陷进地里 18.5 mm）
 //   BR.interact.addSource('items')：准心候选，球心在模型包围盒中心（底面 + 半高）
 //   地上的物资被拿走写进 BR.levelState 的 taken：换层回来不复活，回主页重开才复活。clear() 不再清这份记录
 //   玩家丢下的东西（dropped）记进 BR.levelState 的 drops：换层回来照原样摆回去（'level:enter'），捡走就删（2026-10-02 返修）
@@ -36,7 +38,7 @@ const byId = new Map();
 const picked = new Set();
 const dropped = [];          // 丢弃物 id，先进先出
 const templates = new Map(); // type → 模板；实例 clone 共享几何和材质，手机上省显存
-const infos = new Map();     // type → { hh, r, cy, hitR, vol }：按模板包围盒算一次
+const infos = new Map();     // type → { hh, r, cy, hitR, vol, bot }：按模板包围盒算一次
 const scratchKeys = [];
 let group = null;
 let time = 0;
@@ -81,13 +83,14 @@ function template(type) {
   return tpl;
 }
 
-// 按模板的包围盒算一次：半高 hh、包围球半径 r、包围盒中心离原点的高度 cy、准心命中半径 hitR、体积 vol。
+// 按模板的包围盒算一次：半高 hh、包围球半径 r、包围盒中心离原点的高度 cy、准心命中半径 hitR、体积 vol、
+// 包围盒底面离原点的高度 bot（FE1 返修 r8：PTG-B 针筒的原点在底面上方 1.7 cm，bot = −0.017；叉车货叉上摆放、甩出去落地时按它让底面贴住）。
 // 在模板自己的坐标系里算（位置和朝向清零，只保留缩放）：实例 clone 后位置和朝向都由 place 重写
 function infoOf(type) {
   let inf = infos.get(type);
   if (inf) return inf;
   const tpl = template(type);
-  inf = { hh: 0.08, r: 0.12, cy: 0.08, hitR: 0.12, vol: 0.004 };
+  inf = { hh: 0.08, r: 0.12, cy: 0.08, hitR: 0.12, vol: 0.004, bot: 0 };
   try {
     const px = tpl.position.x, py = tpl.position.y, pz = tpl.position.z;
     const rx = tpl.rotation.x, ry = tpl.rotation.y, rz = tpl.rotation.z;
@@ -103,6 +106,7 @@ function infoOf(type) {
       const ox = (box.max.x + box.min.x) / 2, oz = (box.max.z + box.min.z) / 2;
       inf.hh = sy / 2;
       inf.cy = (box.max.y + box.min.y) / 2;
+      inf.bot = box.min.y;
       inf.r = Math.sqrt(sx * sx + sy * sy + sz * sz) / 2;
       // 球心取在原点正上方（模型会绕原点转），包围盒中心偏出原点的那一截加进半径
       inf.hitR = Math.max(HIT_R_MIN, inf.r + Math.hypot(ox, oz));
@@ -115,12 +119,166 @@ function infoOf(type) {
   return inf;
 }
 
+// ---------- 放得稳的静止姿态（FE1 返修 r12，主会话裁定 B）----------
+// 静止摆放（地上、货叉上、柱础 / 矮东西顶上、甩出去落地、车推开、手放下；不在容器里）时按这个姿态摆：重心（模型三角面按面积加权的质心）的竖直投影
+// 落在「离支撑面 ≤2 mm 的那些顶点」围成的凸包里，往里至少 3 mm。大多数物资直立就站得稳（姿态 = 不歪）；站不稳的（PTG-B 针筒只靠指托下沿立着、
+// 针管悬空，重心在支点前 7 cm；火盐、闪电瓶的底是尖的；蛾子果冻罐底往外鼓 3 mm）按真实刚体倒下去的样子算：绕「离重心最近的那条支撑边」往重心那边转，
+// 转到下一个顶点碰到支撑面为止，重复到重心落进支撑范围里（PTG-B 往针头那边歪约 7°，指托下沿和针帽一起着地 —— 真针筒放在桌上就是这样斜躺着）。
+// 姿态只含前后、左右的歪（rx 绕模型 x、rz 绕模型 z，Euler 顺序 'YXZ'：先歪、再绕竖直轴转 rotY），绕竖直轴的朝向照旧自由。
+// 按模板量一次（模型自己的坐标、带模板的缩放）：{ rx, rz, bot（这个姿态下最低点离原点多高）, com（质心，同一坐标）, hull（支撑凸包 [[x, z]…]）, inset（重心离凸包边最近多远，米） }
+const REST_TOL = 0.002, REST_IN = 0.003;
+const rests = new Map();
+function rotAxis(ax, ay, az, a) {
+  const c = Math.cos(a), s = Math.sin(a), t = 1 - c;
+  return [t * ax * ax + c, t * ax * ay - s * az, t * ax * az + s * ay, t * ax * ay + s * az, t * ay * ay + c, t * ay * az - s * ax, t * ax * az - s * ay, t * ay * az + s * ax, t * az * az + c];
+}
+function mul3(A, B) {
+  const o = new Array(9);
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) o[3 * r + c] = A[3 * r] * B[c] + A[3 * r + 1] * B[3 + c] + A[3 * r + 2] * B[6 + c];
+  return o;
+}
+function app3(R, x, y, z) { return [R[0] * x + R[1] * y + R[2] * z, R[3] * x + R[4] * y + R[5] * z, R[6] * x + R[7] * y + R[8] * z]; }
+// 平面点集 [[x, z]…] 的凸包（逆时针，共线的点去掉）
+function hullXZ(pts) {
+  const P = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (P.length < 3) return P;
+  const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo = [], up = [];
+  for (const q of P) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], q) <= 1e-12) lo.pop(); lo.push(q); }
+  for (let i = P.length - 1; i >= 0; i--) { const q = P[i]; while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], q) <= 1e-12) up.pop(); up.push(q); }
+  lo.pop(); up.pop();
+  return lo.concat(up);
+}
+// 点 (x, z) 离凸包 h 的边最近多远：在里面为正、外面为负；凸包退化（少于 3 点）按 −（到它的距离）算
+function insetXZ(h, x, z) {
+  if (h.length >= 3) {
+    let m = Infinity;
+    for (let i = 0; i < h.length; i++) {
+      const a = h[i], b = h[(i + 1) % h.length], L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+      m = Math.min(m, ((b[0] - a[0]) * (z - a[1]) - (b[1] - a[1]) * (x - a[0])) / L);
+    }
+    return m;
+  }
+  if (!h.length) return -Infinity;
+  if (h.length === 1) return -Math.hypot(x - h[0][0], z - h[0][1]);
+  const a = h[0], b = h[1], dx = b[0] - a[0], dz = b[1] - a[1], L2 = dx * dx + dz * dz || 1, u = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / L2));
+  return -Math.hypot(x - a[0] - u * dx, z - a[1] - u * dz);
+}
+// 凸包上离 (x, z) 最近的点
+function nearestOnHull(h, x, z) {
+  if (h.length === 1) return h[0].slice();
+  let best = null, bd = Infinity;
+  const n = h.length;
+  for (let i = 0; i < (n === 2 ? 1 : n); i++) {
+    const a = h[i], b = h[(i + 1) % n], dx = b[0] - a[0], dz = b[1] - a[1], L2 = dx * dx + dz * dz || 1, u = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / L2));
+    const qx = a[0] + u * dx, qz = a[1] + u * dz, d = Math.hypot(x - qx, z - qz);
+    if (d < bd) { bd = d; best = [qx, qz]; }
+  }
+  return best;
+}
+// 模型（模板坐标，带缩放）的顶点、三角形 → 质心
+function meshOf(tpl) {
+  const V = [], T = [];
+  tpl.updateMatrixWorld(true);
+  const v = new THREE.Vector3();
+  tpl.traverse(n => {
+    const g = n && n.isMesh && n.geometry, pos = g && g.attributes && g.attributes.position;
+    if (!pos || typeof pos.getX !== 'function') return;
+    const i0 = V.length / 3;
+    for (let i = 0; i < pos.count; i++) { v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(n.matrixWorld); V.push(v.x, v.y, v.z); }
+    const idx = g.index, nt = Math.floor((idx ? idx.count : pos.count) / 3);
+    for (let t = 0; t < nt; t++) T.push(i0 + (idx ? idx.getX(3 * t) : 3 * t), i0 + (idx ? idx.getX(3 * t + 1) : 3 * t + 1), i0 + (idx ? idx.getX(3 * t + 2) : 3 * t + 2));
+  });
+  let A = 0, cx = 0, cy = 0, cz = 0;
+  for (let t = 0; t < T.length; t += 3) {
+    const a = 3 * T[t], b = 3 * T[t + 1], c = 3 * T[t + 2];
+    const ux = V[b] - V[a], uy = V[b + 1] - V[a + 1], uz = V[b + 2] - V[a + 2], wx = V[c] - V[a], wy = V[c + 1] - V[a + 1], wz = V[c + 2] - V[a + 2];
+    const ar = Math.hypot(uy * wz - uz * wy, uz * wx - ux * wz, ux * wy - uy * wx) / 2;
+    A += ar; cx += ar * (V[a] + V[b] + V[c]); cy += ar * (V[a + 1] + V[b + 1] + V[c + 1]); cz += ar * (V[a + 2] + V[b + 2] + V[c + 2]);
+  }
+  if (!(A > 0)) { const n = V.length / 3 || 1; cx = cy = cz = 0; for (let i = 0; i < V.length; i += 3) { cx += V[i]; cy += V[i + 1]; cz += V[i + 2]; } return { V, com: [cx / n, cy / n, cz / n] }; }
+  return { V, com: [cx / (3 * A), cy / (3 * A), cz / (3 * A)] };
+}
+// 在姿态 R（3×3，行优先）下：最低点、离它 ≤tol 的顶点的水平凸包、重心离凸包边多远
+function supportOf(V, com, R, tol) {
+  let y0 = Infinity;
+  const W = new Array(V.length);
+  for (let i = 0; i < V.length; i += 3) { const w = app3(R, V[i], V[i + 1], V[i + 2]); W[i] = w[0]; W[i + 1] = w[1]; W[i + 2] = w[2]; if (w[1] < y0) y0 = w[1]; }
+  const pts = [];
+  for (let i = 0; i < W.length; i += 3) if (W[i + 1] <= y0 + tol) pts.push([W[i], W[i + 2]]);
+  const h = hullXZ(pts), G = app3(R, com[0], com[1], com[2]);
+  return { W, y0, h, G, inset: insetXZ(h, G[0], G[2]) };
+}
+function computeRest(type) {
+  const r = { rx: 0, rz: 0, bot: 0, com: [0, 0, 0], hull: [], inset: 0 };
+  const tpl = template(type);
+  const px = tpl.position.x, py = tpl.position.y, pz = tpl.position.z, ox = tpl.rotation.x, oy = tpl.rotation.y, oz = tpl.rotation.z;
+  tpl.position.set(0, 0, 0); tpl.rotation.set(0, 0, 0);
+  let M;
+  try { M = meshOf(tpl); } finally { tpl.position.set(px, py, pz); tpl.rotation.set(ox, oy, oz); tpl.updateMatrixWorld(true); }
+  const V = M.V, com = M.com;
+  if (V.length < 9) return r;
+  let R = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  for (let it = 0; it < 16; it++) {
+    const s = supportOf(V, com, R, REST_TOL);
+    if (s.inset >= REST_IN + 0.0005) break;
+    // 真正碰着的（0.1 mm 以内）：离重心投影最近的那条支撑边（或那一点）就是倒下去时绕着转的棱
+    const c = supportOf(V, com, R, 1e-4), q = nearestOnHull(c.h, c.G[0], c.G[2]);
+    let dx = c.G[0] - q[0], dz = c.G[2] - q[1], L = Math.hypot(dx, dz);
+    const cands = [];
+    if (L > 1e-6) cands.push([dx / L, dz / L]);
+    else for (let k = 0; k < 16; k++) cands.push([Math.cos(k * Math.PI / 8), Math.sin(k * Math.PI / 8)]);   // 重心正好在棱上：哪边转得最少往哪边倒
+    let best = null;
+    for (const d of cands) {
+      let phi = Infinity;
+      for (let i = 0; i < c.W.length; i += 3) {
+        const rd = (c.W[i] - q[0]) * d[0] + (c.W[i + 2] - q[1]) * d[1], ry = c.W[i + 1] - c.y0;
+        if (rd > 1e-6 && ry > 1e-7) phi = Math.min(phi, Math.atan2(ry, rd));
+      }
+      if (phi < Infinity && (!best || phi < best[0])) best = [phi, d];
+    }
+    if (!best) break;
+    // 绕水平轴 (dz, 0, −dx) 转 φ：d 那一边往下
+    R = mul3(rotAxis(best[1][1], 0, -best[1][0], best[0]), R);
+  }
+  // 只留前后、左右的歪（'YXZ' 顺序的 x、z），绕竖直轴的那部分丢掉（朝向由 rotY 定）
+  const m4 = new THREE.Matrix4().set(R[0], R[1], R[2], 0, R[3], R[4], R[5], 0, R[6], R[7], R[8], 0, 0, 0, 0, 1);
+  const e = new THREE.Euler().setFromRotationMatrix(m4, 'YXZ');
+  r.rx = Math.abs(e.x) < 1e-6 ? 0 : e.x; r.rz = Math.abs(e.z) < 1e-6 ? 0 : e.z;
+  const Rr = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(r.rx, 0, r.rz, 'YXZ')).elements;
+  const R3 = [Rr[0], Rr[4], Rr[8], Rr[1], Rr[5], Rr[9], Rr[2], Rr[6], Rr[10]];
+  const s = supportOf(V, com, R3, REST_TOL);
+  r.bot = s.y0; r.com = s.G; r.hull = s.h; r.inset = s.inset;
+  // 歪着摆的模型绕原点转过，准心命中球（球心在原点正上方 cy）要多包一点：|cy|·2 sin(φ/2)（φ = 歪了多少）
+  const tr = Math.max(-1, Math.min(1, (R3[0] + R3[4] + R3[8] - 1) / 2));
+  r.hitAdd = 2 * Math.abs(infoOf(type).cy) * Math.sin(Math.acos(tr) / 2);
+  return r;
+}
+function restOf(type) {
+  let r = rests.get(type);
+  if (r) return r;
+  try { r = computeRest(type); } catch (err) { console.warn('[items] 静止姿态计算失败，按直立摆', type, err); r = { rx: 0, rz: 0, bot: infoOf(type).bot, com: [0, infoOf(type).cy, 0], hull: [], inset: 0, hitAdd: 0 }; }
+  rests.set(type, r);
+  return r;
+}
+// 这件按「放得稳的静止姿态」摆吗：静止、不在容器里（容器、取货口里的照原样）
+function rests_(p) { return !!p.still && !p.owner; }
+// 放在地上时原点比地面高多少（FE1 返修 r14，验收员 play：长按拖动甩出去落地的火盐，原点被直接放到地面高度，晶体尖陷进地里 18.5 mm）：
+// 静静躺着的按放得稳的静止姿态最低顶点贴地（−rest(type).bot：火盐 18.5 mm、PTG-B 5.1 mm）；浮着转圈的原点就在地面上（浮起来的高度 place 里加）
+function floorLift(p) { return rests_(p) ? Math.max(0, -num(restOf(p.type).bot, 0)) : 0; }
+
 function place(p) {
   if (p.still) {
     p.obj.position.set(p.x, p.y, p.z);
+    if (rests_(p)) {
+      const r = restOf(p.type);
+      if (r.rx || r.rz) { p.obj.rotation.set(r.rx, p.rotY, r.rz, 'YXZ'); p.restOn = true; return; }
+    }
+    if (p.restOn) { p.obj.rotation.set(0, p.rotY, 0, 'XYZ'); p.restOn = false; return; }
     p.obj.rotation.y = p.rotY;
     return;
   }
+  if (p.restOn) { p.obj.rotation.set(0, p.obj.rotation.y, 0, 'XYZ'); p.restOn = false; }
   // 浮动物品被抓住时停在抓住那一刻的姿态；松手后从同一姿态接着转，不跳
   const t = (p.held ? p.heldAt : time) - p.tOff;
   p.obj.position.set(p.x, p.y + FLOAT_BASE + Math.sin(t * FLOAT_SPEED + p.phase) * FLOAT_AMP, p.z);
@@ -223,11 +381,20 @@ function lsSetItem(id, v) {
 }
 
 // 丢弃物（玩家按 Q 丢的）记在 levelState 的 drops 表：[x, y, z, type, count]。换层回来由 restoreDrops 照原样摆回去，
-// 被捡走、或丢的太多被挤掉时删掉。联机时不能丢弃（player.js），客机不写
+// 被捡走、或丢的太多被挤掉时删掉。联机时不能丢弃（player.js），客机不写。
+// 静静躺着的（still、不在容器里：货叉上的、甩出去落地的、车推开的、手放下的）多记一项朝向 rotY（弧度，4 位小数；FE1 返修 r12 裁定 D）：
+// [x, y, z, type, count, rotY]，换层回来、联机另一边按记的朝向静静摆回去；浮着转圈的照旧 5 项（朝向按 id 定）
+function r4(v) { return Math.round(v * 1e4) / 1e4; }
+// 静静躺着的 y 记到 0.1 mm（返修 r14：按 1 mm 取整，换层回来最低顶点会离地 ±0.5 mm —— 火盐陷进地里 0.5 mm）
+function dropRec(p) {
+  const v = [r3(p.x), p.still && !p.owner ? r4(p.y) : r3(p.y), r3(p.z), p.type, p.count];
+  if (p.still && !p.owner && isNum(p.rotY)) v.push(r4(Math.atan2(Math.sin(p.rotY), Math.cos(p.rotY))));
+  return v;
+}
 function lsDropSet(p) {
   const L = LS();
   if (!L || !has(L, 'set') || coopGuest()) return false;
-  try { return L.set(lvKey(), 'drop', p.id, [r3(p.x), r3(p.y), r3(p.z), p.type, p.count]) !== false; }
+  try { return L.set(lvKey(), 'drop', p.id, dropRec(p)) !== false; }
   catch (err) { console.error('[items] levelState 记丢弃物失败', p.id, err); return false; }
 }
 function lsDropDel(id) {
@@ -248,7 +415,10 @@ function restoreDrops(e) {
   if (!ds || !ds.size) return;
   Array.from(ds.entries()).forEach(([id, v]) => {
     if (byId.has(id) || !Array.isArray(v) || !BR.itemTypes.has(v[3])) return;
-    BR.items.spawn(v[3], v[0], v[1], v[2], { id, dropped: true, count: v[4], restore: true });
+    // 第 6 项是朝向（返修 r12）：静静躺着、按记的朝向摆；旧格式 5 项照旧（浮着转圈，朝向按 id 定）
+    const o = { id, dropped: true, count: v[4], restore: true };
+    if (v.length >= 6 && isNum(+v[5]) && v[5] !== null) { o.rotY = +v[5]; o.still = true; }
+    BR.items.spawn(v[3], v[0], v[1], v[2], o);
   });
 }
 
@@ -439,7 +609,7 @@ function itemSource(ray, reach, out) {
     const o = p.obj;
     if (!o || o.visible === false || !o.parent) continue;
     const inf = infoOf(p.type);
-    const r = inf.hitR;
+    const r = inf.hitR + (p.restOn ? restOf(p.type).hitAdd || 0 : 0);
     const lx = o.position.x - ox, ly = o.position.y + inf.cy - oy, lz = o.position.z - oz;
     const l2 = lx * lx + ly * ly + lz * lz;
     const tca = lx * dx + ly * dy + lz * dz;
@@ -587,7 +757,8 @@ BR.items = {
     return true;
   },
 
-  // 拖动中每帧调用（interact），或联机回放房主核对过的位置。y 不传就落到地面。
+  // 拖动中每帧调用（interact），或联机回放房主核对过的位置。y 不传就落到地面：静静躺着的按放得稳的样子最低顶点贴地（原点在地面上方 floorLift，
+  // 返修 r14：道具推开地上物资、world 把物资挪出道具占地都不传 y，以前静止的火盐、PTG-B 会陷进地里），浮着的原点在地面上。
   // 不在拖动中的一次性挪动直接写 levelState；拖动中的等 hold(id, false) 松手时一次写
   move(id, x, y, z) {
     const p = byId.get(String(id));
@@ -595,7 +766,7 @@ BR.items = {
     x = +x; z = +z;
     if (!isNum(x) || !isNum(z)) return false;
     p.x = x; p.z = z;
-    p.y = isNum(y) ? y : groundAt(x, z, p.y);
+    p.y = isNum(y) ? y : groundAt(x, z, p.y - floorLift(p)) + floorLift(p);
     place(p);
     if (!p.held) commit(p);
     return true;
@@ -631,6 +802,18 @@ BR.items = {
   },
   // 按类型的尺寸：{ hh 半高, r 包围球半径, cy 包围盒中心高度, hitR 准心命中半径, vol 体积 m³ }
   info(type) { return BR.itemTypes.has(type) ? Object.assign({}, infoOf(type)) : null; },
+  // 放得稳的静止姿态（返修 r12）：{ rx, rz（'YXZ' 顺序：先歪再绕竖直轴转 rotY）, bot（这个姿态下最低点离原点多高，≤0 时原点在最低点上方）,
+  //   com（模型质心）, hull（离支撑面 ≤2 mm 的顶点的水平凸包 [[x, z]…]）, inset（质心离凸包边最近多远，米，≥0.003） }，坐标都是「歪过、还没绕竖直轴转」的模型坐标
+  rest(type) {
+    if (!BR.itemTypes.has(type)) return null;
+    const r = restOf(type);
+    return { rx: r.rx, rz: r.rz, bot: r.bot, com: r.com.slice(), hull: r.hull.map(q => q.slice()), inset: r.inset };
+  },
+  // 这件放在地上时原点比地面高多少（返修 r14）：静静躺着的 = −rest(type).bot（按放得稳的样子最低顶点贴地），浮着的 = 0。interact 拖地上的物资按它跟着地面走
+  floorLift(id) {
+    const p = byId.get(String(id));
+    return p ? floorLift(p) : 0;
+  },
   // 本局本机记过拿走没有（测试用；权威记录在 levelState.taken）
   wasTaken(id) { return picked.has(String(id)); },
 

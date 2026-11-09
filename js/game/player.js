@@ -41,6 +41,11 @@ const SAN_FX_LAMBDA = 2.5;             // 被一口咬掉 15 点 san 时画面�
 const DROP_DIST = 0.8;
 const FLASH_HURT = '#b00000';
 const FLASH_SANITY = '#3a0018';
+// 上下车（FE1 叉车，D2 player.setPose 的最小子集）：眼点按 handle.path(dir) 的三个点走折线
+const MOUNT_SEC = 0.5;                 // 上车、下车的眼点插值时长
+const SHAKE_MAX = 0.04;                // 镜头抖动的位移上限（米）：撞上东西「轻轻一抖」
+// unmount 的这些原因不播 0.5 s 下车插值，直接落到落点（死亡、换层、回主页、复活……）；别的原因（含不传）都播插值
+const UNMOUNT_INSTANT = { death: 1, dead: 1, reset: 1, respawn: 1, home: 1, start: 1, level: 1, leave: 1, force: 1, forced: 1, teleport: 1 };
 
 // 非实体伤害来源 → 结算界面文案
 const CAUSE_TEXT = {
@@ -61,6 +66,15 @@ let lastCause = null, lastCauseKey = null, lastSource = null;
 // 否则走个楼梯背包就没了
 let fullResetPending = true;
 let interactErr = false;               // interact.update 出错只报一次，别每帧刷屏
+// 载具（FE1）：handle 由 BR.vehicles 给，见 mount()。phase：'in' 上车插值、'seat' 坐着、'out' 下车插值（这时 handle 已经交还）、null
+const M = {
+  handle: null, phase: null, t: 0, path: null, len: 0,
+  yaw0: 0, yaw1: null, pitch0: 0,
+  forcing: false,                      // 正在调 handle.forceExit：期间 handle 回调 unmount 一律直接落地
+  err: false,
+};
+let shX = 0, shY = 0, shZ = 0, shT = 0;  // 镜头抖动偏移（坐车撞上东西）
+let reduceMQ;                          // prefers-reduced-motion 的 MediaQueryList（第一次用时取）
 
 const player = BR.player = {
   x: 0, y: PC.eyeHeight, z: 0, yaw: 0, pitch: 0, vx: 0, vz: 0, onGround: true,
@@ -70,15 +84,20 @@ const player = BR.player = {
   selected: 0,
   sprinting: false, noise: 0,
   dead: false,
-  // 姿势：'stand'（默认）。坐 / 躺 / 开车由 D2、F1 的模块改写；镜头被 BR.view 接管时 applyCamera 不写相机
+  // 姿势：'stand'（默认）| 'drive'（坐在载具上，含上下车那 0.5 s）。坐 / 躺由 D2 的模块改写；镜头被 BR.view 接管时 applyCamera 不写相机
   pose: 'stand',
-  // update 内部处理 use / drop / slot1-5，并驱动 BR.interact（空格 / E）；集成层若要自己接管这些按键就置 false，避免一次按键用掉两个
+  // update 内部处理 use / drop / slot1-5，并驱动 BR.interact（空格短按 / 长按）；集成层若要自己接管这些按键就置 false，避免一次按键用掉两个
   handleActions: true,
   slots: SLOTS,
   get feetY() { return feetY; },
+  // 坐着的载具 handle（含上车插值那 0.5 s）；没坐车、或已经开始下车插值时为 null
+  get mounted() { return M.handle; },
+  // 调试 / 测试：{ phase: 'in'|'seat'|'out'|null, t（插值进度 0..1）, key }
+  get mountState() { return { phase: M.phase, t: M.phase === 'in' || M.phase === 'out' ? Math.min(1, M.t / MOUNT_SEC) : M.phase ? 1 : 0, key: M.handle ? M.handle.key : null }; },
   speed, damage, useSelected, respawnInPlace, reset, update,
   interactTarget, interact, select, dropSelected,
   addItem, canAdd, countOf, removeItem,
+  mount, unmount,
 };
 
 // ---------- 小工具 ----------
@@ -91,7 +110,7 @@ function wrapAngle(a) {
 }
 // pos 必须传 undefined 而不是 null：audio 可能用 pos !== undefined 判断是否 3D 声源
 function sound(name, opts) { if (has(BR.audio, 'play')) BR.audio.play(name, undefined, opts); }
-function toast(text) { if (has(BR.hud, 'toast')) BR.hud.toast(text, 1500); }
+function toast(text, ms) { if (has(BR.hud, 'toast')) BR.hud.toast(text, ms || 1500); }
 
 function groundAt(x, z, fallback) {
   if (has(BR.phys, 'groundY')) {
@@ -279,12 +298,18 @@ function useSelected() {
 
 function dropSelected() {
   if (player.dead) return false;
+  if (M.handle || M.phase) return false;   // 坐在车上丢不了东西（drive 情境本来就关掉了丢弃键，脚本直接调也一样）
   const slot = player.inventory[player.selected];
   if (!slot || !has(BR.items, 'spawn')) return false;
   // 第 9 节只约定了拾取同步，丢弃物在对方那边不存在，捡的时候房主也不认这个 id
   if (coop()) { toast('联机时不能丢弃物品'); return false; }
   let px = player.x - Math.sin(player.yaw) * DROP_DIST;
   let pz = player.z - Math.cos(player.yaw) * DROP_DIST;
+  // 叉车货叉（FE1）：落点离某根货叉够近、叉面够得着（BR.vehicles.dropSurface 判断）就稳稳放在叉面上，跟着货叉升降、跟着车走。
+  // 先问货叉再做「面前是墙」的视线检查：举起来的货叉本身会挡住看向地面那条线，不能因此丢到脚下
+  const onFork = forkDrop(slot.type, px, pz);
+  if (onFork === FORK_FULL) { toast(forkFullMsg, forkMsgMs(forkFullMsg)); return false; }   // 瞄准点附近放不下、货叉旁边也没有空地：东西留在手里
+  if (onFork) { removeFromSlot(player.selected, 1); return true; }
   if (has(BR.phys, 'los') && !BR.phys.los(player.x, player.y, player.z, px, feetY + 0.2, pz)) {
     px = player.x;   // 面前是墙就丢在脚下，别丢进墙里
     pz = player.z;
@@ -293,6 +318,52 @@ function dropSelected() {
   if (!p) return false;
   removeFromSlot(player.selected, 1);
   return true;
+}
+
+// 丢在货叉叉面上：dropSurface(x, z, r, type) → { y, veh, tine, x?, z? } | { full, gx?, gy?, gz? } | null（给了 x / z 就按它摆：那根货叉的中线上、
+// 不和这根货叉上已经有的东西叠在一起，离瞄准点最多挪 15 cm）。叉面和人眼之间被墙挡住就不算（隔着墙丢不上去），退回地面的老规则；
+// 瞄准点附近 15 cm 内放不下（返修 r5 裁定 ③）：东西落到这根货叉旁边的那块空地（gx, gy, gz）上，不挪到远处的叉根；
+// 旁边也没有空地（或者看不见）返回 FORK_FULL（不丢，东西留在手里）。
+// 提示（返修 r6 裁定 ⑤：只在真的放不下时才说放不下；说清楚发生了什么、不歧义 —— 不说「往里 / 往外」这种看人站在哪边的话）：
+//   东西放到了货叉旁边的地上：这根货叉别处还空着（s.room）「这一段叉面满了，东西放到旁边地上了，叉尖那头还空着」/「…，靠车那头还空着」，
+//                             整根货叉都摆满了「这根货叉摆满了，东西放到旁边地上了」；
+//   旁边地上也没空地（东西留在手里）：「这一段叉面满了，旁边地上也没地方，叉尖那头还空着」/「…，靠车那头还空着」，整根都满了「这根货叉摆满了，旁边地上也放不下」。
+// 显示时长按每秒 6 个字算、不少于 3 秒（和 L1 断电提示同一个算法；别的短提示还是 1.5 s）
+const FORK_FULL = 'full';
+const FORK_ROOM = { tip: '叉尖那头还空着', heel: '靠车那头还空着' };
+function forkFullText(room, beside) {
+  const where = FORK_ROOM[room];
+  if (beside) return where ? '这一段叉面满了，东西放到旁边地上了，' + where : '这根货叉摆满了，东西放到旁边地上了';
+  return where ? '这一段叉面满了，旁边地上也没地方，' + where : '这根货叉摆满了，旁边地上也放不下';
+}
+function forkMsgMs(t) { return Math.max(3000, Math.ceil(Array.from(String(t)).length * 1000 / 6)); }
+let forkFullMsg = forkFullText(null, false);
+function forkDrop(type, px, pz) {
+  const V = BR.vehicles;
+  if (!has(V, 'dropSurface') || !has(V, 'attachItem')) return null;
+  const inf = has(BR.items, 'info') ? BR.items.info(type) : null;
+  const r = inf ? Math.max(0.03, num(inf.r, 0.1)) : 0.1;
+  let s = null;
+  try { s = V.dropSurface(px, pz, r, type); } catch (err) { console.error('[player] vehicles.dropSurface 出错', err); return null; }
+  if (!s || s.veh == null || !(num(s.y, NaN) === s.y)) return null;
+  if (s.full) {
+    // 隔着墙看不见那根货叉的话照老规则丢地上（和放得下时一样先查视线）
+    if (has(BR.phys, 'los') && !BR.phys.los(player.x, player.y, player.z, px, s.y + 0.05, pz)) return null;
+    const gx = num(s.gx, NaN), gy = num(s.gy, NaN), gz = num(s.gz, NaN);
+    if (gx === gx && gy === gy && gz === gz && (!has(BR.phys, 'los') || BR.phys.los(player.x, player.y, player.z, gx, gy + 0.05, gz))) {
+      const p = BR.items.spawn(type, gx, gy, gz, { id: U.uid('drop'), dropped: true });
+      if (p) { const t = forkFullText(s.room, true); toast(t, forkMsgMs(t)); return p; }
+    }
+    forkFullMsg = forkFullText(s.room, false);
+    return FORK_FULL;
+  }
+  const sx = num(s.x, px), sz = num(s.z, pz);
+  const hh = inf ? num(inf.hh, 0.05) : 0.05;
+  if (has(BR.phys, 'los') && !BR.phys.los(player.x, player.y, player.z, sx, s.y + Math.max(0.03, hh), sz)) return null;
+  const p = BR.items.spawn(type, sx, s.y, sz, { id: U.uid('drop'), dropped: true, still: true });
+  if (!p) return null;
+  try { V.attachItem(p.id, s.veh); } catch (err) { console.error('[player] vehicles.attachItem 出错', err); }
+  return p;
 }
 
 // ---------- 互动 ----------
@@ -361,6 +432,7 @@ function itemFromTarget(target) {
 
 function interact(target) {
   if (player.dead) return false;
+  if (M.handle || M.phase) return false;   // 坐在车上捡不了东西
   const t = itemFromTarget(target);
   if (!t) return false;
   const c = coop();
@@ -398,6 +470,9 @@ function damage(opts) {
 
 function checkDeath() {
   if (player.dead || player.hp > 0) return;
+  // 死在车上：先强制下车（人落在车旁的落点上、车熄火停住），再结算；下车插值没走完的直接落地
+  if (M.handle) forceOut('death');
+  else if (M.phase === 'out') finishOut();
   player.hp = 0;
   player.dead = true;   // 只发一次；之后 update 直接返回，直到 respawnInPlace / reset
   player.vx = 0;
@@ -413,6 +488,8 @@ function checkDeath() {
 }
 
 function respawnInPlace() {
+  if (M.handle) forceOut('respawn');
+  else if (M.phase === 'out') finishOut();
   player.hp = PC.maxHp;
   player.hunger = Math.max(player.hunger, RESPAWN_MIN_STAT);
   player.sanity = Math.max(player.sanity, RESPAWN_MIN_STAT);
@@ -435,6 +512,9 @@ function reset(spawn, opts) {
   const o = opts || {};
   const full = o.full === true || (o.full !== false && fullResetPending);
   fullResetPending = false;
+  // 还坐在车上（换层时 BR.vehicles 一般已经在 level:leave 里放下了）：先强制下车，再摆到新位置
+  if (M.handle) forceOut('reset');
+  dropMount();
 
   player.x = num(s.x, 0);
   player.z = num(s.z, 0);
@@ -470,6 +550,257 @@ function reset(spawn, opts) {
   }
   applyCamera();
   if (has(BR.audio, 'setListener')) BR.audio.setListener(player.x, player.y, player.z, player.yaw);
+}
+
+// ---------- 载具：上车、坐着、下车（FE1 叉车；D2 player.setPose 的最小子集，不做 BR.view / BR.body） ----------
+// handle（BR.vehicles 给）= { key, update(dt, inp|null) → { x, z, eyeY, feetY, dyaw, noise, shake },
+//   path(dir) → [站立眼点, 踏板眼点, 座椅眼点]（世界坐标，dir 'in' | 'out'；'out' 的顺序反过来）, forceExit(reason),
+//   cab() → 世界坐标的驾驶舱矩形, chest() → 世界坐标胸口点 }。
+// 坐着：照常转视角（pitch 限位不变）、照跑 interact.update 和 handleActions，不走路、不算上下坡、没有头晃；每帧调 handle.update
+//   （输入关着时传 null，由 handle 当成「油门 0、方向回正、不升降」），player.x/z = 座椅、y = 眼高、feetY = 车下地面、
+//   yaw += dyaw（车转弯视角跟着转）、noise = 车的响动、镜头加 shake（这一帧的抖动幅度，米，见 setShake；减少动态效果时不抖）。
+// 上车、下车：0.5 s 沿 path 的折线插值（站立 → 踏板上方 → 座椅；下车反过来，车尾下车时中间点由 handle 换成配重上方），
+//   插值时不能走；上车插值的同时视角转向车头、俯仰回平。首点一律换成当前眼点，不会先跳一下。
+// 强制下车（死亡、reset、复活）：先调 handle.forceExit(reason)，它回调 unmount 时直接落到 path('out') 的落点，不播插值
+function ptOf(p) {
+  if (!p || typeof p !== 'object') return null;
+  const a = Array.isArray(p);
+  const x = +(a ? p[0] : p.x), y = +(a ? p[1] : p.y), z = +(a ? p[2] : p.z);
+  return Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z) ? { x, y, z } : null;
+}
+function handlePath(h, dir) {
+  let raw = null;
+  try { raw = has(h, 'path') ? h.path(dir) : null; }
+  catch (err) { console.error('[player] handle.path 出错', err); }
+  const out = [];
+  if (Array.isArray(raw)) for (let i = 0; i < raw.length; i++) { const q = ptOf(raw[i]); if (q) out.push(q); }
+  return out;
+}
+// 折线：首点换成当前眼点，其余照 handle 给的；按长度匀速（整体再做一次缓入缓出）
+function setPath(pts) {
+  const path = [{ x: player.x, y: player.y, z: player.z }];
+  for (let i = pts.length > 1 ? 1 : 0; i < pts.length; i++) path.push({ x: pts[i].x, y: pts[i].y, z: pts[i].z });
+  M.path = path;
+  measurePath();
+}
+function measurePath() {
+  const p = M.path;
+  let len = 0;
+  M.cum = [0];
+  for (let i = 1; i < p.length; i++) {
+    len += Math.hypot(p[i].x - p[i - 1].x, p[i].y - p[i - 1].y, p[i].z - p[i - 1].z);
+    M.cum.push(len);
+  }
+  M.len = len;
+}
+function placeOnPath(s) {
+  const p = M.path, c = M.cum;
+  if (!p || !p.length) return;
+  let i = 1;
+  while (i < p.length - 1 && c[i] < s) i++;
+  if (p.length === 1) { player.x = p[0].x; player.y = p[0].y; player.z = p[0].z; return; }
+  const seg = c[i] - c[i - 1];
+  const k = seg > 1e-9 ? U.clamp((s - c[i - 1]) / seg, 0, 1) : 1;
+  player.x = U.lerp(p[i - 1].x, p[i].x, k);
+  player.y = U.lerp(p[i - 1].y, p[i].y, k);
+  player.z = U.lerp(p[i - 1].z, p[i].z, k);
+}
+
+// 车头朝向（和 player.yaw 同一约定：0 = 朝 -Z）：handle.yaw → cab().rot → 座椅眼点在胸口点前面；都拿不到就不转
+function vehYaw(h) {
+  try {
+    const y = typeof h.yaw === 'function' ? h.yaw() : h.yaw;
+    if (typeof y === 'number' && Number.isFinite(y)) return y;
+  } catch (err) { /* 往下试 */ }
+  try {
+    const cab = has(h, 'cab') ? h.cab() : null;
+    if (cab && typeof cab === 'object') {
+      const r = num(cab.rot, num(cab.yaw, NaN));
+      if (r === r) return r;
+    }
+  } catch (err) { /* 往下试 */ }
+  const eye = M.path && M.path.length > 1 ? M.path[M.path.length - 1] : null;
+  let ch = null;
+  try { ch = has(h, 'chest') ? ptOf(h.chest()) : null; } catch (err) { ch = null; }
+  if (eye && ch) {
+    const fx = eye.x - ch.x, fz = eye.z - ch.z;
+    if (fx * fx + fz * fz > 1e-6) return Math.atan2(-fx, -fz);
+  }
+  return null;
+}
+
+// player.mount(handle) → bool：已经坐在别的车上、死了、handle 不对返回 false
+function mount(h) {
+  if (!h || !has(h, 'update') || player.dead) return false;
+  if (M.handle === h) return true;
+  if (M.handle) return false;
+  if (M.phase === 'out') finishOut();
+  M.handle = h; M.phase = 'in'; M.t = 0; M.err = false;
+  setPath(handlePath(h, 'in'));
+  M.yaw0 = player.yaw; M.pitch0 = player.pitch; M.yaw1 = vehYaw(h);
+  player.pose = 'drive';
+  player.vx = 0; player.vz = 0; vy = 0;
+  player.onGround = true;
+  player.sprinting = false;
+  bobWeight = bobX = bobY = 0;
+  BR.bus.emit('player:mount', { key: h.key != null ? h.key : null });
+  return true;
+}
+
+// player.unmount(reason, { instant }?) → bool：交还 handle（之后不再调它的 update）。按 handle.path('out') 走 0.5 s 落回站姿；
+// 强制下车（reason 在 UNMOUNT_INSTANT 里、正在 forceExit、人已经死了、opts.instant）直接落到落点
+function unmount(reason, opts) {
+  const h = M.handle;
+  if (!h) return false;
+  const why = reason == null ? '' : String(reason);
+  const instant = M.forcing || player.dead || !!(opts && opts.instant) || UNMOUNT_INSTANT[why] === 1;
+  const pts = handlePath(h, 'out');
+  M.handle = null;
+  player.noise = 0;
+  shX = shY = shZ = 0;
+  if (instant) {
+    landAt(pts.length ? pts[pts.length - 1] : null);
+    dropMount();
+  } else {
+    M.phase = 'out'; M.t = 0;
+    setPath(pts);
+    // 落点按地面高度站稳：最后一点的眼高 = 落点地面 + 站立眼高，插值走完不会再跳一下
+    const last = M.path[M.path.length - 1];
+    if (M.path.length > 1) { last.y = groundAt(last.x, last.z, feetY) + PC.eyeHeight; measurePath(); }
+  }
+  BR.bus.emit('player:unmount', { key: h.key != null ? h.key : null, reason: why, instant });
+  return true;
+}
+
+// 落到 p（站立眼点的 x/z；地面按 phys 现算）。没给落点：车旁一圈圈找空地（handle 出错时的兜底）
+function landAt(p) {
+  let x = player.x, z = player.z;
+  if (p) { x = p.x; z = p.z; }
+  else { const q = freeSpotNear(x, z); if (q) { x = q[0]; z = q[1]; } }
+  player.x = x; player.z = z;
+  feetY = groundAt(x, z, feetY);
+  player.y = feetY + PC.eyeHeight;
+  player.vx = 0; player.vz = 0; vy = 0;
+  player.onGround = true;
+}
+function freeSpotNear(x, z) {
+  const P = BR.phys;
+  if (!has(P, 'overlapCircle')) return null;
+  const r = PC.radius;
+  for (let d = 0.9; d <= 4.01; d += 0.3) {
+    for (let i = 0; i < 16; i++) {
+      const a = (i + (d * 10 | 0) * 0.5) / 16 * TWO_PI, px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d;
+      const g = groundAt(px, pz, feetY);
+      if (Math.abs(g - feetY) > 0.5 || P.overlapCircle(px, pz, r, g + 0.02, PC.height)) continue;
+      if (has(BR.world, 'blockers')) {
+        let bs = null;
+        try { bs = BR.world.blockers({ x: px, z: pz, r }); } catch (err) { bs = null; }
+        if (bs && bs.length) continue;   // 出口圈、keepClear 里不落人
+      }
+      return [px, pz];
+    }
+  }
+  return null;
+}
+function finishOut() {
+  if (M.phase !== 'out') return;
+  const p = M.path && M.path.length ? M.path[M.path.length - 1] : null;
+  landAt(p);
+  dropMount();
+}
+// 不经 handle 直接清掉坐车状态（新开一局 / 回主页：BR.vehicles 自己会清它那边的；levelState 也已经重置，不能再写）
+function dropMount() {
+  M.handle = null; M.phase = null; M.path = null; M.cum = null; M.len = 0; M.t = 0;
+  player.pose = 'stand';
+  shX = shY = shZ = 0;
+}
+// 先让 handle 按强制下车处理（写状态、熄火、找落点、回调 unmount），它没回调就自己落地
+function forceOut(reason) {
+  const h = M.handle;
+  if (!h) return;
+  M.forcing = true;
+  try { if (has(h, 'forceExit')) h.forceExit(reason); }
+  catch (err) { console.error('[player] handle.forceExit 出错', err); }
+  finally { M.forcing = false; }
+  if (M.handle === h) {
+    M.forcing = true;
+    try { unmount(reason, { instant: true }); } finally { M.forcing = false; }
+    // handle 没走完它那套（出错或没回调）：准心情境还停在 drive 的话退回走路，不然人站在地上却只能「下车」
+    const I = BR.interact;
+    if (I && I.mode === 'drive' && has(I, 'setMode')) {
+      try { I.setMode('walk'); } catch (err) { /* 老 interact 没有情境 */ }
+    }
+  }
+}
+
+function reducedMotion() {
+  if (reduceMQ === undefined) {
+    try { reduceMQ = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null; } catch (err) { reduceMQ = null; }
+  }
+  return !!(reduceMQ && reduceMQ.matches);
+}
+// shake：数字 = 这一帧的抖动幅度（米；BR.vehicles 撞上「哐」时给 0.03 并在 0.15 s 里自己收到 0），镜头按它摆一个小的三向偏移；
+// {x, y, z} = 直接给这一帧的偏移。都限在 SHAKE_MAX 以内；系统设了减少动态效果就不抖
+function setShake(v, dt) {
+  shT += dt;
+  shX = shY = shZ = 0;
+  if (!v || reducedMotion()) return;
+  if (typeof v === 'object') {
+    shX = U.clamp(num(v.x, 0), -SHAKE_MAX, SHAKE_MAX);
+    shY = U.clamp(num(v.y, 0), -SHAKE_MAX, SHAKE_MAX);
+    shZ = U.clamp(num(v.z, 0), -SHAKE_MAX, SHAKE_MAX);
+    return;
+  }
+  const a = U.clamp(num(v, 0), 0, SHAKE_MAX);
+  if (!(a > 0)) return;
+  shX = a * Math.sin(shT * 71.3);
+  shY = a * 0.6 * Math.sin(shT * 57.1 + 1.7);
+  shZ = a * Math.sin(shT * 63.7 + 0.9);
+}
+
+// 坐着的这一帧：handle.update 给座椅位置、车下地面、转角增量、响动、抖动
+function rideStep(dt, inp) {
+  const h = M.handle;
+  let r = null;
+  try { r = h.update(dt, inp); }
+  catch (err) { if (!M.err) { M.err = true; console.error('[player] handle.update 出错', err); } }
+  if (M.handle !== h) return;   // update 里已经下车（强制下车之类）
+  if (!r || typeof r !== 'object') { player.noise = 0; setShake(0, dt); return; }
+  const ok = num(r.x, NaN) === r.x && num(r.z, NaN) === r.z;
+  const eyeOk = num(r.eyeY, NaN) === r.eyeY;
+  if (M.phase === 'in') {
+    // 插值的终点跟着座椅走（车本来停着，这里只防万一）
+    const last = M.path && M.path[M.path.length - 1];
+    if (last && M.path.length > 1 && ok && eyeOk && (last.x !== r.x || last.y !== r.eyeY || last.z !== r.z)) {
+      last.x = r.x; last.y = r.eyeY; last.z = r.z;
+      measurePath();
+    }
+  } else {
+    if (ok) { player.x = r.x; player.z = r.z; }
+    if (eyeOk) player.y = r.eyeY;
+  }
+  if (num(r.feetY, NaN) === r.feetY) feetY = r.feetY;
+  const dyaw = num(r.dyaw, 0);
+  if (dyaw) {
+    player.yaw = wrapAngle(player.yaw + dyaw);
+    if (M.phase === 'in') { M.yaw0 += dyaw; if (M.yaw1 != null) M.yaw1 += dyaw; }
+  }
+  player.noise = U.clamp(num(r.noise, 0), 0, 1);
+  setShake(r.shake, dt);
+}
+// 上车 / 下车插值推进一帧
+function stepPath(dt) {
+  M.t += dt;
+  const k = U.clamp(M.t / MOUNT_SEC, 0, 1);
+  const e = k * k * (3 - 2 * k);
+  placeOnPath(e * M.len);
+  if (M.phase === 'in') {
+    if (M.yaw1 != null) player.yaw = wrapAngle(M.yaw0 + U.angleDiff(M.yaw0, M.yaw1) * e);
+    player.pitch = M.pitch0 * (1 - e);
+    if (k >= 1) M.phase = 'seat';
+  } else if (M.phase === 'out' && k >= 1) {
+    finishOut();
+  }
 }
 
 // ---------- 每帧 ----------
@@ -616,8 +947,8 @@ function applyCamera() {
   const c = Math.cos(player.yaw), s = Math.sin(player.yaw);
   cam.rotation.order = 'YXZ';   // 先 yaw 后俯仰，第一人称不会出现滚转
   cam.rotation.set(player.pitch, player.yaw, 0);
-  // 左右晃动沿相机右方向偏移
-  cam.position.set(player.x + c * bobX, player.y + bobY, player.z - s * bobX);
+  // 左右晃动沿相机右方向偏移；坐车撞上东西时再加一点抖动（走路时恒为 0）
+  cam.position.set(player.x + c * bobX + shX, player.y + bobY + shY, player.z - s * bobX + shZ);
 }
 
 // 空格 / E 不在这里处理：BR.interact.update 统一判短按、长按、拖动
@@ -639,22 +970,40 @@ function update(dt) {
   if (player.dead) return;
   if (invuln > 0) invuln = Math.max(0, invuln - dt);
 
-  if (active && look) {
+  // 上车插值的 0.5 s 里视角由插值接管（转向车头），这段时间的鼠标 / 滑屏增量丢掉；坐着、下车时照常转头
+  if (active && look && M.phase !== 'in') {
     player.yaw = wrapAngle(player.yaw - num(look.dx, 0));
     player.pitch = U.clamp(player.pitch - num(look.dy, 0), -PITCH_LIMIT, PITCH_LIMIT);
   }
 
   // 准心交互：用这一帧的朝向瞄准、判空格短按 / 长按、推着拖动的东西走；放在走路之前，speed() 才拿得到这一帧的拖动限速。
-  // 输入关着（暂停、菜单）或 handleActions=false 时传 null：手里拖着的东西原地放下
+  // 输入关着（暂停、菜单）或 handleActions=false 时传 null：手里拖着的东西原地放下。坐车时照跑（短按 = 下车，由 drive 情境的接管者处理）
   if (has(BR.interact, 'update')) {
     try { BR.interact.update(dt, active && player.handleActions ? inp : null); }
     catch (err) { if (!interactErr) { interactErr = true; console.error('[player] interact.update 出错', err); } }
   }
 
-  const moved = updateMovement(dt, active ? inp : null);
-  updateVertical(dt);
-  updateBob(moved, dt);
-  player.noise = moved / dt > MOVE_EPS ? (player.sprinting ? NOISE_SPRINT : NOISE_WALK) : 0;
+  const ox = player.x, oz = player.z;
+  if (M.handle) {
+    // 坐车：车由 handle 开（输入关着时传 null = 松油门、方向回正、不升降），不走路、不算上下坡
+    rideStep(dt, active ? inp : null);
+    if (M.phase === 'in') stepPath(dt);
+  } else if (M.phase === 'out') {
+    stepPath(dt);
+  }
+  if (M.handle || M.phase) {
+    // 坐车、上下车：没有头晃、不冲刺；速度按这一帧实际挪了多少算（有的层按 vx/vz 判断人在不在动）
+    bobWeight = bobX = bobY = 0;
+    player.sprinting = false;
+    player.vx = (player.x - ox) / dt;
+    player.vz = (player.z - oz) / dt;
+    if (!M.handle) { player.noise = 0; shX = shY = shZ = 0; }
+  } else {
+    const moved = updateMovement(dt, active ? inp : null);
+    updateVertical(dt);
+    updateBob(moved, dt);
+    player.noise = moved / dt > MOVE_EPS ? (player.sprinting ? NOISE_SPRINT : NOISE_WALK) : 0;
+  }
 
   if (BR.game.statsEnabled) updateStats(dt);
   updateSanityFeedback(dt);
@@ -670,6 +1019,8 @@ function update(dt) {
 // ---------- 局外 ----------
 function onNewSession() {
   fullResetPending = true;
+  // 上一局还坐在车上：直接清掉（BR.vehicles 自己听 game:start / game:home 清它那边；levelState 已经重置，不能再让 handle 写状态）
+  if (M.handle || M.phase) dropMount();
   sanFx = 0;
   // 回主页时不能把低 san 的画面扭曲带过去
   if (has(BR.gfx, 'setSanityEffect')) BR.gfx.setSanityEffect(0);

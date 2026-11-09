@@ -767,13 +767,6 @@ async function main() {
     lap('截图');
   } catch (err) {
     check('测试流程未中断', false, String(err && err.stack || err));
-  } finally {
-    const tc = Date.now();
-    await browser.close();
-    console.log('---- 关闭浏览器用时 ' + ((Date.now() - tc) / 1000).toFixed(1) + 's');
-    // keep-alive 连接不断开的话 close() 会一直等，进程退不出去
-    if (typeof srv.closeAllConnections === 'function') srv.closeAllConnections();
-    srv.close();
   }
   check('零 console.error / 未捕获异常', errors.length === 0, errors.slice(0, 10));
 
@@ -784,6 +777,14 @@ async function main() {
   console.log('页面报错 ' + errors.length + ' 条');
   for (const e of errors) console.log('  ' + e);
   console.log('截图 ' + shots.length + ' 张：' + path.relative(ROOT, OUT));
+  // 先打汇总再关浏览器（FE1 返修 r5，照 interact.mjs）：Chrome 退出后遗留的进程会占着管道，browser.close() 有时好几分钟都不返回，
+  // 以前汇总排在它后面，检查全过了也一直不打印（tests/all.mjs 只能等到超时判失败）。close 最多等 10 s
+  const tc = Date.now();
+  await Promise.race([browser.close().catch(() => {}), new Promise(r => setTimeout(r, 10000))]);
+  console.log('---- 关闭浏览器用时 ' + ((Date.now() - tc) / 1000).toFixed(1) + 's');
+  // keep-alive 连接不断开的话 close() 会一直等，进程退不出去
+  if (typeof srv.closeAllConnections === 'function') srv.closeAllConnections();
+  srv.close();
   process.exit(failed.length || errors.length ? 1 : 0);
 }
 

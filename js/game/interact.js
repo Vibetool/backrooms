@@ -34,10 +34,12 @@
 //   current（复用对象 | null）、target（按下时锁定的那个）、state 'idle'|'pressed'|'drag'|'hold'、holdProgress() 0..1、
 //   speedCap()（player.speed 乘它）、dragging、mode、owner、crossHidden、update(dt, inp|null)、cancel(reason)、
 //   setMode('walk'|'seat'|'lie'|'drive'|'view', owner)、aimAt(x,y,z)、heldInfo()、debugInfo()
+//   debugInfo().cands（FE1 返修 r14）：最近一次选目标考虑过的候选 [{ src, kind, key, t0, t, why: 'best'|'lost'|'mesh'|'far'|'mode'|'wall'|'bad' }]，ray：那次的准心射线
 //   setMode 同步 BR.input.setContext（lie → 'seat'）和 BR.coop.setPose(mode, owner.key)
 //   长按拖谁：物资、道具、测试人、门拖自己；容器、设备、按钮、载具、座位，以及自己拖不了的静止物资（柜子里的瓶子），
 //     拖父链里最近一个能拖的道具。座位候选要带 parentKeys:[椅子 key]（kit 的座位是椅子记录里的锚点，没有自己的道具 key）
 //   遮挡：候选 t ≤ 墙的 t 才有效；命中的碰撞体属于候选自己或它的父链时，忽略这条链再打一次射线（phys.raycast 的 ignoreKey）
+//   物资挤在一起（两件以上物资候选）时按准心射线真正打中的模型选（refineItems，返修 r10）。
 //   优先级：容器里的物资、容器、格子里的子道具 > 父道具；部件和父道具 t 差 < partPrefer 选部件；小目标近 smallPrefer 内优先；
 //     t 相同按 物资 > 按钮 > 容器 > 门 > 设备 > 座位 > 载具 > 实体 > 道具
 //   bus：'interact:short' {kind,key,ok}、'interact:hold' {kind,key,ok}、'interact:deny' {kind,key,why}、'interact:pick' {id}、
@@ -70,7 +72,7 @@ function cv(name) {
 
 const DEG = Math.PI / 180;
 const EMPTY = Object.freeze([]);
-const TIE_EPS = 0.02;          // t 相差在 2 cm 内算「t 相同」，按种类优先级定
+const TIE_EPS = 0.02;          // t 相差在 2 cm 内算「t 相同」，按种类优先级定（两件物资都被射线打中模型时不用它，见 better）
 const WALL_EPS = 0.02;         // 候选正好贴在墙面上时不因浮点误差被判成墙后
 const PROP_FOOT_CLEAR = 0.05;  // 拖道具时底面抬 5 cm 再查碰撞：门槛、地毯这种薄碰撞体不该把箱子卡住
 const EXIT_SCAN = 12;          // 抓起时收集这个半径内的出口，拖动中只查这些
@@ -143,6 +145,7 @@ const D = {
   ignore: [], exits: [], exitCircles: [], keeps: [],   // exits：圆形禁区 {x, z, r（已含外扩）, y?, kind, why?}；keeps：矩形禁区 {x0, z0, x1, z1, why}
   ent: null, localHold: null,
   gRef: 0, gDev: new Float64Array(9), onFloor: false,   // 地面：道具抓起时占地中心的地面高度和此刻 9 个采样点的偏差；物资是否放在地上
+  dy: 0,                                                 // 放在地上的物资：原点比地面高多少（静静躺着的按放得稳的样子最低顶点贴地 = −rest.bot；FE1 返修 r14）
   elev: false, sup0: false,                              // 不在地上（架子上、桌上）：抓起时底面下有没有东西托着
   pushed: [], scrape: 0,                                 // 这次拖动推开过的地上物资 id；摩擦声的累计距离
   t: 0, edgeSince: -1, edgeAt: -1, edgeWhy: '', edgeSaid: false,   // 拖了多久（模拟秒）；被台阶边、架子边挡住的起止时刻和原因
@@ -393,6 +396,9 @@ function visibleCand(c) {
 
 // a 是否比 b 更该被选中
 function better(a, b) {
+  // 两件物资都被准心射线真的打中了模型（refineItems 换成了打中模型的距离）：谁先被打中选谁（FE1 返修 r12 裁定 E）——
+  // 不再套「2 cm 内算平手按种类排」「小目标优先」，高亮的、按空格捡到的就是准心先碰到的那件
+  if (a.kind === 'item' && b.kind === 'item' && a.meshSeq === aimSeq && b.meshSeq === aimSeq) return a.t < b.t;
   // 父子关系：容器里的物资、容器压过父道具；其余子件（按钮、部件）t 差 < partPrefer 才压过
   if (isAncestorOf(b, a)) return !!STRICT_CHILD[a.kind] || a.t - b.t < cv('partPrefer');
   if (isAncestorOf(a, b)) return !(STRICT_CHILD[b.kind] || b.t - a.t < cv('partPrefer'));
@@ -455,6 +461,61 @@ function dragParent(c) {
   return false;
 }
 
+// 物资挤在一起时（返修 r10，验收员 play：甩出去的混装隔 1.2–1.4 cm，准心对准罐头却捡到旁边更高、命中球更大的水瓶）：
+// 有两件以上物资候选时，按准心射线真正打中的模型（三角形）重排 —— 打中了的 t 换成打中模型的距离，没打中的（只进了命中球 / 辅助角）
+// 在有别的物资被打中时不再当候选；一件都没打中照旧（小东西靠辅助角也对得上）
+let pickRc = null;
+const pickHits = [];
+function meshT(obj, reach) {
+  if (!obj || typeof THREE === 'undefined') return -1;
+  if (!pickRc) pickRc = new THREE.Raycaster();
+  pickRc.ray.origin.set(ray.ox, ray.oy, ray.oz);
+  pickRc.ray.direction.set(ray.dx, ray.dy, ray.dz);
+  pickRc.near = 0; pickRc.far = reach + 0.5;
+  pickHits.length = 0;
+  try { obj.updateMatrixWorld(true); pickRc.intersectObject(obj, true, pickHits); } catch (err) { return -1; }
+  return pickHits.length ? pickHits[0].distance : -1;
+}
+let aimSeq = 0;   // 每次 aim 加 1：refineItems 打中模型的物资候选记 meshSeq = aimSeq（候选对象每帧复用，旧的记号不作数）
+function refineItems(reach) {
+  aimSeq++;
+  let n = 0;
+  for (let i = 0; i < cands.length; i++) { const c = cands[i]; if (c && c.kind === 'item' && c.ref && c.ref.obj && num(c.t, -1) >= 0) n++; }
+  if (n < 2) return;
+  let hit = 0;
+  for (let i = 0; i < cands.length; i++) {
+    const c = cands[i];
+    if (!c || c.kind !== 'item' || !c.ref || !c.ref.obj || !(num(c.t, -1) >= 0)) continue;
+    c.meshT = meshT(c.ref.obj, reach);
+    if (c.meshT >= 0) hit++;
+  }
+  if (!hit) return;
+  // 同一件物资的几个候选（叉面举得太高时 vehicles 压的那个灰字候选比它近 3 cm）彼此的先后不变：都按打中模型的距离平移
+  const lo = new Map();
+  for (let i = 0; i < cands.length; i++) { const c = cands[i]; if (c && c.kind === 'item' && c.meshT != null) lo.set(c.ref, Math.min(lo.has(c.ref) ? lo.get(c.ref) : Infinity, c.t)); }
+  for (let i = 0; i < cands.length; i++) {
+    const c = cands[i];
+    if (!c || c.kind !== 'item' || c.meshT == null) continue;
+    c.t = c.meshT >= 0 ? c.meshT + Math.max(0, c.t - lo.get(c.ref)) : -1;
+    if (c.meshT >= 0) c.meshSeq = aimSeq;
+    c.meshT = null;
+  }
+}
+
+// 最近一次 aim 考虑过的候选（返修 r14，验收员 tests：联机测试「B 按 E 拾取」偶发准心丢了，debugInfo 只看得到 current = null，看不出为什么）：
+// 每个候选 { src, kind, key, t0（来源给的 t）, t（按模型重排以后）, why }，why = 'best' 选中 | 'lost' 被更近 / 更该选的压过 | 'mesh' 别的物资被准心真的打中了、它没有 |
+// 'far' 超出够得着的距离 | 'mode' 当前情境不收 | 'wall' 被墙挡住（wallT / wallKey）| 'bad' 来源给的 t 不对。对象复用，每帧原地改，最多记 16 个
+const CAND_DBG_MAX = 16;
+const candDbg = [];
+let candDbgN = 0;
+function noteCand(c, t0, why) {
+  if (candDbgN >= CAND_DBG_MAX) return;
+  let o = candDbg[candDbgN];
+  if (!o) o = candDbg[candDbgN] = { src: '', kind: null, key: null, t0: 0, t: 0, why: '' };
+  o.src = c && c.src || ''; o.kind = c ? c.kind : null; o.key = c ? c.key : null; o.t0 = t0; o.t = c ? num(c.t, -1) : -1; o.why = why;
+  candDbgN++;
+}
+const candT0 = [];
 function aim() {
   fillRay();
   cands.length = 0;
@@ -466,14 +527,23 @@ function aim() {
     catch (err) { once('src:' + s.name, () => console.error('[interact] 来源出错', s.name, err)); }
     for (let k = n0; k < cands.length; k++) if (cands[k] && !cands[k].src) cands[k].src = s.name;
   }
+  candT0.length = cands.length;
+  for (let i = 0; i < cands.length; i++) candT0[i] = cands[i] ? num(cands[i].t, -1) : -1;
+  refineItems(reach);
   let best = null;
+  candDbgN = 0;
   for (let i = 0; i < cands.length; i++) {
     const c = cands[i];
-    if (!c || c.kind == null || !(num(c.t, -1) >= 0) || c.t > reach) continue;
-    if (!acceptInMode(c)) continue;
-    if (!visibleCand(c)) continue;
+    if (!c || c.kind == null || !(num(c.t, -1) >= 0) || c.t > reach) {
+      noteCand(c, candT0[i], !c || c.kind == null ? 'bad' : candT0[i] >= 0 && !(num(c.t, -1) >= 0) ? 'mesh' : c.t > reach ? 'far' : 'bad');
+      continue;
+    }
+    if (!acceptInMode(c)) { noteCand(c, candT0[i], 'mode'); continue; }
+    if (!visibleCand(c)) { noteCand(c, candT0[i], 'wall'); continue; }
+    noteCand(c, candT0[i], 'lost');
     if (!best || better(c, best)) best = c;
   }
+  if (best) for (let i = 0; i < candDbgN; i++) if (candDbg[i].why === 'lost' && candDbg[i].key === best.key && candDbg[i].kind === best.kind && candDbg[i].src === (best.src || '')) { candDbg[i].why = 'best'; break; }
   if (best) {
     copyCand(cur, best);
     resolveDrag(cur);
@@ -736,7 +806,7 @@ function startDrag(c) {
   D.pushed.length = 0;
   D.scrape = 0;
   D.t = 0; D.edgeSince = -1; D.edgeAt = -1; D.edgeWhy = ''; D.edgeSaid = false;
-  D.onFloor = false;
+  D.onFloor = false; D.dy = 0;
   D.elev = false; D.sup0 = false;
   let V = c.vol;
 
@@ -749,6 +819,9 @@ function startDrag(c) {
     D.r = Math.max(0.05, num(rec.r, 0.12));
     D.h = Math.max(0.1, num(rec.hh, 0.1) * 2);
     D.onFloor = Math.abs(D.y - gY(D.x, D.z)) <= ON_FLOOR;
+    // 放在地上的跟着地面走时原点离地多高（FE1 返修 r14，验收员 play：以前直接放到地面高度，甩出去落地的火盐一拖晶体尖就陷进地里 18.5 mm、PTG-B 5.1 mm）：
+    // 静静躺着的按放得稳的样子最低顶点贴地（items.floorLift = −rest(type).bot），浮着的 0（浮起来的高度 items 自己加）
+    if (D.onFloor) D.dy = has(BR.items, 'floorLift') ? num(BR.items.floorLift(rec.id), 0) : 0;
     D.elev = !D.onFloor && D.y > gY(D.x, D.z);
     D.sup0 = D.elev && supportedAt(D.x, D.z, D.y, 0.02, 0.02, null);
   } else if (kind === 'entity') {
@@ -1128,7 +1201,7 @@ function pushItems(mx, mz) {
       D.pushed.push(p.id);
       if (has(I, 'hold')) I.hold(p.id, true);   // 推的过程中不浮动、不每步写 levelState，放下时一次写
     }
-    I.move(p.id, nx, undefined, nz);
+    I.move(p.id, nx, undefined, nz);   // 不给 y：items.move 按 floorLift 落地（静静躺着的最低顶点贴地，返修 r14）
   }
   return true;
 }
@@ -1261,7 +1334,7 @@ function stepDrag(dt, inp, up, cancelled) {
         const d = Math.hypot(mx, mz);
         D.moved += d;
         if (D.kind === 'prop') propGroundDev(D.x, D.z, D.gDev);
-        else if (D.onFloor) D.y = gY(D.x, D.z);   // 放在地上的物资跟着地面起伏（斜坡、小台阶）
+        else if (D.onFloor) D.y = gY(D.x, D.z) + D.dy;   // 放在地上的物资跟着地面起伏（斜坡、小台阶），静静躺着的最低顶点贴地
         applyPos();
         scrapeSound(d);
       }
@@ -1299,7 +1372,7 @@ function release(reason) {
   const ov = D.kind === 'item' || D.kind === 'prop' ? overlapsAt(D.x, D.z) : 0;
   if (ov && (D.validX !== D.x || D.validZ !== D.z)) {
     D.x = D.validX; D.z = D.validZ;
-    if (D.kind === 'item' && D.onFloor) D.y = gY(D.x, D.z);
+    if (D.kind === 'item' && D.onFloor) D.y = gY(D.x, D.z) + D.dy;
     applyPos();
     if (ov === 1 && reason === 'release') toast(blockText(ovHit) || EDGE_WHY.exit, 1500);
   }
@@ -1386,6 +1459,15 @@ function update(dt, inp) {
   if (S.state !== 'idle') { copyCand(cur, locked); S.has = true; }
 }
 
+// 物资、载具摆好以后再选一次准心目标（返修 r13，验收员 play：update 在 player.update 里、转视角和 items.update 之前跑，选目标用的是上一帧的视角和
+// 物资位置，屏幕上画的却是这一帧的 —— 浮着转圈的物资挤在一起时，高亮 / 提示和按空格捡到的差一帧对不上）。main.js 在 items.update 之后、hud.update 之前调；
+// 下一帧 update 开头按下空格时，视角和物资都还是这一刻（渲染出来）的样子，选到的就是这里高亮的那件。按住 / 拖着时不动（目标锁在按下那一刻）
+function refresh() {
+  const P = BR.player;
+  if (!P || P.dead || S.state !== 'idle') return;
+  aim();
+}
+
 // ---------- 情境 ----------
 // mode：'walk' | 'seat' | 'lie' | 'drive' | 'view'；owner：key 字符串，或
 // { key, kind, label, short:{verb,ok,why}, hold, onShort(c), onHold(c), accept(c) }（缺的按情境默认值补）
@@ -1468,6 +1550,9 @@ function debugInfo() {
     current: S.has ? { kind: cur.kind, key: cur.key, label: cur.label, t: +cur.t.toFixed(3), canDrag: cur.canDrag,
       short: cur.short ? cur.short.verb || '' : null, dragKind: cur.dragKind, dragKey: cur.dragKey, src: cur.src } : null,
     wallT: ray.wallT, wallKey: ray.wallKey,
+    // 最近一次 aim 考虑过的候选和各自被剔除的原因（返修 r14，见 noteCand）；ray：那一次准心射线的起点、方向、够得着的距离
+    cands: candDbg.slice(0, candDbgN).map(o => ({ src: o.src, kind: o.kind, key: o.key, t0: +num(o.t0, -1).toFixed(3), t: +num(o.t, -1).toFixed(3), why: o.why })),
+    ray: { o: [+ray.ox.toFixed(3), +ray.oy.toFixed(3), +ray.oz.toFixed(3)], d: [+ray.dx.toFixed(4), +ray.dy.toFixed(4), +ray.dz.toFixed(4)], reach: ray.reach },
     sources: sources.map(s => s.name), handlers: Array.from(handlers.keys()),
     drag: S.state === 'drag' ? { kind: D.kind, key: D.key, x: D.x, z: D.z, moved: D.moved, v: D.v, pending: D.pending, lease: D.lease } : null,
     heldMs: Math.max(S.simMs, S.realMs),
@@ -1518,7 +1603,7 @@ if (BR.bus) {
 BR.interact = {
   addSource, removeSource, handle,
   hit: { sphere: hitSphere, box: hitBox, obb: hitObb, cylinder: hitCylinder },
-  update, cancel, setMode, aimAt, heldInfo, holdProgress, speedCap, debugInfo,
+  update, refresh, cancel, setMode, aimAt, heldInfo, holdProgress, speedCap, debugInfo,
   // 准心目标：复用对象，没对准任何东西时为 null（HUD 只读，别改）
   get current() { return S.has ? cur : null; },
   // 按下那一帧锁定的目标（state 不是 idle 时有意义）

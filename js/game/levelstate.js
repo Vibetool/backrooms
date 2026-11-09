@@ -17,7 +17,7 @@
 //                                                    和 kit 的 rec.t 一致，顶点按父链累加）；A1 只用 dx、dz
 //   items       Map<物品 id, [x, y, z]>               被挪过的地上物资的新位置（脚底坐标，同 items.spawn）
 //   taken       Set<物品 id>                          地上被拿走的物资：world.spawnItems 跳过它们，换层回来不复活
-//   drops       Map<丢弃物 id, [x, y, z, type, count]>  玩家按 Q 丢在这一层地上的东西（脚底坐标）：换层回来照原样摆回去（items.js
+//   drops       Map<丢弃物 id, [x, y, z, type, count(, rotY)]>  玩家按 Q 丢在这一层地上的东西（脚底坐标；静静躺着的多一项朝向）：换层回来照原样摆回去（items.js
 //                                                    听 'level:enter' 重建），被捡走就删掉。和 taken 是同一条规则：放下的留在原处，拿走的不复活。
 //                                                    联机时不能丢弃（player.js），所以这张表只在单机里有内容
 //   doors       Map<门 key, 任意 JSON>                门的开度等（B 阶段定格式）
@@ -135,12 +135,14 @@ const NORM = {
     return [a[0], a[1], a[2]];
   },
   taken(v) { return v ? 1 : null; },
-  // [x, y, z, type, count]；也认 {x, y, z, type, count}
+  // [x, y, z, type, count] 或 [x, y, z, type, count, rotY]（静静躺着的多记朝向，FE1 返修 r12）；也认 {x, y, z, type, count, rotY}
   drop(v) {
-    const a = Array.isArray(v) ? v : v && typeof v === 'object' ? [v.x, v.y, v.z, v.type, v.count] : null;
+    const a = Array.isArray(v) ? v : v && typeof v === 'object' ? [v.x, v.y, v.z, v.type, v.count, v.rotY] : null;
     if (!a || !isNum(a[0]) || !isNum(a[1]) || !isNum(a[2]) || typeof a[3] !== 'string' || !a[3]) return undefined;
     const n = a[4] == null ? 1 : Math.floor(+a[4]);
-    return [a[0], a[1], a[2], a[3], isFinite(n) && n >= 1 ? n : 1];
+    const out = [a[0], a[1], a[2], a[3], isFinite(n) && n >= 1 ? n : 1];
+    if (isNum(a[5])) out.push(a[5]);
+    return out;
   },
   // [open, side, takenSlots]；也认 {open, side, takenSlots | taken}
   container(v) {
