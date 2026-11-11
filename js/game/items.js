@@ -176,12 +176,17 @@ function nearestOnHull(h, x, z) {
   }
   return best;
 }
-// 模型（模板坐标，带缩放）的顶点、三角形 → 质心
+// 不是实物的网格（FE1P H6，验收员 ⑳c：火盐外面那层半透明光晕球被当成实物算支撑和重心，晶体簇像靠着一团光歪着立）：
+// 半透明光晕、发光球、瓶里的闪电这类「光」，物资文件 build 时给网格标 userData.glow = true（现在有火盐的光晕、瓶装闪电三种的闪电和瓶内光晕）。
+// 放得稳的静止姿态（支撑点、重心）、vehicles.js 车推 / 摆货叉 / 甩货用的外形都只算实物网格；准心命中球、包围盒（info）照旧按整个模型（看得见的都瞄得到）
+function solidMesh(n) { return !!(n && n.isMesh) && !(n.userData && n.userData.glow); }
+// 模型（模板坐标，带缩放）的顶点、三角形 → 质心。只算实物网格（solidMesh）
 function meshOf(tpl) {
   const V = [], T = [];
   tpl.updateMatrixWorld(true);
   const v = new THREE.Vector3();
   tpl.traverse(n => {
+    if (!solidMesh(n)) return;
     const g = n && n.isMesh && n.geometry, pos = g && g.attributes && g.attributes.position;
     if (!pos || typeof pos.getX !== 'function') return;
     const i0 = V.length / 3;
@@ -264,8 +269,10 @@ function restOf(type) {
 // 这件按「放得稳的静止姿态」摆吗：静止、不在容器里（容器、取货口里的照原样）
 function rests_(p) { return !!p.still && !p.owner; }
 // 放在地上时原点比地面高多少（FE1 返修 r14，验收员 play：长按拖动甩出去落地的火盐，原点被直接放到地面高度，晶体尖陷进地里 18.5 mm）：
-// 静静躺着的按放得稳的静止姿态最低顶点贴地（−rest(type).bot：火盐 18.5 mm、PTG-B 5.1 mm）；浮着转圈的原点就在地面上（浮起来的高度 place 里加）
-function floorLift(p) { return rests_(p) ? Math.max(0, -num(restOf(p.type).bot, 0)) : 0; }
+// 静静躺着的按放得稳的静止姿态最低顶点贴地（−rest(type).bot：火盐 13 mm、PTG-B 5.1 mm）；浮着转圈的原点就在地面上（浮起来的高度 place 里加）。
+// 最低顶点比原点高的（bot > 0）原点就在地面下面一点（FE1P H13：以前夹到 ≥0，那时立着的糖果袋底封口在原点上方 2.5 mm、浮起 0.7 mm）。
+// 返修 r1 起糖果袋倒平（bot −32.5 mm），现在 32 种物资没有 bot 明显大于 0 的（最大是曲奇 / 口粮的 1e-10 m 级舍入），这条分支留着防以后的模型
+function floorLift(p) { return rests_(p) ? -num(restOf(p.type).bot, 0) : 0; }
 
 function place(p) {
   if (p.still) {
@@ -809,6 +816,8 @@ BR.items = {
     const r = restOf(type);
     return { rx: r.rx, rz: r.rz, bot: r.bot, com: r.com.slice(), hull: r.hull.map(q => q.slice()), inset: r.inset };
   },
+  // 这个网格算不算实物（FE1P H6）：光晕、发光体（build 时标了 userData.glow）不算。vehicles.js 量物资外形、测试量支撑和重心都按它
+  solidMesh,
   // 这件放在地上时原点比地面高多少（返修 r14）：静静躺着的 = −rest(type).bot（按放得稳的样子最低顶点贴地），浮着的 = 0。interact 拖地上的物资按它跟着地面走
   floorLift(id) {
     const p = byId.get(String(id));

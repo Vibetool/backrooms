@@ -9,6 +9,8 @@
 //   外加 forklift-selftest（--selftest：甩货逐帧检查的变异自检，返修 r10；r12 加了第 5 种 pop），
 //   和 forklift-timing（--group timing --strict-timing：计时类检查，全量跑完、负载降到核数一半以下再单独跑、真判，返修 r12）
 //   dark、perf 两组要截图量像素，算截图类（--quick 跳过）；tests/forklift_probe.mjs 是只读探针（出表给主会话和家长看），不自动跑。
+// 叉车打磨（FE1P，2026-11）：tests/forklift_polish.mjs 拆成 forklift_polish（--group light,vine：大灯不透墙要量像素，算截图类）
+//   和 forklift_polish-coop（--group coop：两页联机，失败了等负载降下来单独重跑真判）两项。
 //
 // 跑哪些（按这个顺序）：
 //   1. tests/ 下的回归脚本：phys.test.js、smoke、kit、items、coop、camp、settings、workshop、workshop_core、workshop_ui、infection、visualhooks，
@@ -19,7 +21,8 @@
 // 规则：
 //   - interact、smoke、coop、camp（有墙钟 / 计时类检查）失败了先不判：别的都跑完、1 分钟负载降到核数一半以下（最多等 15 分钟）再单独跑一遍，按这一遍真判，
 //     表里标"重试"，首次日志留在 <名称>.try1.log、补测日志 <名称>.low.log（返修 r13 裁定 G；以前 coop 是失败后紧接着重跑，不等负载降下来）；
-//     mobile 记了 SKIP 的，低负载时只补那几台设备（mobile.low.log），补测还记 SKIP 算失败；叉车各组有 page.evaluate 超过 60 s 的（只打 WARN），
+//     mobile 记了 SKIP 的，低负载时只补那几台设备（mobile.low.log），补测还记 SKIP 算失败；mobile 首次有失败（没有页面报错）的，低负载时只重跑
+//     挂了 / 记 SKIP 的那几台设备，按重跑那一遍判（FE1Q repair-r1：负载 ~40 时 D11b 触摸拖动偶尔滚不起来）；叉车各组有 page.evaluate 超过 60 s 的（只打 WARN），
 //     低负载时带 --strict-timing 再跑一遍这一组，超过 60 s 判失败
 //   - 叉车各组（forklift-<组>）超时放宽到 45 分钟；失败 / 超时先不判，等这一轮别的项都跑完、机器空下来以后单独重跑一次再判
 //     （FE1 返修 r3：几个代理同时跑、负载 70–115 时，能过的组会撞上 25 分钟上限被判超时）。--jobs 1 时就是紧接着重跑
@@ -72,8 +75,9 @@ function levelOrder() {
 
 // ---------- 测试清单 ----------
 // camp.mjs：联机营地（隐藏层 coopcamp）的单页检查，紧跟 coop；营地不在 LEVEL_ORDER，不跑 --scale、不进入库 golden
-const KNOWN = ['phys.test.js', 'smoke.mjs', 'mobile.mjs', 'kit.mjs', 'items.mjs', 'coop.mjs', 'camp.mjs', 'forklift_l1.mjs', 'forklift.mjs', 'settings.mjs', 'workshop.mjs', 'workshop_core.mjs', 'workshop_ui.mjs', 'infection.mjs', 'visualhooks.mjs'];
-const TIMEOUT_OF = { 'coop.mjs': 50 };   // 分钟；没列的按 25。coop 从 FE1 起最后多一段叉车联机（再进一次营地、出发进 L1）
+const KNOWN = ['phys.test.js', 'smoke.mjs', 'mobile.mjs', 'kit.mjs', 'items.mjs', 'coop.mjs', 'camp.mjs', 'forklift_l1.mjs', 'forklift.mjs', 'forklift_polish.mjs', 'settings.mjs', 'workshop.mjs', 'workshop_core.mjs', 'workshop_ui.mjs', 'infection.mjs', 'visualhooks.mjs'];
+const TIMEOUT_OF = { 'coop.mjs': 50, 'mobile.mjs': 50 };   // 分钟；没列的按 25。coop 从 FE1 起最后多一段叉车联机（再进一次营地、出发进 L1）；
+// mobile 从 FE1Q 起多 se1-l 一台和两段 toast-short，负载 39–48 时全量 35 分钟
 const LOW_RETRY = new Set(['interact.mjs', 'smoke.mjs', 'coop.mjs', 'camp.mjs']);   // 失败了等负载降下来单独重跑一遍真判（返修 r13）
 // forklift_probe.mjs：叉车只读探针（第三层货架头顶遮挡比例、出生车附近能叉的货的可达性），只出表、不判过不过，不自动跑
 const SPECIAL = new Set(['all.mjs', 'online.mjs', 'golden.mjs', 'preview.mjs', 'forklift_probe.mjs']);
@@ -89,7 +93,9 @@ function buildItems() {
   const items = [];
   for (const f of ordered) {
     if (f === 'forklift.mjs') {
-      for (const g of FORKLIFT_GROUPS) items.push({ name: 'forklift-' + g, args: ['tests/forklift.mjs', '--group', g], shots: FORKLIFT_SHOT.has(g), retry: 0, retryAlone: 1, timeoutMin: 45, doneMark: DONE_DEFAULT });
+      // items 组最长（单独跑 28 分钟上下，负载 30–50 时 45 分钟跑不完，返修 r1 验收员 tests），给 120 分钟（返修 r2：负载 45–55、同时开 3 路测试时跑了 84.4 分钟，
+      // 75 分钟的上限会先记一次超时再等空闲单独重跑）；别的组 45 分钟
+      for (const g of FORKLIFT_GROUPS) items.push({ name: 'forklift-' + g, args: ['tests/forklift.mjs', '--group', g], shots: FORKLIFT_SHOT.has(g), retry: 0, retryAlone: 1, timeoutMin: g === 'items' ? 120 : 45, doneMark: DONE_DEFAULT });
       // 逐帧检查的变异自检（返修 r10）：四份改坏的 vehicles.js（半空冻结、匀速下落、横向漂移、落地瞬移），要求 F.hover 都报出来
       items.push({ name: 'forklift-selftest', args: ['tests/forklift.mjs', '--selftest'], shots: false, retry: 0, retryAlone: 1, timeoutMin: 20, doneMark: DONE_DEFAULT });
       // 计时类检查低负载重跑（返修 r12 裁定 G）：别的项（含单独重跑的）全跑完以后，等 1 分钟平均负载降到核数一半以下（最多等 15 分钟）再单独跑，
@@ -97,12 +103,21 @@ function buildItems() {
       items.push({ name: 'forklift-timing', args: ['tests/forklift.mjs', '--group', 'timing', '--strict-timing'], shots: false, retry: 0, timeoutMin: 15, doneMark: DONE_DEFAULT, lowLoad: true });
       continue;
     }
+    if (f === 'forklift_polish.mjs') {
+      // 叉车打磨回归（FE1P，2026-11）：light（H8 车头顶墙大灯不透墙，量像素，算截图类）+ vine（H9 藤蔓贴着护顶 0–1 cm）一项；
+      // coop（H14 联机客机开车房主那边 lift 不往回掉，两页联机、内存假 room.php）另一项，有墙钟等待，失败了等负载降下来单独重跑真判
+      items.push({ name: 'forklift_polish', args: ['tests/forklift_polish.mjs', '--group', 'light,vine'], shots: true, retry: 0, retryAlone: 1, timeoutMin: 45, doneMark: DONE_DEFAULT });
+      items.push({ name: 'forklift_polish-coop', args: ['tests/forklift_polish.mjs', '--group', 'coop'], shots: false, retry: 0, lowRetry: true, timeoutMin: 30, doneMark: DONE_DEFAULT });
+      continue;
+    }
     if (f === 'forklift_l1.mjs') {
-      // L1 叉车数据与可动模型：--quick 只跑 10 个种子；本机有开工前的快照（tests/output/golden-tags/FE1-before/forklift_l1.json，gitignore）
-      // 就带 --against FE1-before 逐项比对，没有就只跑不依赖快照的检查（快照怎么重拍见 forklift_l1.mjs 文件头）
+      // L1 叉车数据与可动模型：--quick 只跑 10 个种子；本机有快照（tests/output/golden-tags/<标签>/forklift_l1.json，gitignore）就带 --against 逐项比对，
+      // 优先 FE1P-final（FE1Q J12：J2 出生块车改运行时车、J10 链轮 12 棱、J11 停着的车补面以后重拍的），没有再用开工前的 FE1-before；
+      // 都没有就只跑不依赖快照的检查（快照怎么重拍见 forklift_l1.mjs 文件头）
       const args = ['tests/forklift_l1.mjs'];
       if (QUICK) args.push('--quick');
-      if (fs.existsSync(path.join(TESTS, 'output', 'golden-tags', 'FE1-before', 'forklift_l1.json'))) args.push('--against', 'FE1-before');
+      const fl1Tag = ['FE1P-final', 'FE1-before'].find(t => fs.existsSync(path.join(TESTS, 'output', 'golden-tags', t, 'forklift_l1.json')));
+      if (fl1Tag) args.push('--against', fl1Tag);
       items.push({ name: 'forklift_l1', args, shots: false, retry: 0, timeoutMin: 25, doneMark: DONE_DEFAULT });
       continue;
     }
@@ -196,6 +211,15 @@ function lastMatch(text, re) {
   while ((m = g.exec(text))) r = m;
   return r;
 }
+// tests/mobile.mjs 的设备清单（DEVICES 的键，按跑的顺序）：mobile 超时以后挑出没跑完的设备低负载重跑用（返修 FE1Q · repair-r2）
+function mobileDevices() {
+  try {
+    const src = fs.readFileSync(path.join(ROOT, 'tests', 'mobile.mjs'), 'utf8');
+    const a = src.indexOf('const DEVICES = {'), b = src.indexOf('\n};', a);
+    if (a < 0 || b < 0) return [];
+    return [...src.slice(a, b).matchAll(/^\s+'?([\w-]+)'?:\s*\{/gm)].map(m => m[1]);
+  } catch (e) { return []; }
+}
 function parse(text) {
   let total = null, failed = null, errs = null, m;
   if ((m = lastMatch(text, /检查 (\d+) 项，(?:通过 \d+ 项，)?失败 (\d+) 项/))) { total = +m[1]; failed = +m[2]; }
@@ -277,7 +301,7 @@ async function main() {
   fs.mkdirSync(LOG_DIR, { recursive: true });
   let items = buildItems();
   if (arg('list', false)) {
-    for (const it of items) console.log(pad(it.name, 16) + ' node ' + it.args.join(' ') + (it.shots ? '   [截图类，--quick 跳过]' : '') + (it.retry ? '   [失败重跑 ' + it.retry + ' 次]' : '') + (it.retryAlone ? '   [失败等别的跑完单独重跑 ' + it.retryAlone + ' 次]' : '') + (it.lowRetry ? '   [失败等负载降下来单独重跑一遍真判]' : '') + (it.skipRetry ? '   [记 SKIP 的设备负载降下来补测]' : '') + (it.lowLoad ? '   [最后等负载降下来单独跑、真判]' : ''));
+    for (const it of items) console.log(pad(it.name, 16) + ' node ' + it.args.join(' ') + (it.shots ? '   [截图类，--quick 跳过]' : '') + (it.retry ? '   [失败重跑 ' + it.retry + ' 次]' : '') + (it.retryAlone ? '   [失败等别的跑完单独重跑 ' + it.retryAlone + ' 次]' : '') + (it.lowRetry ? '   [失败或记 SKIP 等负载降下来单独重跑一遍真判]' : '') + (it.skipRetry ? '   [记 SKIP 的设备负载降下来补测]' : '') + (it.lowLoad ? '   [最后等负载降下来单独跑、真判]' : ''));
     return;
   }
   const all = items.length;
@@ -329,10 +353,48 @@ async function main() {
           fs.renameSync(log, path.join(LOG_DIR, it.name + '.try1.log'));
           console.log(`${tag}  先记下（负载 ${os.loadavg()[0].toFixed(1)}），等别的项跑完、负载降下来单独重跑一遍真判`);
           lowQ.push({ i, args: it.args, why: '失败重跑' });
+        } else if (it.lowRetry && status === 'pass' && p.skips > 0) {
+          // 返修 FE1Q · repair-r3（验收员 tests：polish coop 的 C3（J13 靠它盯 H14）、coop 7 前提不成立时记 SKIP，机器忙时整组 SKIP、全量照样报「全部通过」）：
+          // 记了 SKIP 的 lowRetry 项也进低负载补测，整项重跑一遍、按补测真判；补测还记 SKIP 算失败（和 mobile 的 r14 规矩一样）
+          console.log(`${tag}  记了 ${p.skips} 项 SKIP（负载 ${os.loadavg()[0].toFixed(1)}，前提不成立、没真测到），等别的项跑完、负载降下来整项重跑一遍真判`);
+          lowQ.push({ i, args: it.args, why: '补 SKIP', strictSkip: true, whole: true });
         } else if (it.skipRetry && status === 'pass' && p.skips > 0) {
           const devs = [...new Set((r.text.match(/^\s*SKIP \[([^\]]+)\]/gm) || []).map(x => x.replace(/^\s*SKIP \[|\]$/g, '')))];
           console.log(`${tag}  记了 ${p.skips} 项 SKIP（${devs.join(' ')}），负载降下来以后只补这几台设备`);
           if (devs.length) lowQ.push({ i, args: it.args.concat([devs.join(',')]), why: '补 SKIP', strictSkip: true, first: { total: p.total, failed: p.failed } });
+        } else if (it.skipRetry && status === 'fail' && p.failed > 0 && !(p.errs > 0)) {
+          // 返修 FE1Q · repair-r1（验收员 tests：负载 ~40 时 mobile D11b 触摸拖动没滚起来判了 FAIL，全量把 mobile 记成失败、记 SKIP 的两台也不补测）：
+          // 挂了的和记了 SKIP 的那几台设备，负载降下来以后单独重跑，按重跑那一遍判（重跑里还有 FAIL / SKIP 都算失败）；别的设备首次的结果照旧
+          const devs = [...new Set((r.text.match(/^\s*(?:SKIP|FAIL) \[([^\]]+)\]/gm) || []).map(x => x.replace(/^\s*(?:SKIP|FAIL) \[|\]$/g, '')))];
+          if (devs.length) {
+            fs.renameSync(log, path.join(LOG_DIR, it.name + '.try1.log'));
+            console.log(`${tag}  ${p.failed} 项失败（${devs.join(' ')}，负载 ${os.loadavg()[0].toFixed(1)}），负载降下来以后只重跑这几台设备、按重跑真判`);
+            lowQ.push({ i, args: it.args.concat([devs.join(',')]), why: '失败设备重跑', strictSkip: true, redo: true, first: { total: p.total, failed: p.failed } });
+            rec.log = path.join(LOG_DIR, it.name + '.try1.log');
+            recs[i] = rec;
+            return;
+          }
+        } else if (it.skipRetry && status === 'timeout') {
+          // 返修 FE1Q · repair-r2（验收员 tests：负载 50–62 时 mobile 跑到 50 分钟超时，后面 4 台设备一项没跑、全被记成「流程未中断」FAIL，
+          // 超时又不进低负载补测，全量直接记成失败）：首次日志里跑完了、而且没有 FAIL / SKIP 的设备照旧算通过（日志里最后出现的那台可能
+          // 没跑完，不算）；其余设备（没跑到的、跑到一半被杀的、有 FAIL / SKIP 的）负载降下来以后单独重跑，按重跑那一遍判
+          const order = [], bad = new Set(), passN = new Map();
+          for (const m of r.text.matchAll(/^\s*(PASS|FAIL|SKIP) \[([^\]]+)\]/gm)) {
+            if (!order.includes(m[2])) order.push(m[2]);
+            if (m[1] !== 'PASS') bad.add(m[2]); else passN.set(m[2], (passN.get(m[2]) || 0) + 1);
+          }
+          const doneOk = order.slice(0, -1).filter(d => !bad.has(d));
+          const all = mobileDevices(), devs = (all.length ? all : order).filter(d => !doneOk.includes(d));
+          if (devs.length) {
+            fs.renameSync(log, path.join(LOG_DIR, it.name + '.try1.log'));
+            const keep = doneOk.reduce((a, d) => a + (passN.get(d) || 0), 0);
+            console.log(`${tag}  超时（负载 ${os.loadavg()[0].toFixed(1)}）：跑完的 ${doneOk.length} 台（${doneOk.join(' ') || '无'}，${keep} 项通过）照旧算；负载降下来以后重跑其余 ${devs.length} 台（${devs.join(' ')}）、按重跑真判`);
+            lowQ.push({ i, args: it.args.concat([devs.join(',')]), why: '超时没跑完的设备重跑', strictSkip: true, redo: true, keepPass: keep, first: { total: p.total, failed: p.failed } });
+            rec.log = path.join(LOG_DIR, it.name + '.try1.log');
+            rec.total = keep; rec.failed = 0;
+            recs[i] = rec;
+            return;
+          }
         } else if (/^forklift-/.test(it.name) && status === 'pass' && /^WARN page\.evaluate 超过 60 s/m.test(r.text)) {
           // 单次 page.evaluate 超过 60 s（返修 r6 裁定 ⑥ 的上限）：负载降下来以后带 --strict-timing 再跑一遍这一组，超过 60 s 就判失败
           console.log(`${tag}  有 page.evaluate 超过 60 s，负载降下来以后带 --strict-timing 再跑一遍真判`);
@@ -383,8 +445,14 @@ async function main() {
     if (q.strictSkip && p.skips > 0) status = 'fail';   // 低负载补测还记 SKIP：没真测到，算失败
     const prev = recs[q.i] || {};
     // 补 SKIP 的（返修 r14，验收员 tests）：补测里失败的和还记 SKIP 的都算进「失败」，表里的通过 / 总数跟着变；失败项日志指向补测那份（<名称>.low.log），不是首次那份
-    recs[q.i] = q.strictSkip
-      ? Object.assign({}, prev, { status, failed: (prev.failed || 0) + (p.failed || 0) + (p.skips > 0 ? p.skips : 0), errs: Math.max(prev.errs || 0, p.errs || 0), skips: p.skips, retried: true, log, firstLog: prev.log })
+    // redo（首次挂了的设备重跑）：首次的失败都出在重跑的这几台上，失败数按重跑那一遍算
+    // keepPass（超时以后只重跑没跑完的设备）：总数 = 首次跑完的设备通过的项 + 重跑那一遍的总数
+    // whole（lowRetry 项首次记了 SKIP，返修 FE1Q · repair-r3）：整项重跑，结果全按补测这一遍；补测还记 SKIP 的项数算进失败
+    recs[q.i] = q.whole
+      ? { name: it.name, status, code: r.code, ...p, failed: (p.failed || 0) + (p.skips > 0 ? p.skips : 0), ms: r.ms, retried: true, afterSummary: r.afterSummary, log, firstLog: prev.log }
+      : q.strictSkip
+      ? Object.assign({}, prev, { status, failed: (q.redo ? 0 : (prev.failed || 0)) + (p.failed || 0) + (p.skips > 0 ? p.skips : 0), errs: Math.max(prev.errs || 0, p.errs || 0), skips: p.skips, retried: true, log, firstLog: prev.log },
+        q.keepPass != null && p.total != null ? { total: q.keepPass + p.total } : {})
       : { name: it.name, status, code: r.code, ...p, ms: r.ms, retried: true, afterSummary: r.afterSummary, log };
     console.log(`[低负载补测] ${it.name}（${q.why}）  ${LABEL[status]}  ${p.total != null ? (p.total - (p.failed || 0)) + '/' + p.total : ''}${p.skips ? '  仍记 SKIP ' + p.skips + ' 项' : ''}  ${fmtMs(r.ms)}  → ${path.relative(ROOT, log)}`);
   }

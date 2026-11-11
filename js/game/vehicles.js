@@ -18,7 +18,9 @@
 // 升格（keyDecisions[0]）：停着、没人开过的叉车仍在区块网格里（几何、碰撞框、账面全不动，golden 不变）；第一次有人上车、或收到队友的位姿，
 //   才把区块里这台车的顶点段藏掉（kit.hideSpans，车下油渍不藏），改用全层共用的载具网格画它。开过的车状态写 levelState.vehicles，
 //   碰撞挂在 'veh|<车 key>#<部件>' 下整层常驻；网格只给玩家（联机加队友）R+1 块以内的车，走远了释放那一段（状态、碰撞留着）。
-//   出生保底车（data.runtime）不进区块几何：一载入就直接用载具网格画（高画质 mid、低画质 drvLow），油渍作为不随车动的一段。
+//   运行时车（data.runtime：出生保底车、L1 正常生成时出生块里的所有车（返修 FE1Q · J2，例如种子 12345 的 1@0,0#v0）、一块里按 lowb 都放不下的车
+//   （返修 FE1Q · repair-r3，工坊和非工坊一样；以前非工坊用只剩轮廓的 min 档停着）。两端画质不同时同一台车可能一边是运行时车、一边在区块里，各画各的）
+//   不进区块几何：一载入就直接用载具网格画（高画质 mid、低画质 drvLow），停着和开过是同一个网格；油渍作为不随车动的一段。
 // 细节档（keyDecisions[1]）：BR.L1forklift.driveTier(画质, 停放档)；本机没建过原区块的车按 mid（低画质 drvLow），磨损片数按 mid。
 // 碰撞（keyDecisions[2]）：14 个部件 OBB（geo.obbs(lift)）。停着的车 'cx,cz#v<i>#<部件>'（区块卸载时一起摘），开过的车 'veh|<key>#<部件>'。
 // 共用载具网格（keyDecisions[4]）：kit:prop / kit:glow / kit:decal 各一个网格（低画质没有贴花），不挂区块 group，共用 kit 材质；
@@ -39,8 +41,9 @@
 //   联机以房主为准：房主（单机）司机本机算、摆、写，再 coop.emit('fkthrow', { k, list, id, p, v0 }) 让客机照摆；客机司机 coop.use('k:'+车, 'fkthrow')
 //   请房主按房主那边货叉上的东西算，房主摆好、写好状态，回复和广播（同一个 id）客机谁先到用谁，晚到也照摆。
 //   id = 'h' + 房主页面载入时随机生成的一串 + ':' + 序号（房主刷新页面以后不会和以前的撞号；客机记着的编号开新局、回主页、联机连上时清空，返修 r11）。
-// 仪表台大灯开关（FE1 返修 r2，家长定的规则）：pose.hl（1 开 / 0 关，出厂开着），在载具网格里画一个开关（底板 + 拨杆 + 绿色指示灯，
-//   区块里停着的车不画、几何一点不动）。坐在车上准心对准它短按空格开 / 关（drive 情境只认这台车的开关，不加新键）；着车时大灯跟着开关，
+// 仪表台大灯开关（FE1 返修 r2，家长定的规则）：pose.hl（1 开 / 0 关，出厂开着），在载具网格里画一个开关（底板 + 拨杆 + 绿色指示灯）；
+//   区块里停着的 high / mid / lite 档也画同一个（FE1P H3：L1.js fkDashSwitch，拨杆扳在「开」、指示灯熄着，常量 FK_SW 和这里的 SW_* 逐个一样，
+//   tests/forklift_l1.mjs polish H3 拿 _switchGeo 逐个三角形比对）。坐在车上准心对准它短按空格开 / 关（drive 情境只认这台车的开关，不加新键）；着车时大灯跟着开关，
 //   关掉就撤掉灯池那一盏、灯罩和指示灯熄灭（world.lightAt 不再把司机算成被照亮）；手机上准心对着开关时「下车」键临时写成「开大灯 / 关大灯」，
 //   移开恢复「下车」。开关状态写进 levelState.vehicles.hl（离开再回来保留），联机经 coop.hand 的第 10 个值同步（vehicles_net）。
 //
@@ -148,7 +151,9 @@ const PB = { body: 1, mastOuter: 2, wheelsFront: 4, wheelRearL: 8, wheelRearR: 1
   lightSwitch: 2048, lightToggle: 4096 };
 const ALL_PARTS = 8191;
 // ---- 仪表台大灯开关（FE1 返修 r2，家长定的规则）----
-// 只在载具网格里画（开过的车、保底车）：区块里停着的车几何一点不动（golden 零变化）。位置在仪表台斜面左半边（方向盘左下方，
+// 载具网格里画（开过的车、保底车）；区块里停着的 high / mid / lite 档由 L1.js fkDashSwitch 画同一份（FE1P H3，主会话裁定：停着的车也有开关，
+// 拨杆扳在出厂的「开」、指示灯熄着，上车发动以后换成这里画的、指示灯跟大灯一起亮）。改这里的位置、大小、颜色必须同步 L1.js 的 FK_SW ——
+// tests/forklift_l1.mjs polish H3 用 _switchGeo 和 BR.L1forklift.dashSwitch 逐个三角形比对。位置在仪表台斜面左半边（方向盘左下方，
 // 右边是操纵杆）：L1.js fkBody 的斜面下沿 (y 0.86, z −0.56)、上沿 (y 1.02, z −0.66)，slant(x, f, off) 和那里同一套写法。
 // 一块深色底板（离斜面 8 mm，不和仪表板 3 mm、表盘 6 mm 共面）+ 一根镀铬拨杆（开 = 往上扳、关 = 往下扳，绕底板中心的 x 轴转 ±0.5 rad）
 // + 拨杆上方一颗绿色指示灯（kit:glow：发动机开着、开关开着才亮，和大灯一起）+ 拨杆下方一个浅色的小灯头图标
@@ -813,13 +818,13 @@ function quadC(b, mk, c, u, v, col) {
     [c[0] + u[0] + v[0], c[1] + u[1] + v[1], c[2] + u[2] + v[2]], [c[0] - u[0] + v[0], c[1] - u[1] + v[1], c[2] - u[2] + v[2]], mk, { color: col, uv: 'solid' });
 }
 // 一个小方块：中心 c，沿 X / T / N 的半边长 hx / ht / hn；faces 里没有 '-n' 时底面不画（贴着的那面）
-function boxTN(b, c, hx, ht, hn, col, noBottom) {
+function boxTN(b, c, hx, ht, hn, col, noBottom, noTop) {
   const X = SW_AX, T3 = SW_T, N3 = SW_N;
   quadC(b, 'kit:prop', v3(c, X, hx), sc(T3, ht), sc(N3, hn), col);    // +X（T × N = X）
   quadC(b, 'kit:prop', v3(c, X, -hx), sc(N3, hn), sc(T3, ht), col);   // −X
   quadC(b, 'kit:prop', v3(c, T3, ht), sc(N3, hn), sc(X, hx), col);    // +T（N × X = T）
   quadC(b, 'kit:prop', v3(c, T3, -ht), sc(X, hx), sc(N3, hn), col);   // −T
-  quadC(b, 'kit:prop', v3(c, N3, hn), sc(X, hx), sc(T3, ht), col);    // +N（X × T = N）
+  if (!noTop) quadC(b, 'kit:prop', v3(c, N3, hn), sc(X, hx), sc(T3, ht), col);    // +N（X × T = N）
   if (!noBottom) quadC(b, 'kit:prop', v3(c, N3, -hn), sc(T3, ht), sc(X, hx), col);
 }
 function buildSwitch(b, part) {
@@ -838,7 +843,7 @@ function buildSwitch(b, part) {
   }
   // 拨杆：从底板中心沿法线伸出 3.2 cm 的方杆 + 黑色杆头（中位；开 = 往上扳，关 = 往下扳）
   const L = 0.032;
-  boxTN(b, v3(SW_PIVOT, N3, L / 2), 0.0045, 0.0045, L / 2, SW_COL.bat, true);
+  boxTN(b, v3(SW_PIVOT, N3, L / 2), 0.0045, 0.0045, L / 2, SW_COL.bat, true, true);   // 拨杆顶面插在杆头里看不见，不画（FE1Q · J10 腾面；L1.js fkDashSwitch 同一份）
   boxTN(b, v3(SW_PIVOT, N3, L), 0.007, 0.007, 0.006, SW_COL.knob, false);
 }
 
@@ -2187,12 +2192,20 @@ function footShape(it) {
   return m > 0 && fin(m) ? Math.sqrt(m) : null;
 }
 function footMeasure(it) { const f = footShape(it); return f != null ? f : footOfObj(it.obj); }
+// 物资模型里算实物的网格（FE1P H6）：光晕、发光体（物资 build 时标 userData.glow：火盐的光晕球、瓶装闪电的闪电和瓶内光晕）不是实物 ——
+// 量外形（摆货叉、甩货、车推、查穿模）、质心都不算它们，和 items.rest（放得稳的静止姿态）同一个口径（items.solidMesh）
+function solidPart(n) {
+  const I = BR.items;
+  if (I && has(I, 'solidMesh')) return I.solidMesh(n);
+  return !!(n && n.isMesh) && !(n.userData && n.userData.glow);
+}
 function footOfObj(obj) {
   if (!obj || typeof obj.traverse !== 'function' || !obj.matrixWorld) return null;
   try { obj.updateMatrixWorld(true); } catch (err) { return null; }
   const o = obj.matrixWorld.elements, ox = o[12], oz = o[14];
   let m = -1;
   obj.traverse(n => {
+    if (!solidPart(n)) return;
     const pos = n && n.isMesh && n.geometry && n.geometry.attributes ? n.geometry.attributes.position : null;
     if (!pos || !n.matrixWorld || typeof pos.getX !== 'function') return;
     const e = n.matrixWorld.elements;
@@ -2268,7 +2281,8 @@ const ES_N = 16, ES_PAD = 0.002;   // 托着它的那一截随倾斜变化的表
 
 // ---- 物资的外形（按类型量一次，模型自己的坐标系）----
 // { V 顶点, E 边（顶点下标两两一对）, P 查碰撞的点（顶点 + 边上每 2 cm 一点，3 mm 去重）, sl 每 1 cm 一层的水平截面凸包（半平面 [nx, nz, d]…，
-//   点在里面 ⟺ 每条都 nx·x + nz·z ≤ d）, y0 / y1 竖直范围, bb 包围盒 [x0, x1, y0, y1, z0, z1] }；量不到模型 null
+//   点在里面 ⟺ 每条都 nx·x + nz·z ≤ d）, y0 / y1 竖直范围, bb 包围盒 [x0, x1, y0, y1, z0, z1] }；量不到模型 null。
+//   只量实物网格（solidPart，FE1P H6：火盐的光晕球、瓶装闪电的闪电和光晕不算，光晕可以和叉面、地面、墙交叠）
 const typeShapes = new Map();
 function hull2(pts) {
   const n = pts.length / 2;
@@ -2316,6 +2330,7 @@ function typeShape(it) {
     const inv = new THREE.Matrix4().copy(obj.matrixWorld).invert(), M = new THREE.Matrix4(), v = new THREE.Vector3();
     const V = [], E = [], Tr = [];
     obj.traverse(n => {
+      if (!solidPart(n)) return;   // 光晕、发光体不是实物（FE1P H6）
       const g = n && n.isMesh && n.geometry, pos = g && g.attributes && g.attributes.position;
       if (!pos || typeof pos.getX !== 'function') return;
       M.multiplyMatrices(inv, n.matrixWorld);
@@ -2563,10 +2578,11 @@ function throwScene(veh, pose, xLo, xHi, zLo) {
 // Tr = 这一排停下的时刻（水平位置按 σ(t) = 1 − (1 − t/Tr)² 走：整排匀减速），onFork = 1 留在叉上（滑完挂回货叉），H = 模型包围盒高（返修 r11），
 // gz / gy = 看得见的重心（模型三角面按面积加权的质心）离 C 往车尾多远、比底面高多少（返修 r12 裁定 C；对方旧版没有就按 0、H/2 —— 包围盒中心）。
 // mode（这一段怎么走，记在这一段的终点上）：0 贴着叉面 / 地面滑；1 竖直从静止往下掉（对方旧版只给落点时用）；
-//   2 翻下叉尖（一直真的碰着货叉：靠着叉尖那条棱或叉面上的点转，碰不着时按重力落）：关键帧多带 [θ 表, 落差表]（这一段 w = 0…1 等分 16 份时的倾斜、C 往下掉了多少，
-//     房主按模型真实的底面算好的；见 pivotRun）；对方旧版没给表时按「底面所在的平面贴着那条棱」：竖直从静止往下掉（w²）、θ = atan(落差 / 离起点水平走了多远）；
+//   2 翻下叉尖（一直真的碰着货叉：靠着叉尖那条棱或叉面上的点转，碰不着时按重力落）：关键帧多带 [θ 表, 落差表]（这一段 w = 0…1 等分若干份时的倾斜、C 往下掉了多少，
+//     房主按模型真实的底面算好的；返修 r14 起翻下叉尖那段按碰着 / 离开货叉切成几段，每段按时长等分 4–PV_N 份，见 pivotRun 的 segs）；对方旧版没给表时按「底面所在的平面贴着那条棱」：竖直从静止往下掉（w²）、θ = atan(落差 / 离起点水平走了多远）；
 //   3 整件离开货叉以后：倾斜从上一段末了的 θa 起 θa·(1 + κw)(1 − w)²（先接着歪一点再回正，落地时直立；κ 按上一段末了倾斜得多快接上，
-//     最多 THROW_KAPPA_MAX）；竖直是看得见的重心按重力落（重心高度 = 起点 − c1·w − c2·w²，c2 = ½g·T²），C 跟着倾斜在它下面。
+//     最多 THROW_KAPPA_MAX）；竖直是看得见的重心按重力落（重心高度 = 起点 − c1·w − c2·w²：c1 = 上一段末了画出来的重心竖直速度 × T，c2 = 落差 − c1 ≈ ½g·T²，
+//     FE1P H13 起两段接上的那一刻竖直速度连续），C 跟着倾斜在它下面。
 // 水平：有 Tr 时每一段都按 σ 走（整排同速），没有（老轨迹）按 w 线性。写进 out = [x, y, z, θ, nx, nz]（n = 往哪边倾斜的水平单位向量）
 function sig(T, t) { const u = clamp(t / T, 0, 1); return 1 - (1 - u) * (1 - u); }
 const tmpPv = [0, 0, 0, 0, 0, 0];
@@ -2598,31 +2614,36 @@ function segAt(P, k, w, out) {
   }
   if (m === 3) {
     // 离开货叉以后：倾斜从 θa（翻下叉尖那一段末了）接着它的转速平滑回到 0；看得见的重心（质心，离 C (gz, gy)、跟着倾斜转）按重力落。
-    // 重心的落差 Dc = D + gy·(cos θa − 1) + gz·sin θa；out[1]（直立时的原点高）= 重心高 − (gy·cos θ + gz·sin θ) + lift，两头正好接上 a、b 两个关键帧
+    // 重心的落差 Dc = D + gy·(cos θa − 1) + gz·sin θa；out[1]（直立时的原点高）= 重心高 − (gy·cos θ + gz·sin θ) + lift，两头正好接上 a、b 两个关键帧。
+    // 重心落差 = c1·w + c2·w²：c1 接着上一段（翻下叉尖）末了画出来的重心竖直速度（FE1P H13，验收员 r15：3.9 m/s PTG-B 在 mode 2 → 3 那一刻竖直速度差 1–2 cm/s ——
+    // 以前按 c2 = ½g·Tf² 定，计划里的速度和两张表插出来的速度差一点、关键帧时刻又取整到 0.1 ms，接上的地方速度就断一下）；c2 = Dc − c1，加速度 2·c2/Tf² 和 g 只差取整那一点
     const Tf = b[0] - a[0], D = a[2] - b[2], G = pathG(P), gz = G[0], gy = G[1];
-    let tha = 0, th = 0;
+    let tha = 0, th = 0, vc = NaN;
     if (k >= 2 && (a[4] | 0) === 2) {
-      // θa、κ 只和上一段有关：每条轨迹每段算一次记在轨迹上（甩货计划里 pairHit / sampleFall 每 1/300 s 要算一遍）
+      // θa、κ、上一段末了重心往下多快 vc（每秒）只和上一段有关：每条轨迹每段算一次记在轨迹上（甩货计划里 pairHit / sampleFall 每 1/300 s 要算一遍）
       let c3 = P.c3 && P.c3[k];
       if (!c3) {
         segAt(P, k - 1, 1, tmpPv);
-        const t1 = tmpPv[3];
+        const t1 = tmpPv[3], Tp = Math.max(1e-6, a[0] - P[k - 2][0]);
         let kap = 2;
         if (t1 > 1e-5) {
           segAt(P, k - 1, 0.99, tmpPv);
-          const dth = (t1 - tmpPv[3]) / (0.01 * Math.max(1e-6, a[0] - P[k - 2][0]));   // 上一段末了每秒倾斜多少
+          const dth = (t1 - tmpPv[3]) / (0.01 * Tp);   // 上一段末了每秒倾斜多少
           kap = clamp(2 + dth * Tf / t1, 2, THROW_KAPPA_MAX);
         }
-        c3 = [t1 > 1e-5 ? t1 : 0, kap];
+        const cy = q => { segAt(P, k - 1, q, tmpPv); return tmpPv[1] + gy * Math.cos(tmpPv[3]) + gz * Math.sin(tmpPv[3]); }, e = 0.002;
+        const v1 = -(3 * cy(1) - 4 * cy(1 - e) + cy(1 - 2 * e)) / (2 * e * Tp);
+        c3 = [t1 > 1e-5 ? t1 : 0, kap, fin(v1) ? v1 : NaN];
         (P.c3 || (P.c3 = {}))[k] = c3;
       }
-      tha = c3[0];
+      tha = c3[0]; vc = c3[2];
       if (tha > 0) th = Math.max(0, tha * (1 + c3[1] * w) * (1 - w) * (1 - w));
     }
     out[3] = th;
     const Dc = D + gy * (Math.cos(tha) - 1) + gz * Math.sin(tha);
     let c2 = 0.5 * FALL_G * Tf * Tf;
-    if (!(Dc > 0) || c2 > Dc) c2 = Math.max(0, Dc);
+    if (vc === vc && Dc > 0) c2 = Dc - clamp(vc * Tf, 0, Dc);
+    else if (!(Dc > 0) || c2 > Dc) c2 = Math.max(0, Dc);
     out[1] = a[2] + gy * (Math.cos(tha) - Math.cos(th)) + gz * (Math.sin(tha) - Math.sin(th)) - (Dc - c2) * w - c2 * w * w;
     return out;
   }
@@ -2902,9 +2923,12 @@ LGat.zc = 0;
 // PTG-B 尾部又碰上叉尖那一下的减速被摊到前一个点开始，离叉尖还有 4–8 mm 就慢下来了）：每段在自己里面等分，速度突变正好落在段与段之间。
 // 轨迹最多 8 个关键帧，翻下叉尖那段最多切 PV_SPLIT 刀：先切重心竖直速度突变大的（又碰上、换边），再切离开；整段按 PV_N 等分的密度分给各段
 const PV_N = 32, PV_SPLIT = 3, PV_MIN_SEG = 0.0005;
+// 交出去的 vG（离开货叉那一刻重心往下多快，mode 3 从它接着按重力落）按「1 ms 记录的那串位置」的导数给（FE1P H13，验收员 r15：3.9 m/s PTG-B 在 mode 2 → 3
+// 那一刻竖直速度差约 5 mm/s）：半隐式欧拉每步先加速度后挪位置，位置串的斜率比这一步末了的 v 大半步的速度变化（自由落体 ½g·dt ≈ 4.9 mm/s），
+// mode 2 的表是按位置串插的，mode 3 以前从 v 接着落，那一帧速度就小了一截。按 v + ½·(这一步的速度变化) 交出去，两边接上
 function pivotRun(I, sf, tA, Tr, gc, cap) {
   const dt = 0.001, g = I.g, H = [0], TH = [0], DC = [0], EV = [], k2 = Math.max(1e-5, num(I.k2, 0.002));
-  let dG = 0, vG = 0, th = 0, om = 0, touch = true, side = 0, pDiff = (sf(tA) - I.sC) - esAt(I, 0);
+  let dG = 0, vG = 0, vP = 0, th = 0, om = 0, touch = true, side = 0, pDiff = (sf(tA) - I.sC) - esAt(I, 0);
   for (let tau = dt; tA + tau <= Tr + 1e-9; tau += dt) {
     const a = sf(tA + tau) - I.sC, pth = th;
     let nd, nv;
@@ -2913,7 +2937,7 @@ function pivotRun(I, sf, tA, Tr, gc, cap) {
     if (touch) {
       // 绕碰着的那一点转：力臂 = 碰着的那一点 − 重心（水平，往车尾为正 → 往前栽）
       const L0 = LGat(I, th, a);
-      if (L0 !== L0) return finishPivot(H, TH, DC, Math.max(0.001, tau - dt), th, DC[DC.length - 1], gc, dG, vG, om, EV);
+      if (L0 !== L0) return finishPivot(H, TH, DC, Math.max(0.001, tau - dt), th, DC[DC.length - 1], gc, dG, vG + 0.5 * (vG - vP), om, EV);
       const c = Math.cos(th), sn = Math.sin(th), gX = g[2] * c - g[1] * sn, gY = g[1] * c + g[2] * sn, cY = L0 - g[1] * (1 - c) + g[2] * sn;   // C 落了多少 = 碰着的那一点比 C 高多少
       const x = LGat.zc - gX, r2 = x * x + (gY - cY) * (gY - cY), sd = x > 1e-4 ? 1 : x < -1e-4 ? -1 : side;
       if (side && sd && sd !== side) { om = 0; EV.push([H[H.length - 1], 3, -1]); }   // 碰着的那一点换到重心另一边：同时搁在两处，不再转（速度突变多大这一步末了再记）
@@ -2923,7 +2947,7 @@ function pivotRun(I, sf, tA, Tr, gc, cap) {
       if (th <= 0 && om < 0) om = 0;   // 往回转到静止姿态就停住（叉面托着，不会比静止时还往后仰）
       if (th > cap + 1e-9) return { over: true };
       const lv = LGat(I, th, a);
-      if (lv !== lv) return finishPivot(H, TH, DC, Math.max(0.001, tau - dt), pth, DC[DC.length - 1], gc, dG, vG, om, EV);
+      if (lv !== lv) return finishPivot(H, TH, DC, Math.max(0.001, tau - dt), pth, DC[DC.length - 1], gc, dG, vG + 0.5 * (vG - vP), om, EV);
       if (lv > dF + 1e-7) { nd = dF; nv = vG + FALL_G * dt; touch = false; EV.push([H[H.length - 1], 1, 0]); }   // 贴着货叉得比自由落体落得还快：离开货叉（按 g 自由落、接着转）
       else { nd = Math.max(dG, lv); nv = (nd - dG) / dt; }
     } else {
@@ -2932,7 +2956,7 @@ function pivotRun(I, sf, tA, Tr, gc, cap) {
       th = clamp(th + om * dt, 0, Math.max(cap, th));
       nd = dF; nv = vG + FALL_G * dt;
       const lv = LGat(I, th, a);
-      if (lv !== lv) return finishPivot(H, TH, DC, Math.max(0.001, tau - dt), th, DC[DC.length - 1], gc, dG, vG, om, EV);
+      if (lv !== lv) return finishPivot(H, TH, DC, Math.max(0.001, tau - dt), th, DC[DC.length - 1], gc, dG, vG + 0.5 * (vG - vP), om, EV);
       if (lv < nd) { nd = Math.max(dG, lv); nv = (nd - dG) / dt; om = 0; touch = true; side = 0; EV.push([H[H.length - 1], 2, -1]); }   // 又碰上货叉：贴上去，不弹
     }
     const c = Math.cos(th), dC = nd - g[1] * (1 - c) + g[2] * Math.sin(th);
@@ -2940,10 +2964,10 @@ function pivotRun(I, sf, tA, Tr, gc, cap) {
     const diff = a - esAt(I, th) * c;
     if (diff >= 0) {
       const f = pDiff < 0 ? -pDiff / (diff - pDiff) : 1, t1 = tau - dt + dt * f;
-      return finishPivot(H, TH, DC, Math.max(0.001, t1), pth + (th - pth) * f, DC[DC.length - 1] + (dC - DC[DC.length - 1]) * f, gc, dG + (nd - dG) * f, vG + (nv - vG) * f, om, EV);
+      return finishPivot(H, TH, DC, Math.max(0.001, t1), pth + (th - pth) * f, DC[DC.length - 1] + (dC - DC[DC.length - 1]) * f, gc, dG + (nd - dG) * f, vG + (nv - vG) * (f + 0.5), om, EV);
     }
     H.push(tau); TH.push(th); DC.push(dC);
-    dG = nd; vG = nv; pDiff = diff;
+    vP = vG; dG = nd; vG = nv; pDiff = diff;
   }
   return null;
 }
@@ -3887,6 +3911,7 @@ function placeLight(veh, init) {
     L.x = s.x; L.z = s.z; L.y = fin(s.y) ? s.y : veh.pose.y + 1;
     let dirty = false;
     for (const k of ['range', 'intensity', 'color', 'decay']) if (s[k] != null && s[k] !== L[k]) { L[k] = s[k]; dirty = true; }
+    // world.lightAt 按画面上这盏灯的 range / intensity 算（FE1Q J8），驾驶舱另问 sim.litSeat
     if (dirty && !init && S.lightOwner && has(BR.world, 'setExtraLights')) BR.world.setExtraLights(S.lightOwner, [L]);
     return;
   }
@@ -4136,6 +4161,33 @@ function _step(dt, inp, key) {
   return Object.assign({}, veh.pose);
 }
 
+// 测试口（只读，FE1P H3）：载具层画的仪表台大灯开关，拨杆按 hl（缺省 1 = 开）转好，车本地坐标的三角形
+// [[x0, y0, z0, x1, y1, z1, x2, y2, z2, 材质, r, g, b], …]（和 L1.js dashSwitch 比对：几何逐个一样，只有指示灯在 kit:glow、颜色是亮着的绿）
+function _switchGeo(hl) {
+  if (!BR.kit || !has(BR.kit, 'builder')) return null;
+  const out = [], M = mRot(new Float64Array(12), 1, 0, 0, hl === 0 ? SW_ANG : -SW_ANG, SW_PIVOT[0], SW_PIVOT[1], SW_PIVOT[2]);
+  for (const part of ['lightSwitch', 'lightToggle']) {
+    const b = newBuilder();
+    buildSwitch(b, part);
+    b._accs.forEach((a, mk) => {
+      if (typeof mk !== 'string' || !a || !a.idx) return;
+      for (let i = 0; i < a.idx.length; i += 3) {
+        const t = [];
+        for (let j = 0; j < 3; j++) {
+          const v = a.idx[i + j], x = a.pos[v * 3], y = a.pos[v * 3 + 1], z = a.pos[v * 3 + 2];
+          if (part === 'lightToggle') t.push(M[0] * x + M[1] * y + M[2] * z + M[9], M[3] * x + M[4] * y + M[5] * z + M[10], M[6] * x + M[7] * y + M[8] * z + M[11]);
+          else t.push(x, y, z);
+        }
+        const v0 = a.idx[i], c = a.col || a.color;
+        t.push(mk);
+        if (c && c.length >= (v0 + 1) * 3) t.push(c[v0 * 3], c[v0 * 3 + 1], c[v0 * 3 + 2]);
+        out.push(t);
+      }
+    });
+  }
+  return out;
+}
+
 // ---------- 注册 ----------
 if (BR.interact && has(BR.interact, 'addSource')) {
   BR.interact.addSource('vehicles', vehSource);
@@ -4159,7 +4211,7 @@ BR.vehicles = {
   list, byKey, mount, dismount, forceExit, cabFor, chestOf, seatWorld, dropSurface, attachItem, setPose,
   footOf: it => footRaw(it),   // 物资模型离它竖直转轴最远的水平距离（按类型量一次；forklift.js 在车旁找空地时用）
   footPoly,                    // 物资在地上的水平外形（世界坐标凸包）和竖直范围（forklift.js 推地上物资按它，返修 r10）
-  update, applyChunk, unloadChunk, clear, debugInfo, _step,
+  update, applyChunk, unloadChunk, clear, debugInfo, _step, _switchGeo,
   lightSwitch, toggleLight,
   headlightLit: seatLit,   // 本机坐着的车大灯正亮着（L1 断电提示用）
   get seated() { return S.seated; },

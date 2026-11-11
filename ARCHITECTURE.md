@@ -211,7 +211,12 @@ api = {
   moveToward(e, x, z, speed) // 带碰撞的移动，返回是否到达
   wander(e, speed)
   flee(e, x, z, speed)
-  attack(e, target)          // 处理冷却、伤害、san；游玩模式下对玩家自动无效
+  attack(e, target, onLand?) // 起手：定冷却、正对目标、排挥臂，返回 true = 起手了（FE1P H11）；扣血 / 扣 san 在起手后 STRIKE_HIT_K（0.38）个冷却周期
+                             // = 胳膊挥到最前那一帧才结算，那一刻目标已跑出 攻击距离 + 人的半径 + STRIKE_SLACK（0.15 m）、视线被挡、canAttack 不过就算没打中；
+                             // 抡的这一下里实体不想事，但脚下接着扑（返修 r1）：每帧正对目标，按起手前 3 s 内最近一次 moveToward / flee 的速度
+                             // （没有就 def.speed.run）往追击点挪，挪到离目标「攻击距离 − LUNGE_IN（0.15 m）」为止，被墙、车身挡住就贴着滑；
+                             // onLand(e, t, api) 只在打中那一刻调；游玩模式下对玩家自动无效
+  attackStart(e) / swinging(e) // 这一下起手的时刻（秒）| null；正在抡（起手了还没结算）
   lightAt(x, z)              // 0..1，附近光照强度
   playerNoise()              // 0..1，玩家当前噪音（冲刺更大）
 }
@@ -475,7 +480,7 @@ BR.player = {
 - 每个 UI 模块的根节点带自己的 class 前缀（`home-`、`hud-`、`death-`、`coop-`、`tent-`、`touch-`），CSS 只写带前缀的选择器。
 - z-index：画布 0，gfx 低 san 覆盖 10，touch 控件 20，HUD 30，说话角标 35，gfx 闪屏 40，主页 50，测试面板 52，**帐篷选单 54**，gfx 淡入淡出 55，**黑幕 56**（`BR.hud.curtain`），工坊 / 设置 58，结算/暂停 60，**横幅 65**（`BR.hud.notice`），皮肤色板 70，**「回去？」卡片 78**（主页上的 rejoin 卡片 `.coop-rejoin`，css/coop.css），联机弹窗 80，toast 90。
   联机营地（N1）新增的三层：54 帐篷选单在黑幕下面，出发时黑幕盖住选单；56 黑幕在 gfx 淡入淡出（55）之上、暂停和结算（60）之下；65 横幅（「「小明」想回营地」、重连、落单）在暂停和结算之上、皮肤色板（70）之下，暂停、结算、黑幕时都看得见。css/game.css 顶部注释写着同一张表。
-  矮横屏（高 ≤ 520）toast 在右上角，和横幅同一高度带：横幅开着时 hud.js 量横幅底边，toast 排到它下面 8px（`.hud-toasts-below`）。
+  矮横屏（高 ≤ 520）toast 在右上角，和横幅同一高度带：横幅开着时 hud.js 量横幅底边，toast 排到它下面 8px（`.hud-toasts-below`）；站着时那一列压到触屏键 / 实体键 / 准心提示就改成往上长（FE1Q J5，见 BR.hud 的 toast 那几条）。
 - 手机端：点击目标 ≥ 44px；尊重 `env(safe-area-inset-*)`；文字 ≥ 12px。
 
 ## 12. 各模块公开 API（并行开发以此为准）
@@ -642,6 +647,11 @@ nearest(x, z, maxDist): pickup | null
 pick(id, by): bool                     by = 'me' | 'peer'；进背包并从场景移除
 update(dt)
 list
+rest(type) → { rx, rz, bot, com, hull, inset }   放得稳的静止姿态（见 15.8）；只按实物网格算（FE1P H6）
+solidMesh(n) → bool                    n 是网格并且没有 userData.glow 才算实物（FE1P H6）：物资 build 时给光晕、发光体标 mesh.userData.glow = true
+                                       （火盐的光晕球、瓶装闪电的闪电和瓶内光晕；clone 会带上）；静止姿态、vehicles.js typeShape / footOfObj、测试的 F.solid 都按它判，
+                                       准心命中球、items.info 的包围盒照旧按整个模型
+floorLift(id) → 米                     静静躺着的 = −rest(type).bot（最低顶点比原点高时是负的、原点放在地面下面一点，FE1P H13；那时立着的糖果袋是 −2.5 mm，返修 r1 起糖果袋倒平、是 +32.5 mm，现在没有物资是负的）、浮着的 0
 ```
 
 ### BR.world（js/game/world.js）
@@ -650,7 +660,11 @@ start(levelId, seed): Promise          清场、载入出生点周围区块、�
 goTo(levelId, via?): Promise           淡出 → 换层 → 淡入
 update(dt)                             流式加载/卸载、出口检测、level.update
 current; levelSeed; chunkArea
-lightAt(x, z): 0..1
+lightAt(x, z): 0..1                    额外光源（叉车大灯）那部分按画面上那盏灯（收过的 range、补过的 intensity）算，衰减和 gfx 一样 (1 − d/range)²，
+                                       d = 光源到「站在 (x, z) 的人」（离地 0–1.8 m 那段竖线）最近的距离（FE1Q J8：和画面一致，被墙 / 货架收短的地方不算亮）；
+                                       owner 'fk:<key>' / 'fkr:<key>' 并且 BR.forklift.byKey 找得到模拟的（光球已经按墙、货架收过）不再看视线（画面没有影子），
+                                       再和 sim.litSeat(x, z) 取大的 —— 车灯开着时驾驶舱矩形里固定 ≈0.338（保住「开着车灯怪不敢靠近司机」，断电时座位 0.40 → 0.74）；
+                                       别的额外光源照旧从光源到 (x, z) 看视线（extraSees(L, owner, x, z, d, gy)）
 clear()
 chunkCoordsAt(x, z): { cx, cz }        chunkBounds(cx, cz): { minX, minZ, maxX, maxZ }
 chunkAt(x, z): 区块记录 | null          chunks(): 全部已载入区块记录；exits(): 已载入出口描述（记录只读）
@@ -671,7 +685,9 @@ setExtraLights(owner, list | null) → bool
                                        额外光源（FE1：开着的叉车前大灯，owner 'fk:' + 车 key）：整组替换，null / 空数组 = 撤掉；并进 pushLights 交给
                                        gfx 的灯池，和区块灯一样按离相机的距离挑（最多 maxDynamicLights 盏真光，层级不自己建 PointLight）。
                                        光源 { x, y, z, color, intensity, range, decay?, flicker? }（世界坐标）由调用方持有、每帧直接改 x / y / z，gfx 每帧跟随；
-                                       颜色、强度、range 变了要再调一次。工坊的 lightTransform 照样套；lightAt 也算上它们；换层、回主页整个清空
+                                       颜色、强度、range 变了要再调一次。工坊的 lightTransform 照样套；lightAt 也算上它们；换层、回主页整个清空。
+                                       FE1P H8：层在的时候马上 pushLights（同一帧灯池就换上新的 range、强度，车开向墙时不会有一帧光球伸到墙后）；
+                                       FE1Q J8 起光源不再带 litRange / litIntensity（lightAt 按画面上的 range / intensity 算）
 ```
 - 区块状态模块表（`applyChunkState` / `unloadChunkState`）：`['containers', 'devices', 'vehicles', 'cargo']`，不存在的模块自动跳过（cargo 是 FE2 的）。
   `BR[m].applyChunk(c, st)` 必须幂等，`st` 为 null 表示本层没有记录（或工坊编辑态）；调用时机在 setupProps 登记完碰撞体（含 kit fixture 的 skey，例如停着的叉车 `'cx,cz#v<i>'`）、
@@ -689,6 +705,14 @@ A.fx.vanish(e, { sec }?) / A.fx.appear(e, { sec }?)   写 e.state = 'vanish' / '
 A.fx.update(e, dt)                     自己写 animate、没用 def.anim 的实体手动推进淡出淡入
 A.fx.burst(x, y, z, { color | [colors], count=24, speed, life, gravity, drag, up, spread, floor, flash=true, radius, flashSec }?): 实际发出的粒子数
 A.fx.clear()   A.fx.debugInfo(): { particles, particleCap, poolMax, points, clones }
+A.melee(e, api, t, onLand?)            近战骨架（FE1P H11 起第 4 个参数 onLand）：只起手，onLand（骨架选项 onAttack）在胳膊抡到最前、真打中那一刻才调
+A.anim.strikeCurve / STRIKE_PEAK（0.38）/ strikePhase(e, api, t, u, cd)   抡胳膊的曲线、峰值（= entities 的 STRIKE_HIT_K）；相位从 api.attackStart(e) 算，
+                                       客机没有起手时刻照旧按 stateAt 循环；抡完一轮停在收回的姿势，不空抡。FE1Q J1：smiler.js 的脸部放大也按 strikePhase / strikeCurve，
+                                       onAttack 作为 onLand 交给 A.melee —— 笑魇鼓脸鼓到最大那一帧正好扣血（tests/infection.mjs h7，偏差 0 帧）
+A.parts.hazmat(ctx, { color, detail })  程序化防化服（坐车队友、窃皮者伪装）：FE1P H10 起手套 / 靴子 / 面具颜色和 hazmat.glb 一样，换皮肤只换制服（见 15.7）；
+                                       FE1Q J7 起低画质的面罩框、滤罐、手套、靴子也按顶点色上成 glb 的颜色（hazPal().low），面数、槽位、draw call 不变；
+                                       FE1Q repair-r1 起面罩、滤罐、靴子的形状也照 glb（hzMask：椭球脸罩 HZ_MASK + 目镜带 + 呼气阀 + 两侧圆滤罐；hzBoot：0.365 m 高筒靴 + 圆靴头），
+                                       几何键 hazmat_lite_v4，高 2400 / 低 768 面；tests/smoke.mjs 量脸罩、滤罐、靴子包围盒和 glb 相差 ≤15%
 ```
 
 ### BR.entities（js/game/entities.js）
@@ -708,7 +732,10 @@ isHuman(target): bool                  本机玩家，或 def.human === true 的
 ```
 - **坐在车上的玩家**（FE1 叉车；本机或联机队友，`BR.vehicles.cabFor(玩家)` 给出驾驶舱矩形）：视线目标点 = `BR.vehicles.chestOf(玩家)`（护顶四周是空的，从车侧、车尾看得见坐着的人）；
   追击目标点 = 车身左右两侧（驾驶舱那一段，z ∈ [−0.5, 0.55]）和车尾外沿上离怪最近的一点，往外让出怪的半径；攻击距离量到驾驶舱矩形，货叉不算 ——
-  货叉尖前面的怪够不着，会绕到车侧或车尾（叉车不是安全屋）。spawnForChunk 和实体表一行没改（golden 的实体落点靠它）。
+  货叉尖前面的怪够不着，会绕到车侧或车尾（叉车不是安全屋）。FE1P H11（主会话裁定）起攻击距离改成量到**司机身体**：hypot(怪 − seatWorld(车)) ≤ attack.range + 玩家半径，
+  不再量驾驶舱矩形再加半径（以前悲尸站在车身外 1.1 m、离司机 1.5 m 就打中了）；追击点在车侧收到够得着司机的那一段，车尾够不着司机（配重在座椅后面约 1 m），会绕到车尾侧角。
+  扣血时刻对所有近战怪统一（见第 6 节 attack）：胳膊挥到最前那一帧（strike 曲线峰值 0.38，`BR.arch.anim.STRIKE_PEAK`）才结算，那一刻再量距离、视线；
+  抡的这一段实体不 think，脚下接着往目标扑（返修 r1：以前原地不动，人一直往前走 0.46 s 走出 1.4 m，所有近战怪每一下都空挥），冷却照走；被打死 / 被拖走就落空。e._m.lastSwing = { start, at, kind, hit, why: 'hit' | 'far' | 'wall' | 'cannot' | 'nodmg', dist }。spawnForChunk 和实体表一行没改（golden 的实体落点靠它）。
 - 队友开的车在房主这边只按位姿摆 OBB（不扫掠）：开到站着不动的实体身上时，每 0.25 s 把车 4 m 以内被压住的实体推到车外 —— 先用 moveCircle 零位移轻推；推不出来（夹在两根货叉之间、几个部件 OBB 互相顶着）就一圈圈往外找最近的空地放过去（落点不压任何碰撞体，从实体到落点腰高的射线除了这台车自己的部件不碰别的东西，不会被放到墙那边）；场上没有载具时什么都不做。
 
 **感染与转化**（ENGINE_PLAN M4「状态效果、感染与转化」的子集，2026-09-14；目前只有悲尸在用，M4 在此基础上扩成通用 `addEffect` / `applyEffect`）
@@ -758,13 +785,33 @@ setDrive(state | null)                 常驻开车提示行（FE1）：独立�
                                        触屏按档摆：13px 整段不折行 → 12px → 11px → 12px 允许「按住「升」「降」」和「动货叉」之间折行（只有 320 宽竖屏用得上），
                                        第一个不压任何按钮、摇杆、物品栏（连同物品名那一行）的档就用它（360×640 竖屏是 11px 三行，每行一整段；320×568 竖屏拿着东西时是 12px 四行）；
                                        每一档在准心下面都放不下时挪到准心上方（状态短提示那一格上面、左上信息块下面，让开按钮、测试模式「实体」入口、联机麦克风键），
-                                       再不行才压住物品名那一行（repair-r2：以前压物品名排在换小字号之前，320×568 字叠字）。`BR.hud.drive.place` = { mode（用上的档）, upper（挪到了准心上方）, fit, … }
+                                       再不行才压住物品名那一行（repair-r2：以前压物品名排在换小字号之前，320×568 字叠字）。`BR.hud.drive.place` = { mode（用上的档）, upper（挪到了准心上方）, fit, dots（藏掉的行末点个数）, … }
+                                       FE1P H15：竖屏触屏时把摇杆推得到的圆（半径 1.25r + 圆头半径，按 12 条横带近似）也算要让开的东西 —— 先试准心下面不拆段的几档，
+                                       再试准心上方不拆段的几档，最后才拆段；折好行以后行末的「 ·」加 .hud-drive-dot-end（visibility:hidden，占位不变、不来回跳）。横屏、电脑不变。
+                                       返修 r1（摇杆是浮动的，左半屏哪里按下哪里起摇杆，按偏 30–60 px 再推照样盖住框）：竖屏开车时 hud.js 给 <html> 加 hud-stick-cap、
+                                       写 --hud-stick-top = 提示框底边 + R（R = 1.25r + 圆头半径）+ 6 px，css/game.css 把 .touch-zone-l 的上沿收到这里、右边视角区铺满整宽
+                                       并用 clip-path 切成 L 形（上沿以上的左半屏归转视角）；摆框时把「摇杆区（上沿最高到待机摇杆上沿 − 0.6r）里任何一点推得到的范围」
+                                       当成要让开的矩形，准心下面放不下就挪到准心上方（四种竖屏实测都在准心上方一行）。place 多给 stickTop、stickReach、stickOk。
+                                       下车、横屏、电脑时去掉 hud-stick-cap（tests/mobile.mjs DR7b 查下车以后类和变量都清掉、摇杆区回到上车前、原来上沿以上照常起摇杆；DR9c 查横屏开车不收）。
+                                       FE1Q J4：input.js moveStick 在 <html> 有 hud-stick-cap 时把圆心夹在 --hud-stick-top 以下（stickCapTop()），左右照旧跟着手指走；
+                                       tests/mobile.mjs DR9d 从待机中心每 20 px 一步往上拖到屏幕顶、再斜着拖到提示框中心，每一步圆头和底盘都不碰提示框（4 台竖屏）
 driveNote(text, ms?)                   开车状态短提示（「发动中」「雷达自动刹车」「前面是出口」「上面有管子，升不上去」……）：同一行替换，不排队刷屏。
                                        准心正上方居中；触屏上这一高度旁边有键（窄竖屏的升键）时一行放得下就往空的那边挪，一行实在放不下才折行（不截字）。
                                        层级大标题还没收、和它（或挪到准心上方的常驻提示行）压在一起时，大标题 0.25 s 淡出（进层 5 秒内就上车的情况）
 ```
 - toast 自动避开多行交互提示和开车提示行（A1 minor ①）。toast 折行时「…」里的按钮名不拆开（FE1 返修 r4），用「，」隔开的 7 个字以内的短段也不拆开（FE1 返修 r6：「…，靠车那头还空着」在 360 px 竖屏上被拆成「靠车那 / 头还空着」），长段里几个固定的词（下车、大灯开关、应急灯、躲进小屋、靠车那头、叉尖那头、旁边地上、叉面、货叉）也不拆开（FE1 返修 r7：断电提示折成「或者下 / 车找亮着…」「绿色应 / 急灯」「门躲 / 进小屋」）；都只是包一层不换行的 span，文字不变。按「，」切段手写循环，不用正则后行断言（r7：`(?<=，)` 在 iOS / iPadOS Safari 16.4 以下解析就报错，整个 hud.js 不执行；tests/forklift.mjs D0 查 js/ 里没有 `(?<=` / `(?<!`）。
-- 触屏站着（没开车）时 toast 那一列按算出来的位置（列顶 = 屏幕中线 + dy，一条条往下排、居中；不量 getBoundingClientRect，margin-top 有过渡、淡入有位移）压着看得见的触屏键或待机摇杆，就和开车时一样改成「往上长」（`avoidTouch` → `placeUp`，FE1 返修 r7：360×640 竖屏上往货叉上丢东西的两行提示被准心下面的两三行提示推到 y≈400，盖住「丢弃」键和摇杆上沿）。tests/mobile.mjs A3b 查两条长 toast 不压触屏键和摇杆：跑 game 段的 360×640、640×360、402×874、874×402 在 game 段里查，方案 phone[4] 点名的 390×844、844×390 和最窄的 320×568 单独开一局只跑 A3b（`secA3b`，FE1 返修 r8 裁定 ⑥：以前正式套件只覆盖前 4 种）。新文字里不出现隐藏别名键的那个字母；HUD 写手机提示时跟着 `BR.input.buttonLabel('interact')`（开车时是「点「下车」」，不重复成「点「下车」下车」）。
+- 开车时 toast（`avoidDrive`，返修 r2，验收员 play：竖屏开车提示框挪到准心上方以后，断电那条两行的提示留在准心下面的默认位置，盖住「升」「降」，320×568 还盖住摇杆和「丢弃」）：
+  默认那一列（屏幕中线 + dy）先按开车提示框收（框在下面挡着就只留放得下的，放不下改往上长），触屏再和站着时一样量触屏键、待机摇杆（`touchColumnHit`，按算的位置、只算排得下的那几条），压到了也改成「往上长」。
+  `placeUp` 返修 r2 起：底边贴着状态短提示那一格；竖屏开车提示框在准心上方（`place.upper`）、跨着中间时底边改贴它的上沿（排在它上面，不叠在一起）；
+  按实际排出来的那一列找位置 —— 先试最宽的一列，再试收窄到让开两边东西的一列（按这个宽度重新量每条多高），留下的条数多的用哪个（一样多用宽的）；只看和这一列上下有交叠的东西（信息块、状态条、警告、横幅、联机麦克风、测试「实体」键、触屏键、待机摇杆），右上角「暂停」键这种比列顶还高的不再让列收窄；
+  连最新那条都怎么都放不下才退回老办法（收窄、上限压到中间那些东西下面，最新那条照常显示）。tests/mobile.mjs DR10（所有跑开车段的设备）：开车时来一条短 toast、紧跟着断电那条 53 个字的长提示，看得见的 toast（不含正在淡出的）不压触屏键、待机摇杆和开车提示框。
+- 触屏站着（没开车）时 toast 那一列按算出来的位置（列顶 = 屏幕中线 + dy，一条条往下排、居中；不量 getBoundingClientRect，margin-top 有过渡、淡入有位移）压着看得见的触屏键或待机摇杆，就和开车时一样改成「往上长」（`avoidTouch` → `placeUp`，FE1 返修 r7：360×640 竖屏上往货叉上丢东西的两行提示被准心下面的两三行提示推到 y≈400，盖住「丢弃」键和摇杆上沿）。tests/mobile.mjs A3b 查两条长 toast 不压触屏键和摇杆：跑 game 段的 360×640、640×360、402×874、874×402 在 game 段里查，方案 phone[4] 点名的 390×844、844×390 和最窄的 320×568 单独开一局只跑 A3b（`secA3b`，FE1 返修 r8 裁定 ⑥：以前正式套件只覆盖前 4 种）。
+  FE1Q J5（FE1 就有：640×360 横屏站着两条两行 toast 叠在右上角，盖住「冲刺」「丢弃」和准心提示）：矮横屏（`shortScreen()`，高 ≤520）以前 `avoidTouch` 直接 return，现在用 `cornerColumnHit(nodes)` 量右上角那一列
+  （按容器位置，每条 offsetLeft + 排下来的高度，不受淡入位移影响）压不压触屏键、待机摇杆、`.test-entry`、`.coop-mic`、`.hud-prompt`（各留 4 px），压到就 `placeUp(nodes, mid, stand=true)`：
+  居中，底边 = 准心连进度环上沿（mid − `CROSS_REACH` 18 − 6），站着没有状态短提示那一格不用留，底边往下 4 px 以内的东西也让开；放不下的从最早的收掉。
+  一旦往上长（`S.toastUp > 0`），这一批 toast 全部收掉之前跳过检查直接 placeUp，不跳回原位（竖屏站着也生效）；只剩正在淡出的 toast 时不动；矮横屏开着测试面板（`html.br-test-open`，css 把 toast 挪到左边）时照旧；
+  `S.testSig` 记「实体」键显隐和测试面板开关，placeToasts 每帧比对，变了重新摆。844×390 游玩模式两条两行照旧留在右上角。tests/mobile.mjs 新设备 se1-l（568×320），android-l、iphone13-l 各加一段 toast-short：
+  A3c（游玩 / 测试模式连发两条两行 toast 不压触屏键、待机摇杆、实体 / 开麦键、准心提示，在视口里，844 游玩模式照旧在右上角）、A3d（最早那条收掉以后不跳回右上角、底边不动）、A3e（再来断电长提示也不压）。新文字里不出现隐藏别名键的那个字母；HUD 写手机提示时跟着 `BR.input.buttonLabel('interact')`（开车时是「点「下车」」，不重复成「点「下车」下车」）。
 - 准心提示的动词（VERB_PHRASE）N1 新增「进帐篷」「出帐篷」「看地图」「换制服」；FE1 新增「上车」「下车」，repair-r2 新增「开大灯」「关大灯」（仪表台大灯开关）。
 - 模式标签：营地（层级 `lobby` 为真）写「联机营地（Level 1 某处）」、不显示饥饿 / san / HP 条；`BR.coop.active` 时原标签前加「联机 · 」。
   房号角标：`BR.coop.hosting` 为真、还没人连上时左上角加一行「房号 K7M2QX · 等朋友来」，收到 bus `'coop:code'` 立刻刷新并 toast「房号换成了 …」。
@@ -804,6 +851,9 @@ init(); update(dt); leave(); active; role; phase; peerName
                                        phase：idle | creating | hosting | checking | confirm | joining | connecting | handshake | active | reconnecting
                                        （reconnecting 时 active 为 false）
 openLobby(opts?); closeLobby()         opts.join = 房号：停在加入卡片那一步（邀请链接用）。在局内只显示当前联机状态，不能新建也不能加入
+seatBody({ detail, headYaw, pitch, keep }?) → { verts, box: { min, max }, tris, dims, detail, group? } | null
+                                       FE1P：照坐车队友同一套摆法建坐姿人形（程序化防化服），返回蒙皮后车本地坐标（车头 −Z、地面 y = 0、座椅 (0, 1.16, 0.24)）的顶点和包围盒
+                                       （高画质 x ±0.281、y 0.650–2.091、z −0.508–0.464）；keep: true 还给摆好的 group（单机拍车外照片当替身）。安全带离人、怪的手离司机身体的测试用
 mic: bool; micBusy; setMic(on)         开麦/闭麦
 localSpeaking; peerSpeaking            0..1 音量电平（AnalyserNode）
 setVoiceVolume(v) → 夹过的值; voiceVolume   对方语音音量 0..1（设置「联机语音音量」，启动时和 coop:connected / coop:reconnected 时由设置面板调）。
@@ -903,17 +953,63 @@ geo                                    FORKLIFT_GEO（深冻结，只读）：�
 model(b, opts)                         forkliftModel。opts = { lift, steer, part, detail, number, decal, drive, levers, seg }：
                                        part 'all' | 'body' | 'liftLever' | 'wheelsFront' | 'wheelsRear' | 'wheelRearL' | 'wheelRearR' | 'steeringWheel'
                                        | 'mastOuter' | 'mastInner' | 'carriage' | 'chains'（'body' 不含升降杆）；
-                                       part 'all' 且不开 drive 时照原位置、原顺序画，顶点逐位不变（停着的车、golden 都靠它）。
+                                       part 'all' 且不开 drive 时照原位置、原顺序画（停着的车）。FE1P（主会话裁定 H1/H2/H3/H5）起停着的车改了灯盒、安全带、开关、链条，
+                                       顶点不再和 FE1 逐位一样，改动只在叉车自己那几段（tests/forklift_l1.mjs snap 的 geoNoFk：去掉叉车段以后 900 块逐字节一致）。
                                        drive: true = 可动模型（只给开过的车）：货叉水平段等补底面；后轮转向扫过的圆柱里底盘收窄到半宽 0.188、
-                                       配重下半截前脸让开（打满 65° 胎面离车身 ≥ 1 cm）；安全带两条、4.4 cm 宽；两盏前大灯镜面和警示灯罩放进 kit:glow
+                                       配重下半截前脸让开（打满 65° 胎面离车身 ≥ 1 cm）；配重上半截在收窄段补底面、发动机盖后脸补挡板（FE1P H4，贴地低机位看不穿）；
+                                       下半截前脸两个角的 x 取上半截轮廓在 cwFront 处的半宽（返修 r1：以前宽出 3–5 mm，y 0.5 一条楔形缝，站着从车后侧角看得到车底）；
+                                       驾驶位地台各档都画左右侧面（返修 r1：mid / lite / drvLow 以前没有，站在车侧看得到车底；停着的车不动）；
+                                       返修 r2（验收员 spec，FE1 就有的空口）：外门架顶梁两头的端面、护顶两侧纵梁六个面、前后横梁和格栅横条朝司机那面、
+                                       起升油缸缸口封顶、杆头底面、挡货架立柱顶面、扶手（handle 1）顶端封口，各档都画（停着的车不动，golden 不变；
+                                       可动模型 high 1936 / mid 1546 / lite 1215 / drvLow 1113 面，加开关和最多的磨损 high 1996 ≤ 2000）；
+                                       FE1Q J11 起上面 r1 / r2 补的面停着的车也一样画（见下面 lod 那一条），「停着的车不动」不再成立；
+                                       安全带（fkBelt，和停着的 belt > 0 档同一份）；两盏前大灯镜面和警示灯罩放进 kit:glow
                                        （只这一份，不和 kit:prop 叠着）；levers = 操纵杆根数（传停放档的根数，至少 1，升降杆要能扳）。drive 不取随机数
 wear(b, opts)                          磨损贴花：opts = { detail, wearN, part = 'all', lift = 0 }，画 FK_WEAR[1..wearN]，跳过 FK_WEAR[0]（车下那滩油不随车动）；
-                                       part: 'oil' 只画那滩油（保底车的地面油渍）。不看区块贴花上限，返回画了几片
+                                       part: 'oil' 只画那滩油（运行时车的地面油渍）。不看区块贴花上限，返回画了几片
 lod                                    FK_LOD：high / mid / lite / low / lowb / min，FE1 加 drvLow = lite 去掉倒角和贴花（bev:false、ch:0、cwC:0、decals:0），
-                                       也就是 low 加上扶手、安全带、倾斜油缸耳座，没有 trim 砍掉的面
+                                       返修 r1：lite 也画操纵杆头（knobs，每根 10 个三角形；可动模型各档本来就画，lite 停着的以前没有、上车多出一个黑疙瘩），
+                                       也就是 low 加上扶手、安全带、倾斜油缸耳座，没有 trim 砍掉的面。
+                                       FE1Q J10：high / mid / lite / drvLow sprocket 12 棱、arc 6 段（链条搭在链轮上那半圈），low / lowb 8 / 4，min 0 / 0；停着的车和同档可动模型一样。
+                                       给 high 可动模型腾面（1996 → 1998 / 2000）：high 档 beaconBase false（警示灯各档都是灯罩直接坐在后横梁上，y 2.10–2.175、底半径 4.5 cm、顶 3 cm，中心 (0, 0.53)）、
+                                       plate 1（铭牌一道字）、grille 3（配重顶散热缝）、hitch 0（牵引销没有钳口）；去掉看不见的面：踏板朝里侧面、挡泥内板底边、fendU 档翼子板前头端面、开关拨杆顶面（开关 40 面）；
+                                       后视镜镜片 = 镜壳后脸（镜壳不画 pz，镜片 9 × 10 cm 在 z −0.645，3 mm 缝没了）。
+                                       FE1Q J11：停着的车和可动模型同样画 —— 外门架和内门架顶梁六个面（trim 档也画底面）、护顶纵梁 'all'、前后横梁 py / ny / pz / nz、横条补 pz / nz、缸口、杆头底面、
+                                       挡货架立柱五个面、挡货架顶横梁和竖条四个面、驾驶位地台两侧面（trim 档不画前沿）、扶手 1 档顶端封口、配重下半截前脸（不分倒角档）、trim 档轮胎贴车架那面、min 链条背面。
+                                       面数：停放档 high 1940、mid 1588、lite 1265、low 981、lowb 805、min 556（车号 88）；可动模型含开关和最多的磨损 high 1998、mid 1666、lite 1359、drvLow 1259。
+                                       FE1Q repair-r1（圆的零件，验收员 play：方向盘、车轮、表盘一眼看出是多边形）：ring high / mid [16, 3]、lite / drvLow [14, 3]、low [12, 3]（lowb [6, 2] 照旧，repair-r2 改成 [12, 2]）；
+                                       swHub high / mid 12；column lite / drvLow 10、low 8（没有中心盖的档转向柱顶封口当中心）；knob high 6；wf / wr high / mid / lite / drvLow / low [12, 1]、lugs（胎面一深一浅），
+                                       lowb [8, 1] / [6, 1]（repair-r2 改成 [10, 1] / [8, 1]）、min [6, 1] 照旧；hub high / mid 12 = fkCone 矮圆锥（底圈贴在轮辋上、尖顶高 9 mm，光滑法线像个圆盖），hubR 各档 false；
+                                       表盘 FK_GAUGE.n = 12 边 + 一根深红指针（K.needle，离表面 1 mm）。轮胎各档都是「胎面 + 内外两面 + 轮辋」一种做法（np 1）。
+                                       high 腾面：spokes 2（一根横辐条）、straps / hose / tails false，加耳座底面、内门架立柱 / 底梁底面、翼子板中间那段底面（永远是背面）。
+                                       停着的车（drive 不开）另省：胎面贴地那两段（外法线 y < −0.9）、后轮贴车架那面、链轮轴 pz（可见性探针 0 像素；可动模型照画）。
+                                       后横梁 10 cm 深（z 0.48–0.58）、纵梁伸到 0.58（警示灯底圈落在横梁上；forklift.js VINE_GUARD 同步）；high 扶手顶端封口；low / lowb 倾斜油缸顶端封口；min 链轮方块补底面。
+                                       面数：停放 high 1901、mid 1661、lite 1363、low 1073、lowb 793、min 552；可动模型含开关和最多的磨损 high 1993、mid 1773、lite 1491、drvLow 1391。
+                                       换档（101 个种子 × 5×5 块）：高画质 181 台停着的车换档 29 台（lite → low 22），低画质 low → lowb 4 台（方案 risks[11] / [26]）。
+                                       FE1Q repair-r2（验收员 play）：表盘 FK_GAUGE = { n 12, r 0.045, pos [[0.25, 0.5], [−0.335, 0.5]]（斜面上的 [x, f]）, needle }：以前 x ±0.13 正好在
+                                       司机眼点 (0, 1.8, 0.16) 看方向盘轮圈的后面（表心在盘面上离中心 0.1585、轮圈 0.144–0.176），指针整根被挡；挪到轮圈外面（最靠里的点离中心
+                                       0.190 / 0.242）。仪表板黑板宽到 ±0.39（左边那块落在板上）。lowb ring [12, 2]、wf [10, 1]、wr [8, 1]、lugs；trim 档（lowb / min，只有停着的车用）
+                                       不画气瓶压进配重的底棱面（fkTube 新选项 skipN）、方向盘辐条底面（stick 新参数 skipN）、挡货架顶横梁底面（各 2 面，停着永远是背面）。
+                                       面数：停放 lowb 793 → 839、min 552 → 546，其余不变。换档（101 个种子 × 5×5 块）：高画质种子 80 (−2,1) lowb,lowb → lowb,min；
+                                       低画质种子 87 (0,−2) lowb,lowb → low,min；种子 12345 不换档（(2,−2) 两台 lowb 低画质每台只剩 840.5 面，lowb 不能超过 840）。
+                                       FE1Q repair-r3（验收员 play：min 停着时方向盘六段扁框、车轮六边形、没有灯盒和起升油缸）：min 不再当停放档 —— buildForklifts 里所有台按
+                                       FK_PARK_FLOOR（'lowb'）都放不下时从最后一台起改成运行时车（工坊、非工坊同一条；账面照旧 n × FK_NOMINAL），剩下的照旧挑档。
+                                       换档（101 个种子 × 5×5 块）：高画质种子 80 (−2,1) lowb,min → lite,运行时车；低画质种子 87 (0,−2) low,min → low,运行时车、
+                                       70 (−1,−1) lowb,min → low,运行时车；别的块逐位不变（golden 25 块不变），停着的 min 0 台。FK_LOD.min 留着（forkliftModel / 测试照样能建）。
+                                       tests/forklift_l1.mjs polish J11 parkShut（停放 6 档 + 可动 4 档，140 个站立 / 坐姿眼点往 15 类零件里连线 0 漏光）、后视镜（15730 条视线 0 漏光）、H4b 停放 6 档
 ladder                                 FK_LADDER：停放档的挑档顺序 { high: [...], low: [...] }
+gauge                                  FK_GAUGE（只读，FE1Q repair-r2）：表盘的边数、半径、在仪表台斜面上的位置 pos[g] = [x, f]、指针方向；tests/forklift_l1.mjs polish 查驾驶座看得见指针用
+dashSwitch(b)                          FE1P H3：停着的车那份仪表台大灯开关（拨杆扳在出厂的「开」、指示灯熄着的暗绿，全在 kit:prop；FE1Q 起拨杆顶面不画，40 面）；
+                                       和 vehicles.js buildSwitch 同一份几何（常量 FK_SW = vehicles.js 的 SW_*，boxTN 的 noTop），polish H3 拿 BR.vehicles._switchGeo 逐个三角形比对
+belt                                   FE1P H2：FK_BELT（只读）安全带各件在车本地坐标的盒子 { retractor, strap, tongue, stub, buckle }：没扣上、被卷收器收着 ——
+                                       靠背右侧卷收器（出口朝下）、带子 4.4 cm 宽竖直垂到 1.115、锁舌在坐垫右侧面外 1 mm；左边短带落在发动机盖顶面、顶着扣头。
+                                       停着的 high / mid / lite 和可动模型各档同一份 42 面（low / lowb / min 停放档没有，上车换成 lite / drvLow 后出现）
+                                       FE1P 其余：FK_LOD.lampF 各档统一画底面、两侧、朝前、朝司机 5 面（H1；顶面 1.94 m 比谁的眼睛都高不画，min 没灯）；
+                                       链条（H5）一根绕过链轮顶上 —— 前段从货叉架挂点上到链轮、外表面搭过链轮上半圈（FK_LOD.arc 段，按所在链节着色，两侧扇面）、
+                                       后段下到外门架锚座；FK_LOD.links 是节距（high / mid 0.05 m 一深一浅的链板，前后两段都有；其余 0），sprocket 两端面都画（FE1Q J10：high / mid / lite / drvLow 12 棱、搭在链轮上 6 段，low / lowb 8 棱 4 段）；
+                                       geo.sprocket.y 2.09 → 2.084（链条最高点 = 2.125 = mastInner OBB 顶）；drive 模型链条顶点数和 lift 无关（落在链轮上那一节缩成一点占位）
 driveTier(quality, parkedTier)         开过的车用哪一档：低画质一律 'drvLow'；高画质 = 停放档，比 lite 粗（low / lowb / min）用 'lite'，
-                                       parkedTier 为 null（本机没建过原区块：队友开过来的车、出生保底车）用 'mid'。lowb、min 永远不会出现在开过的车上
+                                       parkedTier 为 null（本机没建过原区块：队友开过来的车、运行时车 —— 出生块里的车（保底车和本来就生成的车，FE1Q J2）、按 lowb 都放不下的车（repair-r3，含工坊））用 'mid'。lowb、min 永远不会出现在开过的车上
 ```
 
 ### BR.camp（js/levels/_camp.js，营地构件；N1 联机营地先做，C1 的 NPC 营地沿用）
@@ -975,8 +1071,33 @@ clearAll()                             清除全部实体和测试人
 数据文件：`data/lore-choices.json`（每个层级/实体/物品随机选中的来源）、`data/entity-index.json`（实体清单、各层环境危害）、`data/item-spawn.json`（物品建议密度与出现层级）。
 
 测试：`tests/smoke.mjs`（单机流程）、`tests/coop.mjs`（双浏览器联机：主页联机 → 营地 → 帐篷，辅助函数 `hostCamp` / `joinCamp` / `tentPick` / `readyBoth`；拦截 api.ovobot.ai，用内存假 room.php，绝不连真实服务器）、`tests/camp.mjs`（联机营地单页检查：封闭、预算、布局和种子 / 画质无关）、`tests/items.mjs`（物品）、`tests/kit.mjs`（层级工具库）、`tests/preview.mjs`（按层级/实体出截图与统计，第二波验收用）、`tests/phys.test.js`（含 OBB、sweepOBBs 和「没有 OBB 时逐位不变」的对照）。
-叉车（FE1）：`tests/forklift.mjs`（按 `--group data|mount|drive|crash|side|lift|items|exits|life|pause|nightmare|dark|perf` 分组，能并行跑；side 是 repair-r1 加的 sideObs 用例）、`tests/forklift_l1.mjs`（叉车模型顶点哈希、drive 模型、出生保底、overhead / vines，支持 `--tag` / `--against` 快照和 `--quick`）、`tests/forklift_probe.mjs`（只读探针，all.mjs 列在 SPECIAL 里不自动跑）；联机用例在 `tests/coop.mjs`（假 room.php），手机键位在 `tests/mobile.mjs`。结构基线：`node tests/golden.mjs`（对入库基线）和 `--against <开工前打的快照>`，FE1 要求 26 层加 coopcamp 逐字节不变；营地另用 `node tests/camp.mjs --against N1-final`。
-`tests/all.mjs` 里叉车各组超时 45 分钟，失败 / 超时先不判、等这一轮别的项跑完机器空下来单独重跑一次再判（`--jobs 1` 时紧接着重跑）；forklift、coop、mobile、kit、interact 都是先打印汇总、`browser.close()` 最多等 10 s 再退出（Chrome 的 crashpad 占着管道时 close 会卡好几分钟）。
+叉车（FE1）：`tests/forklift.mjs`（按 `--group data|mount|drive|crash|side|lift|items|exits|life|pause|nightmare|dark|perf` 分组，能并行跑；side 是 repair-r1 加的 sideObs 用例）、`tests/forklift_l1.mjs`（叉车模型顶点哈希、drive 模型、出生保底、overhead / vines，支持 `--tag` / `--against` 快照和 `--quick`）、`tests/forklift_probe.mjs`（只读探针，all.mjs 列在 SPECIAL 里不自动跑）；联机用例在 `tests/coop.mjs`（假 room.php），手机键位在 `tests/mobile.mjs`。
+FE1P 打磨（主会话裁定 H1–H15）：`tests/forklift_polish.mjs`（`--group light`：车头顶墙 / 货架大灯不透墙、逐帧光球、远端车；`vine`：藤蔓贴着护顶 0–1 cm、逐位恢复；`coop`：客机开车房主那边 lift 不往回掉；
+`--old` 用 FE1 提交的三份文件跑反证，light / vine 应该 FAIL），all.mjs 登记成 forklift_polish（light,vine，截图类）和 forklift_polish-coop（失败等负载降下来单独重跑）两项；
+`tests/forklift_l1.mjs --only polish`（H1 灯盒视线、H2 安全带、H3 开关和载具层逐个三角形比、H4 低机位、H4b 站着 / 坐着的眼高看配重下半截和地台下面（返修 r1）、H5 链条、H12 断电新载入区块）；
+返修 r1 另加：`tests/infection.mjs` h2b（抡的时候往前扑）、h6（真键盘按住 W 走 12 s 甩不掉悲尸，≥7 次）；`tests/mobile.mjs` DR9 从待机中心往上 0–90 px、左右 ±30 px 和摇杆区上沿按下推满，DR9b 摇杆区上沿；
+`tests/forklift_polish.mjs` coop 组 C3 在房主那边包一层 BR.vehicles.setPose 逐次记 lift；`tests/items.mjs` 糖果袋倒平、支撑全在袋身上；snap 记录多了 geoNoFk（去掉叉车段以后的几何哈希）。
+返修 r2 另加：`tests/forklift_l1.mjs` polish H1c（可动模型 4 档，车侧站着看外门架顶梁两头、驾驶座看护顶纵梁 / 横梁 / 横条、起升油缸缸口、杆头底面、挡货架立柱顶、扶手顶端都是实心的）；`tests/mobile.mjs` DR10（开车时长 toast 不压触屏键、待机摇杆、开车提示框）、DR7b（下车以后摇杆区恢复）、DR9c（横屏开车不收摇杆区）；`tests/all.mjs` forklift-items 超时 120 分钟（别的叉车组仍是 45 分钟）。结构基线：`node tests/golden.mjs`（对入库基线）和 `--against <开工前打的快照>`，FE1 要求 26 层加 coopcamp 逐字节不变；营地另用 `node tests/camp.mjs --against N1-final`。
+FE1Q（主会话裁定 J1–J13）另加：`tests/infection.mjs` h7（笑魇脸最大那一帧 = 扣血那一帧，±1 帧；57 项）；`tests/forklift_polish.mjs` vine V1–V3 同时量挡体和可动模型三角形、V5 挡体对得上可动模型、light L7–L11（lightAt 和画面一致、司机座位算亮、货架通道照得远）、`--before <目录>` 反证；
+`tests/forklift_l1.mjs` polish J2（真进游戏：出生车运行时、mid / drvLow、开过同一个 sig）、J11 parkShut 和后视镜、H4b 扩到停放 6 档、H5 / J10（≥12 棱、≥6 段），snap 加「J2 出生块去掉叉车段以后别的段逐字节不变」；
+`tests/smoke.mjs` 防化服低画质加面罩框、滤罐；`tests/visualhooks.mjs` 低档白名单放开 skin_stealer 伪装的 gear；`tests/mobile.mjs` DR9d、se1-l 和 toast-short（A3c–A3e）；
+`tests/coop.mjs` V.blkHitAt / V.laneBlk（甩货直道跳过碰出口圈 / keepClear 的，V13 多一项核对，194 项）、V8 等准心提示变成「上车」再按；`tests/forklift.mjs` F.exitHit（chockLane 同一规则）、L9 用 `_geom.vineHit`。
+`tests/all.mjs`：mobile 超时 50 分钟；forklift_l1 有 `tests/output/golden-tags/FE1P-final/forklift_l1.json` 就 `--against FE1P-final`，没有才用 FE1-before。入库基线 `tests/golden/1.json` 按 FE1Q 的 L1 重拍（J12，只有叉车四块的网格顶点数变）。
+FE1Q repair-r1 另加：`tests/forklift_l1.mjs` polish「圆的零件」（方向盘轮圈 / 轮胎 / 轮辋 / 轮毂盖 / 表盘按顶点量棱数）、parkShut 加警示灯罩和 high 档扶手顶端、H1c 加 high 档扶手顶端；
+`tests/forklift.mjs` life F4b–F6b（区块里停着的车 1@1,0#v0：开走 → 走到 loadR + 3 块外卸块 → 回来 / 换层回来，重建的区块里原位置那段又藏掉）；`tests/smoke.mjs` 防化服形状和 glb 比（≤15%）；
+`tests/mobile.mjs` D11b 触摸拖动两回都没滚起来记 SKIP；`tests/all.mjs` mobile 首次失败（没有页面报错）时低负载只重跑挂了 / 记 SKIP 的设备、按重跑判。入库基线 `tests/golden/1.json` 和 FE1P-final 两个标签按 repair-r1 重拍（只有 L1 叉车三块的网格顶点数变）。
+FE1Q repair-r2 另加：`tests/forklift_l1.mjs` polish「表盘指针从驾驶座看得见」（司机眼点左中右往每根指针上 7 个点连线，先碰到的都是指针；停着的 / 开过的 high、mid）、
+「圆的零件」加 lowb（轮圈 ≥12、前轮 ≥10、后轮 ≥8）和后轮；`tests/forklift_polish.mjs` coop 组：J2a–J2f（客机低画质：出生车两边都是运行时车、mid / drvLow，
+客机开车两边位姿一致、(0,0) 不用藏段，下车 levelState 记下；以前只在整合员的一次性脚本里），C3 每一趟先下车、levelState 摆回同一个起点再上车，升降 / 开车按模拟时间等，
+升不到 / 没开动重摆重来一次、还不成立记 SKIP（汇总「跳过 N 项」），没开动时 detail 带客机逐帧的输入、phase、车速；`tests/coop.mjs` 7「两人同时捡同一件」
+等 B 的请求在房主那边批下来以后 A 才松手，A 先进了拖动 / 等不到批下来记 SKIP（只查不复制），V8 上车前 player.reset + 显式对准车身、每秒重对一次，没对上记现场（V.aimDiag）；
+`tests/all.mjs` mobile 超时时首次日志里跑完、没有 FAIL / SKIP 的设备照旧算，其余设备低负载单独重跑、按重跑判（以前超时直接记失败）。
+FE1Q repair-r3 另加：`tests/forklift_l1.mjs` snap「停着的车不再是 min 档」（所有块没有停着的 min；MINFIX 三块是 [停着的车, 运行时车]；整块 ≤10000 / 8000；运行时车只排在块的最后）、
+出生 3×3 以外的 EXTRA_BLOCKS（种子 80 (−2,1)、87 (0,−2)）也拍进快照；polish「坐着的人脚踩在地台上」（repair-r2 写的检查；js/net/coop.js 坐姿 SEAT_THIGH 1.236、整个人往车头挪 SEAT_FWD −0.05：靴底离地台顶面 3 mm，靴跟离发动机盖前脸 1 cm）；
+`tests/all.mjs` lowRetry 的项（coop、polish coop 等）首次通过但记了 SKIP 时也进低负载补测、整项重跑，补测还记 SKIP 算失败；
+`tests/coop.mjs` step() 中途出错以后松开两页的按键（CDP 键盘 + 派发的 keyup）、摘掉 V6 钉住的测试人、还原「切后台」改写和暂停，后一段从干净的状态开始；
+V14b / V14c 结尾和 V11 前客机重新上车改用 remountGuest（照 V8：standAim、等准心提示变成「上车」再按，没坐上再来一遍，失败记 aimDiag）。
+`tests/all.mjs` 里叉车各组超时 45 分钟（items 组 120 分钟），失败 / 超时先不判、等这一轮别的项跑完机器空下来单独重跑一次再判（`--jobs 1` 时紧接着重跑）；forklift、coop、mobile、kit、interact 都是先打印汇总、`browser.close()` 最多等 10 s 再退出（Chrome 的 crashpad 占着管道时 close 会卡好几分钟）。
 mobile DR8（进层马上上车，「发动中」和大标题不叠）先重播一次大标题保证前提成立，前提没了（机器太忙、大标题在提示出来前就自己淡完）记 SKIP，不算通过。
 
 ## 14. 创意工坊与设置（2026-09-13 新增）
@@ -1025,7 +1146,12 @@ BR.forklift
       noise：0 熄火 / 0.25 怠速 / 0.6 行驶 / 0.8 倒车；shake：撞上（≥ 0.8 m/s）时 0.15 s，减少动态效果时恒 0
   sim.obbsWorld() → 14 个世界 OBB（phys.addOBBs 的格式）
   sim.exitSpot(pref, force) → { x, z, y, side: 'left' | 'right' | 'rear' | 'free' } | null
-  sim.lightSpot() → { x, y, z, range, color, intensity, flicker }（world.setExtraLights 的格式）
+  sim.lightSpot() → { x, y, z, range, color, intensity, flicker, decay, owner }（world.setExtraLights 的格式）
+      FE1P H8：range / intensity 是画面上那盏灯用的，已经收过、补过；FE1Q J8 起不再给 litRange / litIntensity（world.lightAt 也按画面上这盏灯算）。见 15.11
+  sim.lightInfo → 上一次 lightSpot 的 { range, intensity, R0（不管墙的名义范围）, seatLit, bound, hit, by: { kind: 'wall' | 'hit' | 'noclip', key, box } }（调试、测试看光球被哪一样收住）
+  sim.litSeat(x, z) → number（FE1Q J8）：(x, z) 在驾驶舱矩形里（本地 |x| ≤ 0.4、z −0.5…0.55）且车灯开着时返回 lightInfo.seatLit（≈ 0.338），否则 0；world.lightAt 和光球那部分取大的
+  sim.vines（FE1P H9）：每根藤蔓的状态多一个 touch（这一帧被车顶着：新碰上、被推开、靠在上面）；BR.forklift.config.vine = { reach: 4, back: 1.2, pad: 0, head: 0.15 }
+  sim.vineVolumes(seated, tier?) → { boxes, caps, cyls, polys }（FE1Q J3 藤蔓挡体，见 15.11）；BR.forklift._geom.vineHit(V, x, y, z) → 包住这一点的挡体名字 | null（测试用）
 
 BR.vehicles
   list() → [{ key, x, z, y, yaw, steer, lift, spd, lever, on, driven, meshed, seat, tier, n, runtime, physKey }]；byKey(key) → 内部记录（只读）
@@ -1038,6 +1164,8 @@ BR.vehicles
   update(dt)；applyChunk(c, st) / unloadChunk(c)（world 建块 / 卸块调，幂等）；clear()
   debugInfo() → { promoted, meshes, calls, tris, perVehicle, tiers: { key: tier }, lease, riders, obbs, seated, phase, light, loops, falls, throws, throwMs, throwBusy, … }（甩货那几项见 15.4）
   _step(dt, { throttle, steer, lift }, key?) → pose   测试口：直接给模拟一步输入（不走 BR.input、不管起动阶段），网格、riders 一起更新
+  _switchGeo(hl?) → [[x0, y0, z0, x1, y1, z1, x2, y2, z2, 材质, r, g, b], …]   测试口（FE1P H3）：载具层画的大灯开关，拨杆按 hl 转好、车本地坐标；
+                                       和 BR.L1forklift.dashSwitch 比对（几何逐个一样，只有指示灯在 kit:glow、颜色是亮着的绿）
   playerLike：BR.player（或 'me'）= 本机；'peer' / 联机队友对象 = 队友坐的那台；也可以直接传车 key
 
 BR.vehiclesNet
@@ -1060,9 +1188,11 @@ BR.vehiclesNet
 
 ### 15.3 升格、共用载具网格、细节档
 
-- **停着的车不动**：没人开过的叉车仍合并在区块网格里，几何、碰撞框、账面全不动（L1 golden 逐字节不变）。第一次有人上车、或者收到队友的 `net:veh` / levelState 记录，才**升格**：
+- **停着的车不动**：没人开过的叉车仍合并在区块网格里，碰撞框、账面不动（几何按 FE1P H1–H5、FE1Q J10 / J11 的裁定改过：只有叉车自己那几段变，去掉叉车段以后逐字节不变）。第一次有人上车、或者收到队友的 `net:veh` / levelState 记录，才**升格**：
   `kit.hideSpans` 把区块里这台车的顶点段（`spans.prop` 加 `spans.wear`）叠成一点，车下的地面油渍 `spans.oil`（FK_WEAR[0]）不藏；再用 `BR.L1forklift.model`（`drive: true`）按部件把它建进全层共用的载具网格。升格后的车状态存 `levelState.vehicles`，不再依赖原区块（bus `'vehicle:promote'`）。
-- **出生保底车**（`runtime: true`，不进区块几何）：一载入就直接以载具网格出现（高画质 mid、低画质 drvLow），地面油渍作为载具网格里不随车动的一段（`wear({ part: 'oil' })`）。
+- **出生块里的车**（`runtime: true`，不进区块几何）：出生保底车，以及 FE1Q J2 起 L1 正常生成时出生块 (0,0) 里本来就生成的车（种子 12345 的 1@0,0#v0 等；工坊地图不算）。一载入就直接以载具网格出现（高画质 mid、低画质 drvLow），地面油渍作为载具网格里不随车动的一段（`wear({ part: 'oil' })`）；
+  孩子最先看到的那台停着、上车都是同一个网格（同一个 sig，例如 'mid|2|44|5|high'）。L1.js buildChunk 设 `b._fkSpawnRT`（条件和 bays[4].forceFk 一样），forklift() 出 runtime 记录、不进 fkQueue，
+  占位累加器 FK_PH 照旧占 pend 面（前面的倒角 / 贴花判断不变，块里别的东西逐字节不变），buildForklifts 开头删掉占位、把账面和细节档退回去。联机两边都是运行时车，客机开它不用藏区块段。
 - **共用载具网格**：kit:prop、kit:glow、kit:decal 各一个网格（低画质没有贴花），预分配、按需扩容，不挂区块 group，共用 BR.assets 的 kit 材质。不管几台车最多 3 个 draw call（低画质 2 个）。
   每台车用一个临时 `kit.builder`（区块外）按部件调 model / wear，部件前后各调 `b.mark()` 量出顶点段，拷进共用缓冲里属于这台车的一段。部件建模顺序：body、mastOuter、wheelsFront、wheelRearL、wheelRearR、steeringWheel、liftLever、mastInner、carriage、chains（链条放最后，按最大长度预留顶点，用不到的叠成一点）。
 - **每帧按 pose 在 CPU 上变换顶点**：车身不动；前轮绕轮轴 (y 0.29, z −0.62) 滚；左右后轮各绕自己的主销 (±0.44, z 0.8) 转 steer 再滚；方向盘绕倾斜轴转 −steer × 6（司机看来逆时针 = 往左打）；内门架升 d、货叉架升 2d；链条按 lift 重写；升降杆绕 `geo.liftLever` 转 lever。
@@ -1070,7 +1200,7 @@ BR.vehiclesNet
 - **熄火 / 着车**：熄火时 glow 网格里这台车那段的顶点色换成灯罩本色 × 0.35（不藏、不开洞）；着车时大灯镜面和警示灯罩点亮，警示灯 1 Hz 闪。
 - **只放附近的车**：本机坐着的、玩家（联机加上队友）R+1 块以内的开过的车 / 保底车才放进网格；走远了释放那一段（状态和碰撞留着），回来按状态重建。
 - **细节档**（`BR.L1forklift.driveTier`）：开过的车在高画质下 = 本机停放档，比 lite 粗就用 lite；低画质一律 drvLow（无倒角、无贴花、不砍面）；lowb、min 永远不会出现在开过的车上。
-  档位和磨损片数由各端按自己的区块数据现算：`applyChunk` 每次都记下 key → { 停放档, wearN }，**这两个值不进 levelState**（两端画质可以不一样）。本机从没建过这台车的原区块（队友开过来的、保底车）用 mid（低画质 drvLow），磨损按 mid 档。
+  档位和磨损片数由各端按自己的区块数据现算：`applyChunk` 每次都记下 key → { 停放档, wearN }，**这两个值不进 levelState**（两端画质可以不一样）。本机从没建过这台车的原区块（队友开过来的、运行时车）用 mid（低画质 drvLow），磨损按 mid 档。
   高画质停放档在 high / mid / lite 的车，上车前后同一档、同样的磨损，看起来一样（同机位截图平均像素差 < 2）。
 - 预算：每台 ≤ 2000 面（实测 lite 1031、mid 1342、high 1810，加 drive 改动约 100）；最坏 6 台开过的车都在附近合计 ≤ 12000 面；叉车不往任何区块里加一个面。L1 出生点开着车、旁边再停 5 台开过的车，高低画质 `BR.gfx.debugInfo().calls` 都 ≤ 120。
   叉车模拟加顶点更新平均每帧 ≤ 0.6 ms（`_step` 连跑 1000 步）。
@@ -1122,7 +1252,9 @@ BR.vehiclesNet
      插值出来的重心竖直加速度在 ±0.6 g 之间来回抖：火盐、闪电瓶翻下叉尖那一小段 1/240 s 逐帧看忽快忽慢）。实测（repair-r14/probe/vp/pivot_v5_*.out）：验收员那一组
      （左叉闪电瓶 + PTG-B、右叉火盐 + 罐头 + PTG-B，PTG-B 针头朝叉尖）和另一组 6 件混装，撞前 2.025 m/s，1/240 s 细步长按网格质心看，离货叉、离地都 > 2 mm 的每一步竖直加速度 0.99–1.0 g
      （跨过碰撞那一刻的差分也不低于 0.8 g）；按 30 帧看时碰撞那一下落在两帧之间，跨过它的差分照样会小（那是真的碰了一下，不是空中慢下来）。
-     离开以后**看得见的重心**竖直按重力落下（离开那一刻的速度接着，加速度 = g）；水平照样跟着整排；落下去的路上从 θa 起 θa·(1 + κw)(1 − w)² 回正（κ 接上翻下去末了倾斜得多快），
+     离开以后**看得见的重心**竖直按重力落下（离开那一刻的速度接着，加速度 = g；FE1P H13 起 mode 3 的重心落差 = c1·w + c2·w²，c1 = 上一段 mode 2 末了**画出来的**
+     重心竖直速度 × Tf（每段算一次缓存在 P.c3[k][2]），c2 = Dc − c1 ≈ ½g·Tf²；pivotRun 交出的 vG 按 1 ms 位置串的导数给（v + ½Δv，半隐式欧拉的位置串斜率比 v 大半步）——
+     以前 3.9 m/s 的 PTG-B 在 mode 2 → 3 那一刻竖直速度差 4–5 cm/s，现在 18 种摆法都 ≤0.2 mm/s，tests/forklift.mjs I26b 盯着 ≤2 mm/s）；水平照样跟着整排；落下去的路上从 θa 起 θa·(1 + κw)(1 − w)² 回正（κ 接上翻下去末了倾斜得多快），
      C 跟着倾斜在重心下方，落地回到静止姿态（重心 = 落点 + gy），接着跟整排滑、一起停。落地的面：每 1/240 s 看重心正下方（`topAt`：地面、碰撞体顶面、sideObs 顶面），
      碰到就在那一步里按抛物线解出落地时刻。
   ③ **滑多远看车速**（返修 r12 裁定 A）：没被挡住时 D = max(最靠车那件此刻最靠车那一点到叉尖的距离 + L(v), v²/(2·0.4g))（`throwDfull`），
@@ -1241,6 +1373,8 @@ BR.vehiclesNet
 ### 15.6 坐在车上时别处怎么处理
 
 - `player.x / z` = 座椅、`y` = 眼高、feetY = 车下地面：world 的出口检测（collectInside / checkExits）直接跳过，不显示「尚未开放」；L1 的水坑接触判定跳过（开过没密封的水坑不掉理智）；实体按第 12 节 BR.entities「坐在车上的玩家」处理；coop 的位置、besideHost 照常按 player.x / z。
+- 怪打坐着的人（FE1P H11）：攻击距离量到司机身体（seatWorld + 人的半径），扣血在胳膊挥到最前那一帧（见第 12 节 BR.entities「坐在车上的玩家」）；
+  坐着的人都不扣安全带（带子垂在座椅右侧外面，离坐姿人形 ≥1 cm），第一人称看不到自己的身体（D2 再做）。
 - 噪音：怠速 0.25、行驶 0.6、倒车 0.8（都比走路的 0.4 大，怠速比走路轻）；本机在开时另外每步调 `BR.entities.makeNoise`（只在噩梦模式生效）。联机时客机开车的响动和客机走路一样，房主那边的怪听不见（现有规则，留给 N2）。
 
 ### 15.7 levelState.vehicles 和联机
@@ -1263,7 +1397,9 @@ BR.vehiclesNet
   tests/coop.mjs V14（客机出站消息攒 7 s：人还坐着、补到以后租约一致、位置差 < 5 cm）、V14b（攒 20 s：放下车、房主把车挪到客机下车的地方）、
   V14c（repair-r3：攒着的这段时间里房主收走租约、车在房主那边被挪开 1.2 m（直接改 levelState），晚到的 rel 不把车挪回去，客机那边被拉过去，没人拿着租约。
   注意：这期间房主自己上不了这台车 —— 客机的位姿消息也攒着，房主那边一直看到他坐在车上，只给「队友在开叉车」；所以 vehFin 这道防线现在只防 levelState 被别的路子改过的情况）。
-- **对方人形**：`me.pose = ['drive', key]` 时，对方把整只 hazmat.glb 藏起来，换成程序化防化服 `hazmat(ctx, { color: 对方皮肤色 })`（_archetypes.js 新增 `o.color`，材质缓存键带颜色，不影响拟态实体共用的材质），摆坐姿钉在 `BR.vehicles.seatWorld(key)`，身体朝向取车的 yaw，头按对方相机相对车转（限 ±90°）；下车切回 glb。名牌坐车时放在 seatWorld + 1.2，视线检查对准 `chestOf(对方)`（护顶四周是空的，隔着车身名牌也不变淡）。
+- **对方人形**：`me.pose = ['drive', key]` 时，对方把整只 hazmat.glb 藏起来，换成程序化防化服 `hazmat(ctx, { color: 对方皮肤色 })`（_archetypes.js 新增 `o.color`，材质缓存键带颜色，不影响拟态实体共用的材质；
+  FE1P H10 起手套 0x141414、靴子 0x111111、面罩框 0x252525、目镜 0x0a0e11、滤罐 0x353535 都和 hazmat.glb 一样（线性值走顶点色，不加槽位；FE1Q J7 起低画质也一样上色：gear 槽材质取手套色，面罩框、滤罐、手套、靴子按顶点色 tint 成 glb 的颜色（HAZ_PAL.low），tests/visualhooks.mjs 低档白名单放开 skin_stealer 伪装的 gear 槽位），
+  换皮肤只换制服；不再长制服色的手和脚（手套 = 深色方块 + 深色手指，靴子里没有脚掌方块）；FE1Q repair-r1 起面罩（圆脸罩 + 目镜 + 两侧圆滤罐）、靴子（圆头高筒靴）的形状也照 glb，几何键 hazmat_lite_v4，高 2400 / 低 768 面；窃皮者伪装共用），摆坐姿钉在 `BR.vehicles.seatWorld(key)`，身体朝向取车的 yaw，头按对方相机相对车转（限 ±90°）；下车切回 glb。名牌坐车时放在 seatWorld + 1.2，视线检查对准 `chestOf(对方)`（护顶四周是空的，隔着车身名牌也不变淡）。
 - 三种模式都能联机（入口：主页「联机」→ 营地 → 帐篷，见第 9 节）；叉车跟着 `BR.game.coop` 走，不另加模式判断。测试一律用 tests/coop.mjs 的假 room.php，绝不连真实服务器。
 
 ### 15.8 货叉上的物资（单机）
@@ -1282,12 +1418,16 @@ BR.vehiclesNet
   I17d 对着叉尖连丢，前两只没有提示、第三只提示「…，靠车那头还空着」；I17c 整根货叉摆满再丢「这根货叉摆满了，东西放到旁边地上了」，两边地上也摆满再丢「这根货叉摆满了，旁边地上也放不下」、留在手里；都查显示时长。
   丢在两根货叉中间的空当、或者叉面举得比 1.4 m 高时，东西落在地上（之后降货叉会停在它上面，提示「货叉下面有东西」）。
 - **放得稳的静止姿态**（返修 r12 裁定 B，items.js `restOf` / `BR.items.rest(type)`）：静止摆放、不在容器里的物资（still && !owner：货叉上、地上、柱础 / 矮东西顶上、甩出去落地、车推开、手放下）
-  按这个姿态摆 —— 重心（模型三角面按面积加权的质心）的竖直投影落在离支撑面 ≤ 2 mm 的顶点围成的凸包里、往里至少 3 mm。按模板量一次：直立就站得稳的不歪（29 种）；
+  按这个姿态摆 —— 重心（模型三角面按面积加权的质心）的竖直投影落在离支撑面 ≤ 2 mm 的顶点围成的凸包里、往里至少 3 mm。**只算实物网格**（FE1P H6，`BR.items.solidMesh`：
+  物资 build 时给光晕 / 发光体标 userData.glow —— 火盐的光晕球、瓶装闪电的闪电和瓶内光晕；vehicles.js typeShape / footOfObj 和测试的 F.solid 同一口径，光晕可以和叉面、地面、墙交叠）。
+  按模板量一次：直立就站得稳的不歪（返修 r1 起 tests/items.mjs 列的 31 种里 25 种，含火盐 —— 坐在自己的晶体底座上，余量 26.6 mm，光晕球心挪到 y 0.066、最低点比底座底面高 1 mm）；
+  糖果袋返修 r1 起倒平躺着（验收员：底封口以前是 1.9 cm 厚的方块，袋子靠它笔直立着）：枕形袋中间一块（|nx|、|ny| ≤ 0.5）一样鼓、上下两头收扁到 5 mm，
+  封口是 2 mm 的薄压边，按同一套算法从直立倒下去，正面或背面整块着地（歪 90°，余量 34.4 mm），两颗糖用透明胶带贴在两个窄侧面上、离支撑面 >2 mm，不当脚；
   站不稳的按刚体倒下去的样子算（绕离重心投影最近的那条支撑边往重心那边转，转到下一个顶点碰到支撑面为止，重复到稳）：PTG-B 往针头那边歪约 7.3°、指托下沿和针帽一起着地（余量 13.5 mm），
-  火盐约 18°、闪电瓶约 11.7°（底是尖的，余量 5.6 mm）、蛾子果冻约 3°（罐底外鼓，余量 4.8 mm）、糖果盒约 4.4°。姿态只含前后、左右的歪：`obj.rotation` 用 Euler 'YXZ'，`(rx, rotY, rz)` ——
+  闪电瓶三种约 11.3°（底是尖的，余量 11.4 mm）、蛾子果冻约 3.2°（罐底外鼓，余量 4.8 mm）（FE1P 以前火盐靠着光晕球歪 18°、糖果袋站在脚边两颗糖上歪 4.4°）。姿态只含前后、左右的歪：`obj.rotation` 用 Euler 'YXZ'，`(rx, rotY, rz)` ——
   先歪再绕竖直轴转 rotY，绕竖直轴的朝向照旧自由；`rest(type)` 给 `{ rx, rz, bot（最低顶点离原点多高）, com, hull, inset }`。浮着转圈的、手里拿着的、容器 / 取货口里的照原样。
   vehicles.js 摆到叉面 / 地面时原点 = 支撑面 − bot（`liftOfType`），forklift.js 推完贴地（`pushY`）同样；interact 长按拖地上的物资（`D.dy`）、道具推开地上物资和 world 把物资挪出道具占地
-  （`items.move` 不给 y）也一样 —— `BR.items.floorLift(id)` = 静静躺着的 −bot、浮着的 0（返修 r14，验收员 play：以前拖动时原点直接放到地面高度，甩出去落地的火盐一拖晶体尖就陷进地里 18.5 mm、
+  （`items.move` 不给 y）也一样 —— `BR.items.floorLift(id)` = 静静躺着的 −bot（最低顶点比原点高时是负的，FE1P H13；返修 r1 起糖果袋倒平、+32.5 mm，现在没有物资是负的）、浮着的 0（返修 r14，验收员 play：以前拖动时原点直接放到地面高度，甩出去落地的火盐一拖晶体尖就陷进地里 18.5 mm、
   PTG-B 5.1 mm，陷下去的高度还写进了 drop 记录）；静静躺着的丢弃物 drop 记录的 y 记到 0.1 mm（按 1 mm 取整换层回来会离地 ±0.5 mm）。准心命中球按歪过的角度多包一点（`hitAdd`）。
 - **放上货叉时**（`attachItem`）：先 `orientOnTine` 再 `centerOnTine`。`supportGap`（返修 r11 起；r12 改成「重心在支撑凸包里」）：按放得稳的静止姿态，
   叉面那一条（这根货叉 |lx − 中线| ≤ 叉宽 / 2、叉尖到叉根）正上方、离最低点 ≤ 2 mm 的顶点，加上底面里的边（两头都离最低点 ≤ 2 mm）和叉沿、叉尖、叉根相交的点
@@ -1325,7 +1465,7 @@ b.mark() → { matKey: 当前顶点数 }        只读数、不加几何、不�
 
 ### 15.10 L1 的数据（纯数据，golden 不看 res.data / res.kit）
 
-- `b.data.forklifts[i] = { key: '1@cx,cz#v<i>', i, x, z, y, rot（世界坐标）, lx, lz（区块本地）, number（车身编号）, detail（停放档；保底车 null）, tris, solid（res.solids 下标）, spans: { prop: [v0, v1], wear: [[v0, v1]…]（不含 FK_WEAR[0]）, oil: [v0, v1] | null }, wearN, runtime }`。
+- `b.data.forklifts[i] = { key: '1@cx,cz#v<i>', i, x, z, y, rot（世界坐标）, lx, lz（区块本地）, number（车身编号）, detail（停放档；运行时车 null）, tris, solid（res.solids 下标）, spans: { prop: [v0, v1], wear: [[v0, v1]…]（不含 FK_WEAR[0]）, oil: [v0, v1] | null }, wearN, runtime }`。
   停着的车的碰撞框由 `b.fixture({ key, kind: 'vehicle', label: '叉车', why: '叉车太重，拖不动' }, () => b.solid(...))` 包住原来那一次 b.solid（res.solids 的顺序和内容不变）；spans 是 buildForklifts 在每台车的磨损和模型前后量出来的累加器顶点段。
 - `b.data.overhead = [{ kind: 'beam' | 'lamp' | 'pipe' | 'valve' | 'gauge' | 'tray' | 'cable' | 'drip' | 'arch', minX, maxX, minZ, maxZ, y, … }]`（世界坐标，y 是底面离地高）：在画这些东西的地方顺手记，不多取随机数、不改几何，高低画质一样。
   主梁底 3.55、吊灯罩底约 3.14、沿 x 的管子 3.42 − r（托码再低 2 cm）、沿 z 的管子 3.2 − r、阀门手轮和压力表底、桥架 3.35、走廊顶板 2.8、天鹰段漏水小管、传说段垂下来的电缆（分段，最低约 2.3）、哥特段的拱（按 0.25 m 一段切成台阶盒）。
@@ -1340,16 +1480,18 @@ b.mark() → { matKey: 当前顶点数 }        只读数、不加几何、不�
   （「上面有消火栓箱 / 灭火器 / 开关盒 / 路锥 / 灯，升不上去」，管排说管子；没列的说「东西」）；降货叉时在条目正上方就停在它顶面以上（「货叉下面有东西」）。
   tests/forklift_l1.mjs data 段守着它：字段合法、每根柱子有柱脚、高低画质逐项一样、营地不写、地牛的 solid 正好对上 res.solids 里那一块；tests/forklift.mjs side 组 S12 / S12b 偏心开向斜放的地牛、纸箱和路锥、砂堆，被挡住时离真实形状 ≤ 5 cm；
   S12c 专门开向斜放的地牛（正对、偏心 0.3 / 0.6 m，4 个方向），量到地牛两个条目的真实形状，那块老碰撞体不算「别的碰撞体」。没覆盖的（都记在 repair-r1 报告里）：小屋里面的家具（只有叉尖伸得进 1.0 m 宽的门洞）、地上 8 cm 以下的碎屑、凸出墙面 ≤ 3 cm 的窗台、门把手。
-- `b.data.vines = [{ top: [x, y, z], bot: [x, y, z], r, mat: 'kit:prop', v: [v0, v1] }]`：花园段梁上挂下来的每根实际画出来的藤蔓（v 是它在区块 kit:prop 里的顶点段）。车附近 4 m 内的藤蔓下段进了护顶、门架或司机胸口点外扩 0.1 m 的范围，就绕顶点往离车的方向转开（`kit.spanEdit`），车离开后约 1.5 s 内慢慢摆回（`spanRestore`）；纯表现，不同步。传说段垂下来的电缆是硬的，会挡车（在 overhead 里）。
+- `b.data.vines = [{ top: [x, y, z], bot: [x, y, z], r, mat: 'kit:prop', v: [v0, v1] }]`：花园段梁上挂下来的每根实际画出来的藤蔓（v 是它在区块 kit:prop 里的顶点段）。车附近 4 m 内的藤蔓下段碰到看得见的护顶架、门架零件、链条（FE1Q J3 藤蔓挡体，见 15.11）或司机头胸胶囊，就绕顶点往离车的方向转开（`kit.spanEdit`），车离开后约 1.5 s 内慢慢摆回（`spanRestore`）；纯表现，不同步。传说段垂下来的电缆是硬的，会挡车（在 overhead 里）。
 - **出生保底**：L1 正常生成时（工坊地图、营地不算），出生块 (0,0) 的中间柱间永远有一台叉车。openBay 加 force 判断：k 落在叉车区间（天鹰段 0.6 ≤ k < 0.62）而且放得下就照旧走 forklift()（种子 12345 就是这样，逐字节不变）；
   否则排在车位线 / 地牛 / 托盘垛之前，按叉车分支同样的公式取 4 次随机数，放一台保底车：只出 fixture 包住的外接 AABB 和一条 `runtime: true` 的记录（没有 spans），不建区块几何、不进 fkQueue、不记账面，所以不受面数闸门影响。
+  FE1Q J2：出生块里本来就生成的车（不触发保底，比如种子 12345）也一样出 runtime 记录、不建区块几何（FK_PH 照旧占面，块里别的段逐字节不变；tests/forklift_l1.mjs snap「J2 出生块 100 块去掉叉车段以后别的段逐字节不变」）。
   同一柱间后面的碎屑只在保底触发时跳过落进叉车占地（含货叉）外扩 0.2 m 的那几片，随机数照取。保底只改变这个柱间之后的取数，块和块之间互不影响；约 98% 种子的 (0,0) 会变，但它们都不在 golden 里。
-- 工坊地图要给工坊的出口和自由墙留面数时（原来低画质最重的两台叉车块加 3 个出口会超 8000），按出口种类预留（「区域」出口不画地上发光圈，留 0）；连 min 档都放不下时从最后一台起改成运行时车（`runtime: true`，和保底车一样由载具网格画），非工坊生成逐字节不变。
+- 工坊地图要给工坊的出口和自由墙留面数时（原来低画质最重的两台叉车块加 3 个出口会超 8000），按出口种类预留（「区域」出口不画地上发光圈，留 0）；所有台按 lowb 都放不下时从最后一台起改成运行时车（`runtime: true`，和保底车一样由载具网格画）。FE1Q repair-r3 起非工坊生成也是这条规则（以前工坊是连 min 都放不下才改、非工坊放不下也按 min 建）：
+  停着的车不再是 min 档；受影响的块只有叉车自己变（tests/forklift_l1.mjs snap MINFIX / EXTRA_BLOCKS，去掉叉车段以后逐字节不变），运行时车在区块账面上照旧按 FK_NOMINAL 记。
 - 营地（`BR.L1room`）不写 overhead、sideObs、vines，不放叉车也不走保底。
 
 ### 15.11 前大灯和声音
 
-- **仪表台大灯开关**（家长 2026-10 拍板，repair-r2）：`pose.hl`（1 开 / 0 关，出厂开着）。BR.vehicles 在载具网格里画（区块里停着的车不画，golden 不动）：仪表台斜面左半边（方向盘左下方）一块深色底板 + 镀铬拨杆（开往上扳、关往下扳）
+- **仪表台大灯开关**（家长 2026-10 拍板，repair-r2）：`pose.hl`（1 开 / 0 关，出厂开着）。BR.vehicles 在载具网格里画（FE1P H3 起区块里停着的 high / mid / lite 档也由 L1.js `fkDashSwitch` 画同一份 —— 拨杆扳在「开」、指示灯熄着的暗绿在 kit:prop 里，上车发动后换成这里画的、指示灯跟大灯一起亮）：仪表台斜面左半边（方向盘左下方）一块深色底板 + 镀铬拨杆（开往上扳、关往下扳）
   + 拨杆上方一颗绿色指示灯（kit:glow，着车且开着才亮，熄着 × 0.12 近乎黑）+ 下方小灯头图标。坐在车上准心对准它（候选 `{ kind: 'button', key: 'fkhl:' + 车 key, label: '大灯开关', small }`）短按空格开 / 关，
   「咔哒」一声；**点火时大灯跟着开关**（出厂开着，所以点火默认亮），关着就撤掉灯池那一盏、灯罩和指示灯熄灭，`world.lightAt` 不再把司机算成被照亮（理智、怕光 / 找光的怪都看它）。
   手机上准心对着开关时「下车」键临时写成「开大灯 / 关大灯」（`input.setButtons({ interact: { label } })`），移开恢复「下车」。开关状态单机 / 房主写进 levelState.vehicles.hl（离开再回来保留），联机经 hand 的第 10 个值同步。
@@ -1358,7 +1500,28 @@ b.mark() → { matKey: 当前顶点数 }        只读数、不加几何、不�
   手机上（`BR.input.isTouch`）说「闪烁：叉车大灯会把你照亮，对准仪表台的大灯开关点「关大灯」键可以关掉，或者下车找亮着绿色应急灯的门躲进小屋」（手机上没有空格，开关靠对准时临时写成「关大灯」的那个键拨，repair-r3 裁定 ④）。
   两句都是家长定的原话（49 / 53 字），显示时长按每秒 6 个字算、不少于 6 秒（8.2 / 8.8 秒，L1.js `fkDarkTip`）。别的时候还是「闪烁：别开灯，找亮着绿色应急灯的门躲进小屋」（一局一次）。
 - 前大灯（数值以代码为准，主会话 r3 裁定 ⑤ 认可、方案已同步：断电时车前 6–8 m 真的照亮、车后不亮、不透墙，tests/forklift.mjs dark 组 K1–K6）：层级不建 PointLight。开着的车通过 `world.setExtraLights('fk:' + key, [灯])` 交给 gfx 现有 6 盏灯池里的一盏，每台开着的车 1 盏，和别的灯一样按离相机的距离挑。光源由 `sim.lightSpot()` 给：先从前立柱沿车头方向 raycast，叉根前 4 m 以内有墙就放在墙前 0.3 m（range 收到 1.8–2.2 m，墙另一侧 2 m 处已在范围外），否则放在叉根前 4 m；离地 1.6 m、range 8、强度 3.2、暖白（光斑铺在车前 2–8 m，L1 断电时车前 4 m 地面约是环境的 3 倍多，车尾后 2 m 在 range 外）。
-  所以车头顶着墙时光不透到墙那边，车后面不亮；L1 断电时正好空出灯位，平时会挤掉最远的一盏区块灯。没人开的车大灯不亮；熄火后撤掉，灯罩变回暗色。
+  所以车头顶着墙时光不透到墙那边，车后面不亮；L1 断电时正好空出灯位，平时会挤掉最远的一盏区块灯。
+  **FE1P H8（主会话裁定：墙另一侧一点光都不吃）**：点光源没有影子，光球只能不伸到挡光的东西后面（forklift.js `lightSpot` / `lightBound`）——
+  ① 墙类（竖直跨过光源高度、水平细长：长边 ≥ 短边 2 倍且 ≥ 0.4 m 的静态碰撞体，加上区块 group 里名为 'noclip' 的切出墙片按包围盒当墙）：取墙沿薄方向的中面、两头各伸出 min(厚/2, 0.15) m，
+  光源到中面距离 d、到中面所在平面的垂距 p，range ≤ d·(1 + min(厚/2, 0.1)/p)；侧着看墙头时不收；货架只算到中面外 0.1 m。② 射线正前方打到的那一样（柱子、堆垛、别的车、墙、切出墙片）：
+  光源在它哪个面的里侧，range 就不超过光源到那个面的距离（墙在射线窗口最远那半米时按原来的 k 慢慢放开）。range 收小后补强度，让光源正下方地面和 range 8 时一样亮（最多 2.2 倍）：
+  顶着小屋墙时 range 0.49、强度 7.04（墙上一块亮斑），试车场 range 4.42。光源仍在墙前 0.3 m。world.setExtraLights 改成马上 pushLights（不会有一帧光球伸到墙后）；
+  远端车（vehicles_net 借灯池）走影子模拟的 lightSpot，同样被收住。tests/forklift_polish.mjs light 组。
+  代价：附近有墙类时光斑比空地小（贴墙开约 1.5–2 m）；柱子、堆垛等矮东西后面照旧会亮（不做影子），只有车头正对着时按背面收住。
+  **FE1Q J9（厚挡光体）**：墙类界限 `wallBound` 改用 `occDepth(hn, pn)` —— 半厚 hn ≤ 0.1 m 的薄墙照旧到远侧面为止（顶墙时墙上一块圆亮斑，墙里那间屋一点光不吃）；货架这类有进深的，
+  光源离开它进深 0.5 m 以外时界限放到远侧面往里 0.1 m（照得到货架上朝通道的货，照不到货架另一侧的通道），光源在进深范围里（对着货架头）照旧中面外 0.1 m，0–0.5 m 之间平滑过渡（`OCC.ramp`）。
+  窄货架道（车中心离货架 1.25 m）光球 2.5 → 3.46 m、叉尖前 5 m 地面开灯比关灯亮 19，宽通道 4.09 → 5.05 m；货架另一侧通道地面差 0。代价：货架是透的，另一侧通道隔着货架缝能看到架子里朝车那边的货被照亮。车从货架头斜着开出来、光源正好在货架中线延长线上时光球不收，货架另一侧通道靠近货架头那一条地面会亮一下（约 2.8 m²，随机位姿约 2%），lightAt 在那里也算亮；接受（从货架头外面本来就绕得过去看到那一段，按两个角收会让车前的光缩到 1–2 m）。
+  **FE1Q J8（lightAt 和画面一致）**：world.lightAt 按画面上那盏灯算（第 12 节 BR.world），被墙 / 货架收短的地方不算亮；开着车灯时驾驶舱里固定算亮（`sim.litSeat`，≈ 0.338）。
+  tests/forklift_polish.mjs light L7（队友驾驶舱）、L8 / L8b（窄货架道）、L9 / L9b（宽通道）、L10（司机座位四处）、L11（空地 21 个地面点：画面亮 ≥8 的 lightAt 亮，光球外画面 ≤2 的不亮），--before <目录> 反证。
+- **L1 断电时新载入的区块**（FE1P H12）：断电途中往没去过的方向走，新载入的区块灯也一起灭、不占灯池（L1.js update 断电期间每帧 `dimLights`，原亮度记在 `_l1orig`），
+  来电时一起按原亮度亮回（以前只灭断电开始那一刻已载入的块，远处新块 18 盏灯亮着、5 盏占了灯池）。tests/forklift_l1.mjs polish H12。
+- **藤蔓**（FE1P H9，FE1Q J3）：碰到看得见的护顶架、门架零件和链条（`sim.vineVolumes`：护顶架用 VINE_GUARD —— 两根纵梁 |x| 0.40–0.46、y 2.04–2.10、z −0.62…0.56，前后横梁，按这一档根数算的格栅横条 y 2.07–2.085，
+  斜立柱，前大灯灯盒，high 档后视镜，警示灯单独一个正 n 棱台；外门架、内门架、货叉架按这一档可动模型的零件（BR.L1forklift.model 按档建一次缓存，按顶点连成零件，凸的照轴对齐盒子或凸多面体算，升降跟着 inner / carriage 动）；
+  链条按 FORKLIFT_GEO 现算；查不到这台车的档按 mid，L1 拆不出零件时退回物理盒子；物理 OBB FK_OBB 不动，不再用 roof 盒子 2.05–2.20）或司机头胸胶囊（半径 CFG.vine.head 0.15）就绕挂点往离车的方向转到刚好贴着：
+  vineClear 按藤蔓轴线段到每个 OBB 的精确 3D 距离（先粗判再黄金分割）、到胶囊的线段间距离，阈值 = 方杆外接半径 r·√2 + 0.5 mm，转角二分到 0.5 mrad；车停着时往回摆一点就碰到的，
+  二分到刚好贴着停住（表面离挡体 0–1 cm、不穿进去，以前停在离护顶 12 cm 以上歪着悬空）；FE1Q J3：藤蔓最下面 2 cm 按平底外接圆柱算（底面和往上 0.7 / 1.4 / 2.1 cm 共 4 圈 × 16 点，每点离挡体 ≥0.5 mm），
+  轴线胶囊只算到离底端 R 为止，停住时藤蔓尖贴着纵梁 0.6 mm（以前按物理 roof 盒子，离看得见的横梁 31 mm）。车走开后 1.2 s 内慢慢摆回、顶点逐位恢复。
+  tests/forklift_polish.mjs vine 组（V1–V3 同时量到挡体和可动模型三角形，V5 四档 × lift 0 / 0.6 离地 1.7 m 以上的模型顶点都在挡体里；V3-side-level.png 是车右侧平视、护顶高度的特写）；tests/forklift.mjs L9 用 `_geom.vineHit` 查每帧顶点。没人开的车大灯不亮；熄火后撤掉，灯罩变回暗色。
   vehicles.js / vehicles_net.js 里 lightSpot() 没给的字段（颜色、强度、range）按 `BR.forklift.config.light` 补（两边的 HEADLIGHT 只是 forklift.js 没加载时的默认，数值同上）。
 - 声音：一次性的 `BR.audio.play('fk_*', pos)`，持续的 `BR.audio.loop('fk_engine' | 'fk_hydraulic' | 'fk_reverse', pos)`（第 12 节 BR.audio）。发动机声随车速变高变低；按住 R / C 液压泵「嗡」；倒车「哔、哔」；到顶到底「咔」；头顶挡住憋压；撞上「哐」/「咚」；雷达「嘀嘀嘀」。
 

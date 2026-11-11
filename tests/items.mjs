@@ -260,6 +260,140 @@ async function staticChecks(page) {
   return info;
 }
 
+// 放得稳的静止姿态只算实物（FE1P H6 / H7）：模型自己的坐标里按测试自己的一份算法量（不调 items.js 的内部），和 BR.items.rest 对账
+//   ① 每种物资：按 rest 的 rx / rz 摆好，只算实物网格（光晕、发光体 —— 物资 build 时标 userData.glow —— 不算），离最低点 ≤2 mm 的顶点围成的水平凸包，
+//      面积加权的质心投影在里面、往里 ≥3 mm（r13 裁定 B），和 rest.inset 差 ≤0.1 mm、rest.bot 差 ≤0.1 mm
+//   ② 发光的（MeshBasicMaterial：不受光照的自发光部件）都标了 userData.glow，标了的都是 MeshBasicMaterial；火盐 1 个、瓶装闪电三种各 2 个
+//   ③ 火盐：每根晶体的底尖都插在底座里（从底尖往上、斜上各打一条射线数穿过底座几次，奇数 = 在里面），整簇连成一块
+//   ④ 糖果袋（返修 r1）：封口是 2 mm 薄压边、立不住，倒平躺着（歪 ≥80°），支撑点全在袋身上，两颗糖不是支撑（离最低点 >2 mm）
+async function restChecks(page) {
+  const r = await ev(page, (all) => {
+    const out = {};
+    const hull = pts => {
+      const P = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+      if (P.length < 3) return P;
+      const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+      const lo = [], up = [];
+      for (const q of P) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], q) <= 1e-12) lo.pop(); lo.push(q); }
+      for (let i = P.length - 1; i >= 0; i--) { const q = P[i]; while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], q) <= 1e-12) up.pop(); up.push(q); }
+      lo.pop(); up.pop();
+      return lo.concat(up);
+    };
+    const inset = (h, x, z) => {
+      if (h.length < 3) return -1;
+      let m = Infinity;
+      for (let i = 0; i < h.length; i++) { const a = h[i], b = h[(i + 1) % h.length]; m = Math.min(m, ((b[0] - a[0]) * (z - a[1]) - (b[1] - a[1]) * (x - a[0])) / (Math.hypot(b[0] - a[0], b[1] - a[1]) || 1)); }
+      return m;
+    };
+    for (const t of all) {
+      const d = BR.itemTypes.get(t), rest = BR.items.rest(t);
+      const root = d.build({ THREE, BR, assets: BR.assets, game: BR.game });
+      root.position.set(0, 0, 0);
+      root.rotation.set(rest.rx, 0, rest.rz, 'YXZ');
+      root.updateMatrixWorld(true);
+      const V = [], glow = [], badGlow = [];
+      let A = 0, cx = 0, cy = 0, cz = 0, mi = 0;
+      const v = new THREE.Vector3();
+      root.traverse(n => {
+        if (!n.isMesh) return;
+        const isGlow = !!(n.userData && n.userData.glow), basic = !!n.material.isMeshBasicMaterial;
+        if (isGlow) glow.push(mi);
+        if (isGlow !== basic) badGlow.push([mi, n.material.type, isGlow]);
+        const idx = mi++;
+        if (isGlow) return;
+        const pos = n.geometry.attributes.position, P = [];
+        for (let i = 0; i < pos.count; i++) { v.fromBufferAttribute(pos, i).applyMatrix4(n.matrixWorld); P.push([v.x, v.y, v.z]); V.push([v.x, v.y, v.z, idx]); }
+        const ix = n.geometry.index, nt = ix ? ix.count / 3 : pos.count / 3;
+        for (let k = 0; k < nt; k++) {
+          const a = P[ix ? ix.getX(3 * k) : 3 * k], b = P[ix ? ix.getX(3 * k + 1) : 3 * k + 1], c = P[ix ? ix.getX(3 * k + 2) : 3 * k + 2];
+          const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], wx = c[0] - a[0], wy = c[1] - a[1], wz = c[2] - a[2];
+          const ar = Math.hypot(uy * wz - uz * wy, uz * wx - ux * wz, ux * wy - uy * wx);
+          A += ar; cx += ar * (a[0] + b[0] + c[0]); cy += ar * (a[1] + b[1] + c[1]); cz += ar * (a[2] + b[2] + c[2]);
+        }
+      });
+      let y0 = Infinity; for (const q of V) y0 = Math.min(y0, q[1]);
+      const sup = V.filter(q => q[1] <= y0 + 0.002), h = hull(sup.map(q => [q[0], q[2]]));
+      const G = [cx / (3 * A), cy / (3 * A), cz / (3 * A)], ins = inset(h, G[0], G[2]);
+      const o = { ins: +(ins * 1000).toFixed(2), restIns: +(rest.inset * 1000).toFixed(2), bot: +(y0 * 1000).toFixed(3), restBot: +(rest.bot * 1000).toFixed(3),
+        tilt: +(Math.acos(Math.cos(rest.rx) * Math.cos(rest.rz)) * 180 / Math.PI).toFixed(2), glow, badGlow, supMeshes: [...new Set(sup.map(q => q[3]))] };
+      if (t === 'firesalt') {
+        // 底座 = 第一个网格（firesalt.js build 里先加的），晶体 = 后两个（每 24 个顶点一根八面体）
+        const ms = []; root.traverse(n => { if (n.isMesh) ms.push(n); });
+        const bm = new THREE.Mesh(ms[0].geometry, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+        bm.matrixWorld.copy(ms[0].matrixWorld); bm.matrixAutoUpdate = false;
+        const rc = new THREE.Raycaster(), tips = [];
+        for (const m of ms.slice(1)) {
+          if (m.userData && m.userData.glow) continue;
+          const pos = m.geometry.attributes.position;
+          for (let k = 0; k < pos.count / 24; k++) {
+            let lo = null;
+            for (let i = 24 * k; i < 24 * (k + 1); i++) { v.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld); if (!lo || v.y < lo.y) lo = v.clone(); }
+            let n = 0;
+            for (const dd of [[0, 1, 0], [0.31, 0.95, 0.1]]) { rc.set(lo, new THREE.Vector3(...dd).normalize()); n += rc.intersectObject(bm, false).length % 2; }
+            tips.push(n === 2);
+          }
+        }
+        o.tips = tips;
+      }
+      if (t === 'candy') {
+        // 两颗糖：实物网格里底封口、顶封口以外、离袋子中线 ≥ 袋宽一半的顶点（模型带 1.25 的缩放）。按模型自己的坐标挑（转回没歪的样子），
+        // 再看它们在静止姿态下离支撑面多高（返修 r1：袋子现在倒平躺着，模型的 y 不再是高度）
+        const Mi = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(rest.rx, 0, rest.rz, 'YXZ')).invert();
+        const candy = V.filter(q => { if (q[3] !== 0) return false; const m = new THREE.Vector3(q[0], q[1], q[2]).applyMatrix4(Mi); return m.y > 0.02 && m.y < 0.18 && Math.abs(m.x) > 0.066; });
+        o.candyLow = candy.length ? +((Math.min(...candy.map(q => q[1])) - y0) * 1000).toFixed(1) : null;
+        o.candyN = candy.length;
+      }
+      out[t] = o;
+    }
+    return out;
+  }, ALL_TYPES);
+  const bad = ALL_TYPES.filter(t => !(r[t].ins >= 3 && Math.abs(r[t].ins - r[t].restIns) <= 0.1 && Math.abs(r[t].bot - r[t].restBot) <= 0.1));
+  check('每种物资放得稳的静止姿态只按实物网格算：质心投影在离最低点 ≤2 mm 的顶点凸包里、往里 ≥3 mm，和 BR.items.rest 对得上（' +
+    ALL_TYPES.map(t => t + ' ' + r[t].tilt + '° ' + r[t].ins + ' mm').join('、') + '）', bad.length === 0, bad.map(t => [t, r[t]]));
+  const glowBad = ALL_TYPES.filter(t => r[t].badGlow.length || r[t].glow.some(i => r[t].supMeshes.includes(i)));
+  const glowN = t => (r[t] ? r[t].glow.length : -1);
+  check('光晕、发光体（MeshBasicMaterial）都标了 userData.glow、不在支撑里：火盐 ' + glowN('firesalt') + ' 个、瓶装闪电三种 ' +
+    ['lightning_in_a_bottle', 'lightning_in_a_bottle_artificial', 'lightning_in_a_bottle_black'].map(glowN).join(' / ') + ' 个',
+    glowBad.length === 0 && glowN('firesalt') === 1 && ['lightning_in_a_bottle', 'lightning_in_a_bottle_artificial', 'lightning_in_a_bottle_black'].every(t => glowN(t) === 2), glowBad.map(t => [t, r[t]]));
+  const fs = r.firesalt || {};
+  check('火盐：直立坐在底座上（歪 ' + fs.tilt + '°，支撑只有底座），每根晶体的底尖都插在底座里（' + (fs.tips || []).filter(Boolean).length + ' / ' + (fs.tips || []).length + '）',
+    !!fs.tips && fs.tips.length === 6 && fs.tips.every(Boolean) && fs.tilt < 0.5 && fs.supMeshes.length === 1 && fs.supMeshes[0] === 0, fs);
+  const cd = r.candy || {};
+  // 返修 r1（验收员：底封口以前是 1.9 cm 厚的方块，袋子靠它笔直立着）：封口改成 2 mm 的薄压边，一袋糖立不住 —— 按同一套静止姿态倒平，
+  // 正面或背面着地（歪 ≥80°），支撑点全在袋身上（封口、两颗糖、胶带都不着地），两颗糖离支撑面 >2 mm
+  check('糖果袋：立不住、倒平躺着（歪 ' + cd.tilt + '°，要 ≥80°），支撑点全在袋身上（支撑网格 ' + JSON.stringify(cd.supMeshes) + '，要 [1]），两颗糖不当脚：最低的糖离支撑面 ' + cd.candyLow + ' mm（要 >2 mm）',
+    cd.candyN > 0 && cd.candyLow > 2 && cd.tilt >= 80 && JSON.stringify(cd.supMeshes) === '[1]', cd);
+}
+
+// 静静放在地上（FE1P H13）：每种物资按 items.move 不给 y 那条路落地（interact 拖地上的物资、车推开的都走这条），
+// 实物网格最低的顶点离地 ±0.1 mm（以前 floorLift 夹到 ≥0，最低点比原点高的糖果袋浮起来）
+async function restFloorChecks(page) {
+  await ev(page, (seed) => { __br.start({ mode: 'test', levelId: 'dev', seed }); return 0; }, SEED);
+  await page.waitForFunction(() => BR.game.screen === 'playing', null, { timeout: 20000, polling: 200 });
+  await installHelpers(page);
+  const r = await ev(page, (all) => {
+    __br.setAuto(false); BR.entities.clear(); BR.items.clear();
+    const P = BR.player, out = {};
+    all.forEach((t, i) => {
+      const x = P.x + 1.2 * Math.sin(i * 0.7), z = P.z + 1.2 * Math.cos(i * 0.7), id = 'rest/' + t;
+      const g = BR.phys.groundY(x, z);
+      BR.items.spawn(t, x, g + 0.3, z, { id, still: true, dropped: true, rotY: i * 0.37 });
+      BR.items.move(id, x, undefined, z);
+      const p = BR.items.find(id);
+      p.obj.updateMatrixWorld(true);
+      let lo = Infinity;
+      const v = new THREE.Vector3();
+      p.obj.traverse(n => { if (!BR.items.solidMesh(n)) return; const pos = n.geometry.attributes.position; for (let k = 0; k < pos.count; k++) { v.fromBufferAttribute(pos, k).applyMatrix4(n.matrixWorld); lo = Math.min(lo, v.y); } });
+      out[t] = { gap: +((lo - g) * 1000).toFixed(3), lift: +(BR.items.floorLift(id) * 1000).toFixed(2) };
+      BR.items.remove(id);
+    });
+    return out;
+  }, ALL_TYPES);
+  const bad = ALL_TYPES.filter(t => !(Math.abs(r[t].gap) <= 0.1));
+  check('每种物资静静放在地上（items.move 不给 y）：实物最低的顶点贴地 ±0.1 mm（糖果袋 ' + (r.candy ? r.candy.gap : '?') + ' mm、floorLift ' + (r.candy ? r.candy.lift : '?') + ' mm；火盐 ' +
+    (r.firesalt ? r.firesalt.gap : '?') + ' mm）', bad.length === 0, bad.map(t => [t, r[t]]));
+}
+
 // =====================================================================
 // 2. 噩梦生存：逐个物品
 // =====================================================================
@@ -759,10 +893,14 @@ async function main() {
     await page.setViewportSize({ width: 480, height: 270 });
     await staticChecks(page);
     lap('注册检查');
+    await restChecks(page);
+    lap('静止姿态（只算实物）');
     await nightmare(page);
     lap('噩梦生存');
     await casual(page);
     lap('游玩模式');
+    await restFloorChecks(page);
+    lap('静静放在地上');
     await screenshots(page);
     lap('截图');
   } catch (err) {

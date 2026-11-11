@@ -396,7 +396,9 @@ function facets(b, key, faces, color, inside) {
   }, { color, uv, solid: false });
 }
 // 两点间的方截面细杆（斜撑、树枝、钢筋、天线）：4 个侧面 8 个三角形
-function stick(b, p0, p1, r, color, key) {
+// capEnd：true = p1 那头封口（四个侧面之后再加一块方盖；缺省不封，别处调用的几何逐位不变）
+// skipN（可选）：skipN(面的外法线) 为真的侧面不画（返修 FE1Q · repair-r2：trim 档方向盘辐条朝下那面，停着永远是背面）
+function stick(b, p0, p1, r, color, key, capEnd, skipN) {
   const d = norm3(sub3(p1, p0));
   const up = Math.abs(d[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
   const a = norm3(cross3(d, up)), c = cross3(a, d);
@@ -405,8 +407,10 @@ function stick(b, p0, p1, r, color, key) {
   const faces = [];
   for (let k = 0; k < 4; k++) {
     const s0 = O[k], s1 = O[(k + 1) % 4];
+    if (skipN) { const u = (s0[0] + s1[0]) / 2, w = (s0[1] + s1[1]) / 2; if (skipN([a[0] * u + c[0] * w, a[1] * u + c[1] * w, a[2] * u + c[2] * w])) continue; }
     faces.push([P(p0, s0[0], s0[1]), P(p0, s1[0], s1[1]), P(p1, s1[0], s1[1]), P(p1, s0[0], s0[1])]);
   }
+  if (capEnd) faces.push(O.map(q => P(p1, q[0], q[1])));
   return facets(b, key || 'kit:prop', faces, color, [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2, (p0[2] + p1[2]) / 2]);
 }
 // 不出碰撞体的盒子
@@ -1220,7 +1224,8 @@ function openBayExits(b, bay, r, env) {
 }
 // fill：没有出口的空地上摆一样东西（车位线/地牛/空托盘垛/叉车），再加水坑、油渍、碎屑。
 // 出生保底（keyDecisions[3]，bay.forceFk：只有 L1 正常生成的出生块 (0,0) 中间柱间，工坊、营地不走）：这个柱间永远有一台叉车。
-// 不看 cap 闸门；k 落在叉车区间、而且本来就放得下（triCount < cap）就照旧走 forklift()（种子 12345 就是这样，逐字节不变）；
+// 不看 cap 闸门；k 落在叉车区间、而且本来就放得下（triCount < cap）就照旧走 forklift()（种子 12345 就是这样，块里别的东西逐字节不变；
+// 返修 FE1Q · J2 以后它在出生块里也只出一条 runtime:true 的数据记录，车画在载具网格里）；
 // 否则排在车位线 / 地牛 / 托盘垛之前，按叉车分支同样的公式取 4 次随机数，放一台保底车（forcedForklift）。后面的碎屑躲开它
 function openBay(b, bay, r, env, cap) {
   b.push(bay.x, bay.z, 0);
@@ -1318,7 +1323,7 @@ function palletJack(b, x, z, rot, env) {
 //   mastOuter：两根立柱、顶梁、坐在车架前面的底座、两根起升油缸缸筒、链条锚座、倾斜油缸耳座
 //   mastInner：两根立柱（套在外门架里）、顶梁、底梁、起升油缸活塞杆 + 杆头、顶上两个链轮
 //   carriage：货叉架上下横梁 + 链条挂点、两个滚轮架（把上下横梁连起来、后端贴着内门架立柱前脸滑）、挡货架（格栅）、两根 L 形货叉（叉根圆角、叉尖削薄）+ 挂钩
-//   chains：前段（货叉架挂点 → 链轮前缘）、后段（外门架锚座 → 链轮后缘），长度随升降变
+//   chains：一根链条 —— 前段（货叉架挂点 → 链轮）、搭在链轮上半圈、后段（链轮 → 外门架锚座），长度随升降变（返修 FE1P · H5）
 // 没有任何品牌名或商标（车身上只有编号）。
 //
 // 车身坐标：原点 = 车底投影中心的地面；−z = 车头（门架、货叉），+z = 车尾（配重）；+x = 坐在座椅上的人的右手边。
@@ -1341,7 +1346,8 @@ const FORKLIFT_GEO = {
   forkY: 0.015,                             // 货叉水平段底面（lift = 0；升到顶 = forkY + 2 × innerTravel ≈ 2.62，够得着第二层货架 2.3）
   forkTip: { x: 0.28, z: -2.1 },            // 货叉尖（±x 两根，宽 0.1、厚 4 cm）
   forkHeel: -1.16,                          // 货叉竖直段前面（托盘最多插到这里）
-  sprocket: { x: 0.12, y: 2.09, z: -1.01, r: 0.035 },   // 链轮（内门架上，lift = 0）
+  // 链轮（内门架上，lift = 0）。链条中心线在链轮外圆上、厚 12 mm，绕过链轮顶上那段外表面最高 y + r + 6 mm = 2.125（= 内门架碰撞盒顶）
+  sprocket: { x: 0.12, y: 2.084, z: -1.01, r: 0.035 },
   chain: { z: -1.045, back: -0.975, anchorY: 1.94, carriageY: 0.58 },   // 链条前段 / 后段的 z、外门架锚座高度、货叉架挂点顶（lift = 0）
   steerWheel: { x: 0, y: 1.25, z: -0.5, tilt: 0.55, r: 0.16 },        // 方向盘中心；轴线从竖直往车尾倒 tilt 弧度
   steerRatio: 6,                            // 方向盘转角 = 后轮转角 × steerRatio
@@ -1415,44 +1421,81 @@ const FK = {
   belt: [0.95, 0.42, 0.08], amber: [1.05, 0.58, 0.1], lens: [0.95, 0.94, 0.86], tail: [0.62, 0.07, 0.05],
   tank: [0.62, 0.64, 0.66], brass: [0.75, 0.58, 0.27], chrome: [0.8, 0.82, 0.84], steel: [0.48, 0.5, 0.53],
   plate: [0.8, 0.81, 0.82], glass: [0.42, 0.5, 0.56], chain: [0.16, 0.16, 0.16], link: [0.36, 0.35, 0.33],
-  gauge: [0.62, 0.62, 0.6], hose: [0.05, 0.05, 0.05], rib: [0.15, 0.15, 0.15], digit: [0.05, 0.05, 0.05],
+  gauge: [0.62, 0.62, 0.6], hose: [0.05, 0.05, 0.05], rib: [0.15, 0.15, 0.15], digit: [0.05, 0.05, 0.05], needle: [0.55, 0.08, 0.05],
 };
+// 表盘：圆的边数、半径、每块表在仪表台斜面上的位置 [x, f]（f：0 = 斜面下沿、1 = 上沿）、指针的方向（表盘平面里，0 = 朝右、π/2 = 朝斜面上沿）。
+// 返修 FE1Q · repair-r2（验收员 play：以前两块表在 x ±0.13，从司机眼点 (0, 1.8, 0.16) 看，方向盘轮圈正好斜着压过两块表的中心，
+// 指针整根被轮圈挡住，开车时看到的是没有指针的灰盘）：挪到方向盘轮圈外面 —— 第一块（mid 唯一的一块）在右边 x 0.25（和左边的大灯开关对称），
+// high 的第二块在左边大灯开关外侧 x −0.335。司机眼点看过去，表盘最靠里的点在方向盘盘面上离中心 0.190 / 0.242 m，轮圈外沿 0.176 m，
+// 方向盘摆正时整块表（连指针）都在轮圈外面（tests/forklift_l1.mjs polish「表盘指针从驾驶座看得见」逐点连线查）
+const FK_GAUGE = Object.freeze({ n: 12, r: 0.045, pos: Object.freeze([Object.freeze([0.25, 0.5]), Object.freeze([-0.335, 0.5])]), needle: Object.freeze([2.35, 0.95]) });
 // 细节档。high / mid / lite / low 的轮廓和部件都一样（车身钣金、翼子板、配重、气瓶、座椅、护顶架、灯、两级门架 + 起升油缸（缸筒、活塞杆、杆头）、
 // 链轮 + 链轮轴、前后两段链条、货叉架 + 滚轮架 + 挡货架 + 货叉、倾斜油缸、四个轮子、方向盘、两侧百叶和车身编号）；
-// 差别在倒角、圆的段数、格栅根数、看不太见的面，和小点缀（后视镜、扶手撑、安全带卷收器、气瓶封头 / 箍带 / 软管、链板、牵引钳口……）。
+// 差别在倒角、圆的段数、格栅根数、看不太见的面，和小点缀（后视镜、扶手撑、气瓶封头 / 箍带 / 软管、链板、牵引钳口……）。
+// 返修 FE1P（主会话裁定 H1–H5）：安全带（卷收器 + 垂下来的带子 + 锁舌 + 短带 + 扣头）、仪表台大灯开关在 high / mid / lite 停放档和可动模型里一模一样
+//   （belt > 0 画安全带、dashSwitch 画开关；low / lowb / min 停放档没有，上车换成 lite / drvLow 后出现，是方案接受的细节档变化）；
+//   arc = 链条搭在链轮上那半圈的段数（0 = 没有链轮、只有前段，min）；links = 链节节距（0 = 不画链板）；sprocket = 链轮棱数。
 // 一块里放不下时再往下退的 lowb / min 见下面。面数见 fkTris（车身编号按最费面的 "88" 算）。挑档见 buildForklifts：
 //   高画质：high → mid → lite → low → lowb → min，整块实际面数放得下的最细一档；低画质：low → lowb → min（不倒角、不贴花）。
 //   wf / wr = 前 / 后轮 [一圈段数, 胎截面边数]；ring = 方向盘 [轮圈段数, 管截面段数]；cw = 配重俯视轮廓点数；ch / cwC / backC = 端面斜角（米）；
 //   其余是数量（根数、段数）或开关
+// 前大灯灯盒（返修 FE1P · H1）：各档都画底面、两侧、朝前、朝司机五个面 —— 灯盒宽 8 cm、立柱只宽 5 cm，朝司机那面两边各露出 1.5 cm，
+// 从驾驶座、车后看得见；灯盒底在 1.86 m，比站着（1.62）、坐着（1.8）的眼睛都高，底面一定看得到。顶面（1.94 m）谁都看不到，不画
+const FK_LAMPF = Object.freeze(['ny', 'px', 'nx', 'pz', 'nz']);
 const FK_LOD = {
-  high: { bev: true, ch: 0.025, cwC: 0.04, cw: 10, backC: 0.02, fendU: true, fendP: true, wf: [10, 2], wr: [8, 2], hub: 5, hubR: true, ring: [10, 3], spokes: 3, swHub: 5, knob: 4,
-    slats: 5, slatF: ['py', 'ny', 'pz', 'nz'], back: [-0.27, 0, 0.27], midRail: true, louvers: 3, ribs: 3, grille: 5, digits: 2,
-    plate: 3, gauges: 2, levers: 3, knobs: true, mirror: true, lampF: ['py', 'ny', 'px', 'nx', 'nz'], beacon: 6, beaconBase: true,
-    cyl: 6, cylCap: true, rod: 5, rods: true, column: 6, tank: 8, domes: true, straps: true, valve: true, hose: true, links: 0.12, backChain: true,
-    sprocket: 6, axle: true, heads: true, ears: true, tilt: 2, hitch: 1, belt: 3, heel: true, tip: true, hook: true, ridges: true, step: true, matSides: true,
-    tails: true, handle: 2, seatBase: true, guardEnds: true, posts: 'noBottom', bracket: true, decals: 10 },
-  mid: { bev: true, ch: 0.02, cwC: 0.03, cw: 8, backC: 0, fendU: false, fendP: true, wf: [8, 2], wr: [8, 2], hub: 4, hubR: false, ring: [8, 3], spokes: 2, swHub: 5, knob: 0,
+  high: { bev: true, ch: 0.025, cwC: 0.04, cw: 10, backC: 0.02, fendU: true, fendP: true, wf: [12, 1], wr: [12, 1], lugs: true, hub: 12, hubR: false, ring: [16, 3], spokes: 2, swHub: 12, knob: 6,
+    slats: 5, slatF: ['py', 'ny', 'pz', 'nz'], back: [-0.27, 0, 0.27], midRail: true, louvers: 3, ribs: 3, grille: 3, digits: 2,
+    plate: 1, gauges: 2, levers: 3, knobs: true, mirror: true, lampF: FK_LAMPF, beacon: 6, beaconBase: false,
+    cyl: 6, cylCap: true, rod: 5, rods: true, column: 6, tank: 8, domes: true, straps: false, valve: true, hose: false, links: 0.05, backChain: true, arc: 6,
+    sprocket: 12, axle: true, heads: true, ears: true, tilt: 2, hitch: 0, belt: 3, heel: true, tip: true, hook: true, ridges: true, step: true, matSides: true,
+    tails: false, handle: 2, seatBase: true, guardEnds: true, posts: 'noBottom', bracket: true, decals: 10, dashSwitch: true },
+  mid: { bev: true, ch: 0.02, cwC: 0.03, cw: 8, backC: 0, fendU: false, fendP: true, wf: [12, 1], wr: [12, 1], lugs: true, hub: 12, hubR: false, ring: [16, 3], spokes: 2, swHub: 12, knob: 0,
     slats: 3, slatF: ['py', 'ny'], back: [-0.27, 0.27], midRail: false, louvers: 3, ribs: 2, grille: 3, digits: 2,
-    plate: 1, gauges: 1, levers: 2, knobs: true, mirror: false, lampF: ['py', 'px', 'nx', 'nz'], beacon: 6, beaconBase: false,
-    cyl: 5, cylCap: true, rod: 4, rods: true, column: 5, tank: 8, domes: false, straps: false, valve: true, hose: false, links: 0, backChain: true,
-    sprocket: 5, axle: true, heads: true, ears: true, tilt: 2, hitch: 0, belt: 2, heel: false, tip: true, hook: true, ridges: false, step: true, matSides: false,
-    tails: false, handle: 1, seatBase: true, guardEnds: true, posts: 'noBottom', bracket: true, decals: 6 },
-  low: { bev: false, ch: 0, cwC: 0, cw: 8, backC: 0, fendU: false, fendP: false, wf: [8, 1], wr: [8, 1], hub: 0, hubR: false, ring: [6, 3], spokes: 2, swHub: 0, knob: 0,
+    plate: 1, gauges: 1, levers: 2, knobs: true, mirror: false, lampF: FK_LAMPF, beacon: 6, beaconBase: false,
+    cyl: 5, cylCap: true, rod: 4, rods: true, column: 5, tank: 8, domes: false, straps: false, valve: true, hose: false, links: 0.05, backChain: true, arc: 6,
+    sprocket: 12, axle: true, heads: true, ears: true, tilt: 2, hitch: 0, belt: 2, heel: false, tip: true, hook: true, ridges: false, step: true, matSides: false,
+    tails: false, handle: 1, seatBase: true, guardEnds: true, posts: 'noBottom', bracket: true, decals: 6, dashSwitch: true },
+  low: { bev: false, ch: 0, cwC: 0, cw: 8, backC: 0, fendU: false, fendP: false, wf: [12, 1], wr: [12, 1], lugs: true, hub: 0, hubR: false, ring: [12, 3], spokes: 2, swHub: 0, knob: 0,
     slats: 2, slatF: ['py', 'ny'], back: [-0.27, 0.27], midRail: false, louvers: 2, ribs: 0, grille: 0, digits: 2,
-    plate: 0, gauges: 0, levers: 1, knobs: false, mirror: false, lampF: ['py', 'nz'], beacon: 5, beaconBase: false,
-    cyl: 4, cylCap: false, rod: 4, rods: true, column: 4, tank: 8, domes: false, straps: false, valve: false, hose: false, links: 0, backChain: true,
-    sprocket: 5, axle: true, heads: true, ears: false, tilt: 1, hitch: 0, belt: 0, heel: false, tip: false, hook: false, ridges: false, step: false, matSides: false,
-    tails: false, handle: 0, seatBase: false, guardEnds: false, posts: 'sides', bracket: true, decals: 0 },
+    plate: 0, gauges: 0, levers: 1, knobs: false, mirror: false, lampF: FK_LAMPF, beacon: 5, beaconBase: false,
+    cyl: 4, cylCap: false, rod: 4, rods: true, column: 8, tank: 8, domes: false, straps: false, valve: false, hose: false, links: 0, backChain: true, arc: 4,
+    sprocket: 8, axle: true, heads: true, ears: false, tilt: 1, hitch: 0, belt: 0, heel: false, tip: false, hook: false, ridges: false, step: false, matSides: false,
+    tails: false, handle: 0, seatBase: false, guardEnds: false, posts: 'sides', bracket: true, decals: 0, dashSwitch: false },
 };
-// lite：高画质里一块挤了两三台叉车、连 mid 都放不下时用 —— low 的几何 + 倒角（和高画质别的东西一样是圆边）+ 扶手、安全带、倾斜油缸耳座、几片磨损
-FK_LOD.lite = Object.assign({}, FK_LOD.low, { bev: true, ch: 0.02, cwC: 0.03, handle: 1, belt: 1, ears: true, tilt: 2, decals: 4 });
+// high 档给链轮腾面（返修 FE1Q · J10：可动模型 high 原来 1996 / 2000 面，链轮 8 → 12 棱、链条搭在链轮上那半圈 4 → 6 段要多 48 面）：
+//   除了几处谁都看不到的面（踏板朝里那面、挡泥内板底边、翼子板前头端面、开关拨杆顶面，共 −14），四样几乎看不见的小点缀改成和 mid 一样 ——
+//   警示灯不要黑底座（−16）、铭牌只画一道字（−4）、配重顶上的散热缝 5 → 3 道（−4）、牵引销不要下面那片钳口（−10）；
+//   后视镜镜片做成镜壳的后脸（−2）。J10 / J11 以后可动模型 high 是 1998 面（含开关和最多的磨损）。
+// 圆的零件（返修 FE1Q · repair-r1，验收员 play：方向盘、车轮、表盘一眼看出是多边形，和 J10 链轮同一个道理）：
+//   方向盘轮圈 high / mid 16 段、lite / drvLow 14 段、low 停放档 12 段（截面照旧 3 边）；方向盘中心盖 high / mid 12 棱（lite / drvLow / low 没有中心盖，
+//   转向柱顶上的封口当中心：10 / 10 / 8 棱）；助力球 6 棱；表盘 12 边的圆 + 一根深红指针（FK_GAUGE）；
+//   轮胎、轮辋 high / mid / lite / drvLow / low 12 棱（胎面一深一浅的花纹块 lugs），轮毂盖 high / mid 改成 12 段的矮圆锥（fkCone）；lowb / min 照旧（省面档）。
+//   轮胎统一成「胎面一圈 + 内外两面 + 外面一块轮辋」（以前 high / mid 的胎侧是一圈斜面、轮辋凹进去 1.2 cm，量下来斜面只差 8 mm，看上去一样）。
+//   high 可动模型腾面（≤2000）：后轮不要轮毂盖（和 mid 一样，−26）、方向盘三根辐条改成一根横辐条（和 mid 一样，−16）、气瓶不要两道箍带（−16）、
+//   不要接进发动机盖的软管（−8）、尾灯不要黑灯座（和 mid 一样只剩红灯片，−20）；外加几处永远是背面的面（耳座底面、内门架立柱底面 / 底梁底面、
+//   翼子板中间那段底面，−14）。可动模型 high 现在 1993 面（含开关和最多的磨损）。
+//   停着的车另省几样只有停着才永远看不见的面（轮子不转、后轮不打方向、门架不升）：胎面贴地那两段、后轮贴着车架那面、链轮轴朝司机那面 ——
+//   停放 high 1940 → 1901、mid 1588 → 1661、lite 1265 → 1363、low 981 → 1073、lowb 805 → 793、min 556 → 552（因此换档的块见方案 risks）
+// lite：高画质里一块挤了两三台叉车、连 mid 都放不下时用 —— low 的几何 + 倒角（和高画质别的东西一样是圆边）+ 扶手、安全带、倾斜油缸耳座、几片磨损。
+// knobs：操纵杆头（返修 r1：可动模型不管哪档都画杆头，lite 停着的不画，上车前后多出一个黑疙瘩；每根杆 10 个三角形）
+// 链轮（返修 FE1Q · J10，主会话裁定）：high / mid / lite（drvLow 跟着 lite）12 棱、链条搭在链轮上那半圈 6 段 —— 特写看上去是圆的轮子、
+// 链条绕过去是顺的；low / lowb 停放档（一块里挤不下时的省面档）照旧 8 棱 4 段，上车换成 lite / drvLow 后变圆（细节档变化）
+FK_LOD.lite = Object.assign({}, FK_LOD.low, { bev: true, ch: 0.02, cwC: 0.03, handle: 1, belt: 1, ears: true, tilt: 2, decals: 4, dashSwitch: true, knobs: true, sprocket: 12, arc: 6,
+  wf: [12, 1], wr: [12, 1], lugs: true, ring: [14, 3], column: 10 });
 // 一块里放不下 low 时往下退（两种画质都可能用到）。trim = 省掉站着看不见或很窄的面（侧裙前后端、翼子板两头的端面、轮胎贴着车架那面、
 // 地台前沿、配重用六边形、靠背不收角、门架 / 货叉架横梁只画朝外的面），气瓶不要托架、直接落在配重顶上。
 //   lowb：会动部件之间的关系件都还在（起升油缸 + 活塞杆 + 杆头、链轮 + 轴、前后两段链条、滚轮架、倾斜油缸、百叶），编号只喷右边
-//   min：最后的保底，只剩轮廓（车身、翼子板、配重、气瓶、护顶架、座椅、两级门架、货叉架 + 滚轮架 + 货叉、链条、轮子、方向盘）
-FK_LOD.lowb = Object.assign({}, FK_LOD.low, { trim: true, cw: 6, wr: [6, 1], ring: [6, 2], digits: 1, tank: 6, slats: 0, back: [], levers: 0 });
-FK_LOD.min = Object.assign({}, FK_LOD.lowb, { wf: [6, 1], louvers: 0, digits: 0, lampF: null,
-  cyl: 0, rods: false, column: 3, backChain: false, sprocket: 0, axle: false, heads: false, tilt: 0 });
+//   min：最后的保底，只剩轮廓（车身、翼子板、配重、气瓶、护顶架、座椅、两级门架、货叉架 + 滚轮架 + 货叉、链条、轮子、方向盘）。
+//   返修 FE1Q · repair-r3 起不再当停放档：按 lowb 都放不下的车改成运行时车（见 buildForklifts / FK_PARK_FLOOR），min 只留着给 forkliftModel / 测试建
+// 返修 FE1Q · repair-r2（验收员 play：lowb 停着时方向盘是六段的扁框、车轮 8 / 6 棱，上车换成 lite 以后变圆 —— 站在车旁看得出来）：
+//   lowb 方向盘轮圈 6 → 12 段（和 low 一样）、前轮 8 → 10 棱、后轮 6 → 8 棱（胎面一深一浅）；腾面：trim 档气瓶压进配重的底棱面、方向盘辐条底面、
+//   挡货架顶横梁底面不画（停着永远是背面，各 2 面）。lowb 793 → 839 面：再多一面，种子 12345 的 (2,-2)（两台 lowb，低画质每台只剩 840.5 面）
+//   就得一台退到 min。车轮做不到 12 棱是这个预算定的（方案 risks[11] / [27]）。min 照旧（最后的保底，必须最省），只少了上面三处背面（552 → 546）。
+//   代价（101 个种子 × 5×5 块普查）：高画质种子 80 (-2,1) 两台 lowb 正好卡在 2 × 793，现在放不下两台 lowb → 一台 lowb + 一台 min；
+//   低画质种子 87 (0,-2) 两台 lowb → 一台 low + 一台 min。别的车都没换档
+FK_LOD.lowb = Object.assign({}, FK_LOD.low, { trim: true, cw: 6, wf: [10, 1], wr: [8, 1], lugs: true, ring: [12, 2], column: 4, digits: 1, tank: 6, slats: 0, back: [], levers: 0 });
+FK_LOD.min = Object.assign({}, FK_LOD.lowb, { wf: [6, 1], wr: [6, 1], lugs: false, ring: [6, 2], louvers: 0, digits: 0, lampF: null,
+  cyl: 0, rods: false, column: 3, backChain: false, arc: 0, sprocket: 0, axle: false, heads: false, tilt: 0 });
 // drvLow：低画质下开过的车（载具网格里）一律用这一档 = lite 去掉倒角和贴花（不调 _bevelBox、端面斜角 0、没有磨损），
 // 也就是 low 加上扶手、安全带、倾斜油缸耳座，没有 trim 砍掉的面（坐在驾驶位四周看不到穿帮的缝）。只配 drive:true 用
 FK_LOD.drvLow = Object.assign({}, FK_LOD.lite, { bev: false, ch: 0, cwC: 0, decals: 0 });
@@ -1544,7 +1587,7 @@ function fkTube(b, A, B, r, seg, color, o) {
       v(A[0] + m[0] * r, A[1] + m[1] * r, A[2] + m[2] * r, m[0], m[1], m[2], 0, 0);
       v(B[0] + m[0] * r1, B[1] + m[1] * r1, B[2] + m[2] * r1, m[0], m[1], m[2], 0, 0);
     }
-    for (let k = 0; k < k1 - k0; k++) { const a = 2 * k; t(a, a + 2, a + 3); t(a, a + 3, a + 1); }
+    for (let k = 0; k < k1 - k0; k++) { if (o.skipN && o.skipN(dir(k0 + k + 0.5))) continue; const a = 2 * k; t(a, a + 2, a + 3); t(a, a + 3, a + 1); }
     let base = 2 * (k1 - k0 + 1);
     if (o.arc) return;
     for (const [want, C, rr, sgn] of [[o.cap0, A, r, -1], [o.cap1, B, r1, 1]]) {
@@ -1557,6 +1600,20 @@ function fkTube(b, A, B, r, seg, color, o) {
 }
 // 竖直的圆管（警示灯、链轮）：底面圆心 (x, y, z)、高 h；caps 同 fkTube
 function fkPost(b, x, y, z, r, h, seg, color, o) { return fkTube(b, [x, y, z], [x, y + h, z], r, seg, color, o); }
+// 矮圆锥（轮毂盖，返修 FE1Q · repair-r1）：底圈圆心 A、半径 r、n 段，尖顶 B；只画侧面（n 个三角形，底圈贴在轮辋上、不画底）。
+// 尖顶法线沿轴、底圈法线是侧面的斜法线 —— 光滑着色下看起来是一个微微鼓起的圆盖
+function fkCone(b, A, B, r, n, color) {
+  const d = sub3(B, A), h = Math.hypot(d[0], d[1], d[2]) || 1, ax = [d[0] / h, d[1] / h, d[2] / h];
+  const e1 = norm3(cross3(ax, Math.abs(ax[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0])), e2 = cross3(ax, e1), l = Math.hypot(h, r);
+  return b._piece('kit:prop', 0, 0, 0, 0, (v, t) => {
+    v(B[0], B[1], B[2], ax[0], ax[1], ax[2], 0, 0);
+    for (let k = 0; k < n; k++) {
+      const a = k / n * TAU, c = Math.cos(a), sn = Math.sin(a), m = [e1[0] * c + e2[0] * sn, e1[1] * c + e2[1] * sn, e1[2] * c + e2[2] * sn];
+      v(A[0] + m[0] * r, A[1] + m[1] * r, A[2] + m[2] * r, (m[0] * h + ax[0] * r) / l, (m[1] * h + ax[1] * r) / l, (m[2] * h + ax[2] * r) / l, 0, 0);
+    }
+    for (let k = 0; k < n; k++) t(0, 1 + k, 1 + (k + 1) % n);
+  }, { color, uv: 'stretch', solid: false });
+}
 // 圆环（方向盘轮圈）：圆心 C、轴线 ax（单位向量）、环半径 R、管半径 r，N × M 个四边形，法线光滑
 function fkRing(b, C, ax, R, r, N, Mm, color, e1) {
   const u = e1 || norm3(cross3(ax, Math.abs(ax[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0])), w = cross3(ax, u);
@@ -1572,7 +1629,8 @@ function fkRing(b, C, ax, R, r, N, Mm, color, e1) {
 }
 // 绕 x 轴的回转面（轮胎）：截面折线 prof = [[半径, x], ...]（x 相对轮心），一圈 S 段；绕轴方向法线光滑。
 // cols[k]：第 k 条截面边的颜色，或 [颜色 A, 颜色 B] = 相邻段交替（胎面花纹块）；inside：截面里面一点 [半径, x]（定法线朝外）
-function fkLathe(b, C, prof, S, cols, inside) {
+// skip(j)：不画第 j 段（停着的车贴地那两段胎面，见 fkWheel）
+function fkLathe(b, C, prof, S, cols, inside, skip) {
   const groups = new Map();
   for (let k = 0; k + 1 < prof.length; k++) {
     const r0 = prof[k][0], x0 = prof[k][1], r1 = prof[k + 1][0], x1 = prof[k + 1][1];
@@ -1581,6 +1639,7 @@ function fkLathe(b, C, prof, S, cols, inside) {
     nr /= l; nx /= l;
     if (nr * ((r0 + r1) / 2 - inside[0]) + nx * ((x0 + x1) / 2 - inside[1]) < 0) { nr = -nr; nx = -nx; }
     for (let j = 0; j < S; j++) {
+      if (skip && skip(j)) continue;
       const c = Array.isArray(cols[k][0]) ? cols[k][j % 2] : cols[k];
       if (!groups.has(c)) groups.set(c, []);
       groups.get(c).push([r0, x0, r1, x1, nr, nx, j]);
@@ -1648,6 +1707,67 @@ function fkNumber(b, num, side, xs, zc, y0, H, color) {
   }
 }
 
+// ---- 安全带（返修 FE1P · H2，主会话裁定：没扣上、被卷收器收着）----
+// 右边：靠背右侧面上一个卷收器（黑，出口朝下），带子从出口顺着重力贴着座椅右侧边竖直垂下，下端是锁舌（钢色），停在坐垫右侧面外 1 mm ——
+//   不悬空（上头进卷收器 1 cm）、不穿进座椅、不斜撑。带子 4.4 cm 宽、4 mm 厚，四个长面都画（从驾驶座、车外都看得到正反面，不会只剩一条线）。
+// 左边：坐垫左侧面外一截短带（下端落在发动机盖顶面 y 1.0 上），顶着锁扣扣头（钢色，顶面高出坐垫 1.2 cm，坐在驾驶座往左下看得见）。
+// 停着的车（belt > 0 的档）和可动模型（各档）同一份几何：形状、位置、面数都一样，上车前后看不出区别。
+// 坐着的人不扣（全游戏约定），带子照样垂在座椅右侧外面
+const FK_BELT = {
+  retractor: { x: 0.255, y: 1.4, z: 0.427, w: 0.04, h: 0.09, d: 0.07 },        // x 0.235–0.275（里侧 5 mm 贴进靠背侧面）、y 1.40–1.49、z 0.392–0.462
+  strap: { x0: 0.2515, x1: 0.2555, y0: 1.115, y1: 1.41, z0: 0.4, z1: 0.444 },   // 右边垂下来的带子（上头伸进卷收器 1 cm、下头伸进锁舌 1 cm）
+  tongue: { x0: 0.251, x1: 0.258, y0: 1.07, y1: 1.125, z0: 0.398, z1: 0.446 },  // 锁舌：坐垫右侧面（x 0.25）外 1 mm，比带子宽、厚一点（面不和带子共面）
+  stub: { x0: -0.2555, x1: -0.2515, y0: 1.0, y1: 1.115, z0: 0.202, z1: 0.238 }, // 左边短带：下端落在发动机盖顶面上
+  buckle: { x0: -0.282, x1: -0.251, y0: 1.1, y1: 1.172, z0: 0.197, z1: 0.243 }, // 锁扣扣头
+};
+for (const k in FK_BELT) Object.freeze(FK_BELT[k]);
+Object.freeze(FK_BELT);
+function fkBelt(b) {
+  const K = FK, B = FK_BELT, box = (q, col, faces) => dbox(b, (q.x0 + q.x1) / 2, q.y0, (q.z0 + q.z1) / 2, q.x1 - q.x0, q.y1 - q.y0, q.z1 - q.z0, col, faces);
+  const r = B.retractor;
+  dbox(b, r.x, r.y, r.z, r.w, r.h, r.d, K.black, 'noBottom');   // 底面是出口（站着、坐着都看不到它的底）
+  box(B.strap, K.belt, ['px', 'nx', 'pz', 'nz']);
+  box(B.tongue, K.steel, ['py', 'px', 'pz', 'nz']);             // 贴着坐垫的那面、底面（1.07 m，比谁的眼睛都低）不画
+  box(B.stub, K.belt, ['nx', 'pz', 'nz']);                      // 贴着坐垫侧面（下半截对着座椅底座）的那面看不到
+  box(B.buckle, K.steel, 'noBottom');
+}
+// ---- 仪表台大灯开关（返修 FE1P · H3）：停着的车也画，和 vehicles.js buildSwitch 画给可动模型的那个同一份几何 ----
+// 位置在仪表台斜面左半边（方向盘左下方）：slant(x, f, off) = 斜面上 f（0 = 下沿、1 = 上沿）处、离面 off 的点（和 fkBody 的 slant 同一套）。
+// 底板 7 × 9.2 cm、厚 8 mm（底面贴着斜面，不画）+ 拨杆上方一颗指示灯 + 拨杆下方的小灯头图标 + 镀铬拨杆和黑色杆头。
+// 停着的车：拨杆按出厂的「开」（hl = 1）往斜面上沿扳 0.5 rad（和可动模型熄火时一样）；发动机没开，指示灯是熄着的暗绿（放在 kit:prop 里，不发光）。
+// 上车发动以后载具层换成可动模型，指示灯（kit:glow）跟大灯一起亮
+const FK_SW = { x: -0.22, f: 0.5, ang: 0.5, T: [0, 0.848, -0.53], N: [0, 0.53, 0.848], X: [1, 0, 0],
+  plate: [0.09, 0.09, 0.095], bat: [0.8, 0.82, 0.84], knob: [0.05, 0.05, 0.05], icon: [0.78, 0.78, 0.72], lampOff: [0.1, 0.3, 0.11] };   // lampOff：熄着的指示灯（吃光照；常亮灯光下和可动模型熄火时 kit:glow × 0.12 的暗绿差不多亮）
+function fkSlant(x, f, off) { return [x, 0.86 + 0.16 * f + 0.53 * off, -0.56 - 0.1 * f + 0.848 * off]; }
+function fkDashSwitch(b) {
+  const W = FK_SW, v3 = (a, d, k) => [a[0] + d[0] * k, a[1] + d[1] * k, a[2] + d[2] * k], sc = (d, k) => [d[0] * k, d[1] * k, d[2] * k];
+  const piv = fkSlant(W.x, W.f, 0.008), ca = Math.cos(-W.ang), sa = Math.sin(-W.ang);
+  // 拨杆绕底板中心的 x 轴转 −ang（vehicles.js mRot 同一个右手转法）
+  const rot = p => { const y = p[1] - piv[1], z = p[2] - piv[2]; return [p[0], piv[1] + ca * y - sa * z, piv[2] + sa * y + ca * z]; };
+  const quadC = (c, u, v, col, xf) => {
+    let P = [[c[0] - u[0] - v[0], c[1] - u[1] - v[1], c[2] - u[2] - v[2]], [c[0] + u[0] - v[0], c[1] + u[1] - v[1], c[2] + u[2] - v[2]],
+      [c[0] + u[0] + v[0], c[1] + u[1] + v[1], c[2] + u[2] + v[2]], [c[0] - u[0] + v[0], c[1] - u[1] + v[1], c[2] - u[2] + v[2]]];
+    if (xf) P = P.map(xf);
+    b.quad(P[0], P[1], P[2], P[3], 'kit:prop', { color: col, uv: 'solid' });
+  };
+  const boxTN = (c, hx, ht, hn, col, noBottom, xf, noTop) => {
+    quadC(v3(c, W.X, hx), sc(W.T, ht), sc(W.N, hn), col, xf);
+    quadC(v3(c, W.X, -hx), sc(W.N, hn), sc(W.T, ht), col, xf);
+    quadC(v3(c, W.T, ht), sc(W.N, hn), sc(W.X, hx), col, xf);
+    quadC(v3(c, W.T, -ht), sc(W.X, hx), sc(W.N, hn), col, xf);
+    if (!noTop) quadC(v3(c, W.N, hn), sc(W.X, hx), sc(W.T, ht), col, xf);
+    if (!noBottom) quadC(v3(c, W.N, -hn), sc(W.T, ht), sc(W.X, hx), col, xf);
+  };
+  boxTN(fkSlant(W.x, W.f, 0.004), 0.035, 0.046, 0.004, W.plate, true);
+  quadC(v3(fkSlant(W.x, W.f, 0.0092), W.T, 0.031), sc(W.X, 0.009), sc(W.T, 0.0065), W.lampOff);
+  const ic = v3(fkSlant(W.x, W.f, 0.0092), W.T, -0.03);
+  quadC(v3(ic, W.X, -0.008), sc(W.X, 0.0065), sc(W.T, 0.0075), W.icon);
+  for (const k of [-1, 0, 1]) quadC(v3(v3(ic, W.X, 0.008), W.T, k * 0.0055), sc(W.X, 0.0055), sc(W.T, 0.0012), W.icon);
+  const L = 0.032;
+  boxTN(v3(piv, W.N, L / 2), 0.0045, 0.0045, L / 2, W.bat, true, rot, true);   // 拨杆顶面插在杆头里看不见，不画（FE1Q · J10 腾面；vehicles.js 同一份）
+  boxTN(v3(piv, W.N, L), 0.007, 0.007, 0.006, W.knob, false, rot);
+}
+
 // ---- 车身（不动的部分）----
 // w = { body: 画车身, lever: 画升降杆（第一根操纵杆，part 'liftLever'）, drive: 可动模型, levers: 操纵杆根数, seg: 分段标记（测试量部件包围盒用，不加几何）}。
 // part='all'（drive 不开）时照原来的位置、原来的顺序画，顶点逐位不变；drive 的改动见 forkliftModel 前面的说明
@@ -1669,11 +1789,14 @@ function fkBody(b, L, o, w) {
     // 侧裙（踏板下面那段车身）：外侧、顶、前、后四面，顶上一圈棱倒 3 cm
     fkBox(b, L, s * 0.445, 0.14, 0.12, 0.21, 0.26, 0.84, K.body, M ? [s > 0 ? 'px' : 'nx', 'py'] : [s > 0 ? 'px' : 'nx', 'py', 'pz', 'nz'], 0.03, 'top');
     // 上车踏板：前轮后面、发动机盖前面那一段侧裙顶上的黑色防滑板（+ 两道防滑棱）。低档只画顶面，压低到离侧裙顶 3 mm（不悬空）
-    dbox(b, s * 0.46, 0.4, -0.19, 0.12, L.step ? 0.012 : 0.003, 0.16, K.black, L.step ? 'noBottom' : ['py']);
+    // 返修 FE1Q（J10 腾面）：朝里那个 1.2 cm 高的侧面贴着侧裙顶的倒角、站着坐着蹲低都看不到（可见性探针 0 像素），不画
+    dbox(b, s * 0.46, 0.4, -0.19, 0.12, L.step ? 0.012 : 0.003, 0.16, K.black, L.step ? ['py', s > 0 ? 'px' : 'nx', 'pz', 'nz'] : ['py']);
     if (L.ridges) for (const dz of [-0.04, 0.04]) sheet(b, s * 0.46, 0.415, -0.19 + dz, 0.11, 0.012, 'up', K.steel);
   }
-  // 驾驶位地台：橡胶垫（后面贴着发动机盖前脸，那一面不画）+ 横向防滑棱
-  dbox(b, 0, 0.585, -0.44, 0.74, 0.03, 0.68, K.mat, L.matSides ? ['py', 'px', 'nx', 'nz'] : M ? ['py'] : ['py', 'nz']);
+  // 驾驶位地台：橡胶垫（后面贴着发动机盖前脸，那一面不画）+ 横向防滑棱。
+  // 可动模型各档都画左右两个侧面（返修 r1，验收员 spec：mid / lite / drvLow 没有侧面，站在车侧从前翼子板后面往下看，
+  // 地台边沿有一条缝一直看到车底地面）。返修 FE1Q · J11：停着的车各档也画（trim 档照旧不画前沿，它藏在仪表台下半截里）
+  dbox(b, 0, 0.585, -0.44, 0.74, 0.03, 0.68, K.mat, M ? ['py', 'px', 'nx'] : ['py', 'px', 'nx', 'nz']);
   for (let k = 0; k < L.ribs; k++) sheet(b, 0, 0.618, -0.46 + k * 0.1, 0.62, 0.016, 'up', K.rib);
   // 前翼子板：2.5 cm 厚的钣金折成"斜 — 平 — 斜"三段包住前轮上半；里面一块深灰挡泥内板把它和车架、侧裙连起来。
   // 朝里的端面贴着仪表台 / 车架，不画；低档不画翼子板底面（朝着轮胎、站着看不见）和挡泥内板（后面就是同色的车架侧面）
@@ -1681,10 +1804,14 @@ function fkBody(b, L, o, w) {
   const FI = fkOffsetLine(FO, 0.025, [WF.z, WF.y]);
   for (const s of [-1, 1]) {
     const xa = s > 0 ? 0.355 : -0.59, xb = s > 0 ? 0.59 : -0.355, u = L.fendU ? [] : [2];
+    // 返修 FE1Q（J10 腾面）：画了翼子板底面的档（fendU），前头那条 2.5 cm 的钣金端面朝下朝前、正对着地面和轮胎前沿，
+    // 站着、坐着、低机位都看不到（可见性探针全部机位加起来 6 像素），不画；repair-r1：不画底面的档这条端面也一样 0 像素，各档都不画
     for (let i = 0; i < 3; i++) {   // trim：前后两头 2.5 cm 的钣金端面也省掉
-      fkPrism(b, [FO[i], FO[i + 1], FI[i + 1], FI[i]], 'x', xa, xb, K.body, { cap0: s < 0, cap1: s > 0, skip: (i === 0 ? [1] : i === 1 ? [1, 3] : [3]).concat(u, M ? [1, 3] : []) });
+      // 中间那段平的底面（0.64 m 朝下）永远是背面，各档都不画（返修 FE1Q · repair-r1 腾面）
+      fkPrism(b, [FO[i], FO[i + 1], FI[i + 1], FI[i]], 'x', xa, xb, K.body, { cap0: s < 0, cap1: s > 0, skip: (i === 0 ? [1, 3] : i === 1 ? [1, 2, 3] : [3]).concat(u, M ? [1, 3] : []) });
     }
-    if (L.fendP) fkPrism(b, [[FI[0][0], 0.33], FI[0], FI[1], FI[2], FI[3], [FI[3][0], 0.33]], 'x', s * 0.355, s * 0.375, K.chassis, { skip: [1, 2, 3], cap0: false });
+    // 挡泥内板：底边（y 0.33，悬在轮胎正上方、朝下）谁都看不到（可见性探针 0 像素），不画（返修 FE1Q，J10 腾面）
+    if (L.fendP) fkPrism(b, [[FI[0][0], 0.33], FI[0], FI[1], FI[2], FI[3], [FI[3][0], 0.33]], 'x', s * 0.355, s * 0.375, K.chassis, { skip: [1, 2, 3, 5], cap0: false });
   }
   S('dash');
   // 仪表台（前围）：上半截宽到 ±0.47、坐在两边翼子板上（前立柱脚、操纵杆、转向柱都在它上面），斜面朝司机；下半截在两块挡泥内板之间
@@ -1693,12 +1820,19 @@ function fkBody(b, L, o, w) {
   fkPrism(b, [[-0.8, 0.58], [-0.56, 0.58], [-0.56, 0.665], [-0.8, 0.665]], 'x', -0.355, 0.355, K.body, { cap0: false, cap1: false, skip: [0, 2] });
   // 斜面上的仪表板（黑）+ 表盘：slant(x, f, off) = 斜面上 f（0 = 下沿、1 = 上沿）处、离面 off 的点
   const slant = (x, f, off) => [x, 0.86 + 0.16 * f + 0.53 * off, -0.56 - 0.1 * f + 0.848 * off];
-  if (!M) facets(b, 'kit:prop', [[slant(-0.3, 0.18, 0.003), slant(0.3, 0.18, 0.003), slant(0.3, 0.82, 0.003), slant(-0.3, 0.82, 0.003)]], K.black, [0, 0.8, -0.7]);
+  // 仪表板宽到 ±0.39（返修 FE1Q · repair-r2：表盘挪到方向盘轮圈外面以后，左边那块在 x −0.38…−0.29，要落在黑板上）
+  if (!M) facets(b, 'kit:prop', [[slant(-0.39, 0.18, 0.003), slant(0.39, 0.18, 0.003), slant(0.39, 0.82, 0.003), slant(-0.39, 0.82, 0.003)]], K.black, [0, 0.8, -0.7]);
+  // 表盘（返修 FE1Q · repair-r1：以前是一块没有指针的白色六边形）：FK_GAUGE 边的圆 + 一根深色指针（离表面 1 mm，不共面）；位置见 FK_GAUGE.pos
   for (let g = 0; g < L.gauges; g++) {
-    const pts = [];
-    for (let k = 0; k < 6; k++) { const a = k / 6 * TAU; pts.push(slant((g ? 0.13 : -0.13) + Math.cos(a) * 0.045, 0.5 + Math.sin(a) * 0.045 / 0.189, 0.006)); }
+    const pts = [], gx = FK_GAUGE.pos[g][0], gf = FK_GAUGE.pos[g][1], at = (u, v, off) => slant(gx + u, gf + v / 0.189, off);
+    for (let k = 0; k < FK_GAUGE.n; k++) { const a = k / FK_GAUGE.n * TAU; pts.push(at(Math.cos(a) * FK_GAUGE.r, Math.sin(a) * FK_GAUGE.r, 0.006)); }
     facets(b, 'kit:prop', [pts], K.gauge, [0, 0.8, -0.7]);
+    const na = FK_GAUGE.needle[g], cu = Math.cos(na), cv = Math.sin(na), w = 0.0018;
+    facets(b, 'kit:prop', [[at(-cu * 0.006 - cv * w, -cv * 0.006 + cu * w, 0.007), at(-cu * 0.006 + cv * w, -cv * 0.006 - cu * w, 0.007),
+      at(cu * 0.036 + cv * w * 0.5, cv * 0.036 - cu * w * 0.5, 0.007), at(cu * 0.036 - cv * w * 0.5, cv * 0.036 + cu * w * 0.5, 0.007)]], K.needle, [0, 0.8, -0.7]);
   }
+  // 仪表台大灯开关（返修 FE1P · H3）：停着的车（dashSwitch 档）也画，和载具层 vehicles.js 画给可动模型的那个同一份几何；可动模型不在这里画
+  if (!D && L.dashSwitch) fkDashSwitch(b);
   // 铭牌：仪表台右侧面一块铝牌 + 几行字（只是几道黑线，没有任何文字 / 商标）
   if (L.plate) {
     sheet(b, 0.473, 0.77, -0.68, 0.11, 0.065, '+x', K.plate);
@@ -1718,9 +1852,29 @@ function fkBody(b, L, o, w) {
     : L.cw > 6 ? [[-0.55, 0.56], [0.55, 0.56], [0.55, 1.05], [0.47, 1.2], [0.3, 1.25], [-0.3, 1.25], [-0.47, 1.2], [-0.55, 1.05]]
     : [[-0.55, 0.56], [0.55, 0.56], [0.55, 1.08], [0.4, 1.25], [-0.4, 1.25], [-0.55, 1.08]];
   fkPrism(b, CWP, 'y', 0.5, 1.12, K.cw, { cap0: false, c1: L.cwC });
-  // 下半截。可动模型：前脸往后挪到 FK_DRV.cwFront（后轮打方向时胎面最远伸到 z ≈ 1.044，留 1 cm 以上），前脸各档都画（打方向时露出来）
-  if (!D) fkPrism(b, CWP.slice(2), 'y', 0.12, 0.5, K.cw, { cap0: false, cap1: false, skip: L.bev ? [] : [CWP.length - 3] });
-  else fkPrism(b, CWP.slice(2).map((p, i, a) => (i === 0 || i === a.length - 1) ? [p[0], Math.max(p[1], FK_DRV.cwFront)] : p), 'y', 0.12, 0.5, K.cw, { cap0: false, cap1: false });
+  // 可动模型（返修 FE1P · H4）：底盘在后轮里侧收窄、配重下半截前脸挪到 cwFront 以后，上半截底面（y 0.5）在两个轮罩顶上露出来了 ——
+  // 补上收窄那段（|x| 从 chassisHalf 到配重侧面、z 从侧裙后端 0.54 到 cwFront）的底面，从轮罩下面往上看不穿车身。停着的车不动
+  // 配重俯视轮廓在 z = cwFront 处的半宽 xe（后角是圆的：轮廓点 z 超过 cwFront 的那条边上插值）；a0 = 那条边起点在 cwFront 前面时的 z
+  let xe = 0.55, a0 = null;
+  for (let i = 2; i + 1 < CWP.length && CWP[i][0] > 0; i++) {
+    const a = CWP[i], c = CWP[i + 1], zc = FK_DRV.cwFront;
+    if (a[1] <= zc && c[1] >= zc) { xe = a[0] + (c[0] - a[0]) * (zc - a[1]) / (c[1] - a[1]); if (a[1] < zc) a0 = a[1]; break; }
+  }
+  if (D) for (const s of [-1, 1]) {
+    const hw = FK_DRV.chassisHalf, zc = FK_DRV.cwFront, P = [[s * hw, 0.54], [s * 0.55, 0.54]];
+    if (a0 != null) P.push([s * 0.55, a0]);
+    P.push([s * xe, zc], [s * hw, zc]);
+    facets(b, 'kit:prop', [P.map(q => [q[0], 0.5, q[1]])], K.cw, [s * 0.35, 0.8, 0.8]);
+    // 发动机盖后脸露在侧裙顶（0.4）和配重上半截底（0.5）之间的那截（|x| 0.34–0.53）：停着的车有全宽的底盘侧面挡着，
+    // 可动模型从轮罩下面往前看得进发动机盖里 —— 补一块深灰挡板，和侧裙后脸同在 z 0.54（上下接着，不重叠），顶上接配重上半截的底面
+    sheet(b, s * 0.435, 0.4, 0.54, 0.19, 0.1, '+z', K.chassis);
+  }
+  // 下半截。可动模型：前脸往后挪到 FK_DRV.cwFront（后轮打方向时胎面最远伸到 z ≈ 1.044，留 1 cm 以上），前脸各档都画（打方向时露出来）。
+  // 前脸两个角的 x 取上半截轮廓在 cwFront 处的半宽 xe（返修 r1，验收员 spec：以前还是 ±0.55，比上半截宽 3–5 mm，y 0.5 那里露出一条
+  // 楔形缝，下半截没有顶面，站着从车后侧角看得穿到车底地面）—— 上下两截的侧面在 cwFront 往后严丝合缝
+  // 返修 FE1Q · J11：不倒角档的前脸（z 1.05，对着后轮后沿）以前不画，站在车侧从后轮和车架之间往下看得进配重下半截里 —— 各档都画
+  if (!D) fkPrism(b, CWP.slice(2), 'y', 0.12, 0.5, K.cw, { cap0: false, cap1: false });
+  else fkPrism(b, CWP.slice(2).map((p, i, a) => (i === 0 || i === a.length - 1) ? [Math.sign(p[0]) * xe, Math.max(p[1], FK_DRV.cwFront)] : p), 'y', 0.12, 0.5, K.cw, { cap0: false, cap1: false });
   // 配重顶上的散热格栅（几道黑缝）、后面的黄黑警示条、两个尾灯
   for (let k = 0; k < L.grille; k++) sheet(b, 0, 1.123, 1.0 + k * 0.04, 0.48, 0.02, 'up', K.black);
   fkStripes(b, -0.28, 0.28, 0.64, 0.86, 1.253, L.bev ? 0.07 : 0.09, K.body);
@@ -1736,7 +1890,8 @@ function fkBody(b, L, o, w) {
   // trim 档（lowb / min，六棱的瓶子）不画托架：瓶子底下那条棱面（离轴 0.866·TR = 0.13）直接落在配重顶上、压进 5 mm
   const TY = M ? 1.245 : 1.32, TZ = 0.86, TR = 0.15, TL = L.domes ? 0.3 : 0.36;
   if (L.tank) {
-    fkTube(b, [-TL, TY, TZ], [TL, TY, TZ], TR, L.tank, K.tank, { cap0: !L.domes, cap1: !L.domes });
+    // trim 档：压进配重顶 5 mm 的那条底棱面谁都看不到，不画（返修 FE1Q · repair-r2，给 lowb 圆方向盘、圆轮子腾面）
+    fkTube(b, [-TL, TY, TZ], [TL, TY, TZ], TR, L.tank, K.tank, { cap0: !L.domes, cap1: !L.domes, skipN: M ? n => n[1] < -0.9 : null });
     for (const s of [-1, 1]) {
       if (L.domes) fkTube(b, [s * 0.3, TY, TZ], [s * 0.36, TY, TZ], TR, L.tank, K.tank, { r1: 0.095, cap1: true });   // 两头的封头
       if (!M) dbox(b, s * 0.16, 1.12, TZ, 0.05, 0.07, 0.26, K.black, 'noBottom');                       // 托架
@@ -1752,25 +1907,8 @@ function fkBody(b, L, o, w) {
   fkBox(b, L, 0, L.seatBase ? 1.06 : 1.003, 0.24, 0.5, L.seatBase ? 0.1 : 0.157, 0.44, K.seat, 'noBottom', 0.035, 'top');
   fkPrism(b, M ? [[0.4, 1.13], [0.5, 1.13], [0.54, 1.63], [0.44, 1.63]] : [[0.4, 1.13], [0.5, 1.13], [0.54, 1.6], [0.52, 1.63], [0.46, 1.63], [0.44, 1.6]],
     'x', -0.24, 0.24, K.seat, { c0: L.backC, c1: L.backC, skip: [0] });
-  // 安全带：右边靠背上的卷收器 → 一条橙色带子顺着坐垫右侧斜下来；左边坐垫旁一个锁扣
-  const strap = (A, B2, x0, x1, both) => {
-    const du = B2[0] - A[0], dv = B2[1] - A[1], l = Math.hypot(du, dv), nu = -dv / l * 0.022, nv = du / l * 0.022;
-    fkPrism(b, [[A[0] + nu, A[1] + nv], [B2[0] + nu, B2[1] + nv], [B2[0] - nu, B2[1] - nv], [A[0] - nu, A[1] - nv]], 'x', x0, x1, K.belt, both);
-  };
-  if (!D) {
-    if (L.belt) {
-      strap([0.47, 1.44], [0.14, 1.13], 0.252, 0.258, { cap0: false, cap1: L.belt > 1 });
-      if (L.belt > 2) dbox(b, 0.255, 1.4, 0.49, 0.04, 0.09, 0.07, K.black, 'noBottom');
-      if (L.belt > 1) dbox(b, -0.265, 1.08, 0.16, 0.03, 0.05, 0.06, K.steel, ['py', 'nx', 'pz', 'nz']);
-    }
-  } else {
-    // 可动模型（各档一样）：两条 4.4 cm 宽的带子，两个大面都画（从驾驶座往下看得见）——
-    // 右边：卷收器 → 顺着坐垫右侧斜下来的那条；左边：从座椅底座伸上来、顶着锁扣的一截短带（锁扣高出坐垫 3 cm）
-    strap([0.47, 1.44], [0.14, 1.13], 0.252, 0.258, { cap0: true, cap1: true });
-    dbox(b, 0.255, 1.4, 0.49, 0.04, 0.09, 0.07, K.black, 'noBottom');
-    strap([0.31, 1.03], [0.17, 1.2], -0.258, -0.252, { cap0: true, cap1: true });
-    dbox(b, -0.255, 1.19, 0.16, 0.03, 0.06, 0.05, K.steel, 'noBottom');
-  }
+  // 安全带（返修 FE1P · H2：没扣上、被卷收器收着）：见 fkBelt。停着的车（belt > 0 的档：high / mid / lite）和可动模型（各档）同一份几何
+  if (D || L.belt) fkBelt(b);
   // 护顶架（黑）：前立柱从仪表台两角、后立柱从配重顶斜着上去，顶上四根边梁 + 一排格栅横条
   for (const s of [-1, 1]) {
     const xa = s > 0 ? 0.405 : -0.455, xb = s > 0 ? 0.455 : -0.405;   // 立柱比顶上边梁窄 1 cm，侧面不和边梁共面
@@ -1779,10 +1917,17 @@ function fkBody(b, L, o, w) {
     S(s > 0 ? 'postRR' : 'postRL');
     fkPrism(b, [[0.59, 1.08], [0.65, 1.08], [0.56, 2.07], [0.5, 2.07]], 'x', xa, xb, K.black, { skip: [0, 2] });
     S('roof');
-    dbox(b, s * 0.43, 2.04, -0.03, 0.06, 0.06, 1.18, K.black, L.guardEnds ? 'all' : 'sides');
+    // 两侧纵梁各档都画六个面（返修 r2，验收员 spec：lite / drvLow 只画 'sides'，坐在驾驶座往左上、右上看，纵梁没有底面；
+    // 返修 FE1Q · J11：停着的车也一样，站在车旁往上看护顶不再看得穿）
+    dbox(b, s * 0.43, 2.04, -0.02, 0.06, 0.06, 1.2, K.black, 'all');   // z −0.62…0.58（返修 FE1Q · repair-r1：跟着后横梁往后伸 2 cm）
   }
-  for (const z of [-0.59, 0.53]) dbox(b, 0, 2.04, z, 0.8, 0.06, 0.06, K.black, M ? ['py', z < 0 ? 'nz' : 'pz'] : L.bev ? ['py', 'ny', 'pz', 'nz'] : ['py', 'ny', z < 0 ? 'nz' : 'pz']);
-  for (let k = 0; k < L.slats; k++) dbox(b, 0, 2.07, -0.45 + k * 0.9 / (L.slats - 1), 0.8, 0.015, 0.05, K.black, L.slatF);
+  // 前后横梁、格栅横条：各档都画朝司机的那面和底面（返修 r2 只补了可动模型；返修 FE1Q · J11 停着的车、trim 档也补上 ——
+  // 站在车旁往上看，横梁、横条是实心的）
+  // 后横梁 10 cm 深（z 0.48–0.58，返修 FE1Q · repair-r1）：警示灯底圈（半径 4.5 cm，z 0.485–0.575）整圈落在横梁顶上 ——
+  // 以前横梁只有 6 cm 深，灯罩前后各悬出 1.5 cm、灯罩又不画底，从车后站着往上看透得过去
+  for (const [z, d] of [[-0.59, 0.06], [0.53, 0.1]]) dbox(b, 0, 2.04, z, 0.8, 0.06, d, K.black, ['py', 'ny', 'pz', 'nz']);
+  const slatF = L.slatF.indexOf('pz') < 0 ? L.slatF.concat(['pz', 'nz']) : L.slatF;
+  for (let k = 0; k < L.slats; k++) dbox(b, 0, 2.07, -0.45 + k * 0.9 / (L.slats - 1), 0.8, 0.015, 0.05, K.black, slatF);
   // 前大灯：两根前立柱上头朝前各一个（可动模型：镜面放进 kit:glow，只这一份，开车时点亮、熄火时由载具层压暗）
   if (L.lampF) for (const s of [-1, 1]) {
     S(s > 0 ? 'postFR' : 'postFL');
@@ -1798,16 +1943,17 @@ function fkBody(b, L, o, w) {
   {
     const zb = y => -0.69 + (y - 0.99) / 1.08 * 0.17;   // 前立柱后面那条边
     if (L.handle > 1) {
-      stick(b, [-0.43, 1.2, zb(1.2) + 0.05], [-0.43, 1.62, zb(1.62) + 0.05], 0.014, K.body);
+      stick(b, [-0.43, 1.2, zb(1.2) + 0.05], [-0.43, 1.62, zb(1.62) + 0.05], 0.014, K.body, undefined, true);   // 顶端封口（返修 FE1Q · repair-r1：坐着往左前下方看得见空的方管口）
       for (const y of [1.24, 1.58]) stick(b, [-0.43, y, zb(y) - 0.01], [-0.43, y, zb(y) + 0.05], 0.01, K.black);
-    } else if (L.handle) stick(b, [-0.43, 1.2, zb(1.2) + 0.012], [-0.43, 1.62, zb(1.62) + 0.012], 0.014, K.body);   // 中档：直接贴着立柱
+    } else if (L.handle) stick(b, [-0.43, 1.2, zb(1.2) + 0.012], [-0.43, 1.62, zb(1.62) + 0.012], 0.014, K.body, undefined, true);   // 中档：直接贴着立柱（顶端封口：返修 r2 可动模型、FE1Q · J11 停着的车，坐着、站着往左前下方看得见空的管口）
   }
-  // 后视镜：左前立柱外侧
+  // 后视镜：左前立柱外侧。镜壳朝司机那面整块是镜片（返修 FE1Q · J11：以前镜片是离镜壳 3 mm 的一张单面片，
+  // 从车左前方站着斜看，视线从镜片和镜壳之间的缝里穿过去、打到镜片背面 —— 透过去看得到后面；现在镜片就是镜壳的后脸，没有缝）
   S('mirror');
   if (L.mirror) {
     stick(b, [-0.46, 1.76, -0.6], [-0.53, 1.79, -0.655], 0.008, K.black);
-    dbox(b, -0.545, 1.74, -0.655, 0.09, 0.1, 0.02, K.black, 'all');
-    sheet(b, -0.545, 1.75, -0.642, 0.08, 0.08, '+z', K.glass);
+    dbox(b, -0.545, 1.74, -0.655, 0.09, 0.1, 0.02, K.black, ['py', 'ny', 'px', 'nx', 'nz']);
+    sheet(b, -0.545, 1.74, -0.645, 0.09, 0.1, '+z', K.glass);
   }
   S('steer');
   }
@@ -1836,14 +1982,18 @@ function fkBody(b, L, o, w) {
   // 倾斜油缸：缸筒尾端在仪表台前脸，活塞杆伸到外门架外侧的耳座
   if (L.tilt) for (const s of [-1, 1]) {
     const A = [s * G.tiltBase.x, G.tiltBase.y, G.tiltBase.z], B2 = [s * G.tiltEye.x, G.tiltEye.y, G.tiltEye.z];
-    if (L.tilt < 2) { fkTube(b, A, [s * 0.385, B2[1], B2[2]], 0.03, 4, K.mast); continue; }   // 低档：一根管直接顶到外门架立柱外侧（没有耳座）
+    // 低档：一根管直接顶到外门架立柱外侧（没有耳座）。顶着立柱那头封口（返修 FE1Q · repair-r1：坐在前面另一台车上（1.8 m）看得进管口）
+    if (L.tilt < 2) { fkTube(b, A, [s * 0.385, B2[1], B2[2]], 0.03, 4, K.mast, { cap1: true }); continue; }
     const M = [A[0] + (B2[0] - A[0]) * 0.62, A[1] + (B2[1] - A[1]) * 0.62, A[2] + (B2[2] - A[2]) * 0.62];
     fkTube(b, A, M, 0.034, L.cyl, K.mast, { cap1: true });
     fkTube(b, M, B2, 0.017, L.rod, K.chrome);
   }
 }
 // ---- 轮子：在当前坐标系原点（轮心正下方的地面）建，s = 外侧朝 ±x ----
-function fkWheel(b, L, s, front) {
+// D = 可动模型。停着的车（D 不开，轮子不转、后轮不打方向）省掉永远是背面的两样（返修 FE1Q · repair-r1，可见性探针车四周
+// 0.3–8 m、眼高 1.62 / 1.8 / 2.2 和驾驶座一圈都是 0 像素）：胎面贴地那两段（外法线朝下 > 0.9）、后轮贴着车架那面。
+// 可动模型照画（轮子会转、后轮会打方向）
+function fkWheel(b, L, s, front, D) {
   const W = front ? FORKLIFT_GEO.wheelFront : FORKLIFT_GEO.wheelRear, K = FK, R = W.r, hw = W.w / 2, y = W.y, C = [0, y, 0];
   const [S, np] = front ? L.wf : L.wr, rr = R * 0.6;
   // 截面：轮辋边 → 胎侧（略往外鼓）→ 胎肩 → 胎面 → 内侧边；胎面一深一浅 = 花纹块。np = 截面边数（3 / 2 / 1 = 只有胎面）
@@ -1853,13 +2003,15 @@ function fkWheel(b, L, s, front) {
     fkLathe(b, C, prof, S, np >= 3 ? [K.tire, K.tire, [K.tire, K.lug]] : [K.tire, [K.tire, K.lug]], [(rr + R) / 2, 0]);
     fkDisc(b, -s * (hw - 0.02), y, 0, R, S, K.tire, -s);                     // 轮胎内侧（贴着车架那面）
     fkDisc(b, s * (hw - 0.012), y, 0, rr, S, K.rim, s);                       // 轮辋（凹在胎侧里 1.2 cm）
-  } else {                                                                     // 低档：胎面一圈 + 内外两面，外面一块灰色轮辋（trim 档不画贴着车架那面）
-    fkLathe(b, C, [[R, s * hw], [R, -s * hw]], S, [K.tire], [R * 0.5, 0]);
-    if (!L.trim) fkDisc(b, -s * hw, y, 0, R, S, K.tire, -s);
+  } else {                                                                     // 胎面一圈 + 内外两面，外面一块灰色轮辋（lugs：胎面一深一浅 = 花纹块）
+    fkLathe(b, C, [[R, s * hw], [R, -s * hw]], S, [L.lugs ? [K.tire, K.lug] : K.tire], [R * 0.5, 0], D ? null : j => Math.cos((j + 0.5) / S * TAU) < -0.9);
+    // 贴着车架那面（FE1Q · J11：trim 档以前省掉，站在车前从门架下面看得进前轮里）
+    if (D || front) fkDisc(b, -s * hw, y, 0, R, S, K.tire, -s);
     fkDisc(b, s * hw, y, 0, R, S, K.tire, s);
     fkDisc(b, s * (hw + 0.003), y, 0, rr, S, K.rim, s);
   }
-  if (L.hub && (front || L.hubR)) fkTube(b, [s * (hw - 0.012), y, 0], [s * (hw + 0.008), y, 0], R * 0.2, L.hub, K.hub, { cap1: true });   // 轮毂盖
+  // 轮毂盖：轮辋正中一个微微鼓起的 L.hub 段矮圆锥（返修 FE1Q · repair-r1：以前是 4–5 棱的短圆管，近看是方的 / 五边的）
+  if (L.hub && (front || L.hubR)) fkCone(b, [s * (hw + 0.003), y, 0], [s * (hw + 0.012), y, 0], R * 0.2, L.hub, K.hub);
 }
 // ---- 方向盘：轮圈 + 辐条 + 中心盖 + 助力球；turn = 方向盘自己转了多少（弧度）----
 function fkSteeringWheel(b, L, turn) {
@@ -1869,20 +2021,26 @@ function fkSteeringWheel(b, L, turn) {
   const at = (a, r, up) => { const d = dir(a); return [C[0] + d[0] * r + ax[0] * up, C[1] + d[1] * r + ax[1] * up, C[2] + d[2] * r + ax[2] * up]; };
   fkRing(b, C, ax, SW.r, 0.016, L.ring[0], L.ring[1], K.black, dir(0));
   if (L.spokes > 2) for (const a of [0, Math.PI, -HALF_PI]) stick(b, at(a, 0.035, -0.012), at(a, SW.r - 0.01, 0), 0.009, K.black);
-  else stick(b, at(0, SW.r - 0.01, 0), at(Math.PI, SW.r - 0.01, 0), 0.009, K.black);
+  // trim 档（停着的车用、方向盘不转）辐条朝下那面在 1.24 m，永远是背面，不画（返修 FE1Q · repair-r2 腾面）
+  else stick(b, at(0, SW.r - 0.01, 0), at(Math.PI, SW.r - 0.01, 0), 0.009, K.black, undefined, undefined, L.trim ? n => n[1] < -0.9 : null);
   if (L.swHub) fkTube(b, at(0, 0, -0.035), at(0, 0, 0.004), 0.04, L.swHub, K.black, { cap1: true });
   // 助力球：左前方（单手打方向用）
   if (L.knob) { const P = at(Math.PI * 0.8, SW.r, 0); fkTube(b, P, [P[0] + ax[0] * 0.055, P[1] + ax[1] * 0.055, P[2] + ax[2] * 0.055], 0.016, L.knob, K.black, { cap1: true }); }
 }
 // ---- 外门架：两根立柱（前后 12 cm、左右 7 cm）、顶梁、底座、起升油缸缸筒、链条锚座、倾斜油缸耳座 ----
-function fkMastOuter(b, L) {
+function fkMastOuter(b, L, D) {
   const K = FK, G = FORKLIFT_GEO, M = !!L.trim;
   for (const s of [-1, 1]) {
     dbox(b, s * 0.33, 0.06, -1.0, 0.07, G.mastOuterTop - 0.06, 0.12, K.mast, L.posts);                                       // 立柱
-    if (L.ears) dbox(b, s * 0.4075, 0.94, -0.97, 0.085, 0.08, 0.06, K.mast, ['py', 'ny', s > 0 ? 'px' : 'nx', 'pz', 'nz']);   // 倾斜油缸耳座
-    if (L.cyl) fkTube(b, [s * 0.2, 0.14, -0.865], [s * 0.2, 1.75, -0.865], 0.04, L.cyl, K.mast, { cap1: L.cylCap });         // 起升油缸缸筒（坐在底座上）
+    // 倾斜油缸耳座（底面 0.94 m 朝下，比谁的眼睛都低、门架也不升 —— 永远是背面，不画：返修 FE1Q · repair-r1 腾面）
+    if (L.ears) dbox(b, s * 0.4075, 0.94, -0.97, 0.085, 0.08, 0.06, K.mast, ['py', s > 0 ? 'px' : 'nx', 'pz', 'nz']);
+    // 起升油缸缸筒（坐在底座上）。各档都封顶（返修 r2 可动模型、FE1Q · J11 停着的车：lite / low 缸口敞着，坐着眼高 1.8、缸顶 1.75，
+    // 往前下方看得见活塞杆周围那圈空口）
+    if (L.cyl) fkTube(b, [s * 0.2, 0.14, -0.865], [s * 0.2, 1.75, -0.865], 0.04, L.cyl, K.mast, { cap1: true });
   }
-  dbox(b, 0, 1.9, -0.925, 0.73, 0.08, 0.03, K.mast, M ? ['py', 'pz'] : ['py', 'ny', 'pz', 'nz']);   // 顶梁（在内门架后面，两头接立柱）
+  // 顶梁（在内门架后面，两头接立柱）：各档都画六个面 —— 两头的端面（x ±0.365，3 × 8 cm，立柱只到 z −0.94、顶梁在 −0.94…−0.91，
+  // 端面露在立柱后面）站在车侧看得见（返修 r2 可动模型；FE1Q · J11 停着的车也补上，trim 档补上底面：从车前斜下方看得进去）
+  dbox(b, 0, 1.9, -0.925, 0.73, 0.08, 0.03, K.mast, ['py', 'ny', 'pz', 'nz', 'px', 'nx']);
   dbox(b, 0, 0.06, -0.87, 0.73, 0.08, 0.14, K.mast, M ? ['py', 'nz'] : ['py', 'nz', 'px', 'nx']);   // 底座：后面贴着车架前脸
   if (L.backChain || !M) dbox(b, 0, 1.92, -0.9625, 0.3, 0.05, 0.045, K.mast, L.backChain ? ['py', 'ny', 'nz', 'px', 'nx'] : ['py', 'nz']);   // 链条锚座
 }
@@ -1891,18 +2049,25 @@ function fkMastOuter(b, L) {
 function fkMastInner(b, L, D) {
   const K = FK, G = FORKLIFT_GEO, sp = G.sprocket, M = !!L.trim;
   for (const s of [-1, 1]) {
-    dbox(b, s * 0.265, 0.1, -1.0, 0.1, G.mastInnerTop - 0.1, 0.07, K.mastIn, D ? 'all' : L.posts);                           // 立柱
+    // 立柱。可动模型画四个侧面和顶面；底面不画 —— 升满也只到 1.4 m，比站着的眼睛低，永远是背面（返修 FE1Q · repair-r1 腾面，以前是 'all'）
+    dbox(b, s * 0.265, 0.1, -1.0, 0.1, G.mastInnerTop - 0.1, 0.07, K.mastIn, D ? 'noBottom' : L.posts);
     if (L.rods) fkTube(b, [s * 0.2, 0.4, -0.865], [s * 0.2, 2.07, -0.865], 0.022, L.rod, K.chrome);                           // 起升油缸活塞杆
-    if (L.heads) dbox(b, s * 0.2, 2.06, -0.8975, 0.06, 0.055, 0.135, K.mast, L.bev ? ['py', 'ny', 'px', 'nx', 'pz'] : ['py', 'px', 'nx', 'pz']);   // 杆头：顶住内门架顶梁
+    // 杆头：顶住内门架顶梁。各档都画底面（返修 r2 可动模型、FE1Q · J11 停着的车：杆头 2.06 m 比眼睛高，站着、坐着往前上方看底面是空的）
+    if (L.heads) dbox(b, s * 0.2, 2.06, -0.8975, 0.06, 0.055, 0.135, K.mast, ['py', 'ny', 'px', 'nx', 'pz']);
     // 链轮 + 链轮轴（从立柱内侧伸出来）。min：一块方的，往后伸进顶梁 2 mm（不悬空）
     if (L.sprocket) {
-      // 低档（不倒角）：链轮只画朝里那个端面（朝立柱那面被轴挡住），轴只画顶面和正面
-      fkTube(b, [s * (sp.x - 0.015), sp.y, sp.z], [s * (sp.x + 0.015), sp.y, sp.z], sp.r, L.sprocket, K.steel, { cap0: L.axle, cap1: L.bev || !L.axle });
-      if (L.axle) dbox(b, s * 0.175, sp.y - 0.01, sp.z, 0.08, 0.02, 0.02, K.steel, L.bev ? ['py', 'ny', 'pz', 'nz'] : ['py', 'nz']);
-    } else dbox(b, s * sp.x, sp.y - sp.r, sp.z + 0.006, 0.03, 2 * sp.r, 0.082, K.steel, ['nz', 'px', 'nx', 'py']);
+      // 链轮两个端面各档都画（返修 FE1P · H5：朝立柱那面从车前斜着看得见，轴只挡住中间 2 cm）；侧面法线光滑。
+      // high / mid / lite / drvLow 12 棱（返修 FE1Q · J10：8 棱特写一眼看出八边形），low / lowb 8 棱。
+      // 低档（不倒角）的轴只画顶面和正面
+      fkTube(b, [s * (sp.x - 0.015), sp.y, sp.z], [s * (sp.x + 0.015), sp.y, sp.z], sp.r, L.sprocket, K.steel, { cap0: true, cap1: true });
+      // 轴朝司机那面（pz）停着的车被内门架顶梁挡住、0 像素，不画；可动模型升起来以后从驾驶座仰看得见，照画（返修 FE1Q · repair-r1）
+      if (L.axle) dbox(b, s * 0.175, sp.y - 0.01, sp.z, 0.08, 0.02, 0.02, K.steel, L.bev ? (D ? ['py', 'ny', 'pz', 'nz'] : ['py', 'ny', 'nz']) : ['py', 'nz']);
+    } else dbox(b, s * sp.x, sp.y - sp.r, sp.z + 0.006, 0.03, 2 * sp.r, 0.082, K.steel, ['nz', 'px', 'nx', 'py', 'ny']);   // 底面 2.05 m 比眼睛高，要画（返修 FE1Q · repair-r1）
   }
-  dbox(b, 0, G.mastInnerTop - 0.08, -0.9475, 0.43, 0.08, 0.035, K.mastIn, M ? ['py', 'nz'] : ['py', 'ny', 'pz', 'nz']);   // 顶梁
-  if (!M) dbox(b, 0, 0.16, -0.9475, 0.43, 0.08, 0.035, K.mastIn, D ? ['py', 'ny', 'pz', 'nz'] : ['py', 'pz', 'nz']);   // 底梁
+  // 顶梁：在两根立柱后面（立柱到 z −0.965，顶梁 −0.965…−0.93），两头的端面露在立柱后面、杆头上下各露 2 cm / 5 mm ——
+  // 各档都画六个面（返修 FE1Q · J11：以前没有端面，站在车侧往上看透得过去；trim 档以前也没有底面和背面）
+  dbox(b, 0, G.mastInnerTop - 0.08, -0.9475, 0.43, 0.08, 0.035, K.mastIn, ['py', 'ny', 'pz', 'nz', 'px', 'nx']);
+  if (!M) dbox(b, 0, 0.16, -0.9475, 0.43, 0.08, 0.035, K.mastIn, ['py', 'pz', 'nz']);   // 底梁（底面升满也只到 1.42 m，永远是背面）
 }
 // ---- 货叉架 + 挡货架 + 货叉（lift = 0 的位置；升起来时整体上移 pose(lift).carriage）----
 // D = 可动模型：货叉升起来以后从下面看得见 —— 货叉水平段、竖直段、下横梁、滚轮架都补上底面（停着的车货叉贴地，底面离地 1.5 cm 看不见，不画）。
@@ -1914,16 +2079,21 @@ function fkCarriage(b, L, D, S) {
   dbox(b, 0, 0.08, -1.09, 0.92, 0.08, 0.05, K.mast, L.heel ? ['py', 'ny', 'pz', 'nz', 'px', 'nx'] : M ? ['py', 'nz'] : D ? ['py', 'ny', 'pz', 'nz'] : ['py', 'pz', 'nz']);   // 下横梁
   for (const s of [-1, 1]) {
     dbox(b, s * G.sprocket.x, 0.5, -1.052, 0.03, 0.08, 0.026, K.steel, L.hook ? ['py', 'pz', 'px', 'nx'] : ['py', 'pz']);             // 链条挂点（上横梁后面）
-    dbox(b, s * 0.44, 0.54, -1.085, 0.04, 0.7, 0.03, K.mast, L.hook ? ['pz', 'nz', 'px', 'nx', 'py'] : M ? ['nz', 'pz'] : 'sides');   // 挡货架立柱
+    // 挡货架立柱。各档都画顶面（返修 r2 可动模型：lite / drvLow 只画 'sides'，立柱比挡货架顶横梁两头宽出去 2 cm，坐着往前下方看得见空的顶口；
+    // FE1Q · J11 停着的车也补上，trim 档补上两侧和顶面 —— 以前只有前后两面，站在车前斜着看是透的）
+    dbox(b, s * 0.44, 0.54, -1.085, 0.04, 0.7, 0.03, K.mast, L.hook ? ['pz', 'nz', 'px', 'nx', 'py'] : ['px', 'nx', 'py', 'pz', 'nz']);
     // 滚轮架：把上下横梁连起来，后端顶到内门架立柱前脸（z −1.035，那一面不画）—— 升降时货叉架靠它沿内门架上下滑。
     // 顶比上横梁低 5 mm、前面插进两根横梁 5 mm，不和横梁的面共面
     if (L.bracket) dbox(b, s * 0.26, 0.08, -1.0525, 0.05, 0.455, 0.035, K.mast, L.bev ? ['px', 'nx', 'nz', 'py'] : ['px', 'nx', 'nz']);
     // 可动模型：滚轮架露在下横梁后面那 3 cm 的底面（插进横梁的那 5 mm 不画，免得和横梁底面共面）
     if (L.bracket && D) sheet(b, s * 0.26, 0.08, -1.05, 0.05, 0.03, 'down', K.mast);
   }
-  dbox(b, 0, 1.2, -1.085, 0.84, 0.04, 0.03, K.mast, M ? ['pz', 'nz'] : ['pz', 'nz', 'py', 'ny']);
+  // 挡货架顶横梁、竖条：各档都画四面（返修 FE1Q · J11：trim 档的顶横梁、不倒角档（low / drvLow）的竖条以前只有前后两面，
+  // 站在车前、坐在驾驶座斜着看是透的）
+  // trim 档（只有停着的车用、门架不升）顶横梁底面在 1.2 m、朝下，比站着 / 坐着的眼睛都低，永远是背面，不画（返修 FE1Q · repair-r2 腾面）
+  dbox(b, 0, 1.2, -1.085, 0.84, 0.04, 0.03, K.mast, L.trim ? ['pz', 'nz', 'py'] : ['pz', 'nz', 'py', 'ny']);
   if (L.midRail) dbox(b, 0, 0.88, -1.085, 0.84, 0.03, 0.03, K.mast, ['pz', 'nz', 'py']);
-  for (const x of L.back) dbox(b, x, 0.54, -1.085, 0.025, 0.66, 0.02, K.mast, L.bev ? ['pz', 'nz', 'px', 'nx'] : ['pz', 'nz']);
+  for (const x of L.back) dbox(b, x, 0.54, -1.085, 0.025, 0.66, 0.02, K.mast, ['pz', 'nz', 'px', 'nx']);
   // 货叉：竖直段（后下角圆过渡）+ 水平段（叉尖上面削薄、下面倒角）+ 骑在上横梁上的挂钩。
   // 低档：竖直段直接贴到上横梁前面（不画挂钩），水平段是一块平板
   for (const s of [-1, 1]) {
@@ -1937,17 +2107,57 @@ function fkCarriage(b, L, D, S) {
     if (L.hook) dbox(b, s * G.forkTip.x, 0.54, -1.09, 0.1, 0.04, 0.06, K.fork, ['py', 'pz', 'px', 'nx']);
   }
 }
-// ---- 链条：前段（货叉架挂点 → 链轮前缘）、后段（外门架锚座 → 链轮后缘）；长度跟着升降变 ----
-function fkChains(b, L, ps) {
-  const K = FK, G = FORKLIFT_GEO, sp = G.sprocket, top = sp.y + ps.inner, y0 = G.chain.carriageY + ps.carriage;
+// ---- 链条（返修 FE1P · H5）：一根链条 —— 前段从货叉架挂点上到链轮、搭在链轮上半圈、后段从链轮后面下到外门架锚座 ----
+// 链条中心线在链轮外圆上（前段 z = 链轮 z − r、后段 z = 链轮 z + r），厚 12 mm、宽 26 mm（比链轮窄 4 mm：侧面不和链轮端面共面）。
+// 搭在链轮上的那半圈（L.arc 段）= 外表面一圈折线（外半径 r + 6 mm，弦的中点仍在链轮外面）+ 两侧各一片半圆扇面（里面那截藏在链轮里）。
+// 链节（L.links = 节距，0 = 不画）：从货叉架挂点那头起算弧长 s，[k·节距, (k+1)·节距) 是第 k 节，奇数节是浅色链板 ——
+//   前段、后段朝前（−z）那一面各贴一片浅色薄片（离链面 2 mm）；搭在链轮上的那几段外表面按自己所在那一节着色。
+//   升降时整根链条在链轮上滑：s 从货叉架那头算，所以前段的链节跟着货叉架走、锚座那头的链节不动（链条全长和 lift 无关）。
+//   可动模型（D）：浅色片数 = 整根链条上奇数节的个数（和 lift 无关）—— 正好落在链轮上那一节的薄片缩成一点（零面积，不出像素），
+//   载具层按 lift 重建链条时顶点数、索引数都不变；停着的车（lift 0）不画那片
+// min（没有链轮、只有前段）照旧
+function fkChains(b, L, ps, D) {
+  const K = FK, G = FORKLIFT_GEO, sp = G.sprocket, cy = sp.y + ps.inner, y0 = G.chain.carriageY + ps.carriage, ya = G.chain.anchorY;
+  const R = sp.z - G.chain.z, T = 0.012, hw = 0.013, Ro = R + T / 2, hf = cy - y0, hb = cy - ya, arcL = Math.PI * R, S = hf + arcL + hb;
+  const quad = (P, n, col) => b._piece('kit:prop', 0, 0, 0, 0, (v, t) => {
+    for (const q of P) v(q[0], q[1], q[2], n[0], n[1], n[2], 0, 0);
+    const g = cross3(sub3(P[1], P[0]), sub3(P[2], P[0]));
+    if (g[0] * n[0] + g[1] * n[1] + g[2] * n[2] >= 0) { t(0, 1, 2); t(0, 2, 3); } else { t(0, 2, 1); t(0, 3, 2); }
+  }, { color: col, uv: 'stretch', solid: false });
+  const lightAt = s0 => L.links > 0 && Math.floor(s0 / L.links) % 2 === 1;
   for (const s of [-1, 1]) {
-    const x = s * sp.x, h = top - y0;
-    dbox(b, x, y0, G.chain.z, 0.026, h, 0.012, K.chain, L.backChain ? ['nz', 'px', 'nx', 'pz'] : ['nz', 'px', 'nx']);   // 比链轮窄 4 mm：侧面不和链轮端面共面
-    if (L.links) {   // 链板：正面一节深一节浅
-      const n = Math.max(2, Math.round(h / L.links)), p = h / n;
-      for (let k = 0; k < n; k += 2) sheet(b, x, y0 + k * p, G.chain.z - 0.008, 0.026, p, '-z', K.link);
+    const x = s * sp.x;
+    dbox(b, x, y0, G.chain.z, 2 * hw, hf, T, K.chain, ['nz', 'px', 'nx', 'pz']);   // 前段（FE1Q · J11：min 档以前不画背面，从驾驶座、车侧看是透的）
+    if (!L.backChain) continue;
+    dbox(b, x, ya, G.chain.back, 2 * hw, hb, T, K.chain, ['nz', 'pz', 'px', 'nx']);   // 后段
+    if (L.arc) {
+      // 外表面：θ 从 0（前段顶）经过链轮正上方到 π（后段顶）；每段一块平的（法线沿这一段中间的半径），按这段中点所在的链节着色
+      const N = L.arc, O = k => { const a = Math.PI * k / N; return [sp.z - Ro * Math.cos(a), cy + Ro * Math.sin(a)]; };
+      for (let k = 0; k < N; k++) {
+        const p0 = O(k), p1 = O(k + 1), am = Math.PI * (k + 0.5) / N;
+        quad([[x - hw, p0[1], p0[0]], [x + hw, p0[1], p0[0]], [x + hw, p1[1], p1[0]], [x - hw, p1[1], p1[0]]], [0, Math.sin(am), -Math.cos(am)],
+          lightAt(hf + R * am) ? K.link : K.chain);
+      }
+      // 两侧半圆扇面（外圈折线 O(0)…O(N)，弦正好过链轮轴；里面那截在链轮里看不见）
+      for (const sx of [-1, 1]) {
+        const F = [];
+        for (let k = 0; k <= N; k++) { const q = O(k); F.push([x + sx * hw, q[1], q[0]]); }
+        facets(b, 'kit:prop', [F], K.chain, [x, cy, sp.z].map((c, i) => i === 0 ? x - sx : c));
+      }
     }
-    if (L.backChain) dbox(b, x, G.chain.anchorY, G.chain.back, 0.026, top - G.chain.anchorY, 0.012, K.chain, ['nz', 'pz']);
+    if (L.links > 0) {
+      const zf = G.chain.z - T / 2 - 0.002, zb = G.chain.back - T / 2 - 0.002, n = [0, 0, -1];
+      // 后段最下面那截（锚座顶 1.97 以下）插在锚座里看不见：那里的链节不贴
+      const sEnd = S - Math.max(0, 1.97 - ya);
+      for (let k = 1; k * L.links < sEnd; k += 2) {
+        const a = k * L.links, c = Math.min(S, (k + 1) * L.links);
+        let yA = null, yB = null, z = zf;
+        if (a < hf) { yA = y0 + a; yB = y0 + Math.min(c, hf); }
+        else if (c > hf + arcL) { z = zb; yA = cy - (c - hf - arcL); yB = cy - Math.max(0, a - hf - arcL); }
+        if (yA !== null && yB - yA > 1e-6) quad([[x - hw, yA, z], [x - hw, yB, z], [x + hw, yB, z], [x + hw, yA, z]], n, K.link);
+        else if (D) quad([[x, cy, sp.z], [x, cy, sp.z], [x, cy, sp.z], [x, cy, sp.z]], n, K.link);   // 落在链轮上那一节：缩成一点占位
+      }
+    }
   }
 }
 // ---- 磨损（软边贴花，只在高画质）：踏板边上蹭掉的漆、配重后角的刮痕、配重侧面的锈迹、仪表台前脸往下流的油痕、
@@ -1984,7 +2194,8 @@ function fkWearEmit(b, L, want, ps, dec) {
 //   ① 货叉水平段、竖直段、下横梁、滚轮架、内门架补底面（升起来从下面看是实心的）；
 //   ② 后轮打方向扫过的圆柱（主销 (±0.44, z 0.8)、半径 0.244、高 0–0.46）里，底盘 z 0.54 往后收窄到半宽 FK_DRV.chassisHalf、
 //      配重下半截前脸挪到 FK_DRV.cwFront 并且各档都画 —— 0 到 ±maxSteer 胎面离车身 ≥1 cm；
-//   ③ 安全带两条（右边卷收器那条 + 左边顶着锁扣的短带），4.4 cm 宽、两个大面都画；
+//   ③ 安全带（fkBelt：卷收器、垂下来的带子、锁舌、短带、扣头）各档都画 —— 和停着的车 belt > 0 的档同一份几何（返修 FE1P · H2）；
+//   ③b 配重上半截在收窄那段的底面、发动机盖后脸下面那截挡板（返修 FE1P · H4，从轮罩下面往上 / 往前看不穿）；
 //   ④ 两盏前大灯镜面、警示灯罩放进 kit:glow（只这一份，不在 kit:prop 里重复）；
 //   ⑤ 操纵杆根数按 opts.levers（至少 1）。
 function forkliftModel(b, opts) {
@@ -1994,17 +2205,17 @@ function forkliftModel(b, opts) {
   const nl = o.levers != null && +o.levers >= 0 ? Math.min(3, +o.levers | 0) : L.levers;
   const w = { body: want('body'), lever: want('liftLever'), drive: D, levers: D ? Math.max(1, nl) : nl, seg: S };
   if (w.body || w.lever) fkBody(b, L, o, w);
-  if (want('wheelsFront')) { S('wheelsFront'); for (const s of [-1, 1]) { b.push(s * G.wheelFront.x, G.wheelFront.z, 0); fkWheel(b, L, s, true); b.pop(); } }
+  if (want('wheelsFront')) { S('wheelsFront'); for (const s of [-1, 1]) { b.push(s * G.wheelFront.x, G.wheelFront.z, 0); fkWheel(b, L, s, true, D); b.pop(); } }
   for (const s of [-1, 1]) {
     if (!want('wheelsRear') && !want(s < 0 ? 'wheelRearL' : 'wheelRearR')) continue;
     S(s < 0 ? 'wheelRearL' : 'wheelRearR');
-    b.push(s * G.wheelRear.x, G.wheelRear.z, steer); fkWheel(b, L, s, false); b.pop();
+    b.push(s * G.wheelRear.x, G.wheelRear.z, steer); fkWheel(b, L, s, false, D); b.pop();
   }
   if (want('steeringWheel')) { S('steeringWheel'); fkSteeringWheel(b, L, steer * G.steerRatio); }
-  if (want('mastOuter')) { S('mastOuter'); fkMastOuter(b, L); }
+  if (want('mastOuter')) { S('mastOuter'); fkMastOuter(b, L, D); }
   if (want('mastInner')) { S('mastInner'); b.push(0, 0, 0, ps.inner); fkMastInner(b, L, D); b.pop(); }
   if (want('carriage')) { b.push(0, 0, 0, ps.carriage); fkCarriage(b, L, D, S); b.pop(); }
-  if (want('chains')) { S('chains'); fkChains(b, L, ps); }
+  if (want('chains')) { S('chains'); fkChains(b, L, ps, D); }
   if (typeof o.decal === 'function') fkWearEmit(b, L, want, ps, o.decal);
 }
 // 场景里停着的叉车（没人开）：货叉落地、轮子摆正。
@@ -2019,8 +2230,11 @@ function forkliftModel(b, opts) {
 // 多出来的面数记在细节档 D 上（和倒角、贴花一样，只影响可见几何）。
 const FK_NOMINAL = 318;                       // 改前叉车的面数（4 个倒角盒按普通盒算 + 门架 / 货叉 / 方向盘 / 4 个轮子），两种画质都是这个
 const FK_CAP = { high: 9950, low: 7950 };     // 建完叉车后整块实际面数的上限（kit 预算 10000 / 8000，留 50 的余量）
-// 挑档顺序：高画质 high → mid → lite → low → lowb → min；低画质 low → lowb → min（不倒角、不贴花）
+// 挑档顺序：高画质 high → mid → lite → low → lowb → min；低画质 low → lowb → min（不倒角、不贴花）。
+// 返修 FE1Q · repair-r3：停放档最省到 lowb（FK_PARK_FLOOR）—— 所有台按 lowb 都放不下时先把最后几台改成运行时车（见 buildForklifts），
+// 所以 L1 生成的停着的车不会再是 min（min 留在梯子末尾只当兜底，forkliftModel / 测试照样能建）
 const FK_LADDER = Object.freeze({ high: Object.freeze(['high', 'mid', 'lite', 'low', 'lowb', 'min']), low: Object.freeze(['low', 'lowb', 'min']) });
+const FK_PARK_FLOOR = 'lowb';
 const FK_PH = 'L1:forklift-pending';          // 占位累加器的 key（不是材质，不会建成 mesh）
 const fkQueue = new WeakMap(), fkCost = {};
 // 改前那台叉车的 5 个倒角盒（车身、配重、座椅、靠背、护顶）：[w, h, d, faces, 倒角, 倒哪些棱, 它前面先建了多少面（护顶前面是 4 根立柱）]
@@ -2076,7 +2290,8 @@ function fkWsReserve(b) {
 //   { key: '<层>@cx,cz#v<i>', i, x, z, y, rot（世界坐标）, lx, lz（区块本地坐标）, number（车身编号）, detail（停放档；保底车 null）, tris,
 //     solid（res.solids 下标：外接 AABB，用 kit fixture 包住、显式 key = key，world 登记成 phys key 'cx,cz#v<i>'）,
 //     spans: { prop: [v0, v1], wear: [[v0, v1]…]（不含 FK_WEAR[0]）, oil: [v0, v1] | null }（kit:prop / kit:decal 累加器里的顶点段）,
-//     wearN（贴上的磨损片数，不含 FK_WEAR[0]）, runtime（保底车 true：不进区块几何，没有 spans / wearN）}
+//     wearN（贴上的磨损片数，不含 FK_WEAR[0]）, runtime（true：不进区块几何，没有 spans / wearN —— 出生保底车、L1 正常生成时出生块里的所有车
+//     （返修 FE1Q · J2）、一块里按 lowb 都放不下的车（返修 FE1Q · repair-r3，含工坊））}
 function fkRecord(b, x, z, rot, runtime) {
   const p = b.point(x, z), w = b.world(x, z), R = b._T.rot + rot;
   const list = b.data.forklifts || (b.data.forklifts = []);
@@ -2096,10 +2311,16 @@ function fkSolid(b, rec, x, z, rot) {
   b.fixture({ key: rec.key, kind: 'vehicle', label: '叉车', why: '叉车太重，拖不动', pivot: [x, z, rot] }, () => b.solid(x - hx, 0, z - hz, x + hx, 2.15, z + hz));
 }
 function forklift(b, x, z, rot) {
-  const rec = fkRecord(b, x, z, rot, false);
+  // J2：出生块（b._fkSpawnRT）里本来就生成的车也是运行时车：数据记录 runtime:true、不进 fkQueue；
+  // 占位、账面、fixture 和别的车一模一样（块里后面的东西倒不倒角、贴不贴花照旧），finish 时占位删掉、账面退回去（见 buildForklifts）
+  const rt = !!b._fkSpawnRT;
+  const rec = fkRecord(b, x, z, rot, rt);
   const pend = FK_NOMINAL + fkOldExtra(b);
-  if (!fkQueue.has(b)) fkQueue.set(b, []);
-  fkQueue.get(b).push({ x: rec.lx, z: rec.lz, y: rec.y, rot: rec.rot, pend, number: rec.number, rec });
+  if (rt) (b._fkRtPend || (b._fkRtPend = [])).push(pend);
+  else {
+    if (!fkQueue.has(b)) fkQueue.set(b, []);
+    fkQueue.get(b).push({ x: rec.lx, z: rec.lz, y: rec.y, rot: rec.rot, pend, number: rec.number, rec });
+  }
   // 占位：先按改前那台的面数 pend 占上（见上面的说明）。账面只记 FK_NOMINAL：pend 里多出来的倒角面数和改前一样记在细节档 D 上
   let ph = b._accs.get(FK_PH);
   if (!ph) { ph = { key: FK_PH, n: 0, idx: [] }; b._accs.set(FK_PH, ph); }
@@ -2141,24 +2362,36 @@ function fkObjTris(b) {
 function buildForklifts(b) {
   const q = fkQueue.get(b);
   b._accs.delete(FK_PH);
+  // J2：出生块里改成运行时车的那几台 —— 占位删掉了、几何不建：生成时记下的账面（FK_NOMINAL − pend）和细节档（pend − FK_NOMINAL）都退回去，
+  // 这几台车在这块的账面上一个面都不占（和保底车一样）
+  if (b._fkRtPend) {
+    const e0 = ext(b), cat0 = e0.cat;
+    e0.cat = 'forklift';
+    for (const p of b._fkRtPend) { charge(b, p - FK_NOMINAL); addExtra(e0, FK_NOMINAL - p); }
+    e0.cat = cat0;
+    delete b._fkRtPend;
+    if (b.data.tri) b.data.tri.extra = e0.tris;
+  }
   if (!q || !q.length) return;
   fkQueue.delete(b);
   const wsRes = fkWsReserve(b);
   const lad = FK_LADDER[lowQ() ? 'low' : 'high'], cap = FK_CAP[lowQ() ? 'low' : 'high'] - wsRes;
   const e = ext(b), cat = e.cat, T0 = b._T, t0 = rawTri(b), pend = q.reduce((a, f) => a + f.pend, 0);
-  // 挑档：先定保底档 = 所有台都用同一档时放得下的最细一档（都放不下就用最省的 min），所有台都按它占上；
+  // 挑档：先定保底档 = 所有台都用同一档时放得下的最细一档，所有台都按它占上；
   // 再从第一台起逐台往细里升，放得下就升。整块合计 = 累加器里的 + 单独挂进去的物体 + 叉车
   const base = t0 + fkObjTris(b);
-  // 工坊地图（这块要给工坊的出口 / 自由墙留面数）：连 min 都放不下时，从最后一台起改成运行时车（runtime:true，不建区块几何，
-  // 载具层进层时直接以载具网格显示，和出生保底车一样），直到剩下的按 min 放得下 —— 工坊的出口摆进来以后整块仍不超预算。
-  // 不在工坊里时照旧（放不下也按 min 建，和改前逐字节一样）
-  if (wsRes > 0) {
-    const minT = fkTris(lad[lad.length - 1]);
-    while (q.length && base + q.length * minT > cap) {
-      const r = q.pop().rec;
-      r.runtime = true; r.detail = null; r.tris = 0;
-      delete r.spans; delete r.wearN;
-    }
+  // 返修 FE1Q · repair-r3（验收员 play：min 档停着时方向盘是六段的扁框、车轮六边形、没有大灯灯盒和起升油缸，上车换成 lite 才变圆、变全 ——
+  // 站在车旁看得出来；repair-r2 以后高画质种子 80 (-2,1)、低画质种子 70 (-1,-1)、87 (0,-2) 各有一台）：min 不再当停放档。
+  // 所有台都按 lowb（FK_PARK_FLOOR）放不下时，从最后一台起改成运行时车（runtime:true，不建区块几何、没有 spans / wearN，
+  // 载具层载入这块时直接以载具网格画：高画质 mid、低画质 drvLow —— 停着和开过是同一个网格，和出生块的车一样），直到剩下的按 lowb 放得下；
+  // 剩下的车照旧挑档（少了一台，往往能升一档）。工坊地图同一条规则（cap 已经先扣掉工坊出口 / 自由墙要留的面数），以前是连 min 都放不下才改。
+  // 账面照旧按 n × FK_NOMINAL 记（和工坊以前一样：改成运行时车的那台在 pend 里、最后 charge(pend − all) 一起结），块里别的东西逐字节不变。
+  // 不受影响的块（种子 12345 的 golden 25 块都是）挑档和以前逐位一样
+  const floorT = fkTris(FK_PARK_FLOOR);
+  while (q.length && base + q.length * floorT > cap) {
+    const r = q.pop().rec;
+    r.runtime = true; r.detail = null; r.tris = 0;
+    delete r.spans; delete r.wearN;
   }
   const n = q.length;
   let fl = lad.length - 1;
@@ -3232,7 +3465,10 @@ function buildChunk(ctx, cx, cz, rng) {
   const bays = planBays(rng, defs, isSpawn, st);
   const env = { st, sector, orient, bays, slots: [], huts: [], walls: [], portalNear: isSpawn ? null : portalNear(seed, cx, cz) };
   // 出生保底：只在 L1 正常生成时（工坊地图不放；营地 BR.L1room 走 roomBuild，不经过这里）
-  if (isSpawn && !(BR.workshop && BR.workshop.active)) bays[4].forceFk = true;
+  // 返修 FE1Q · J2（主会话裁定）：同一个条件下，出生块里的所有叉车（保底车、本来就生成的，例如种子 12345 的 1@0,0#v0）一律按运行时车处理 ——
+  // 不建区块几何、不进 fkQueue、不记账面，进层时载具层直接画载具网格（高画质 mid、低画质 drvLow），停着和开过是同一个网格。
+  // 占位累加器照旧占着改前那台的面数（见 forklift），所以块里别的东西逐字节不变
+  if (isSpawn && !(BR.workshop && BR.workshop.active)) { bays[4].forceFk = true; b._fkSpawnRT = true; }
   // 头顶的东西（叉车升货叉、举着货叉开车时要避开）：b.data.overhead，画的地方顺手记（不取随机数、不改几何，高低画质一样）
   env.oh = b.data.overhead = [];
   env.side = b.data.sideObs = [];   // 车身高度上伸出来、没有碰撞体的东西（sideAdd）
@@ -3323,7 +3559,18 @@ function onBlackoutStart(ctx) {
   else if (!S.warned) { BR.hud.toast('闪烁：别开灯，找亮着绿色应急灯的门躲进小屋', 3500); S.warned = true; }
   BR.audio.play('static');
   BR.gfx.applyEnv(BLACKOUT_ENV, BR.game.settings.visibility);
-  for (const c of BR.world.chunks()) for (const l of (c.lights || [])) { if (l._l1orig === undefined) l._l1orig = l.intensity; l.intensity = 0; }
+  dimLights();
+}
+// 断电：已载入区块的灯全灭（原亮度记在 _l1orig，来电时恢复）。断电途中才载入的区块（往没去过的方向走）也要灭 ——
+// update 里断电期间每帧补一次（返修 FE1P · H12：原来只在断电那一刻扫一遍，后载入的块灯一直亮着、还占着灯池的位置）。
+// 灯池（gfx.selectLights）只挑亮度 > 0 的灯，所以灭掉的灯不占位置。返回这次新灭了几盏
+function dimLights() {
+  let n = 0;
+  for (const c of BR.world.chunks()) for (const l of (c.lights || [])) {
+    if (l._l1orig === undefined) l._l1orig = l.intensity;
+    if (l.intensity !== 0) { l.intensity = 0; n++; }
+  }
+  return n;
 }
 function onBlackoutEnd() {
   BR.audio.play('buzz');
@@ -3399,6 +3646,7 @@ BR.levels.register({
     if (S.blackout && S.timer >= S.blackoutUntil) { S.blackout = false; onBlackoutEnd(); }
 
     if (S.blackout) {
+      dimLights();   // 断电途中新载入的区块：灯一起灭
       // 断电途中才上车点着火、或者把关掉的大灯又打开：大灯亮起来的那一刻补一次叉车那句（每次断电最多一次）
       if (!S.warnedFk && seatLit()) { fkDarkTip(); S.warnedFk = true; S.warned = true; }
       // 依据：hazards「手臂：灯光熄灭时从通风管道和裂缝伸出，猎捕流浪者」——没有独立实体文件，按环境危害处理
@@ -3806,8 +4054,12 @@ BR.L1room = Object.freeze({
 //                       part: 'oil' 只画 FK_WEAR[0]（保底车的地面油渍，放在载具网格里不随车动的一段）。不看区块贴花上限。返回画了几片
 //   lod                 FK_LOD（只读）：high / mid / lite / low / lowb / min / drvLow
 //   ladder              FK_LADDER：停放档的挑档顺序 { high: [...], low: [...] }
+//   dashSwitch(b)       仪表台大灯开关（返修 FE1P · H3）：停着的车那份（拨杆扳在出厂的「开」、指示灯熄着的暗绿，全在 kit:prop），
+//                       和 vehicles.js buildSwitch 画给可动模型的同一份几何（底板中心 = vehicles 的 SW_PIVOT 往斜面里 4 mm）
+//   belt                FK_BELT（只读）：安全带各件的盒子（车本地坐标，返修 FE1P · H2）
+//   gauge               FK_GAUGE（只读）：表盘的边数、半径、在仪表台斜面上的位置、指针方向（返修 FE1Q · repair-r2，测试查驾驶座看得见指针用）
 //   driveTier(q, parked) 开过的车用哪一档（keyDecisions[1]）：低画质一律 'drvLow'；高画质 = 停放档，比 lite 粗（low / lowb / min）就用 'lite'，
-//                       本机没建过这台车的原区块（parked 为 null：队友开过来的车、出生保底车）用 'mid'
+//                       本机没建过这台车的原区块（parked 为 null：队友开过来的车、出生块里的车（保底车和本来就生成的，J2）、工坊放不下的车）用 'mid'
 function fkWear(b, opts) {
   const o = opts || {}, part = o.part || 'all';
   if (part === 'oil') return kit.decal(b, FK_WEAR[0][1]) ? 1 : 0;
@@ -3833,6 +4085,9 @@ BR.L1forklift = Object.freeze({
   lod: FK_LOD,
   ladder: FK_LADDER,
   driveTier: fkDriveTier,
+  dashSwitch: fkDashSwitch,
+  belt: FK_BELT,
+  gauge: FK_GAUGE,
 });
 })();
 

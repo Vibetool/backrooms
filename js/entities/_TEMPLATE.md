@@ -128,7 +128,7 @@ def.animate(e, dt, api, u)     可选：每帧（不降频）在自动动画之�
 `e` 与 `api` 见 ARCHITECTURE.md 第 6 节，附加：`e.maxHp`、`e.r`、`e.h`、`e.dead`、`e.hitAt`（最近挨打的 api.time）；`api.faceToward(e,x,z)`、`api.canAttack(e,t)`、`api.damage(e|id, amount, source)`、`api.player`、`api.list`。
 `findTarget` 返回 `{ kind:'player'|'entity', ref, x, z, dist, seen }`，`seen=false` 时 x/z 是最后看见的位置（记忆 3 秒）。
 
-**骨架状态存 `e.data.arch`**（`A.state(e)` 取），实体自己的状态放 `e.data` 的其他键。所有骨架共有选项：`sight`（索敌半径，缺省 perception.sight）、`canTarget(e, t, api) → bool`（过滤目标，处理 relations）、`onAttack(e, t, api)`（打中一次后回调）。速度选项可填数字或档位名（`'run'`），缺省取 `def.speed.walk/run`。
+**骨架状态存 `e.data.arch`**（`A.state(e)` 取），实体自己的状态放 `e.data` 的其他键。所有骨架共有选项：`sight`（索敌半径，缺省 perception.sight）、`canTarget(e, t, api) → bool`（过滤目标，处理 relations）、`onAttack(e, t, api)`（胳膊抡到最前、真打中那一刻回调一次；起手了没打中不调，FE1P H11）。速度选项可填数字或档位名（`'run'`），缺省取 `def.speed.walk/run`。
 
 ### 5.1 `A.stalker(opts)` 追猎者
 巡逻 → 发现（`alert` 停顿）→ `chase` → `attack`；丢失目标后去最后位置 `search`；被打后去打人者的位置搜索；噩梦模式下还会去查看听见/闻到的玩家。
@@ -229,7 +229,7 @@ sanityRadius / sanityPerSec（只在范围内按秒扣 san，噩梦模式才生�
 ```
 A.state(e)                               e.data.arch
 A.acquire(e, api, { sight, canTarget })  findTarget + 过滤
-A.melee(e, api, t) → 'hit' | 'wait' | false   够得着就出手/等冷却（并写 e.state='attack'）；false = 继续靠近
+A.melee(e, api, t, onLand?) → 'hit' | 'wait' | false   够得着就起手/等冷却（并写 e.state='attack'）；'hit' = 起手了，扣血在胳膊抡到最前那一刻（起手后 0.38 个冷却周期），抡的时候怪往前扑；onLand(e, t, api) 真打中那一刻才调；false = 继续靠近
 A.reach(e, t)                            attack.range + 目标半径
 A.speedOf(e, 'walk'|'run', 覆盖值)
 A.patrol(e, api, A.state(e), { patrol, patrolRadius, patrolSpeed })
@@ -350,6 +350,8 @@ A.parts.hazmat(ctx, { full: false, detail: null, color: null }) → Object3D   �
     缺省是程序化仿制品（约 1k 面，detail:'high' 时另加兜帽轮廓/目镜/两侧滤罐/胸前拉链条/腕踝胶带环/腰带小包/靴底，约 1.6k 面）；
     full: true 直接用测试人的 hazmat.glb（约 1.8 万面，超预算，只适合同屏最多一两只的实体）
     制服颜色槽位（body/head）保持可被 BR.skin 改色；面罩/滤罐/手套/靴子/腰带/胶带环固定在 gear 槽位，颜色不随皮肤变
+    手套 / 靴子 / 面罩 / 滤罐的颜色和 hazmat.glb 一样（FE1P H10；FE1Q J7 起低画质也按顶点色 tint 上这四种颜色，gear 槽位材质取手套色，
+    tests/visualhooks.mjs 低档白名单里是 skin_stealer 伪装的 gear 槽位；不加面、不加槽位）
 A.parts.rig(key, fn(b), { colors, look, mats }) → SkinnedMesh   完全自定义骨架（6.6）
 ```
 

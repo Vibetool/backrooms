@@ -95,8 +95,9 @@ function smilerDrift(opts) {
         if (now < a.until && t.dist > A.reach(e, t)) { e.state = 'alert'; api.faceToward(e, t.x, t.z); return; }
         a.mode = 'chase';
       }
-      const m = A.melee(e, api, t);
-      if (m) { if (m === 'hit' && typeof o.onAttack === 'function') o.onAttack(e, t, api); return; }
+      // onAttack 作为 onLand 交给 A.melee：胳膊（脸）扑到最前、真打中那一刻才调（FE1P H11，entities.js「近战出手时机」）
+      const m = A.melee(e, api, t, o.onAttack);
+      if (m) return;
       e.state = 'chase';   // 用户原话「发现目标后逼近」
       api.moveToward(e, t.x, t.z, A.speedOf(e, 'run', o.chaseSpeed));
       return;
@@ -327,9 +328,10 @@ A.register({
       const face = u._face;
       if (!face) return;
       if (e.state === 'attack' && !e.dead) {
+        // 相位和别的近战怪同一套（A.anim.strikePhase：从这一下起手算，STRIKE_PEAK 处扑到最前，entities.js 就在那一刻扣血）
         const cd = Math.max(0.2, num(e.def.attack && e.def.attack.cooldown, 1));
-        const k = clamp(((api.time - (u.stateAt || 0)) % cd) / cd * 2.6, 0, 1);
-        face.scale.setScalar(1 + 0.22 * Math.sin(k * Math.PI));
+        const k = A.anim.strikePhase(e, api, api.time, u, cd);
+        face.scale.setScalar(1 + 0.22 * Math.max(0, A.anim.strikeCurve(k)));
       } else if (face.scale.x !== 1) face.scale.setScalar(1);
     },
   },

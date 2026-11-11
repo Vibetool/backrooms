@@ -3,6 +3,10 @@
 // 覆盖：测试人被划伤感染 → 45 s 原地变悲尸；感染中被打死 → 约 4 s 尸体爬起；两种形态都感染、非人类不感染；
 // 悲尸放过已感染的测试人（自然流程能走完三阶段）；噩梦玩家三阶段的治愈规则、提示时长与死亡结算；Level 8 旧感染持续伤害不再叠加；
 // 游玩/测试模式玩家不受伤不感染；症状只改实例材质；快照新旧格式互通；客机回单机后感染记录不卡死。
+// 近战出手时机（FE1P H11，h 段）：扣血 / 感染挪到胳膊抡到最前的那一刻（起手后 0.38 个冷却周期，和动画同一处），那一刻目标出了
+// 攻击距离 + 0.15 m 就算没打中；坐在叉车上的人攻击距离量到司机身体（座椅上的人），扣血那一帧怪的手离司机身体包围盒 ≤ 0.15 m，
+// 车外 1 m 的怪打不到司机，游玩模式坐在车上照样不挨打。返修 r1：抡的这一下里怪接着往前扑（h2b），人一直往前走甩不掉悲尸（h6）。
+// FE1Q J1：笑魇也同一个出手时刻（h7：60 fps 推 8 s，每次扣血那一帧脸正好鼓到最大，±1 帧）。
 // 任一检查失败或页面出现 console.error / 未捕获异常时退出码为 1。
 import http from 'node:http';
 import fs from 'node:fs';
@@ -176,6 +180,10 @@ async function main() {
     await snapshotGuest(B.page, hostRows);
     await level8(B.page);
     await B.ctx.close();
+
+    const C = await newPage(browser, base, 'strike');
+    await strike(C.page);
+    await C.ctx.close();
   } catch (err) {
     check('测试流程未中断', false, String(err && err.stack || err));
   }
@@ -725,6 +733,322 @@ async function level8(page) {
   }, SEED);
   check('Level 8 噩梦：被悲尸划伤感染，吃罐头治好后 20 s 内不再有旧的悲尸感染持续伤害、血量不降', r.level === '8' && r.spawned && r.infected && r.cured &&
     r.legacyDmg === 0 && r.afterCure.length === 0 && r.hpLater >= r.hpCure, r);
+}
+
+// =====================================================================
+// h：近战出手时机（FE1P H11）
+// =====================================================================
+// 页面里：右手（foreR 骨骼上、模型 y 低于 handY + 0.03H 的顶点：手掌和手指）蒙皮后的世界坐标；车本地 ↔ 世界
+function strikeHelpers() {
+  const H = window.__stk = {};
+  H.hand = e => {
+    const u = e.obj && e.obj.userData.arch, rig = u && u.rig;
+    if (!rig) return [];
+    const d = rig.meta.dims, sk = rig.skeleton, b = rig.bones.foreR, bi = sk.bones.indexOf(b), geo = rig.mesh.geometry;
+    e.obj.updateMatrixWorld(true);
+    const M = new THREE.Matrix4().multiplyMatrices(b.matrixWorld, sk.boneInverses[bi]);
+    const pos = geo.attributes.position, si = geo.attributes.skinIndex, out = [], v = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+      if (si.getX(i) !== bi) continue;
+      v.fromBufferAttribute(pos, i);
+      if (v.y > d.handY + 0.03 * d.H) continue;
+      out.push(v.clone().applyMatrix4(M));
+    }
+    return out;
+  };
+  H.L = (p, x, z) => { const c = Math.cos(p.yaw), s = Math.sin(p.yaw), dx = x - p.x, dz = z - p.z; return { x: c * dx - s * dz, z: s * dx + c * dz }; };
+  H.W = (p, lx, lz) => { const c = Math.cos(p.yaw), s = Math.sin(p.yaw); return { x: p.x + c * lx + s * lz, z: p.z - s * lx + c * lz }; };
+  // 点集到司机身体包围盒（车本地）的最近距离
+  H.boxD = (p, box, pts) => {
+    let best = Infinity;
+    for (const q of pts) {
+      const l = H.L(p, q.x, q.z), ly = q.y - p.y;
+      const dx = Math.max(box.min[0] - l.x, 0, l.x - box.max[0]), dy = Math.max(box.min[1] - ly, 0, ly - box.max[1]), dz = Math.max(box.min[2] - l.z, 0, l.z - box.max[2]);
+      best = Math.min(best, Math.hypot(dx, dy, dz));
+    }
+    return best;
+  };
+  // 出生点附近的叉车摆到南主通道十字口（和 tests/forklift.mjs 的 YARD 同一处），站到车左侧上车，等坐稳
+  H.seat = () => {
+    const P = BR.player;
+    const v = BR.vehicles.list().slice().sort((a, b) => Math.hypot(a.x - P.x, a.z - P.z) - Math.hypot(b.x - P.x, b.z - P.z))[0];
+    if (!v) return null;
+    BR.vehicles.setPose(v.key, { x: -1, z: 32.6, yaw: -Math.PI / 2, steer: 0, lift: 0, spd: 0, lever: 0, on: 0 });
+    __inf.step(0.2);
+    const p = BR.vehicles.byKey(v.key).pose, st = H.W(p, -1.2, 0.24), seat = H.W(p, 0, 0.24);
+    BR.player.reset({ x: st.x, y: BR.phys.groundY(st.x, st.z), z: st.z, yaw: Math.atan2(-(seat.x - st.x), -(seat.z - st.z)) }, { full: false });
+    __inf.step(0.05);
+    const ok = BR.vehicles.mount(v.key);
+    __inf.step(1.6);
+    return { key: v.key, ok, seated: BR.vehicles.seated };
+  };
+  return 0;
+}
+// L1（种子 12345）开局：等进到 playing、换层过场走完再关掉自动推进
+async function startL1(page, mode) {
+  await ev(page, m => {
+    __br.setAuto(true);
+    __br.start({ mode: m, difficulty: m === 'nightmare' ? 'easy' : null, seed: 12345, levelId: '1', settings: { visibility: 1, spawnSlider: 0 } });
+    return 0;
+  }, mode);
+  await page.waitForFunction(m => BR.game.screen === 'playing' && !BR.world.transitioning && String(BR.game.levelId) === '1' && BR.game.mode === m, mode, { timeout: 90000 });
+  await ev(page, () => { __br.setAuto(false); __inf.step(0.5); return 0; });
+}
+async function strike(page) {
+  await ev(page, strikeHelpers);
+  // h0 扣血时刻和动画峰值是同一个数
+  const k0 = await ev(page, () => {
+    const A = BR.arch.anim, api = BR.entities.api;
+    let peak = 0, pk = -1;
+    for (let i = 0; i <= 1000; i++) { const v = A.strikeCurve(i / 1000); if (v > peak) { peak = v; pk = i / 1000; } }
+    return { hitK: api.STRIKE_HIT_K, slack: api.STRIKE_SLACK, peakAt: pk, peak, PEAK: A.STRIKE_PEAK };
+  });
+  check('h0 扣血时刻（entities STRIKE_HIT_K）= 抡胳膊动画到峰值的那一刻（strikeCurve 最大值处 / STRIKE_PEAK），容差 0.15 m', k0.hitK === k0.PEAK && Math.abs(k0.peakAt - k0.hitK) < 0.002 && k0.peak === 1 && k0.slack === 0.15, k0);
+
+  // h1 站着的玩家：悲尸起手以后不马上扣血，等到 0.38 个冷却周期（胳膊抡到最前）才扣，感染同一帧；那一帧右手离玩家最近（±1 帧）
+  const h1 = await ev(page, seed => {
+    __br.start({ mode: 'nightmare', difficulty: 'easy', seed, levelId: 'dev', settings: { visibility: 1 } });
+    __br.setAuto(false);
+    __inf.step(0.5);
+    __inf.home();
+    BR.entities.clear(); BR.effects.clear();
+    const P = BR.player, api = BR.entities.api;
+    P.hp = 100; P.hunger = 100; P.sanity = 100;
+    const w = __inf.put('wretch', 1.3, 0, true);
+    if (!w) return { ok: false };
+    const cd = Math.max(0.2, w.def.attack.cooldown), dt = 1 / 60;
+    const nd = __inf.ev.damage.length, ni = __inf.ev.infect.length;
+    let start = null, hitAt = null, infAt = null, startHp = null, dHand = [], hitIdx = -1;
+    for (let i = 0; i < 60 * 8 && hitAt == null; i++) {
+      __inf.reset();
+      __inf.step(dt);
+      const t = __inf.time();
+      if (start == null && api.swinging(w)) { start = api.attackStart(w); startHp = P.hp; }
+      if (start != null) {
+        const hs = __stk.hand(w);
+        let m = Infinity; for (const q of hs) m = Math.min(m, Math.hypot(q.x - P.x, q.z - P.z));
+        dHand.push(+m.toFixed(3));
+      }
+      if (__inf.ev.damage.length > nd && hitAt == null) { hitAt = t; hitIdx = dHand.length - 1; }
+      if (BR.effects.has('wretch_cycle') && infAt == null) infAt = t;
+    }
+    const k = start != null && hitAt != null ? (hitAt - start) / cd : null;
+    const near = dHand.slice(Math.max(0, hitIdx - 30), hitIdx + 31);
+    const minNear = Math.min.apply(null, near);
+    BR.entities.remove(w);
+    return { ok: true, cd, start, hitAt, k: k != null ? +k.toFixed(4) : null, curve: k != null ? +BR.arch.anim.strikeCurve(k).toFixed(3) : null, startHp, hp: P.hp,
+      infAt, dmg: __inf.ev.damage.slice(nd).length, infects: __inf.ev.infect.length - ni, handAtHit: dHand[hitIdx], minNear, dHand0: dHand[0], lastSwing: w._m.lastSwing };
+  }, SEED);
+  check('h1 站着的玩家：悲尸起手那一刻不扣血（起手时血还是满的），抡到最前（起手后 0.38 个冷却周期，逐帧 1/60 s）才扣，那一帧动画在峰值附近（≥0.95）',
+    h1.ok && h1.start != null && h1.startHp === 100 && h1.k >= 0.38 - 1e-6 && h1.k <= 0.38 + 1 / 60 / h1.cd + 1e-3 && h1.curve >= 0.95 && h1.dmg === 1, h1);
+  check('h1 划伤感染和扣血同一帧（不在起手时就感染上）', h1.ok && h1.infAt != null && Math.abs(h1.infAt - h1.hitAt) < 1e-6, { hitAt: h1.hitAt, infAt: h1.infAt });
+  check('h1 扣血那一帧右手离玩家最近（前后各半秒里最近的就是这一帧，±1 帧 1 cm 内），比起手时近', h1.ok && h1.handAtHit != null && h1.handAtHit <= h1.minNear + 0.01 && h1.handAtHit < h1.dHand0,
+    { handAtHit: h1.handAtHit, minNear: h1.minNear, dHand0: h1.dHand0 });
+
+  // h2 躲开：起手以后玩家一下子退到「攻击距离 + 0.15 m + 抡这一下能扑过去的距离（追击速度 × 0.38 个冷却周期）+ 0.3 m」以外、钉在那里，
+  // 怪扑过去也够不着：抡到的那一刻不扣血、不感染（返修 r1：抡的时候怪接着往前扑，只退出攻击距离 + 0.15 m 会被扑上）
+  const h2 = await ev(page, () => {
+    BR.entities.clear(); BR.effects.clear(); __inf.reset();
+    const P = BR.player, api = BR.entities.api;
+    P.hp = 100;
+    const nd = __inf.ev.damage.length, ni = __inf.ev.infect.length;
+    const w = __inf.put('wretch', 1.3, 0, true);
+    if (!w) return { ok: false };
+    let started = false;
+    for (let i = 0; i < 60 * 8 && !started; i++) { __inf.reset(); __inf.step(1 / 60); started = api.swinging(w); }
+    // 往后退：离悲尸 range + 半径 + 0.15 + 扑过去的距离 再多 0.3 m
+    const sw = w._m.swing, lungeMax = (sw ? sw.v : 0) * Math.max(0, (sw ? sw.at : 0) - __inf.time());
+    const b = __inf.base, need = w.def.attack.range + BR.config.player.radius + 0.15 + lungeMax + 0.3;
+    const ux = (P.x - w.x), uz = (P.z - w.z), L = Math.hypot(ux, uz) || 1;
+    P.x = w.x + ux / L * need; P.z = w.z + uz / L * need;
+    const hold = { x: P.x, z: P.z };
+    let landed = false;
+    for (let i = 0; i < 60 && !landed; i++) { P.x = hold.x; P.z = hold.z; __inf.step(1 / 60); landed = !api.swinging(w); }
+    const ls = w._m.lastSwing;
+    BR.entities.remove(w);
+    __inf.base.x = b.x; __inf.base.z = b.z;
+    return { ok: true, started, landed, ls, need: +need.toFixed(3), lungeMax: +lungeMax.toFixed(3), dmg: __inf.ev.damage.length - nd, infects: __inf.ev.infect.length - ni, hp: P.hp, fx: BR.effects.has('wretch_cycle') };
+  });
+  check('h2 起手以后玩家退到攻击距离 + 0.15 m + 怪能扑过去的距离以外：抡到那一刻算没打中（不扣血、不感染，lastSwing.why = far）', h2.ok && h2.started && h2.landed && h2.dmg === 0 && h2.infects === 0 && h2.hp === 100 && !h2.fx &&
+    !!h2.ls && h2.ls.hit === false && h2.ls.why === 'far' && h2.lungeMax > 1, h2);
+
+  // h2b 抡的时候接着扑（返修 r1）：起手以后玩家往后退到攻击距离 + 0.5 m（原来原地抡就够不着），怪抡的这一下往前扑，抡到那一刻打中；
+  // 扑完离玩家不近于「攻击距离 − 0.15 m − 1 帧」（不贴到人身上）
+  const h2b = await ev(page, () => {
+    BR.entities.clear(); BR.effects.clear(); __inf.reset();
+    const P = BR.player, api = BR.entities.api;
+    P.hp = 100;
+    const nd = __inf.ev.damage.length;
+    const w = __inf.put('wretch', 1.3, 0, true);
+    if (!w) return { ok: false };
+    let started = false;
+    for (let i = 0; i < 60 * 8 && !started; i++) { __inf.reset(); __inf.step(1 / 60); started = api.swinging(w); }
+    const reach = w.def.attack.range + BR.config.player.radius;
+    const ux = (P.x - w.x), uz = (P.z - w.z), L = Math.hypot(ux, uz) || 1;
+    const b = __inf.base;
+    P.x = w.x + ux / L * (reach + 0.5); P.z = w.z + uz / L * (reach + 0.5);
+    const hold = { x: P.x, z: P.z }, w0 = { x: w.x, z: w.z };
+    let landed = false, minD = Infinity;
+    for (let i = 0; i < 60 && !landed; i++) { P.x = hold.x; P.z = hold.z; __inf.step(1 / 60); minD = Math.min(minD, Math.hypot(P.x - w.x, P.z - w.z)); landed = !api.swinging(w); }
+    const ls = w._m.lastSwing, moved = Math.hypot(w.x - w0.x, w.z - w0.z), v = w._m.chaseV;
+    BR.entities.remove(w);
+    __inf.base.x = b.x; __inf.base.z = b.z;
+    return { ok: true, started, landed, ls, moved: +moved.toFixed(3), minD: +minD.toFixed(3), reach, v, dmg: __inf.ev.damage.length - nd, hp: P.hp };
+  });
+  check('h2b 抡的时候怪接着往前扑：起手后玩家退到攻击距离 + 0.5 m，抡到那一刻照样打中（扑了 ≥ 0.3 m），扑完不贴到人身上（离人 ≥ 攻击距离 − 0.15 m − 0.11 m）',
+    h2b.ok && h2b.started && h2b.landed && !!h2b.ls && h2b.ls.hit === true && h2b.dmg === 1 && h2b.moved >= 0.3 && h2b.minD >= h2b.reach - 0.15 - 0.11, h2b);
+
+  // h3 坐在叉车上：车右侧 3.2 m 放悲尸，它走到车侧打司机。扣血那一帧手离司机身体包围盒（坐姿人形同一套摆法）≤ 0.15 m，离座椅 ≤ 攻击距离 + 人的半径
+  await startL1(page, 'nightmare');
+  const h3 = await ev(page, () => {
+    BR.entities.clear(); BR.effects.clear();
+    const s = __stk.seat();
+    if (!s || !s.seated) return { ok: false, s };
+    const P = BR.player, k = s.key, pose = () => BR.vehicles.byKey(k).pose;
+    P.hp = 100; P.sanity = 100; P.hunger = 100;
+    const body = BR.coop.seatBody({ detail: 'high' });
+    const w0 = __stk.W(pose(), 3.2, 0.3), st0 = BR.vehicles.seatWorld(k);
+    const w = BR.entities.spawn('wretch', w0.x, undefined, w0.z, { force: true, yaw: Math.atan2(-(st0.x - w0.x), -(st0.z - w0.z)) });   // 面朝座椅
+    if (!w || !body) return { ok: false, w: !!w, body: !!body };
+    const nd = __inf.ev.damage.length;
+    let hit = null;
+    for (let i = 0; i < 30 * 10 && !hit; i++) {
+      __inf.step(1 / 30);
+      P.sanity = 100;
+      if (__inf.ev.damage.length > nd) {
+        const p = pose(), st = BR.vehicles.seatWorld(k);
+        hit = { boxD: +__stk.boxD(p, body.box, __stk.hand(w)).toFixed(3), dSeat: +Math.hypot(w.x - st.x, w.z - st.z).toFixed(3), l: __stk.L(p, w.x, w.z), ls: w._m.lastSwing };
+      }
+    }
+    BR.entities.remove(w);
+    return { ok: true, hit, reach: w.def.attack.range + BR.config.player.radius, box: body.box, hp: P.hp };
+  });
+  check('h3 坐在叉车上：车侧的悲尸打到司机，扣血那一帧它的手离司机身体包围盒 ≤ 0.15 m（离座椅 ≤ 攻击距离 + 人的半径）', h3.ok && !!h3.hit && h3.hit.boxD <= 0.15 && h3.hit.dSeat <= h3.reach + 1e-6, h3);
+
+  // h4 车外 1 m：钉在车身侧面外 1 m（左右）和车尾外 1 m 的悲尸 4 s 打不到司机，直接调 attack 也返回 false
+  const h4 = await ev(page, () => {
+    const P = BR.player, api = BR.entities.api, k = BR.vehicles.seated;
+    if (!k) return { ok: false };
+    const p = BR.vehicles.byKey(k).pose, G = (BR.L1forklift && BR.L1forklift.geo) || {}, half = G.half || { x: 0.6, z: 1.3 };
+    const spots = { left: [-(half.x + 1.0), 0.24], right: [half.x + 1.0, 0.24], rear: [0, half.z + 1.0] };
+    const out = {};
+    for (const nm in spots) {
+      BR.entities.clear();
+      P.hp = 100;
+      const at = __stk.W(p, spots[nm][0], spots[nm][1]), st = BR.vehicles.seatWorld(k);
+      const w = BR.entities.spawn('wretch', at.x, undefined, at.z, { force: true, yaw: Math.atan2(-(st.x - at.x), -(st.z - at.z)) });
+      if (!w) { out[nm] = null; continue; }
+      const nd = __inf.ev.damage.length;
+      let att = 0, swung = 0, tgt = 0;
+      for (let i = 0; i < 30 * 4; i++) {
+        w.x = at.x; w.z = at.z;
+        __inf.step(1 / 30);
+        if (api.swinging(w)) swung++;
+        if (w.state === 'attack') att++;
+        if (w.target && w.target.kind === 'player') tgt++;
+      }
+      w.x = at.x; w.z = at.z; w.cooldown = 0;
+      const direct = api.attack(w, P);
+      out[nm] = { dmg: __inf.ev.damage.length - nd, swung, att, tgt, direct, dSeat: +Math.hypot(at.x - st.x, at.z - st.z).toFixed(3) };
+      BR.entities.remove(w);
+    }
+    return { ok: true, out, hp: P.hp };
+  });
+  check('h4 车外 1 m（车身左右侧面外 1 m、车尾外 1 m）的悲尸盯着坐在车上的人 4 s 也打不到，直接调 attack 也不起手', h4.ok && ['left', 'right', 'rear'].every(n => h4.out[n] && h4.out[n].tgt > 0 && h4.out[n].dmg === 0 && h4.out[n].swung === 0 && h4.out[n].direct === false), h4);
+
+  // h5 游玩模式坐在车上：悲尸贴着车侧 10 s，不起手、不掉血（实体不攻击玩家照旧）
+  await startL1(page, 'casual');
+  const h5 = await ev(page, () => {
+    BR.entities.clear();
+    const s = __stk.seat();
+    if (!s || !s.seated) return { ok: false, s };
+    const P = BR.player, api = BR.entities.api, p = BR.vehicles.byKey(s.key).pose;
+    const at = __stk.W(p, 1.0, 0.24), st = BR.vehicles.seatWorld(s.key);
+    const w = BR.entities.spawn('wretch', at.x, undefined, at.z, { force: true, yaw: Math.atan2(-(st.x - at.x), -(st.z - at.z)) });
+    if (!w) return { ok: false };
+    const hp0 = P.hp, nd = __inf.ev.damage.length;
+    let swung = 0;
+    for (let i = 0; i < 10 * 10; i++) { w.x = at.x; w.z = at.z; __inf.step(0.1); if (api.swinging(w) || w.state === 'attack') swung++; }
+    w.cooldown = 0;
+    const direct = api.attack(w, P);
+    BR.entities.remove(w);
+    return { ok: true, mode: BR.game.mode, atk: BR.game.attackPlayers, hp0, hp: P.hp, dmg: __inf.ev.damage.length - nd, swung, direct };
+  });
+  check('h5 游玩模式坐在叉车上：悲尸贴着车侧 10 s 不起手、不掉血，直接调 attack 也不起手', h5.ok && h5.mode === 'casual' && !h5.atk && h5.hp === h5.hp0 && h5.dmg === 0 && h5.swung === 0 && h5.direct === false, h5);
+
+  // h6 人一直往前走甩不掉悲尸（返修 r1，验收员挑的「扣血挪后以后人一直走，所有近战怪都打不到」）：噩梦·简单，种子 12345，
+  // 真键盘按住 W 直着走 12 s（步行 3 m/s，不冲刺），身后 2 m 放一只悲尸。HEAD（扣血在起手那一刻）同一设置挨打 10 次，
+  // 现在至少 7 次（差 ≤ 30%）；站着不动同样 ≥ 7 次
+  await startL1(page, 'nightmare');
+  const lane = await ev(page, () => {
+    for (let i = 0; i < 4000; i++) {
+      const x = -60 + (i * 37.17) % 120, z = -60 + (i * 53.31) % 120, yaw = (i % 4) * Math.PI / 2;
+      const fx = -Math.sin(yaw), fz = -Math.cos(yaw), sx = fz, sz = -fx;
+      let ok = true;
+      for (const o of [-0.4, 0, 0.4]) for (const y of [0.3, 1.0]) {
+        const h = BR.phys.raycast(x + sx * o - fx * 5, y, z + sz * o - fz * 5, fx, 0, fz, 50, {});
+        if (h && h.dist < 50) { ok = false; break; }
+      }
+      if (ok && Math.abs(BR.phys.groundY(x, z)) < 0.01) return { x, z, yaw };
+    }
+    return null;
+  });
+  const walkRun = async walk => {
+    await ev(page, l => {
+      BR.entities.clear(); BR.effects.clear();
+      const P = BR.player;
+      P.reset({ x: l.x, y: BR.phys.groundY(l.x, l.z), z: l.z, yaw: l.yaw }, { full: false });
+      P.pitch = 0; P.hp = 100; P.sanity = 100; P.hunger = 100;
+      __inf.step(0.1);
+      const fx = -Math.sin(l.yaw), fz = -Math.cos(l.yaw);
+      window.__h6w = BR.entities.spawn('wretch', l.x - fx * 2.0, undefined, l.z - fz * 2.0, { force: true, yaw: l.yaw });
+      window.__h6n = __inf.ev.damage.length;
+      return 0;
+    }, lane);
+    if (walk) await page.keyboard.down('KeyW');
+    for (let i = 0; i < 36; i++) await ev(page, () => { for (let j = 0; j < 10; j++) { BR.player.hp = 100; BR.player.sanity = 100; __inf.step(1 / 30); } BR.effects.clear(); return 0; });
+    if (walk) await page.keyboard.up('KeyW');
+    return ev(page, l => {
+      const P = BR.player, w = window.__h6w;
+      const r = { hits: __inf.ev.damage.length - window.__h6n, moved: +Math.hypot(P.x - l.x, P.z - l.z).toFixed(2), d: w ? +Math.hypot(w.x - P.x, w.z - P.z).toFixed(2) : null, ls: w && w._m.lastSwing };
+      if (w) BR.entities.remove(w);
+      return r;
+    }, lane);
+  };
+  const h6w = lane ? await walkRun(true) : null, h6s = lane ? await walkRun(false) : null;
+  check('h6 真键盘按住 W 一直往前走 12 s（不冲刺），身后的悲尸照样追上来打中 ≥ 7 次（HEAD 同一设置 10 次）；站着不动也 ≥ 7 次',
+    !!lane && h6w.moved >= 30 && h6w.hits >= 7 && h6s.hits >= 7, { lane, walk: h6w, still: h6s });
+
+  // h7 笑魇（smiler.js，FE1Q J1）和别的近战怪同一个出手时刻：60 fps 推 8 s，每次扣血那一帧脸正好鼓到最大
+  // （前后半秒里脸最大的那一帧离扣血那一帧 ≤1 帧，扣血那一帧 ≥ 最大的 95%），不再是先鼓脸、缩回去才掉血
+  await startL1(page, 'nightmare');
+  const h7 = await ev(page, () => {
+    BR.entities.clear(); BR.effects.clear();
+    const l = { x: -31.32, z: 33.24, yaw: 0 }, P = BR.player;
+    P.reset({ x: l.x, y: BR.phys.groundY(l.x, l.z), z: l.z, yaw: l.yaw }, { full: false });
+    P.hp = 100; P.sanity = 100; __inf.step(0.1);
+    const e = BR.entities.spawn('smiler', l.x, undefined, l.z + 2.0, { force: true, yaw: l.yaw });
+    if (!e) return { ok: false };
+    const nd = __inf.ev.damage.length, rows = [], hitIdx = [];
+    for (let i = 0; i < 60 * 8; i++) {
+      P.hp = 100; P.sanity = 100;
+      const n0 = __inf.ev.damage.length;
+      __br.step(1 / 60);
+      const f = e.obj && e.obj.getObjectByName('smilerFace');
+      rows.push(f ? f.scale.x : 1);
+      if (__inf.ev.damage.length > n0) hitIdx.push(i);
+    }
+    const near = hitIdx.map(i => {
+      const a = Math.max(0, i - 30), w = rows.slice(a, i + 31);
+      let m = -Infinity, mi = -1;
+      for (let j = 0; j < w.length; j++) if (w[j] > m + 1e-9) { m = w[j]; mi = a + j; }
+      return { i, atHit: +rows[i].toFixed(4), max: +m.toFixed(4), maxAt: mi, off: mi - i };
+    });
+    BR.entities.remove(e);
+    return { ok: true, hits: hitIdx.length, dmg: __inf.ev.damage.length - nd, src: __inf.ev.damage.slice(nd).map(d => d.src).filter((v, k, a) => a.indexOf(v) === k), near };
+  });
+  check('h7 笑魇 60 fps 推 8 s：每次扣血那一帧脸正好鼓到最大（前后半秒里最大的那一帧离扣血 ≤1 帧，扣血那一帧 ≥ 最大的 95%），和别的近战怪同一个出手时刻', h7.ok && h7.hits >= 3 &&
+    h7.near.every(q => q.max > 1.1 && Math.abs(q.off) <= 1 && (q.atHit - 1) >= 0.95 * (q.max - 1)), h7);
 }
 
 // =====================================================================

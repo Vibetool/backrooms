@@ -460,6 +460,9 @@ function updateSound(r) {
 }
 
 // ---------- ③ 大灯（借灯池） ----------
+// 影子模拟 lightSpot() 给的光球已经按墙、货架收过（FE1P H8 / FE1Q J9），world.lightAt 也按这几样算（FE1Q J8：画面上亮的地方才算亮，
+// 驾驶舱里的司机另由 world 问影子模拟的 litSeat）
+const LIGHT_KEYS = ['range', 'intensity', 'color', 'decay'];
 function lightOwner(r) { return 'fkr:' + r.key; }
 function lightOff(r) {
   if (!r.lightOn) return;
@@ -478,11 +481,12 @@ function updateLight(r) {
   let dirty = !r.lightOn;
   if (s && isFinite(s.x) && isFinite(s.z)) {
     L.x = +s.x; L.z = +s.z; L.y = isFinite(s.y) ? +s.y : L.y;
-    for (const k of ['range', 'intensity', 'color', 'decay']) if (s[k] != null && s[k] !== L[k]) { L[k] = s[k]; dirty = true; }
+    for (const k of LIGHT_KEYS) if (s[k] != null && s[k] !== L[k]) { L[k] = s[k]; dirty = true; }
   } else {
-    // 没有模拟：车头前 3 m、高 1 m（核心没有模拟时也这么放）
+    // 没有模拟：车头前 3 m、高 1 m（核心没有模拟时也这么放）；不知道前面有没有墙，光球只给 1.5 m（不伸到墙后面去）
     const v = vehRec(r.key), y0 = v && v.pose ? num(v.pose.y, 0) : 0;
     L.x = r.shown.x - Math.sin(r.shown.yaw) * 3; L.z = r.shown.z - Math.cos(r.shown.yaw) * 3; L.y = y0 + 1;
+    if (L.range !== 1.5) { L.range = 1.5; dirty = true; }
   }
   if (dirty) {
     try { W.setExtraLights(lightOwner(r), [L]); r.lightOn = true; } catch (err) { once('light', () => console.error('[vehiclesNet] setExtraLights 出错', err)); }

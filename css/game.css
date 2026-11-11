@@ -821,6 +821,19 @@
 }
 
 .hud-drive-dot { color: var(--hud-dim); }
+/* 折行以后挂在一行末尾的「 ·」（hud.js trimDots 量出来加的类）：藏起来但还占着宽度，免得让出的几个像素把下一段拉上来、来回跳 */
+.hud-drive-dot.hud-drive-dot-end { visibility: hidden; }
+
+/* 竖屏开车（返修 r1，H15）：摇杆是浮动的，左半屏哪里按下哪里起摇杆。hud.js placeDrive 摆好开车提示框以后，把左边摇杆区的上沿收到
+   「提示框底边 + 摇杆推得到的半径」（--hud-stick-top），上沿以上那一块左半屏归转视角（右边视角区铺满整宽，用 clip-path 切成 L 形，
+   点击判定跟着 clip-path 走），这样手指按在哪里、往哪推，圆头都碰不到提示框。横屏、电脑、下车以后 hud.js 去掉 hud-stick-cap，照旧 */
+html.hud-stick-cap .touch-root .touch-zone-l { top: var(--hud-stick-top, 0px); }
+html.hud-stick-cap .touch-root .touch-zone-r {
+  left: 0;
+  width: auto;
+  -webkit-clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 100%, 50% var(--hud-stick-top, 0px), 0 var(--hud-stick-top, 0px));
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 100%, 50% var(--hud-stick-top, 0px), 0 var(--hud-stick-top, 0px));
+}
 
 /* 触屏的「按住「升」「降」动货叉 ·」：两块包在一起整段不折行；hud.js 的最后一档（.hud-drive-split，320 宽竖屏）才放开两块之间 */
 .hud-drive-phrase { white-space: nowrap; }

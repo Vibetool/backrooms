@@ -1471,7 +1471,7 @@ function liveLight(src, t) {
 // setExtraLights(owner, list | null)：owner 名下的光源整组替换（null / 空数组 = 撤掉），并进 pushLights 交给 gfx 的灯池
 // （和区块灯一样按离相机的距离挑，最多 6 盏真光）。光源对象 { x, y, z, color, intensity, range, decay?, flicker? }（世界坐标）
 // 由调用方持有、每帧直接改 x / y / z，gfx 每帧跟随，不用再调；颜色、强度、range 变了要再调一次（工坊激活时强度是推灯那一刻算的）。
-// 工坊的 lightTransform 照样套（工坊地图全黑时大灯也不亮）。lightAt 也算上它们。换层、回主页时整个清空
+// 工坊的 lightTransform 照样套（工坊地图全黑时大灯也不亮）。lightAt 也算上它们（FE1Q J8：和画面一致，见 extraLit）。换层、回主页时整个清空
 const extraLights = new Map();   // owner → [光源, …]
 function setExtraLights(owner, list) {
   const key = owner == null ? '' : String(owner);
@@ -1479,7 +1479,66 @@ function setExtraLights(owner, list) {
   if (arr.length) extraLights.set(key, arr);
   else if (!extraLights.delete(key)) return false;
   S.lightsDirty = true;
+  // 马上交给 gfx（FE1P H8）：调用方（vehicles / vehiclesNet 的 update）在本帧 world.update 之后才跑，等下一帧的 pushLights 的话，
+  // 灯的位置（gfx 每帧直接读）已经是这一帧的、范围却还是上一帧的 —— 车开向墙时光球会有一帧伸到墙后面
+  if (S.level) pushLights();
   return true;
+}
+// 叉车大灯（owner 'fk:<key>' 本机、'fkr:<key>' 远端）的车自己的碰撞 key：lightAt 看视线时它们不挡（司机坐在车里照样被自己的大灯照到）
+function extraIgnore(owner, L) {
+  if (L && L.ignoreKey != null) return L.ignoreKey;
+  const m = /^fkr?:(.+)$/.exec(owner || '');
+  return m ? ['veh|' + m[1], m[1]] : null;
+}
+// 叉车大灯对应的模拟（BR.forklift.byKey；本机开的车和队友开过来的车的影子模拟都登记在那里）
+function extraSim(owner) {
+  const m = /^fkr?:(.+)$/.exec(owner || '');
+  const F = BR.forklift;
+  if (!m || !F || !has(F, 'byKey')) return null;
+  try { return F.byKey(m[1]) || null; } catch (err) { return null; }
+}
+// 一盏额外光源给 (x, z) 加多少（FE1Q J8：画面上真的被这盏灯照亮的地方才算亮）：
+//   ① 按画面上那盏灯的 range / intensity（叉车大灯的光球已经按墙、货架收过：墙后面、货架另一侧在光球外面），衰减和 gfx 一样 (1 − d/range)²；
+//      d = 光源到「站在这一点的人」（离地 0–1.8 m 那一段竖线）最近的距离 —— 光源 1.6 m 高，平地上就是水平距离，和区块灯只算水平距离一个意思：
+//      光斑边上地面已经暗了、人的头胸还被照到的那一圈也算亮。
+//   ② 光球按墙收过的（叉车模拟算的 lightSpot，有 sim.lightInfo）不再看视线：画面上没有影子，光球里柱子、堆垛后面也是亮的，lightAt 跟画面走；
+//      没有模拟兜底摆的灯（光球没按墙收）照旧按视线（三个高度有一条没被碰撞体挡住）算。
+//   ③ 驾驶舱：开着大灯司机算被照亮（sim.litSeat，≈ 0.34，保留「开着车灯怪不敢靠近司机」），取 ①③ 大的那个
+const BODY_H = 1.8;
+function extraLit(L, owner, x, z) {
+  const sim = extraSim(owner);
+  let add = 0;
+  if (sim && has(sim, 'litSeat')) { try { add = Math.max(0, num(sim.litSeat(x, z), 0)); } catch (err) { add = 0; } }
+  const I = L.intensity != null ? +L.intensity : 1;
+  if (!(I > 0)) return add;
+  const r = rangeOf(L);
+  const d2 = (L.x - x) * (L.x - x) + (L.z - z) * (L.z - z);
+  if (d2 >= r * r) return add;
+  const P = BR.phys;
+  const g = has(P, 'groundY') ? num(P.groundY(x, z), NaN) : NaN;
+  const gy = g === g ? g : num(L.y, 1.6) - 1.6;
+  const dy = L.y < gy ? gy - L.y : L.y > gy + BODY_H ? L.y - gy - BODY_H : 0;
+  const d = Math.sqrt(d2 + dy * dy);
+  if (d >= r) return add;
+  const bounded = !!(sim && sim.lightInfo);
+  if (!bounded && !extraSees(L, owner, x, z, Math.sqrt(d2), gy)) return add;
+  const k = 1 - d / r;
+  return Math.max(add, I * k * k);
+}
+// 额外光源照不照得到 (x, z)：从光源到这一点离地 1.0 / 0.4 / 1.6 m 三个高度，有一条视线没被碰撞体挡住就算照得到（gy = 这一点的地面高度）
+const LIT_HEIGHTS = [1.0, 0.4, 1.6];
+function extraSees(L, owner, x, z, d, gy) {
+  const P = BR.phys;
+  if (!has(P, 'raycast')) return true;
+  const ign = extraIgnore(owner, L), opts = ign ? { ignoreKey: ign } : undefined;
+  for (let i = 0; i < LIT_HEIGHTS.length; i++) {
+    const ty = gy + LIT_HEIGHTS[i], dy = ty - L.y, len = Math.sqrt(d * d + dy * dy);
+    if (!(len > 1e-6)) return true;
+    let h = null;
+    try { h = P.raycast(L.x, L.y, L.z, x - L.x, dy, z - L.z, len, opts); } catch (err) { return true; }
+    if (!h || !(h.dist < len - 1e-3)) return true;
+  }
+  return false;
 }
 
 // ---------- 出口 ----------
@@ -1751,20 +1810,17 @@ function lightAt(x, z) {
       }
     }
   }
-  // 额外光源（开着的叉车大灯）：同样的衰减。没有时一条都不多算，和改前逐位一样
+  // 额外光源（开着的叉车大灯）：按画面上那盏灯算（见 extraLit：光球按墙、货架收过，墙后面、货架另一侧不算；驾驶舱里的司机算亮）。
+  // 没有时一条都不多算，和改前逐位一样
   if (extraLights.size) {
     let hit = false;
-    extraLights.forEach(arr => {
+    extraLights.forEach((arr, owner) => {
       for (let i = 0; i < arr.length && !hit; i++) {
         const L = arr[i];
         if (!validPoint(L)) continue;
-        const I = L.intensity != null ? +L.intensity : 1;
-        if (!(I > 0)) continue;
-        const r = rangeOf(L);
-        const d2 = (L.x - x) * (L.x - x) + (L.z - z) * (L.z - z);
-        if (d2 >= r * r) continue;
-        const k = 1 - Math.sqrt(d2) / r;
-        v += I * k * k;
+        const add = extraLit(L, owner, x, z);
+        if (!(add > 0)) continue;
+        v += add;
         if (v >= 1) hit = true;
       }
     });

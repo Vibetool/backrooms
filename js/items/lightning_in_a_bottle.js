@@ -166,6 +166,9 @@ VARIANTS.forEach((v) => {
         ],
         glass: [[K.lathe(FLASK, SEG), 0xd7ebf5, 0.3]],
       });
+      // 瓶里的闪电和光晕是光，不是实物（userData.glow，FE1P H6）：放稳的姿态只按瓶身、瓶塞算支撑和重心
+      const glowMats = [K.glowMat(v.bolt), K.glowMat(v.halo, v.haloOp)];
+      root.traverse(n => { if (n.isMesh && glowMats.indexOf(n.material) >= 0) n.userData.glow = true; });
       return root;
     },
     use(player) {

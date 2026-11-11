@@ -130,6 +130,144 @@ function suitColors() {
   });
   return out;
 }
+// 程序化防化服（BR.arch.parts.hazmat：坐车队友、窃皮者伪装）和 hazmat.glb 的手套 / 靴子 / 面罩对一对（FE1P H10）。
+// 顶点级：制服色（body / head 槽位）的顶点在手套顶面以下的必须都在手套方块里面，在靴口（0.365 m）以下的必须都在靴筒里面；
+// 颜色：最终颜色 = 槽位材质色 × 顶点色（线性），换成 sRGB 色阶和 glb 的 Gloves / Boots / Mask 比。
+// 形状（返修 FE1Q · repair-r1，用户原话「面具和靴子不能换」）：面罩脸罩（落在脸罩椭球面上的面罩色顶点）、一侧滤罐、一只靴子的包围盒，
+// 和 glb 同样取法量出来的比，每一边相差 ≤15%（程序化人形的兜帽大一圈，脸罩整体往前挪了，所以比尺寸不比位置）
+function hazmatParity() {
+  const A = BR.arch, T = THREE;
+  const toS = v => { v = Math.max(0, v); const s = v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055; return Math.round(s * 255); };
+  const glbM = {};
+  const g = BR.assets.modelSync('hazmat');
+  if (g) g.traverse(o => { if (!o.isMesh) return; for (const m of (Array.isArray(o.material) ? o.material : [o.material])) if (m && m.name && m.color) glbM[m.name.replace(/\.\d+$/, '')] = [m.color.r, m.color.g, m.color.b]; });
+  const glbS = {};
+  for (const k in glbM) glbS[k] = glbM[k].map(toS);
+  const dS = (rgb, name) => (glbS[name] ? Math.max.apply(null, rgb.map((v, i) => Math.abs(toS(v) - glbS[name][i]))) : 99);
+  // glb 同样取法：面罩脸罩 = Mask 材质里落在脸罩椭球面上（tools/blender_hazmat.py：中心 (0, 1.615, −0.078)、半径 0.098 / 0.118 / 0.075，±4%）的顶点
+  // （头带、镜框胶条、呼气阀不在椭球面上，不算）；一侧滤罐 = Filter 材质 x > 0.03（下巴呼气阀上那片不算）；
+  // 一只靴子 = Boots 材质 x > 0（模型根坐标，高 1.8 m、面朝 −z，和程序化人形一样）
+  const glbShape = { mask: null, filter: null, boot: null };
+  if (g) {
+    g.updateMatrixWorld(true);
+    const inv = new T.Matrix4().copy(g.matrixWorld).invert(), q = new T.Vector3();
+    const B = { Mask: [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity], Filter: null, Boots: null };
+    B.Filter = B.Mask.slice(); B.Boots = B.Mask.slice();
+    g.traverse(o => {
+      if (!o.isMesh) return;
+      const mats = Array.isArray(o.material) ? o.material : [o.material], P2 = o.geometry.attributes.position, I2 = o.geometry.index;
+      const grs = o.geometry.groups && o.geometry.groups.length ? o.geometry.groups : [{ start: 0, count: I2 ? I2.count : P2.count, materialIndex: 0 }];
+      for (const gr of grs) {
+        const nm = (mats[gr.materialIndex] && mats[gr.materialIndex].name || '').replace(/\.\d+$/, '');
+        if (!B[nm]) continue;
+        for (let i = gr.start; i < gr.start + gr.count; i++) {
+          q.fromBufferAttribute(P2, I2 ? I2.getX(i) : i).applyMatrix4(o.matrixWorld).applyMatrix4(inv);
+          if (nm === 'Mask' && !(Math.abs(Math.hypot(q.x / 0.098, (q.y - 1.615) / 0.118, (q.z + 0.078) / 0.075) - 1) < 0.04)) continue;
+          if (nm === 'Filter' && !(q.x > 0.03)) continue;
+          if (nm === 'Boots' && !(q.x > 0)) continue;
+          const b2 = B[nm]; for (let a = 0; a < 3; a++) { b2[a] = Math.min(b2[a], q.getComponent(a)); b2[a + 3] = Math.max(b2[a + 3], q.getComponent(a)); }
+        }
+      }
+    });
+    const sz = b2 => (b2[0] === Infinity ? null : [0, 1, 2].map(a => +(b2[a + 3] - b2[a]).toFixed(4)));
+    glbShape.mask = sz(B.Mask); glbShape.filter = sz(B.Filter); glbShape.boot = sz(B.Boots);
+  }
+  const lin = h => { const c = new T.Color().setHex(h); const cm = T.ColorManagement; if (!cm || cm.legacyMode !== false) c.convertSRGBToLinear(); return c; };
+  const rows = [];
+  const look = (mesh, who, detail) => {
+    const rig = mesh.userData.rig, d = rig.meta.dims, H = d.H, geo = mesh.geometry, pos = geo.attributes.position, idx = geo.index, col = geo.attributes.color, si = geo.attributes.skinIndex;
+    const slotOf = new Array(pos.count).fill(null), matOf = new Array(pos.count).fill(null);
+    for (const gr of geo.groups) for (let i = gr.start; i < gr.start + gr.count; i++) { const v = idx ? idx.getX(i) : i; slotOf[v] = rig.slots[gr.materialIndex]; matOf[v] = mesh.material[gr.materialIndex]; }
+    const name = i => rig.list[si.getX(i)].name;
+    const gw = (0.035 * H * 1.35 + 0.01) / 2, gh = 0.03 * H, gd = (0.05 * H * 1.35 + 0.01) / 2, gy = d.handY - 0.005 * H;
+    const inGlove = v => Math.abs(Math.abs(v.x) - d.shoulderW) <= gw + 1e-4 && Math.abs(v.y - gy) <= gh + 1e-4 && Math.abs(v.z) <= gd + 1e-4;
+    // 靴筒：小腿中线上 y 0.05 → 0.365 的圆台（半径 6.6 → 8 cm，中心 z −0.005 → 0），按 8 段的边心距算（低画质 8 段、高画质 10 段）
+    const BOOT_TOP = 0.365, inBoot = v => {
+      if (v.y > BOOT_TOP + 1e-4 || v.y < -1e-4) return false;
+      const k = Math.max(0, Math.min(1, (v.y - 0.05) / 0.315)), r = (0.066 + 0.014 * k) * Math.cos(Math.PI / 8), zc = -0.005 * (1 - k);
+      return Math.hypot(Math.abs(v.x) - d.hipW, v.z - zc) <= r + 1e-4;
+    };
+    const fin = i => { const c = matOf[i].color; const t = col ? [col.getX(i), col.getY(i), col.getZ(i)] : [1, 1, 1]; return [c.r * t[0], c.g * t[1], c.b * t[2]]; };
+    let suitOutGlove = 0, suitOutBoot = 0, gloveN = 0, bootN = 0, glove = null, boot = null, mask = null;
+    const v = new T.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i);
+      const s = slotOf[i], b = name(i);
+      if (s === 'body' || s === 'head') {
+        if (/^fore/.test(b) && v.y < gy + gh - 1e-4 && !inGlove(v)) suitOutGlove++;
+        if (/^shin/.test(b) && v.y < BOOT_TOP - 1e-4 && !inBoot(v)) suitOutBoot++;
+        continue;
+      }
+      if (s !== 'gear') continue;
+      // 手套：前臂骨骼上、手套方块里（含手指：手套方块下面那一截）；靴子：小腿骨骼上、离地 6 cm 以下
+      if (/^fore/.test(b) && v.y < gy - gh * 0.5) { gloveN++; glove = glove || fin(i); }
+      if (/^shin/.test(b) && v.y < 0.06) { bootN++; boot = boot || fin(i); }
+    }
+    // 面罩（repair-r1 起是照 glb 的椭球脸罩）：头骨骼、gear 槽位里脸罩椭球的底极点（中心 (0, 1.6, −0.135)、竖半径 0.118）
+    {
+      let best = Infinity;
+      for (let i = 0; i < pos.count; i++) {
+        if (slotOf[i] !== 'gear' || name(i) !== 'head') continue;
+        v.fromBufferAttribute(pos, i);
+        const dd = Math.hypot(v.x, v.y - (1.6 - 0.118), v.z + 0.135);
+        if (dd < best) { best = dd; mask = fin(i); }
+      }
+    }
+    // 滤罐（FE1Q J7；repair-r1 起高低画质都是两侧各一个圆滤罐）：滤罐圆柱外端端盖的圆心顶点（头骨骼、gear 槽位，离那一点 <0.1 mm）——
+    // 椭球（半径 0.098 / 0.118 / 0.075）上方位 1.2、仰角 −0.3 那一点顺着外法线往外 5 cm
+    let filter = null, filterAt = null;
+    {
+      const R = [0.098, 0.118, 0.075], th = 1.2, ph = -0.3, dv = [Math.sin(th) * Math.cos(ph), Math.sin(ph), -Math.cos(th) * Math.cos(ph)];
+      const nn = [dv[0] / R[0], dv[1] / R[1], dv[2] / R[2]], nl = Math.hypot(nn[0], nn[1], nn[2]);
+      const tip = [R[0] * dv[0] + nn[0] / nl * 0.05, 1.6 + R[1] * dv[1] + nn[1] / nl * 0.05, -0.135 + R[2] * dv[2] + nn[2] / nl * 0.05];
+      let best = Infinity;
+      for (let i = 0; i < pos.count; i++) {
+        if (slotOf[i] !== 'gear' || name(i) !== 'head') continue;
+        v.fromBufferAttribute(pos, i);
+        const dd = Math.hypot(Math.abs(v.x) - tip[0], v.y - tip[1], v.z - tip[2]);
+        if (dd < best) { best = dd; if (dd < 1e-4) filter = fin(i); }
+      }
+      filterAt = +best.toFixed(6);
+    }
+    // 形状（repair-r1）：按最终颜色认件（离 glb 的 Mask / Filter / Boots 色 sRGB ≤2 色阶），量包围盒
+    const shape = { mask: null, filter: null, boot: null };
+    {
+      const bb = () => [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity], add = (b2, p) => { for (let a = 0; a < 3; a++) { b2[a] = Math.min(b2[a], p[a]); b2[a + 3] = Math.max(b2[a + 3], p[a]); } };
+      const M = bb(), Fi = bb(), Bo = bb();
+      for (let i = 0; i < pos.count; i++) {
+        if (slotOf[i] !== 'gear') continue;
+        v.fromBufferAttribute(pos, i);
+        const b = name(i), c = fin(i), p = [v.x, v.y, v.z];
+        if (b === 'head' && dS(c, 'Mask') <= 2 && Math.abs(Math.hypot(v.x / 0.098, (v.y - 1.6) / 0.118, (v.z + 0.135) / 0.075) - 1) < 0.04) add(M, p);
+        if (b === 'head' && v.x > 0.03 && dS(c, 'Filter') <= 2) add(Fi, p);
+        if (b === 'shinR' && dS(c, 'Boots') <= 2) add(Bo, p);
+      }
+      const sz = b2 => (b2[0] === Infinity ? null : [0, 1, 2].map(a => +(b2[a + 3] - b2[a]).toFixed(4)));
+      shape.mask = sz(M); shape.filter = sz(Fi); shape.boot = sz(Bo);
+    }
+    const r3 = a => a && a.map(x => +x.toFixed(5));
+    rows.push({ who, detail, tris: Math.round((idx ? idx.count : pos.count) / 3), suitOutGlove, suitOutBoot, gloveN, bootN, glove: r3(glove), boot: r3(boot), mask: r3(mask), filter: r3(filter), filterAt, shape,
+      gloveD: glove ? dS(glove, 'Gloves') : 99, bootD: boot ? dS(boot, 'Boots') : 99, maskD: mask ? dS(mask, 'Mask') : 99, filterD: filter ? dS(filter, 'Filter') : 99 });
+  };
+  const linSkin = k => lin(BR.skin.color(k)).getHex();
+  for (const detail of ['high', 'low']) {
+    look(A.parts.hazmat(null, { color: linSkin('blue'), detail }), 'seat', detail);
+    look(A.parts.hazmat(null, { detail }), 'mimic', detail);
+  }
+  // 换皮肤只换制服：高低两档各比一次（低档 FE1Q J7 起也带顶点色，gear 槽位同一份 vc 材质、同一份几何的颜色）
+  const skinSwap = {};
+  for (const detail of ['high', 'low']) {
+    const p = A.parts.hazmat(null, { color: linSkin('pink'), detail }), b = A.parts.hazmat(null, { color: linSkin('blue'), detail });
+    const gi = p.userData.rig.slots.indexOf('gear'), bi = p.userData.rig.slots.indexOf('body');
+    skinSwap[detail] = { gearSame: p.material[gi] === b.material[gi] && p.geometry === b.geometry, suitDiff: p.material[bi].color.getHex() !== b.material[bi].color.getHex(),
+      pink: p.material[bi].color.getHexString(), blue: b.material[bi].color.getHexString(), gearVc: !!p.material[gi].vertexColors, suitVc: !!p.material[bi].vertexColors };
+  }
+  skinSwap.gearSame = skinSwap.high.gearSame && skinSwap.low.gearSame;
+  skinSwap.suitDiff = skinSwap.high.suitDiff && skinSwap.low.suitDiff;
+  const m = A.parts.hazmat(null, { detail: 'high' }), mc = m.material[m.userData.rig.slots.indexOf('body')].color, want = lin(BR.skin.color());
+  const mimicSuit = { got: mc.getHexString(), want: want.getHexString(), d: Math.max(Math.abs(mc.r - want.r), Math.abs(mc.g - want.g), Math.abs(mc.b - want.b)) * 255 };
+  return { glb: glbS, glbS, glbShape, rows, skinSwap, mimicSuit };
+}
 function expectedHex(key) {
   const c = new THREE.Color().setHex(BR.skin.color(key));
   const cm = THREE.ColorManagement;
@@ -190,6 +328,29 @@ async function desktop(browser, base) {
     return out;
   });
   check('每个层级 entities / items 表里的 type 都已注册', tableIssues.length === 0, tableIssues);
+
+  // ---------- 程序化防化服（联机队友坐车、窃皮者伪装）和测试人的 hazmat.glb 对齐（FE1P H10） ----------
+  const hz = await ev(page, hazmatParity);
+  check('防化服 glb 已载入，量得到 Gloves / Boots / Mask / Filter / Suit 五个材质', !!hz.glb && ['Gloves', 'Boots', 'Mask', 'Filter', 'Suit'].every(n => !!hz.glb[n]), hz.glb);
+  for (const r of hz.rows || []) {
+    // 低画质（FE1Q J7）：gear 槽位材质是手套色，面罩框、滤罐、手套、靴子各按 glb 的颜色上 tint（visualhooks 低档白名单放开了这一项），按裁定色阶差 ≤6
+    check('防化服（' + r.who + ' · ' + r.detail + '）：制服色的手掌、手指不包住手套，脚掌不从靴子里伸出来（制服色顶点在手套 / 靴子高度以下的都藏在里面）',
+      r.suitOutGlove === 0 && r.suitOutBoot === 0 && r.gloveN > 0 && r.bootN > 0, r);
+    const tol = r.detail === 'high' ? 1 : 6;
+    check('防化服（' + r.who + ' · ' + r.detail + '）：手套、靴子、面罩、滤罐的颜色和 glb 一样（sRGB 色阶差 ≤' + tol + '）',
+      r.gloveD <= tol && r.bootD <= tol && r.maskD <= tol && r.filterD <= tol,
+      { glove: r.glove, boot: r.boot, mask: r.mask, filter: r.filter, filterAt: r.filterAt, glb: hz.glbS, gloveD: r.gloveD, bootD: r.bootD, maskD: r.maskD, filterD: r.filterD });
+  }
+  check('换皮肤只换制服（高低两档）：粉色、蓝色两个坐车人形的手套 / 靴子 / 面罩 / 滤罐材质和几何一模一样，制服色不同', hz.skinSwap && hz.skinSwap.gearSame && hz.skinSwap.suitDiff, hz.skinSwap);
+  // 返修 FE1Q · repair-r1（验收员 play：队友一坐上车，面罩就从圆脸罩 + 两个圆滤罐变成方块、靴子从圆头高筒靴变成方块）
+  {
+    const G2 = hz.glbShape || {}, bad = [];
+    const near = (a, b) => !!a && !!b && a.length === b.length && a.every((x, i) => Math.abs(x - b[i]) <= 0.15 * b[i]);
+    for (const r of hz.rows || []) for (const k of ['mask', 'filter', 'boot']) if (!near(r.shape && r.shape[k], G2[k])) bad.push([r.who + '·' + r.detail, k, r.shape && r.shape[k], G2[k]]);
+    check('防化服（坐车 / 伪装 × 高 / 低画质）的面罩脸罩宽高、一侧滤罐、一只靴子的包围盒和 hazmat.glb 每一边相差 ≤15%（面具和靴子不能换）',
+      !!G2.mask && !!G2.filter && !!G2.boot && bad.length === 0, bad.length ? bad.slice(0, 6) : { glb: G2, got: (hz.rows || []).map(r => [r.who, r.detail, r.shape]) });
+  }
+  check('窃皮者伪装（不指定制服色）：制服色 = 当前皮肤按 skin.apply 一样转线性（和测试人 glb 的制服一个颜色）', hz.mimicSuit && hz.mimicSuit.d <= 1, hz.mimicSuit);
 
   const home0 = await ev(page, () => ({ screen: BR.game.screen, shown: BR.home.shown, skin: BR.skin.current, inputOn: BR.input.enabled }));
   check('主页：启动后停在主页、输入关闭', home0.screen === 'home' && home0.shown && !home0.inputOn, home0);

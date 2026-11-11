@@ -25,7 +25,16 @@
 // 噪音：makeNoise(level, sec)：玩家这一刻弄出 level（0..1）的响动，持续 sec 秒，和走路冲刺的 player.noise 取大，
 //   走同一套听觉判断（perceive、archetypes 的 hearPlayer 都读 playerNoise）。只在实体会打玩家的模式（噩梦）生效
 // 坐在车上的玩家（FE1 叉车，见「坐在车上的玩家」一节）：视线对准 BR.vehicles.chestOf(玩家)，追击点是车侧 / 车尾外沿离怪最近的一点，
-//   攻击距离量到驾驶舱矩形（BR.vehicles.cabFor），货叉不算。spawnForChunk 和实体表不受影响
+//   攻击距离量到司机身体（座椅上的人：BR.vehicles.seatWorld，加人的半径，和站着时一样的算法；FE1P H11，原来量到驾驶舱矩形再加人的半径，
+//   怪站在车身外 1 m 多就打得到人）。spawnForChunk 和实体表不受影响
+// 近战出手时机（FE1P H11，孩子看图挑的「先掉血、后挥手」）：attack(e, target, onLand?) 只是起手 —— 够得着、看得见、冷却好了就定冷却、
+//   正对目标、记 attackAt，返回 true；扣血挪到胳膊抡到最前的那一刻（起手后 STRIKE_HIT_K 个冷却周期，_archetypes.js 的 strikeCurve
+//   在同一处到峰值）。那一刻再量一次：目标跑出攻击距离 + STRIKE_SLACK、隔了墙、或者已经不能打了（游玩模式、死了）就算没打中，
+//   不扣血、不调 onLand（悲尸的划伤感染挂在 onLand 上，跟着扣血走）。从起手到打到这一段实体不想事（抡出去的胳膊收不回来），
+//   但脚下接着扑（返修 r1：原来原地不动，人一直往前走 0.46 s 就走出 1.4 m，怪每一下都空挥，噩梦难度被打穿）：每帧正对目标，
+//   按起手前的追击速度（最近一次 moveToward / flee 的速度，没有就用 def.speed.run）往追击点挪，挪到离目标「攻击距离 − LUNGE_IN」
+//   为止（不贴到人身上）；被墙、车身挡住就贴着滑，跟不上就算没打中。
+//   冷却、伤害数值不变，只是扣血的时刻后移。api.attackStart(e) / api.swinging(e) 给动画和测试读
 (function () {
 'use strict';
 const BR = window.BR;
@@ -63,6 +72,12 @@ const CRUMB_MAX = 200;
 const NOISE_SLOTS = 8;         // 同时生效的 makeNoise 条数：喇叭的短响和行驶的持续低响要能并存
 // 拖动限速的缺省值，和 BR.config.interact 同名字段一致（base.js 里有就用那边的）
 const DRAG_V0 = 1.8, DRAG_K = 0.6, DRAG_VMIN = 0.25;
+// 近战扣血时刻（见文件头「近战出手时机」）：起手后这么多个冷却周期（周期 = max(0.2, attack.cooldown)，和动画同一个算法）。
+// 和 _archetypes.js 的 STRIKE_PEAK 是同一个数（swipe 胳膊最前、bite 嘴合上），改一个要两个一起改，tests/infection.mjs 会核对
+const STRIKE_HIT_K = 0.38;
+const STRIKE_SLACK = 0.15;     // 打到那一刻的距离容差（米）：起手时够得着、抡的这一下里目标挪出去不到这么多照样打中
+const LUNGE_IN = 0.15;         // 抡的这一下里往前扑，扑到离目标「攻击距离 − 这么多」为止（返修 r1）
+const CHASE_V_SEC = 3;         // 起手前这么久以内 moveToward / flee 过，就按那时的速度扑；再早的不算（用 def.speed.run）
 
 // ---------- 状态 ----------
 const ents = [];               // 对外的 list：只做原地压缩，外部拿到的引用始终有效
@@ -231,8 +246,10 @@ function targetRadius(kind, ref) { return kind === 'player' ? BR.config.player.r
 // 目标玩家（本机，或以后传进来的联机队友）坐在车上时（BR.vehicles.cabFor(玩家) 给出驾驶舱矩形）：
 //   视线目标点 = BR.vehicles.chestOf(玩家)（护顶四周是空的，从车侧、车尾看得见坐着的人）；
 //   追击目标点 = 车身左右两侧（驾驶舱那一段）和车尾外沿上离怪最近的一点，往外让出怪的半径 —— 怪绕到车侧或车尾，不会去顶货叉；
-//     车尾只在「站在车尾够得着驾驶舱」时才算（手短的怪去车侧）；
-//   攻击距离量到驾驶舱矩形（加上人的半径，和站着时一样的算法），货叉不算：货叉尖前面的怪够不着，会绕过去。
+//     车侧那一点再收到站在那里够得着司机的一段里（FE1P H11）；车尾只在「站在车尾够得着司机」时才算（手短的怪去车侧）；
+//   攻击距离量到司机身体：座椅上的人（BR.vehicles.seatWorld 的水平位置，取不到用胸口点）加人的半径，和站着时一样的算法
+//   （FE1P H11：原来量到驾驶舱矩形再加人的半径，悲尸站在车身外 1.1 m、离人 1.5 m 就打中了）。货叉、门架、配重都挡在人外面，
+//   货叉尖前面、车尾外面的怪够不着人，会绕到车侧。
 // 驾驶舱矩形认 phys 的 OBB 写法 { cx, cz, hx, hz, rot }（rot 和 kit 一致：本地 → 世界 x' = c·x + s·z、z' = −s·x + c·z，
 //   车头在本地 −z），也认 { x, z, hx, hz, yaw }、轴对齐 { minX, maxX, minZ, maxZ } 和四个角点。
 //   车身半宽、车尾位置取 BR.forklift.geo / BR.L1forklift.geo 的 half、cab（缺省 0.6 / 1.3、驾驶舱 z −0.5…0.55）。
@@ -276,7 +293,8 @@ function normCab(raw, chest) {
   if (!Number.isFinite(cx) || !Number.isFinite(cz) || !(hx > 0) || !(hz > 0)) return null;
   return { cx, cz, hx, hz, c: Math.cos(rot), s: Math.sin(rot) };
 }
-// 玩家坐在车上：{ cab, chest:{x,y,z}, bx（车身半宽）, rz（车尾外沿离驾驶舱中心，本地 +z） }；没坐车返回 null
+// 玩家坐在车上：{ cab, chest:{x,y,z}, body:{x,z}（司机身体 = 座椅上的人的水平位置）, bl:{x,z}（司机身体在驾驶舱矩形本地坐标里）,
+//   bx（车身半宽）, rz（车尾外沿离驾驶舱中心，本地 +z） }；没坐车返回 null
 function rideOf(P) {
   if (!P) return null;
   const local = P === BR.player;
@@ -289,7 +307,8 @@ function rideOf(P) {
   if (V && has(V, 'cabFor')) {
     try {
       const chest = has(V, 'chestOf') ? ptOf(V.chestOf(P)) : null;
-      const cab = normCab(V.cabFor(P), chest);
+      const raw = V.cabFor(P);
+      const cab = normCab(raw, chest);
       if (cab) {
         const G = vehGeo();
         const gc = G && G.cab, gh = G && G.half;
@@ -301,7 +320,13 @@ function rideOf(P) {
           const x = ch ? ch.x : cab.cx, z = ch ? ch.z : cab.cz;
           ch = { x, y: playerFeet(P) + CHEST_H, z };
         }
-        ride = { cab, chest: ch, bx, rz };
+        // 司机身体：坐垫顶面中心的水平位置（人就坐在那里）；取不到座椅退回胸口点
+        let st = null;
+        if (raw && raw.key != null && has(V, 'seatWorld')) st = ptOf(V.seatWorld(raw.key));
+        const body = st ? { x: st.x, z: st.z } : { x: ch.x, z: ch.z };
+        const dx = body.x - cab.cx, dz = body.z - cab.cz;
+        const bl = { x: cab.c * dx - cab.s * dz, z: cab.s * dx + cab.c * dz };
+        ride = { cab, chest: ch, body, bl, bx, rz };
       }
     } catch (err) {
       once('ride', () => console.error('[entities] 读坐车玩家的驾驶舱出错', err));
@@ -311,34 +336,45 @@ function rideOf(P) {
   if (local) { RS.t = time; RS.h = P.mounted; RS.ride = ride; }
   return ride;
 }
-// 点到驾驶舱矩形的水平距离（在矩形里为 0）
-function cabDist(cab, x, z) {
-  const dx = x - cab.cx, dz = z - cab.cz;
-  const lx = cab.c * dx - cab.s * dz, lz = cab.s * dx + cab.c * dz;
-  const ex = Math.max(0, Math.abs(lx) - cab.hx), ez = Math.max(0, Math.abs(lz) - cab.hz);
-  return Math.hypot(ex, ez);
-}
-// 站在车尾（追击点上）够不够得着驾驶舱
-function rearReach(e, ride) {
+// 怪够得着人的距离（攻击距离 + 人的半径），追击点往里收 0.02 m 余量，免得停在边上浮点抖一下就够不着
+function reachOf(e, kind, ref) {
   const atk = e.def.attack;
-  if (!atk) return false;
-  return ride.rz + e.r + RIDE_GAP - ride.cab.hz <= num(atk.range, 1.2) + BR.config.player.radius - 0.02;
+  return atk ? num(atk.range, 1.2) + targetRadius(kind, ref) : 0;
 }
-// 追击点写进 out.x / out.z：车身两侧（驾驶舱那一段）和车尾外沿上离怪最近的一点，沿外法线让出怪的半径
+// 攻击距离量的那段水平距离：坐在车上的玩家量到司机身体（座椅上的人），其余量到目标位置
+function strikeDist(e, kind, ref) {
+  const ride = kind === 'player' ? rideOf(ref) : null;
+  const p = ride ? ride.body : ref;
+  return Math.hypot(p.x - e.x, p.z - e.z);
+}
+// 站在车尾（追击点上）够得着司机的那一段车尾外沿：本地 x 的半宽（以司机身体的 x 为中心）；够不着返回 −1
+function rearReach(e, ride) {
+  if (!e.def.attack) return -1;
+  const R = reachOf(e, 'player', null) - 0.02;
+  const dz = ride.rz + e.r + RIDE_GAP - ride.bl.z;
+  return dz <= R ? Math.sqrt(R * R - dz * dz) : -1;
+}
+// 追击点写进 out.x / out.z：车身两侧（驾驶舱那一段）和车尾外沿上离怪最近的一点，沿外法线让出怪的半径。
+// 车侧那一点的 z 再收到「站在那里够得着司机」的一段（离司机身体 ≤ 够得着的距离）：怪停在驾驶舱前端、后端够不着人时不会傻站着
 const chaseOut = { x: 0, z: 0 };
 function chasePoint(e, ride, out) {
-  const cab = ride.cab, bx = ride.bx, rz = ride.rz, hz = cab.hz;
+  const cab = ride.cab, bx = ride.bx, rz = ride.rz, hz = cab.hz, bl = ride.bl;
   const dx = e.x - cab.cx, dz = e.z - cab.cz;
   const lx = cab.c * dx - cab.s * dz, lz = cab.s * dx + cab.c * dz;
   const off = e.r + RIDE_GAP;
-  // 两侧：x = ±bx，z ∈ [−hz, hz]，外法线 (±1, 0)
-  const sz = U.clamp(lz, -hz, hz);
+  // 两侧：x = ±bx，z ∈ [−hz, hz] ∩ 够得着司机的那一段，外法线 (±1, 0)
   const sx = lx < 0 ? -bx : bx;
-  let px = sx + (lx < 0 ? -off : off), pz = sz;
+  const px0 = sx + (lx < 0 ? -off : off);
+  const R = reachOf(e, 'player', null) - 0.02, ex = px0 - bl.x;
+  const w = R > Math.abs(ex) ? Math.sqrt(R * R - ex * ex) : 0;
+  const z0 = Math.max(-hz, bl.z - w), z1 = Math.min(hz, bl.z + w);
+  const sz = z0 <= z1 ? U.clamp(lz, z0, z1) : U.clamp(bl.z, -hz, hz);
+  let px = px0, pz = sz;
   let best = (lx - sx) * (lx - sx) + (lz - sz) * (lz - sz);
-  // 车尾：z = rz，x ∈ [−bx, bx]，外法线 (0, +1)
-  if (rearReach(e, ride)) {
-    const rx = U.clamp(lx, -bx, bx);
+  // 车尾：z = rz，x ∈ [−bx, bx] ∩ 够得着司机的那一段，外法线 (0, +1)
+  const wr = rearReach(e, ride);
+  if (wr >= 0) {
+    const rx = U.clamp(lx, Math.max(-bx, bl.x - wr), Math.min(bx, bl.x + wr));
     const d = (lx - rx) * (lx - rx) + (lz - rz) * (lz - rz);
     if (d < best) { best = d; px = rx; pz = rz + off; }
   }
@@ -531,9 +567,11 @@ function moveToward(e, x, z, speed) {
   if (!alive(e)) return false;
   const dx = x - e.x, dz = z - e.z;
   const dist = Math.hypot(dx, dz);
+  const want = num(speed, walkOf(e));
+  e._m.chaseV = want; e._m.chaseVAt = time;   // 起手以后往前扑用这个速度（见文件头「近战出手时机」）
   if (dist <= ARRIVE) return true;
   // 最后一步不冲过头
-  const sp = Math.min(num(speed, walkOf(e)), dist / Math.max(curDt, 1e-3));
+  const sp = Math.min(want, dist / Math.max(curDt, 1e-3));
   steer(e, dx / dist, dz / dist, sp);
   return Math.hypot(x - e.x, z - e.z) <= ARRIVE;
 }
@@ -568,41 +606,92 @@ function flee(e, x, z, speed) {
   let dx = e.x - x, dz = e.z - z;
   let d = Math.hypot(dx, dz);
   if (d < 1e-3) { const a = aiRng() * Math.PI * 2; dx = Math.cos(a); dz = Math.sin(a); d = 1; }
-  steer(e, dx / d, dz / d, num(speed, runOf(e)));
+  const want = num(speed, runOf(e));
+  e._m.chaseV = want; e._m.chaseVAt = time;
+  steer(e, dx / d, dz / d, want);
   return Math.hypot(e.x - x, e.z - z);
 }
 
 function faceToward(e, x, z) { turnTo(e, Math.atan2(-(x - e.x), -(z - e.z)), Math.max(curDt, 1 / 60)); }
 
 // ---------- 战斗 ----------
-function attack(e, target) {
+// 起手（见文件头「近战出手时机」）：够得着、看得见、冷却好了 → 定冷却、正对目标、记起手时刻，排一次「打到」，返回 true。
+// onLand(e, t, api)：打中那一刻（扣完血）调一次，t 是传进来的目标；没打中不调。上一下还没打到时不能再起手
+function attack(e, target, onLand) {
   if (!alive(e)) return false;
   const atk = e.def.attack;
   const t = resolveTarget(target);
-  if (!atk || !t || e.cooldown > 0) return false;
+  if (!atk || !t || e.cooldown > 0 || e._m.swing) return false;
   const kind = t.kind, ref = t.ref;
   if (!canAttack(e, kind, ref)) return false;
-  // 坐在车上的玩家：距离量到驾驶舱矩形（货叉不算），视线对准座椅胸口点
-  const ride = kind === 'player' ? rideOf(ref) : null;
-  const dist = ride ? cabDist(ride.cab, e.x, e.z) : Math.hypot(ref.x - e.x, ref.z - e.z);
-  if (dist > num(atk.range, 1.2) + targetRadius(kind, ref)) return false;
+  // 坐在车上的玩家：距离量到司机身体（座椅上的人，见「坐在车上的玩家」），视线对准座椅胸口点
+  if (strikeDist(e, kind, ref) > reachOf(e, kind, ref)) return false;
   if (!losTarget(e, kind, ref)) return false;   // 隔着薄墙挠不到
 
   e.cooldown = Math.max(0.05, num(atk.cooldown, 1));
-  const ax = ride ? ride.chest.x : ref.x, az = ride ? ride.chest.z : ref.z;
+  const ride = kind === 'player' ? rideOf(ref) : null;
+  const ax = ride ? ride.body.x : ref.x, az = ride ? ride.body.z : ref.z;
   e.yaw = Math.atan2(-(ax - e.x), -(az - e.z));   // 出手瞬间正对目标
   e._m.attackAt = time;
-  let ok = false;
-  if (kind === 'player') {
-    if (has(BR.player, 'damage')) {
-      ok = BR.player.damage({ hp: num(atk.hp, 0), sanity: num(atk.sanity, 0), source: e }) !== false;
-    }
+  const m = e._m;
+  const v = Number.isFinite(m.chaseV) && time - m.chaseVAt <= CHASE_V_SEC ? m.chaseV : runOf(e);
+  m.swing = { at: time + strikeDelay(atk), kind, ref, t: target, v: Math.max(0, v), onLand: typeof onLand === 'function' ? onLand : null };
+  if (e.def.sounds && e.def.sounds.attack) sound(e, e.def.sounds.attack);
+  return true;
+}
+function strikeDelay(atk) { return STRIKE_HIT_K * Math.max(0.2, num(atk.cooldown, 1)); }
+
+// 抡的这一下里接着扑（见文件头「近战出手时机」）：正对目标（坐车的人对准司机身体），离目标还比「攻击距离 − LUNGE_IN」远就按起手时记的
+// 追击速度往追击点（坐车的人是车侧 / 车尾那一点）挪，最后一步不冲过头；不想事、不换目标
+const lungeAim = { x: 0, z: 0 };
+function lunge(e, sw, dt) {
+  const kind = sw.kind, ref = sw.ref;
+  if (!canAttack(e, kind, ref)) return;
+  curDt = dt;
+  const ride = kind === 'player' ? rideOf(ref) : null;
+  const body = ride ? ride.body : ref;
+  const dist = strikeDist(e, kind, ref);
+  const stop = Math.max(0.05, reachOf(e, kind, ref) - LUNGE_IN);
+  if (dist > stop && sw.v > 0) {
+    aimPoint(e, kind, ref, lungeAim);
+    const dx = lungeAim.x - e.x, dz = lungeAim.z - e.z, L = Math.hypot(dx, dz);
+    if (L > 0.02) steer(e, dx / L, dz / L, Math.min(sw.v, L / Math.max(dt, 1e-3), (dist - stop) / Math.max(dt, 1e-3)));
+  }
+  faceToward(e, body.x, body.z);
+}
+
+// 胳膊抡到最前的那一刻：再量一次，够得着（攻击距离 + STRIKE_SLACK）、看得见、还能打才扣血，扣上了再调 onLand。
+// 结果记在 e._m.lastSwing（测试读）
+function landSwing(e) {
+  const m = e._m, sw = m.swing;
+  m.swing = null;
+  const atk = e.def.attack;
+  if (!sw || !alive(e) || !atk) return false;
+  const kind = sw.kind, ref = sw.ref;
+  let ok = false, why = 'hit';
+  const dist = canAttack(e, kind, ref) ? strikeDist(e, kind, ref) : Infinity;
+  if (!Number.isFinite(dist)) why = 'cannot';
+  else if (dist > reachOf(e, kind, ref) + STRIKE_SLACK) why = 'far';
+  else if (!losTarget(e, kind, ref)) why = 'wall';
+  else if (kind === 'player') {
+    if (has(BR.player, 'damage')) ok = BR.player.damage({ hp: num(atk.hp, 0), sanity: num(atk.sanity, 0), source: e }) !== false;
   } else {
     ok = damageEntity(ref, atk.entityHp != null ? atk.entityHp : num(atk.hp, 0), e);
   }
-  if (e.def.sounds && e.def.sounds.attack) sound(e, e.def.sounds.attack);
+  if (why === 'hit' && !ok) why = 'nodmg';
+  m.lastSwing = { start: m.attackAt, at: time, kind, hit: ok, why, dist: Number.isFinite(dist) ? Math.round(dist * 1000) / 1000 : null };
+  if (ok && sw.onLand && alive(e)) {
+    try { sw.onLand(e, sw.t, api); }
+    catch (err) { once('onLand:' + e.type, () => console.error('[entities] ' + e.type + ' 打中以后的回调出错', err)); }
+  }
   return ok;
 }
+// 起手时刻（动画用：抡胳膊的那一轮从这里算）| null（没起过手，或者是联机客机：客机不跑 AI，没有起手时刻）
+function attackStart(e) {
+  const m = e && e._m;
+  return m && Number.isFinite(m.attackAt) && m.attackAt > -1e8 ? m.attackAt : null;
+}
+function swinging(e) { return !!(e && e._m && e._m.swing); }
 
 function damageEntity(t, amount, source) {
   if (typeof t === 'string') t = byId.get(t);
@@ -633,6 +722,7 @@ function kill(e, killer) {
   e.state = 'dead';
   e.target = null;
   e.held = null;           // 拖着的被打死了：手里就空了（interact 看到目标死了会自己取消）
+  e._m.swing = null;       // 抡到一半被打死：这一下落空
   e._m.killer = info[0];
   e._m.killerType = info[1];
   e._m.diedAt = time;
@@ -774,7 +864,7 @@ function makeEntity(def, id, x, y, z, yaw) {
       wanderT: 0, wanderYaw: 0, pauseT: 0,
       provoker: null, provokeUntil: 0,
       idleT: rand(IDLE_MIN * 0.5, IDLE_MAX),
-      attackAt: -1e9, removeAt: null, killer: null, killerType: null, killEmitted: false,
+      attackAt: -1e9, swing: null, lastSwing: null, chaseV: NaN, chaseVAt: -1e9, removeAt: null, killer: null, killerType: null, killEmitted: false,
       snap: null,
     },
   };
@@ -1329,8 +1419,17 @@ function runAI(dt) {
     const m = e._m;
     if (e.dead) {
       e.held = null;
+      m.swing = null;
       if (m.removeAt != null && time >= m.removeAt) finalize(e);
       continue;
+    }
+    // 正在抡（起手到打到之间，见文件头「近战出手时机」）：到点就判打没打中；没到点不想事、接着往目标扑（lunge），冷却照走。
+    // 排在远处降频之前：打到的时刻按真实帧走。被人拖着就落空（胳膊被拽开了）
+    if (m.swing) {
+      if (e.held) m.swing = null;
+      else if (time >= m.swing.at) landSwing(e);
+      else { e.cooldown = Math.max(0, e.cooldown - dt); lunge(e, m.swing, dt); continue; }
+      if (e.removed || e.dead) continue;
     }
     // 被拖着：不想事，只被手拽着走，一路记面包屑（排在远处降频之前，拖着的一定跟着按真实帧走）
     if (e.held) {
@@ -1626,6 +1725,8 @@ const api = {
   findTarget, los, moveToward, wander, flee, attack, lightAt, playerNoise,
   // 第 6 节之外的附加帮助
   faceToward,
+  attackStart, swinging,          // 近战起手时刻 | null；正在抡（还没打到）。见文件头「近战出手时机」
+  STRIKE_HIT_K, STRIKE_SLACK,
   canAttack(e, target) { const t = resolveTarget(target); return !!t && canAttack(e, t.kind, t.ref); },
   damage: damageEntity,
   // 感染与转化：onAttack(e, t, api) 里 api.isHuman(t) && api.infect(t, SPEC, e)

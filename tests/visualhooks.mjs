@@ -263,7 +263,8 @@ const TINTED_FORMS = {
     partygoer_pedestal: { '': ['body'] },                           // M2：底座棱环下的凹槽
   },
   low: {
-    skin_stealer: { true: ['body', 'head'] },
+    // FE1Q J7（用户原话「面具和靴子不能换」）：低画质伪装（程序化防化服）的面罩框、滤罐、手套、靴子按 hazmat.glb 的颜色上 tint，只在 gear 槽位
+    skin_stealer: { true: ['body', 'head'], disguise: ['gear'] },
     wretch: { '': ['body'] },
     hound: { '': ['body', 'head'] },
     duller: { '': ['body'] },

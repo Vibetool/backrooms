@@ -124,9 +124,19 @@ const DRIVE_NOTE_MS = 1800;
 // 触屏常驻提示行的几档（placeDrive 依次试）：'' 13px 整段不折行；t1 12px；t2 11px；split 12px、允许「按住「升」「降」」和「动货叉」之间折行
 const DRIVE_MODES = ['', 'hud-drive-t1', 'hud-drive-t2', 'hud-drive-split'];
 const DRIVE_GAP = 6;             // 开车提示行离按钮、摇杆、准心提示、背包至少这么远（px）
+// 竖屏开车时摇杆推得到的范围（FE1P H15，孩子看图挑的「往前推摇杆，圆头盖住开车提示框」）：摇杆是浮动的 —— 左半屏哪里按下，
+// 圆心就放在哪里（input.js startStick）。手指按下往任何方向推满（半径 r），圆头（半径 = .touch-knob 的一半，input.js 是 0.45r）的外沿到
+// r + 圆头半径；推过了头圆心会跟着手指走，再多留 STICK_OVER·r。返修 r1（验收员：手指按得比待机摇杆高 30–60 px 再往前推，照样盖住）：
+// 竖屏开车时左边摇杆区的上沿收到「提示框底边 + 推得到的半径 + DRIVE_GAP」（html.hud-stick-cap + --hud-stick-top，css/game.css），
+// 上沿以上那一块左半屏归转视角；提示框摆的时候让开「摇杆区里任何一点推得到的范围」，摇杆区至少要盖到待机摇杆上沿再往上
+// STICK_ROOM·r（拇指按偏一点照样起摇杆），准心下面放不下就挪到准心上方。只管竖屏：横屏提示行本来就在摇杆右边，不变
+const STICK_OVER = 0.25;
+const STICK_ROOM = 0.6;
 const DRIVE_NAME_RESERVE = 28;   // 背包栏上面给物品名留的高度（物品名显隐时提示行不跳）
 const TOAST_GAP = 6;             // toast 和开车提示行 / 状态短提示之间
 const TOAST_MIN_H = 28;          // 一条 toast 大约多高：准心提示和开车提示行之间连一条都放不下就改成往上长
+// 准心（含按住时的进度环，外径 30px）往上占多少：矮横屏站着「往上长」时列底边贴到这里再留 TOAST_GAP（FE1Q J5）
+const CROSS_REACH = 18;
 const STYLE_RE = /(^|\/)css\/game\.css([?#]|$)/;
 const SELF_RE = /js\/game\/hud\.js([?#].*)?$/;
 // currentScript 只在脚本同步执行期间有值，必须在顶层取
@@ -169,6 +179,7 @@ const S = {
   toastUp: 0,                      // 开车时 toast「往上长」：列底边离屏幕底多少 px（写进 --hud-toast-up），0 = 不往上长
   toastUpW: 0,                     // 往上长时的列宽（px，写进 --hud-toast-w）
   toastTop: 0,                     // 矮横屏有横幅时 toast 排到横幅下面的 top（px，0 = 不挪；写进 --hud-toast-top）
+  testSig: '',                     // 触屏时测试面板开没开、「实体」键显没显示（placeToasts 比对，变了重新摆 toast）
   noticeSig: null,                 // 横幅容器的布局类（触屏 / 状态条开着）已经按哪个状态写过
 };
 // 开车提示（FE1）：state = setDrive 给的东西；on / touch 已经写进 DOM 的显隐和文字版本；note 状态短提示；place 触屏摆放的结果
@@ -845,6 +856,12 @@ function putName(v, whyMode) {
 // 只在提示内容、显隐、窗口尺寸变了的那一帧量一次；横屏 toast 挪到右上角时 CSS 把 margin-top 定死成 0，这个值不起作用
 const TOAST_DY_MIN = 84;           // 和 css 里 .hud-toasts 原来的 margin-top 一致：单行提示时位置不变
 function placeToasts() {
+  // 测试模式的「实体」键显隐、测试面板开关（矮横屏 toast 让不让开要看它们，FE1Q J5）：变了就重新摆
+  if (S.touch && dom.toasts) {
+    const te = document.querySelector('.test-entry');
+    const sig = (document.documentElement.classList.contains('br-test-open') ? 'o' : '') + (te && !te.hidden ? 'e' : '');
+    if (sig !== S.testSig) { S.testSig = sig; S.layoutDirty = true; }
+  }
   if (!S.layoutDirty || !dom.toasts) return;
   S.layoutDirty = false;
   let dy = TOAST_DY_MIN;
@@ -887,12 +904,13 @@ function toastHeights(nodes) {
 // 开车时 toast 的位置。默认版式（屏幕中线下面）里开车提示行挡在 toast 那一列：上面放得下最新那条就只留放得下的
 // （从最新的往回数，更早的提前收掉）；连最新那条都放不下，或者是矮横屏（右上角那一列正好压着「升」「降」键和状态短提示）、
 // toast 排在横幅下面的版式，就改成「往上长」：居中，底边贴着准心上方状态短提示那一格，往上排到信息块 / 状态条 / 横幅 / 触屏键为止
-// （在两边的东西收窄列宽让开，在中间的就压低上限），放不下的同样从最早的收掉
+// （在两边的东西收窄列宽让开，在中间的就压低上限），放不下的同样从最早的收掉。
+// 触屏（返修 r2，验收员 play：竖屏开车提示框挪到准心上方以后，断电那条两行的提示留在准心下面的默认位置，盖住「升」「降」键，
+// 320×568 还盖住摇杆）：默认那一列和站着时一样量触屏键、待机摇杆，压到了也改成往上长（排在准心上方的开车提示框上面）
 function avoidDrive(dy, mid) {
   const nodes = [];
   for (const t of S.toasts) if (!t.leaving) nodes.push(t);
   if (!nodes.length) return;
-  const H = window.innerHeight || document.documentElement.clientHeight || 0;
   const W = window.innerWidth || document.documentElement.clientWidth || 0;
   const cx = W / 2;
   let goUp = shortScreen() || S.toastTop > 0;
@@ -908,12 +926,45 @@ function avoidDrive(dy, mid) {
       if (room >= Math.max(m.newest, TOAST_MIN_H)) cap = room;
       else goUp = true;
     }
+    if (!goUp && S.touch && touchColumnHit(nodes, top, cap)) goUp = true;
   }
   if (goUp) {
     const r = placeUp(nodes, mid);
     m = r.m; cap = r.cap;
   }
   trimToasts(nodes, m, cap);
+}
+
+// 平常版式（列顶 = top，从最新的往回数只排 cap 高）下，这一列压不压看得见的触屏键或待机摇杆（左右上下各留 4 px）。
+// 每条的位置按算的（一条条往下排、居中），不量 getBoundingClientRect：列的 margin-top 有 0.12 s 的过渡、新 toast 有淡入的位移
+function touchColumnHit(nodes, top, cap) {
+  const inp = BR.input;
+  if (!inp || !has(inp, 'touchLayout')) return false;
+  let L = null;
+  try { L = inp.touchLayout(); } catch (err) { L = null; }
+  if (!L) return false;
+  const blocks = L.buttons.slice();
+  if (L.stick) blocks.push({ l: L.stick.l, t: L.stick.t, r: L.stick.r2, b: L.stick.b });
+  const cx = (window.innerWidth || document.documentElement.clientWidth || 0) / 2;
+  // 只排得下 cap 的时候，最早那几条会被收掉：从最新的往回数，留下的那几条才算
+  let keep = nodes.length, used = 0;
+  if (cap < Infinity) {
+    keep = 0;
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      used += nodes[i].node.offsetHeight + (i < nodes.length - 1 ? TOAST_GAP : 0);
+      if (used > cap && i < nodes.length - 1) break;
+      keep++;
+    }
+  }
+  let y = top;
+  for (let i = nodes.length - keep; i < nodes.length; i++) {
+    const w = nodes[i].node.offsetWidth, h = nodes[i].node.offsetHeight;
+    if (!(w > 0 && h > 0)) continue;
+    const a = { l: cx - w / 2, r: cx + w / 2, t: y, b: y + h };
+    y += h + TOAST_GAP;
+    for (const b of blocks) if (a.l < b.r + 4 && a.r > b.l - 4 && a.t < b.b + 4 && a.b > b.t - 4) return true;
+  }
+  return false;
 }
 
 // 从最新的往回数，放不下 cap 的（更早的）提前收掉
@@ -927,75 +978,144 @@ function trimToasts(nodes, m, cap) {
   }
 }
 
-// 「往上长」：居中，底边贴着准心上方状态短提示那一格，往上排到信息块 / 状态条 / 横幅 / 触屏键为止（在两边的东西收窄列宽让开，在中间的就压低上限）。
+// 「往上长」：居中，底边贴着准心上方状态短提示那一格，往上排到信息块 / 状态条 / 横幅 / 触屏键为止。
+// 竖屏开车提示框挪到了准心上方（DV.place.upper）时，底边改贴着它的上沿（返修 r2：以前 toast 往上长会和它叠在一起）。
+// 返修 r2 起按实际排出来的那一列找位置：先试最宽的一列，再试收窄到让开两边东西的一列（按这个宽度重新量每条多高），
+// 哪个留下的条数多用哪个（一样多用宽的，行数少）；只看和这一列上下有交叠的东西 —— 右上角的「暂停」键这类比列顶还高的不再让列收窄。
+// 连最新那一条都怎么都放不下才退回老办法（列宽收窄、上限压到中间那些东西下面，最新那条照常显示）。
 // 返回 { m: 各条高度, cap: 往上最多放多高 }
-function placeUp(nodes, mid) {
+function placeUp(nodes, mid, stand) {
   const H = window.innerHeight || document.documentElement.clientHeight || 0;
   const W = window.innerWidth || document.documentElement.clientWidth || 0;
   const cx = W / 2;
-  {
-    // 底边：状态短提示那一格（显示着就量它，没显示按一行高留着，免得它一出来 toast 就跳）
-    let noteTop = mid - 30 - 30;
-    if (DV.noteOn && !dom.driveNote.hidden) {
-      const nr = dom.driveNote.getBoundingClientRect();
-      if (nr.height > 0) noteTop = Math.min(noteTop, nr.top);
-    }
-    const bottom = noteTop - TOAST_GAP;
-    let half = Math.min(520, W - 32) / 2, limit = 8;
-    const blocks = [];
-    // 上半屏别的东西：信息块、状态条、警告、横幅，还有联机的麦克风键（coop.js）、测试模式的「实体」键（testmode.js）
-    const others = [dom.infoBlock, dom.stats, dom.warn, dom.notices, document.querySelector('.coop-mic'), document.querySelector('.test-entry')];
-    for (const el of others) {
-      if (!el || el.hidden) continue;
-      const r = el.getBoundingClientRect();
-      if (r.height > 0 && r.width > 0) blocks.push({ l: r.left, r: r.right, t: r.top, b: r.bottom });
-    }
-    const inp = BR.input;
-    if (S.touch && inp && has(inp, 'touchLayout')) {
-      let L = null;
-      try { L = inp.touchLayout(); } catch (err) { L = null; }
-      if (L) for (const b of L.buttons) blocks.push(b);
-    }
-    for (const b of blocks) {
-      if (b.t >= bottom) continue;
-      // 在两边（离中线 ≥ 100px，窄屏按屏宽的 1/5）：收窄列宽让开；挡在中间：上限压到它下面
-      const near = b.l >= cx ? b.l - cx : b.r <= cx ? cx - b.r : 0;
-      if (near >= Math.min(100, W * 0.2)) half = Math.min(half, near - 8);
-      else limit = Math.max(limit, b.b + TOAST_GAP);
-    }
-    setToastUp(Math.max(1, Math.round(H - bottom)), Math.floor(half * 2));
-    return { m: toastHeights(nodes), cap: Math.max(0, bottom - limit) };
+  // 底边：状态短提示那一格（显示着就量它，没显示按一行高留着，免得它一出来 toast 就跳）。
+  // stand（矮横屏站着，FE1Q J5）：没在开车就没有状态短提示，底边贴到准心（连进度环）上面 —— 568×320 上留一格就放不下断电那条长提示
+  let noteTop = stand ? mid - CROSS_REACH : mid - 30 - 30;
+  if (!stand && DV.noteOn && !dom.driveNote.hidden) {
+    const nr = dom.driveNote.getBoundingClientRect();
+    if (nr.height > 0) noteTop = Math.min(noteTop, nr.top);
   }
+  let bottom = noteTop - TOAST_GAP;
+  const full = Math.min(520, W - 32) / 2, side = Math.min(100, W * 0.2);
+  const nearOf = b => b.l >= cx ? b.l - cx : b.r <= cx ? cx - b.r : 0;
+  const blocks = [];
+  // 上半屏别的东西：信息块、状态条、警告、横幅，还有联机的麦克风键（coop.js）、测试模式的「实体」键（testmode.js）
+  const others = [dom.infoBlock, dom.stats, dom.warn, dom.notices, document.querySelector('.coop-mic'), document.querySelector('.test-entry')];
+  for (const el of others) {
+    if (!el || el.hidden) continue;
+    const r = el.getBoundingClientRect();
+    if (r.height > 0 && r.width > 0) blocks.push({ l: r.left, r: r.right, t: r.top, b: r.bottom });
+  }
+  const inp = BR.input;
+  if (S.touch && inp && has(inp, 'touchLayout')) {
+    let L = null;
+    try { L = inp.touchLayout(); } catch (err) { L = null; }
+    if (L) {
+      for (const b of L.buttons) blocks.push(b);
+      if (L.stick) blocks.push({ l: L.stick.l, t: L.stick.t, r: L.stick.r2, b: L.stick.b });
+    }
+  }
+  // 准心上方的开车提示框：跨着中间就把底边抬到它上沿上面；偏在一边就和别的东西一样让开
+  if (DV.on && DV.place && DV.place.upper && !dom.drive.hidden) {
+    const r = dom.drive.getBoundingClientRect();
+    if (r.height > 0 && r.width > 0) {
+      const b = { l: r.left, r: r.right, t: r.top, b: r.bottom };
+      if (nearOf(b) < side && b.t - TOAST_GAP < bottom) bottom = b.t - TOAST_GAP;
+      else blocks.push(b);
+    }
+  }
+  // 矮横屏站着时底边贴着准心，旁边的键（568×320 的「冲刺」）上沿可能就在底边下面一点：底边往下 4 px 以内的也让开，和别处一样留 4 px
+  const live = blocks.filter(b => b.t < bottom + (stand ? 4 : 0));
+  const up = Math.max(1, Math.round(H - bottom));
+  // 宽 2·half 的一列：从最新的往回排，最多留几条不压任何东西（列顶不高过 8 px）
+  const tryHalf = half => {
+    setToastUp(up, Math.floor(half * 2));
+    const m = toastHeights(nodes);
+    let used = 0, n = 0;
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      used += m.hs[i] + (i < nodes.length - 1 ? TOAST_GAP : 0);
+      const top = bottom - used, l = cx - half, r = cx + half;
+      if (top < 8 || live.some(b => b.l < r + 4 && b.r > l - 4 && b.t - 4 < bottom && b.b + TOAST_GAP > top)) break;
+      n++;
+    }
+    return { half, m, n, used: n ? m.hs.slice(nodes.length - n).reduce((a, h, i) => a + h + (i ? TOAST_GAP : 0), 0) : 0 };
+  };
+  // 老办法的列宽和上限：两边（离中线 ≥ 100px，窄屏按屏宽的 1/5）的收窄列宽让开；挡在中间的把上限压到它下面
+  let narrow = full, limit = 8;
+  for (const b of live) {
+    const near = nearOf(b);
+    if (near >= side) narrow = Math.min(narrow, near - 8);
+    else limit = Math.max(limit, b.b + TOAST_GAP);
+  }
+  let best = tryHalf(full);
+  if (best.n < nodes.length && narrow < full - 0.5) {
+    const c = tryHalf(narrow);
+    if (c.n > best.n) best = c;
+    else setToastUp(up, Math.floor(best.half * 2));
+  }
+  if (best.n > 0) {
+    if (S.toastUpW !== Math.floor(best.half * 2)) best = tryHalf(best.half);
+    return { m: best.m, cap: best.used + 0.5 };
+  }
+  setToastUp(up, Math.floor(narrow * 2));
+  return { m: toastHeights(nodes), cap: Math.max(0, bottom - limit) };
 }
 
 // 触屏站着（没开车）时 toast 的位置（FE1 返修 r7）：平常在准心提示下面；那一列压着看得见的触屏键或待机摇杆
 // （360×640 竖屏上往货叉上丢东西的两行提示正好盖住「丢弃」键和摇杆上沿），就改成「往上长」，和开车时一样。
 // 平常版式下每条的位置按算的（列顶 = 屏幕中线 + dy，一条条往下排、居中），不量 getBoundingClientRect：
-// 列的 margin-top 有 0.12 s 的过渡、新 toast 有淡入的位移，刚换完 dy 那一下量出来的是半路上的位置
+// 列的 margin-top 有 0.12 s 的过渡、新 toast 有淡入的位移，刚换完 dy 那一下量出来的是半路上的位置。
+// 矮横屏（高 ≤ 520，FE1Q J5；FE1 起就有的毛病：640×360、568×320 站着来两条两行提示，右上角那一列一直排到「冲刺」「丢弃」键和
+// 准心提示上，测试模式还压着「实体」键）：平常在右上角暂停键下面（css），那一列压到触屏键、待机摇杆、「实体」键、开麦键或准心提示
+// （cornerColumnHit）就改成往上长：居中，底边贴着准心上面（没在开车，没有状态短提示那一格），放不下的从最早的收掉。
+// 一旦往上长了，这一批 toast 都收掉之前一直往上长（FE1Q J5）：以前最早那条到时间收掉、剩下的放得回原位，就一下跳回原位，正在看的字会跳走
 function avoidTouch(dy, mid) {
   const nodes = [];
   for (const t of S.toasts) if (!t.leaving) nodes.push(t);
+  const inp = BR.input;
+  if (!nodes.length) {
+    // 只剩正在淡出的：留在原地淡完，不跳（全部移走以后 placeToasts 自己回到平常版式）
+    if (!S.toasts.length) setToastUp(0, 0);
+    return;
+  }
+  const short = shortScreen();
+  // 矮横屏开着测试面板（右侧抽屉，html.br-test-open）时 css 把 toast 挪到了左边，往上长的居中列会钻到抽屉底下：照旧
+  const testOpen = short && document.documentElement.classList.contains('br-test-open');
+  if (!inp || !has(inp, 'touchLayout') || S.toastTop > 0 || testOpen) { setToastUp(0, 0); return; }
+  if (!(S.toastUp > 0)) {
+    if (short ? !cornerColumnHit(nodes) : !touchColumnHit(nodes, mid + dy, Infinity)) return;
+  }
+  const r = placeUp(nodes, mid, short);
+  trimToasts(nodes, r.m, r.cap);
+}
+
+// 矮横屏站着：右上角那一列（平常版式，css .hud-toasts 的 max-height:520px 那一段）压不压看得见的触屏键、待机摇杆、测试模式的「实体」键、
+// 联机的开麦键、准心提示（左右上下各留 4 px）。列的位置量容器（矮屏这一列没有 margin-top 过渡、没有 transform），
+// 每条的左右用布局位置（offsetLeft，不受淡入动画的位移影响），上下按没在收的那几条一条条往下排（正在淡出的马上就移走）
+function cornerColumnHit(nodes) {
   setToastUp(0, 0);
   const inp = BR.input;
-  if (!nodes.length || !inp || !has(inp, 'touchLayout') || shortScreen() || S.toastTop > 0) return;
   let L = null;
   try { L = inp.touchLayout(); } catch (err) { L = null; }
-  if (!L) return;
-  const blocks = L.buttons.slice();
-  if (L.stick) blocks.push({ l: L.stick.l, t: L.stick.t, r: L.stick.r2, b: L.stick.b });
-  const cx = (window.innerWidth || document.documentElement.clientWidth || 0) / 2;
-  let y = mid + dy, hit = false;
+  const blocks = L ? L.buttons.slice() : [];
+  if (L && L.stick) blocks.push({ l: L.stick.l, t: L.stick.t, r: L.stick.r2, b: L.stick.b });
+  const extra = [document.querySelector('.test-entry'), document.querySelector('.coop-mic'), dom.prompt];
+  for (const el of extra) {
+    if (!el || el.hidden) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden') blocks.push({ l: r.left, t: r.top, r: r.right, b: r.bottom });
+  }
+  if (!blocks.length) return false;
+  const c = dom.toasts.getBoundingClientRect();
+  let y = c.top;
   for (const t of nodes) {
     const w = t.node.offsetWidth, h = t.node.offsetHeight;
     if (!(w > 0 && h > 0)) continue;
-    const a = { l: cx - w / 2, r: cx + w / 2, t: y, b: y + h };
+    const a = { l: c.left + t.node.offsetLeft, r: c.left + t.node.offsetLeft + w, t: y, b: y + h };
     y += h + TOAST_GAP;
-    for (const b of blocks) if (a.l < b.r + 4 && a.r > b.l - 4 && a.t < b.b + 4 && a.b > b.t - 4) { hit = true; break; }
-    if (hit) break;
+    for (const b of blocks) if (a.l < b.r + 4 && a.r > b.l - 4 && a.t < b.b + 4 && a.b > b.t - 4) return true;
   }
-  if (!hit) return;
-  const r = placeUp(nodes, mid);
-  trimToasts(nodes, r.m, r.cap);
+  return false;
 }
 
 function updatePrompt(dt, p, dead) {
@@ -1284,6 +1404,7 @@ function resetDrivePlace() {
   toggle(dom.drive, 'hud-drive-placed', false);
   for (const m of DRIVE_MODES) if (m) toggle(dom.drive, m, false);
   DV.place = null;
+  setStickCap(null);
 }
 
 function rectOf(el) {
@@ -1353,6 +1474,9 @@ function placeDrive(pr) {
   const xMin = ins.l + 8, xMax = W - ins.r - 8, yMin = promptB + DRIVE_GAP, cx = W / 2;
   const hard = L.buttons.slice();
   if (L.stick) hard.push({ l: L.stick.l, t: L.stick.t, r: L.stick.r2, b: L.stick.b });
+  // 竖屏开车：摇杆区（上沿最高可以到 capMax）里任何一点按下推得到的范围，提示框一律让开
+  const cap = L.stick && S.touch && H > W ? stickCap(L) : null;
+  if (cap) hard.push({ l: -1e4, t: cap.max - cap.R, r: W / 2 + cap.R, b: 1e5 });
   if (pr) hard.push({ l: pr.left, t: pr.top, r: pr.right, b: pr.bottom });
   const row = rectOf(dom.invRow);
   const inv = [row];
@@ -1366,27 +1490,40 @@ function placeDrive(pr) {
   // 第一个放得下（不压任何东西）的档就用它；都放不下用最后一档的兜底位置。电脑只有一档
   const modes = S.touch ? DRIVE_MODES : [''];
   let found = null, fit = false, mode = '', cands = [], upper = false;
-  for (let mi = 0; mi < modes.length; mi++) {
-    for (const m of DRIVE_MODES) if (m) toggle(el, m, m === modes[mi]);
-    mode = modes[mi];
-    const r = searchDrive(el, st, { hard, inv, reserve, row, invTop, floor, xMin, xMax, yMin, cx });
-    found = r.found; cands = r.cands; fit = !!found;
-    if (fit) break;
-  }
+  const tryBelow = list => {
+    for (let mi = 0; mi < list.length && !found; mi++) {
+      for (const m of DRIVE_MODES) if (m) toggle(el, m, m === list[mi]);
+      mode = list[mi];
+      const r = searchDrive(el, st, { hard, inv, reserve, row, invTop, floor, xMin, xMax, yMin, cx });
+      found = r.found; cands = r.cands; fit = !!found;
+    }
+  };
   // 准心下面怎么都放不下（320×568 这种又窄又矮的竖屏：背包栏、物品名、按钮和摇杆把下半屏占满了）：挪到准心上方，
   // 状态短提示那一格上面、左上信息块下面，让开按钮、测试模式的「实体」键、联机的麦克风键（FE1 返修 r2：以前退到准心提示正下方，
   // 第二行压在物品名和背包栏上，字叠字）。还是按档试，先试字大的
-  if (!found && S.touch) {
+  const tryUpper = list => {
     const H2 = H / 2;
     let noteTop = H2 - 30 - 30;
     if (DV.noteOn && !dom.driveNote.hidden) { const nr = dom.driveNote.getBoundingClientRect(); if (nr.height > 0) noteTop = Math.min(noteTop, nr.top); }
     const ups = hard.concat(upperBlocks());
-    for (let mi = 0; mi < modes.length && !found; mi++) {
-      for (const m of DRIVE_MODES) if (m) toggle(el, m, m === modes[mi]);
-      mode = modes[mi];
+    for (let mi = 0; mi < list.length && !found; mi++) {
+      for (const m of DRIVE_MODES) if (m) toggle(el, m, m === list[mi]);
+      mode = list[mi];
       const r = searchUpper(el, st, { hard: ups, xMin, xMax, cx, noteTop, topLimit: ins.t + 4 });
       if (r.found) { found = r.found; fit = true; upper = true; cands = r.cands; }
     }
+  };
+  if (S.touch && H > W) {
+    // 竖屏（FE1P H15）：摇杆推得到的那一圈让出来以后，准心下面常常只剩摇杆和右边那列键之间一条窄缝 —— 宁可挪到准心上方，
+    // 也不把「按住「升」「降」动货叉」拆成两行塞进窄缝：先试下面不拆段的几档，再试上面不拆段的几档，最后才拆段
+    const whole = modes.filter(m => m !== 'hud-drive-split'), split = modes.filter(m => m === 'hud-drive-split');
+    tryBelow(whole);
+    if (!found) tryUpper(whole);
+    if (!found) tryBelow(split);
+    if (!found) tryUpper(split);
+  } else {
+    tryBelow(modes);
+    if (!found && S.touch) tryUpper(modes);
   }
   // 还是放不下：压住物品名那一行（总比压住按钮强），按档再试一遍
   if (!found) {
@@ -1404,7 +1541,54 @@ function placeDrive(pr) {
   st.width = Math.ceil(found.w) + 'px';
   st.left = Math.round(found.x) + 'px';
   st.top = Math.round(found.y) + 'px';
-  DV.place = { sig, x: found.x, y: found.y, w: found.w, fit, cands, mode, upper };
+  const dots = S.touch ? trimDots(el) : 0;
+  // 摇杆区上沿：提示框底边 + 推得到的半径 + 间距（提示框在右边推不到的地方就不用收）；放不下兜底时收到 capMax 为止
+  let stickTop = null, reach = true;
+  if (cap) {
+    const hb = found.y + el.offsetHeight, hl = found.x;
+    if (hl >= W / 2 + cap.R + DRIVE_GAP) stickTop = 0;
+    else {
+      stickTop = Math.ceil(hb + cap.R + DRIVE_GAP);
+      if (stickTop > cap.max) { stickTop = Math.floor(cap.max); reach = false; }
+    }
+  }
+  setStickCap(stickTop);
+  DV.place = { sig, x: found.x, y: found.y, w: found.w, fit, cands, mode, upper, dots, stickTop, stickReach: cap ? cap.R : null, stickOk: reach };
+}
+
+// 竖屏开车的摇杆区（见 STICK_OVER）：R = 手指按下的地方到圆头外沿最远能推到多远；max = 摇杆区上沿最多收到这里
+// （待机摇杆上沿再往上 STICK_ROOM·r，拇指按在待机摇杆上或者偏上一点都起得了摇杆）
+function stickCap(L) {
+  const sk = L.stick;
+  const kn = document.querySelector('.touch-knob');
+  const kr = kn && kn.offsetWidth > 0 && kn.offsetWidth < sk.r * 2 ? kn.offsetWidth / 2 : Math.round(sk.r * 0.45);
+  return { R: sk.r * (1 + STICK_OVER) + kr, max: sk.t - STICK_ROOM * sk.r };
+}
+// 摇杆区上沿：null = 不收（横屏、电脑、没在开车）；数字 = 竖屏开车时左边摇杆区从这个高度往下才起摇杆（css/game.css html.hud-stick-cap）
+function setStickCap(top) {
+  const de = document.documentElement;
+  if (top == null || !(top > 0)) {
+    if (de.classList.contains('hud-stick-cap')) { de.classList.remove('hud-stick-cap'); de.style.removeProperty('--hud-stick-top'); }
+    return;
+  }
+  de.style.setProperty('--hud-stick-top', Math.round(top) + 'px');
+  de.classList.add('hud-stick-cap');
+}
+
+// 折好行以后，挂在一行末尾的「 ·」藏起来（FE1P H15：竖屏两三行时第一行末尾吊着一个点）。用 visibility 藏，占的宽度不变，
+// 不会因为让出几个像素把下一段拉上来、来回跳。返回藏了几个
+function trimDots(el) {
+  const segs = Array.from(el.querySelectorAll('.hud-drive-seg'));
+  let n = 0;
+  for (let i = 0; i < segs.length; i++) {
+    const dot = segs[i].querySelector('.hud-drive-dot');
+    if (!dot) continue;
+    const next = segs[i + 1];
+    const end = !next || next.getBoundingClientRect().top > segs[i].getBoundingClientRect().top + 2;
+    toggle(dot, 'hud-drive-dot-end', end);
+    if (end) n++;
+  }
+  return n;
 }
 
 // 上半屏别的东西：左上信息块、状态条、警告、横幅，联机的麦克风键（coop.js）、测试模式的「实体」键（testmode.js）
@@ -2258,7 +2442,8 @@ BR.hud = {
   setDrive, driveNote,
   get drive() {
     return { on: DV.on, touch: !!DV.touch, text: DV.on ? dom.driveText.textContent : '', note: DV.noteOn ? DV.note : '',
-      place: DV.place ? { x: DV.place.x, y: DV.place.y, w: DV.place.w, fit: DV.place.fit, cands: DV.place.cands, mode: DV.place.mode || '', upper: !!DV.place.upper } : null };
+      place: DV.place ? { x: DV.place.x, y: DV.place.y, w: DV.place.w, fit: DV.place.fit, cands: DV.place.cands, mode: DV.place.mode || '', upper: !!DV.place.upper,
+        dots: DV.place.dots || 0, stickTop: DV.place.stickTop, stickReach: DV.place.stickReach, stickOk: DV.place.stickOk } : null };
   },
   get visible() { return S.visible; },
   get paused() { return S.paused; },

@@ -744,6 +744,14 @@ function startStick(t) {
   drawStick(st.ox, st.oy, 0, 0);
 }
 
+// 竖屏开车时摇杆区上沿（px，见 hud.js setStickCap）；没收窄时 null
+function stickCapTop() {
+  const de = document.documentElement;
+  if (!de || !de.classList.contains('hud-stick-cap')) return null;
+  const v = parseFloat(de.style.getPropertyValue('--hud-stick-top'));
+  return v > 0 ? v : null;
+}
+
 function moveStick(t) {
   const st = T.stick, r = st.r;
   if (st.reanchor) {
@@ -753,13 +761,27 @@ function moveStick(t) {
     st.oy = t.clientY;
   }
   let dx = t.clientX - st.ox, dy = t.clientY - st.oy;
-  const len = Math.sqrt(dx * dx + dy * dy);
+  let len = Math.sqrt(dx * dx + dy * dy);
   if (len > r) {
     // 拖出圈外时圆心跟着手指走，往反方向推时不必先退回整个半径
     dx *= r / len;
     dy *= r / len;
     st.ox = t.clientX - dx;
     st.oy = t.clientY - dy;
+  }
+  // 竖屏开车（hud.js 给 <html> 加 hud-stick-cap、写 --hud-stick-top）：圆心不高过摇杆区上沿 —— 手指一路往上拖，圆心停在上沿、
+  // 圆头最高到「上沿 − 半径」，hud.js 摆提示框时已经让开了这一圈（FE1P H15 返修 r2）。左右照旧跟着手指走
+  const cap = stickCapTop();
+  if (cap != null && st.oy < cap) {
+    st.oy = cap;
+    dx = t.clientX - st.ox;
+    dy = t.clientY - st.oy;
+    len = Math.sqrt(dx * dx + dy * dy);
+    if (len > r) {
+      dx *= r / len;
+      dy *= r / len;
+      st.ox = t.clientX - dx;
+    }
   }
   const m = Math.min(len, r) / r;
   if (m < STICK_DEAD) {

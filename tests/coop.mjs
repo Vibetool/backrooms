@@ -14,6 +14,8 @@
 //   V13 / V13b 全速撞上去时货叉上的东西整排往前甩出去（找一条车轮挡直道，叉尖前面是空地；找不到退回撞柱子），客机开车由房主算（use 'fkthrow'）、
 //   房主开车发 net:fkthrow，两边落点一样；V13d 房主发往客机的消息卡住 6 s（回复晚于客机的 4 s 等待）：客机照样按房主的广播摆，两边最终一致、货叉上不剩东西；
 //   V13c 客机撞上就按住 S 倒车：等房主回轨迹、整排停下以前车锁着不动，解锁后才倒出去，离开货叉以后不停在叉面高度、按重力往下落（nograv）；
+//   FE1Q J6：甩货直道（V.chockLane / V.pillarLane）的起点、整条路径、起点往后 0.5 m 的倒车余量碰到出口圈 / keepClear 的跳过 ——
+//   以前随机种子偶尔挑到起点压在出口圈里的直道，往前开得出去、撞上以后倒车被「后面是出口」挡住，V13c / V13d 偶尔挂；V13 多一项核对并记下这一局的种子。
 //   V14 / V14b 客机开着车时出站消息被攒住（连接不断）7 s / 20 s：人还坐着、补到以后两边一致；要不回租约被放下车时房主把车挪到他下车的地方。
 //   V14c 消息攒住期间房主收走租约、这台车在房主那边被挪开：客机晚到的 rel 不把车挪回去（hostRel 的 vehFin 拒绝分支），客机那边被拉过去。
 //   短按一律在同一个 evaluate 里派发 keydown / keyup（N1 minor ⑤：机器忙时两次 CDP 按键之间隔得太久会被当成长按）。
@@ -223,7 +225,63 @@ async function step(title, fn) {
     await fn();
   } catch (err) {
     check(title + '：流程未中断', false, String(err && err.stack || err).split('\n').slice(0, 4).join(' | '));
+    await cleanAfterAbort(title);
   }
+}
+// 返修 FE1Q · repair-r3（验收员 spec：负载 50–60 时 V6 的 page.evaluate 超过 45 s 跳出去，accelTo 按住的 W 一直没松，
+// 车在没人按键的情况下往前溜，把后面的 V8「重连后车不瞬移」也连带弄挂）：一段中途出错以后，把当前两页（lockPages）的
+// 按键全部松开（CDP 键盘 + 页面里派发的 keyup，__v.down 是派发的），钉住的测试人（V6 的 __v6pins）摘掉，
+// 「切后台」的 document.hidden 改写还原、暂停关掉 —— 后一段从干净的状态开始。每页最多等 10 s，出错只记一行日志
+const HELD_CODES = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyR', 'KeyC', 'KeyQ', 'Space', 'ShiftLeft', 'ShiftRight'];
+async function cleanAfterAbort(title) {
+  for (const p of lockPages) {
+    if (!p || (typeof p.isClosed === 'function' && p.isClosed())) continue;
+    for (const c of HELD_CODES) { try { await p.keyboard.up(c); } catch (err) { /* 页面已关 */ } }
+    try {
+      const r = await Promise.race([
+        p.evaluate(codes => {
+          for (const code of codes) window.dispatchEvent(new KeyboardEvent('keyup', { code, key: code === 'Space' ? ' ' : code.replace(/^Key|Left$|Right$/g, '').toLowerCase(), bubbles: true, cancelable: true }));
+          const out = { pins: 0, hidden: false, paused: false };
+          if (window.__v6pins) {
+            window.__v6pins.forEach((_, id) => { out.pins++; try { if (window.BR && BR.entities) BR.entities.remove(id); } catch (e) { /* 忽略 */ } });
+            window.__v6pins.clear();
+          }
+          if (Object.getOwnPropertyDescriptor(document, 'hidden')) {
+            delete document.hidden; delete document.visibilityState;
+            document.dispatchEvent(new Event('visibilitychange'));
+            out.hidden = true;
+          }
+          if (window.BR && BR.hud && BR.hud.paused) { BR.hud.pause(false); out.paused = true; }
+          return out;
+        }, HELD_CODES),
+        sleep(10000).then(() => 'timeout'),
+      ]);
+      logLine('     （' + title + ' 中途出错：已松开按键并清场 ' + JSON.stringify(r) + '）');
+    } catch (err) {
+      logLine('     （' + title + ' 中途出错：清场失败 ' + String(err && err.message || err).slice(0, 200) + '）');
+    }
+  }
+}
+
+// 客机重新上车（返修 FE1Q · repair-r3，照 V8 的办法）：standAim（player.reset + 显式对准车身），等准心提示变成「上车」（每秒重对一次、最多 8 s）再短按空格，
+// 等起动走完；没坐上就再来一遍。两遍都没坐上时记下现场（V.aimDiag）。返回 __v.seat()
+async function remountGuest(driver, K, tag) {
+  let s = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await ev(driver, k => __v.standAim(k, 1.2, 0.24), K);
+    await sleep(600);
+    let aimOk = false;
+    for (let t = 0; t < 8 && !aimOk; t++) {
+      aimOk = await waitFor(driver, k => { const c = BR.interact.current; return !!c && c.kind === 'vehicle' && c.key === k && (!c.short || c.short.ok !== false); }, K, 1000);
+      if (!aimOk) await ev(driver, k => __v.standAim(k, 1.2, 0.24), K);
+    }
+    await ev(driver, () => __v.tap('Space'));
+    await ev(driver, () => __v.untilRun());
+    s = await ev(driver, () => __v.seat());
+    if (s.seated === K) return s;
+    info(tag + ' 客机重新上车第 ' + (attempt + 1) + ' 遍没坐上', { aimOk, s, diag: await ev(driver, k => __v.aimDiag(k), K) });
+  }
+  return s;
 }
 
 // =====================================================================
@@ -459,6 +517,40 @@ function installHelpers() {
       });
     });
     return suit;
+  };
+  // 坐在叉车上的对方（坐姿人形，程序化防化服）：手套、靴子、面罩的最终颜色（材质色 × 顶点色，换成 sRGB 色阶）和走路时的 hazmat.glb 比；
+  // 顶点级：制服色（body / head）顶点在手套顶面以下的都藏在手套方块里，在靴口以下的都藏在靴子方块里（FE1P H10）
+  T.seatGear = () => {
+    const seat = BR.gfx.scene.getObjectByName('coop-peer-seat');
+    let mesh = null;
+    if (seat) seat.traverse(o => { if (!mesh && o.isSkinnedMesh) mesh = o; });
+    if (!mesh) return null;
+    const toS = v => { v = Math.max(0, v); return Math.round((v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055) * 255); };
+    const glb = {};
+    const g = BR.assets.modelSync('hazmat');
+    if (g) g.traverse(o => { if (o.isMesh) for (const m of (Array.isArray(o.material) ? o.material : [o.material])) if (m && m.name && m.color) glb[m.name.replace(/\.\d+$/, '')] = [m.color.r, m.color.g, m.color.b].map(toS); });
+    const rig = mesh.userData.rig, d = rig.meta.dims, H = d.H, geo = mesh.geometry, pos = geo.attributes.position, idx = geo.index, col = geo.attributes.color, si = geo.attributes.skinIndex;
+    const slotOf = [], matOf = [];
+    for (const gr of geo.groups) for (let i = gr.start; i < gr.start + gr.count; i++) { const v = idx ? idx.getX(i) : i; slotOf[v] = rig.slots[gr.materialIndex]; matOf[v] = mesh.material[gr.materialIndex]; }
+    const gw = (0.035 * H * 1.35 + 0.01) / 2, gh = 0.03 * H, gd = (0.05 * H * 1.35 + 0.01) / 2, gy = d.handY - 0.005 * H;
+    const fin = i => { const c = matOf[i].color, t = col ? [col.getX(i), col.getY(i), col.getZ(i)] : [1, 1, 1]; return [c.r * t[0], c.g * t[1], c.b * t[2]].map(toS); };
+    let outG = 0, outB = 0, glove = null, boot = null;
+    const v = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i);
+      const s = slotOf[i], b = rig.list[si.getX(i)].name;
+      if (s === 'body' || s === 'head') {
+        if (/^fore/.test(b) && v.y < gy + gh - 1e-4 && !(Math.abs(Math.abs(v.x) - d.shoulderW) <= gw + 1e-4 && Math.abs(v.y - gy) <= gh + 1e-4 && Math.abs(v.z) <= gd + 1e-4)) outG++;
+        if (/^shin/.test(b) && v.y < 0.13 - 1e-4 && !(Math.abs(Math.abs(v.x) - d.hipW) <= 0.07 + 1e-4 && v.y >= -1e-4 && v.z >= -0.165 - 1e-4 && v.z <= 0.105 + 1e-4)) outB++;
+      } else if (s === 'gear') {
+        if (!glove && /^fore/.test(b) && v.y < gy - gh * 0.5) glove = fin(i);
+        if (!boot && /^shin/.test(b) && v.y < 0.06) boot = fin(i);
+      }
+    }
+    const dd = (a, n) => (a && glb[n] ? Math.max.apply(null, a.map((x, k) => Math.abs(x - glb[n][k]))) : 99);
+    // 低画质（FE1Q J7 起）面罩框、滤罐、手套、靴子也按 glb 的颜色上 tint，量出来差 0；容差照 smoke 低画质那项留 6
+    const low = /detail="low"/.test(String(rig.key));
+    return { glove, boot, glb: { Gloves: glb.Gloves, Boots: glb.Boots }, gloveD: dd(glove, 'Gloves'), bootD: dd(boot, 'Boots'), tol: low ? 6 : 1, low, outG, outB };
   };
   T.peerSuit = () => {
     const o = BR.gfx.scene.getObjectByName('coop-peer');
@@ -723,8 +815,12 @@ async function lockHintCheck(tag) {
   if (s0 && s0.hint && !s0.locked) {
     await p.mouse.click(s0.cx, s0.cy);
     const locked = await waitFor(p, () => !!document.pointerLockElement, null, 3000);
-    await p.mouse.move(400, 300); await p.mouse.move(600, 300);
-    await sleep(400);
+    // 鼠标分几步横移，等视角真转过去（最多 3 s）；以前固定等 400 ms，机器忙时 yaw 还没变就判了失败（FE1Q 验收 minor）
+    let turned = false;
+    for (let i = 0; i < 6 && !turned; i++) {
+      await p.mouse.move(400, 300, { steps: 4 }); await p.mouse.move(600, 300, { steps: 4 });
+      turned = await waitFor(p, y0 => Math.abs(BR.player.yaw - y0) > 0.01, s0.yaw, 500);
+    }
     const s1 = await look(p);
     check(tag + '：照横幅说的点在它正中 → 指针锁上、横幅收起，鼠标横移视角会转', locked && s1.locked && !s1.hint && Math.abs(s1.yaw - s0.yaw) > 0.01, { before: s0, after: s1 });
   }
@@ -1525,17 +1621,39 @@ async function run(browser, base) {
     await sleep(100);
     await A.keyboard.down('Space');
     const pressed = await waitFor(A, () => BR.interact.state === 'pressed', null, 1500);
+    // 返修 FE1Q · repair-r2（验收员 tests：负载约 30 时偶尔判反 —— 东西进了 A 的背包）：这一项是竞态，前提是「B 的拾取请求批下来的时候
+    // A 还按着、还没到 holdMs 进拖动」。A 那边逐帧看：东西在房主（A）这边消失之前 A 的 interact 有没有离开 pressed（进了拖动 / 长按）；
+    // 东西消失（批给了 B）以后才松开空格。前提不成立（A 没进 pressed、等 6 s 都没批下来、批下来之前 A 已经进了拖动）记 SKIP，只查不复制
+    const pollA = ev(A, id => new Promise(res => {
+      const t0 = performance.now();
+      let left = null;
+      const tick = () => {
+        const st = BR.interact.state, gone = !BR.items.find(id);
+        if (!gone && st !== 'pressed' && left == null) left = st;
+        if (gone || performance.now() - t0 > 6000) { res({ gone, left, ms: Math.round(performance.now() - t0) }); return; }
+        requestAnimationFrame(tick);
+      };
+      tick();
+    }), it3.id);
     await ev(B, t => { BR.bus.emit('item:pickRequest', { id: t.id, type: t.type }); }, it3);
-    const goneA3 = await waitFor(A, id => !BR.items.find(id), it3.id, 3000);
+    const r3 = await pollA;
+    const goneA3 = r3.gone;
     await sleep(250);
     await A.keyboard.up('Space');
     const goneB3 = await waitFor(B, id => !BR.items.find(id), it3.id, 3000);
     await sleep(300);
     const after3 = { A: await count(A, it3.type), B: await count(B, it3.type) };
     const t3 = await ev(A, n => __t.toasts.slice(n), n3);
-    if (!pressed) info(tag + ' 同时捡：A 的空格没进 pressed（机器忙），这一项只看不复制', { t3 });
-    check(tag + ' 两人同时捡同一件：东西只进 B 的背包，A 那边落空并提示「「客机B」先拿到了」', goneA3 && goneB3 && after3.B === before3.B + 1 && after3.A === before3.A &&
-      (!pressed || t3.some(t => /「客机B」先拿到了/.test(t))), { it: it3.id, pressed, before3, after3, toasts: t3 });
+    const dA3 = after3.A - before3.A, dB3 = after3.B - before3.B;
+    if (!pressed || !goneA3 || r3.left) {
+      const why = !pressed ? 'A 的空格没进 pressed' : !goneA3 ? '6 s 里 B 的请求都没批下来' : 'B 的请求批下来之前 A 已经进了 ' + r3.left + '（按满 holdMs）';
+      skips.push(tag + ' 两人同时捡同一件（' + why + '，机器忙，前提不成立）');
+      info(tag + ' 同时捡：前提不成立（' + why + '），这一项只查不复制', { r3, pressed, before3, after3, toasts: t3 });
+      check(tag + ' 两人同时捡同一件（前提不成立时）：东西没有复制（两边背包合起来最多多 1 件）', dA3 >= 0 && dB3 >= 0 && dA3 + dB3 <= 1, { r3, before3, after3 });
+    } else {
+      check(tag + ' 两人同时捡同一件：东西只进 B 的背包，A 那边落空并提示「「客机B」先拿到了」', goneB3 && dB3 === 1 && dA3 === 0 &&
+        t3.some(t => /「客机B」先拿到了/.test(t)), { it: it3.id, pressed, r3, before3, after3, toasts: t3 });
+    }
 
     // 慢了半拍（2026-10-05 返修 r2）：B 准心对着它，A 先拿走了；东西在 B 屏幕上消失后 0.15 s B 才按到（准心上已经没有它了）
     // → B 也要提示「「房主A」先拿到了」（interact 记着 1 s 内对准过的那件）
@@ -2091,6 +2209,26 @@ function installVeh() {
   };
   V.cur = () => { const c = BR.interact.current; return c ? { kind: c.kind, key: c.key, ok: c.short ? c.short.ok !== false : null, why: c.short ? c.short.why : null } : null; };
   V.seat = () => ({ seated: BR.vehicles.seated, mode: BR.interact.mode, ctx: BR.input.context, phase: BR.vehicles.debugInfo().phase, coop: BR.coop.phase });
+  // 返修 FE1Q · repair-r2（验收员 spec：负载 45 时 V8 standL 以后 8 s 准心一直什么都没对着，接着 V12 也挂，失败时记的东西不够定位）：
+  // 上车前照 tests/forklift.mjs mountCar 的做法 —— player.reset 到站立点（脚底高度按地面重算、清掉下车时留下的状态），
+  // 再 aimAt 显式对准座椅那一侧的车身；V.frames 数 rAF 帧（等待期间游戏循环到底走没走）
+  V.frames = 0;
+  { const fr = () => { V.frames++; requestAnimationFrame(fr); }; requestAnimationFrame(fr); }
+  V.standAim = (k, lx, lz) => {
+    const w = V.W(k, lx, lz), s = V.W(k, 0, 0.24), P = BR.player, yaw = Math.atan2(-(s.x - w.x), -(s.z - w.z));
+    if (typeof P.reset === 'function') P.reset({ x: w.x, y: BR.phys.groundY(w.x, w.z), z: w.z, yaw }, { full: false });
+    else { P.x = w.x; P.z = w.z; P.yaw = yaw; }
+    P.vx = 0; P.vz = 0; P.pitch = 0;
+    if (BR.interact && BR.interact.aimAt) BR.interact.aimAt(s.x, BR.phys.groundY(s.x, s.z) + 1.25, s.z);
+    return V.cur();
+  };
+  // 准心没对上车时的现场：人在哪、朝哪、页面是不是后台、在哪个画面、游戏循环走了多少帧、车在人的哪边
+  V.aimDiag = k => {
+    const P = BR.player, v = BR.vehicles.byKey(k), L = v ? V.L(k, P.x, P.z) : null;
+    return { P: { x: +P.x.toFixed(3), y: +(P.y || 0).toFixed(3), z: +P.z.toFixed(3), yaw: +P.yaw.toFixed(3), pitch: +P.pitch.toFixed(3) }, hidden: document.hidden, vis: document.visibilityState,
+      screen: BR.game.screen, paused: !!(BR.hud && BR.hud.paused), istate: BR.interact.state, imode: BR.interact.mode, ctx: BR.input.context, frames: V.frames,
+      carLocal: L && { x: +L.x.toFixed(3), z: +L.z.toFixed(3) }, cam: BR.gfx && BR.gfx.camera ? [+BR.gfx.camera.position.x.toFixed(2), +BR.gfx.camera.position.y.toFixed(2), +BR.gfx.camera.position.z.toFixed(2)] : null, cur: V.cur() };
+  };
   // 短按：同一个 evaluate 里先造好 keydown、keyup 两个事件（event.timeStamp 是造出来的时刻，两者只差零点几毫秒），再接连派发。
   // 不经两次 CDP 往返，也不用 setTimeout 隔开：SwiftShader 一帧要两三百毫秒，计时器会被拖到帧后面，间隔被拉长就判成了长按
   // （N1 minor ⑤）。按下和松开落在同一帧里没关系：input 记下按下 / 松开两个边沿，interact 按两个事件的时间戳算按了多久
@@ -2241,6 +2379,40 @@ function installVeh() {
     }
     return false;
   };
+  // 车的盒子在某个位姿和拖动禁区（BR.world.blockers({})：出口圈 = 出口半径 + 0.4、层级 keepClear）相交吗（FE1Q J6）。
+  // 车本身开不进出口圈（forklift.js blockerObs 按同一份 blockers 挡）：直道起点压在出口圈里时往前开得出去（起点就重叠的不算），
+  // 撞上以后倒车却被「后面是出口」挡住，V13c / V13d 的倒车距离就不够（以前随机种子偶尔挑到这种直道）。相交判断照 forklift.js：
+  // 圆按 OBB 最近点算，矩形按 OBB 外接框，出口只管它上下 −1…+3 m 的盒子；圆再多留 5 cm 余量
+  V.blkPad = 0.05;
+  V.blkHitAt = (x, z, yaw, lift) => {
+    const G = BR.L1forklift.geo, BL = (BR.world && typeof BR.world.blockers === 'function' ? BR.world.blockers({}) : []) || [];
+    if (!BL.length) return null;
+    const boxes = BR.phys.toWorldOBBs(G.obbs(lift || 0), x, z, yaw, BR.phys.groundY(x, z));
+    for (const b of BL) for (const o of boxes) {
+      if (b.y != null && (o.maxY < b.y - 1 || o.minY > b.y + 3)) continue;
+      const c = Math.cos(o.rot), s = Math.sin(o.rot);
+      let hit;
+      if (b.r != null) {
+        const dx = b.x - o.cx, dz = b.z - o.cz, lx = c * dx + s * dz, lz = -s * dx + c * dz;
+        const qx = Math.max(-o.hx, Math.min(o.hx, lx)), qz = Math.max(-o.hz, Math.min(o.hz, lz));
+        hit = Math.hypot(lx - qx, lz - qz) < b.r + V.blkPad;
+      } else {
+        const r = Math.abs(o.hx * c) + Math.abs(o.hz * s), q = Math.abs(o.hx * s) + Math.abs(o.hz * c);
+        hit = o.cx + r > b.x0 && o.cx - r < b.x1 && o.cz + q > b.z0 && o.cz - q < b.z1;
+      }
+      if (hit) return b.kind + (b.why ? ':' + b.why : '') + '@' + [b.x, b.z, b.r, b.x0, b.z0, b.x1, b.z1].filter(v => v != null).map(v => +(+v).toFixed(2)).join(',');
+    }
+    return null;
+  };
+  // 一条直道（起点 x, z、朝 yaw、往前 run 米）从起点往后 V.backRoom 米的倒车余量到撞停的地方，车都不碰拖动禁区（每 10 cm 查一次）
+  V.backRoom = 0.5;
+  V.laneBlk = (x, z, yaw, run, lift) => {
+    const f = { x: -Math.sin(yaw), z: -Math.cos(yaw) };
+    for (let s = -V.backRoom; s <= run + 1e-6; s += 0.1) { const h = V.blkHitAt(x + f.x * s, z + f.z * s, yaw, lift); if (h) return { s: +s.toFixed(2), h }; }
+    const h = V.blkHitAt(x + f.x * run, z + f.z * run, yaw, lift);
+    return h ? { s: run, h } : null;
+  };
+  V.laneSkips = [];
   // 撞车甩货用的直道（返修 r10）：先找一条车轮挡直道 —— 货叉抬到叉底 0.3 m（lift 0.11），车身（最靠前的低部件）撞上 12 cm 高的车轮挡，
   // 货叉从挡上面伸过去，叉尖前面 1.8 m 是空地（两根货叉的延长线上、0.05–0.6 m 高打射线都不碰东西），东西翻下叉尖落到地上；
   // 已载入的区块里没有这样的直道才退回撞柱子（叉尖顶着柱础，东西整排往前挪到碰上为止、留在叉上）。open 写是哪一种
@@ -2261,6 +2433,9 @@ function installVeh() {
       let ok = true;
       for (let s = 0; s <= run - 0.08 && ok; s += 0.1) if (V.blockedAt(k, x + f.x * s, z + f.z * s, yaw, LIFT)) ok = false;
       if (!ok || !V.blockedAt(k, x + f.x * (run + 0.12), z + f.z * (run + 0.12), yaw, LIFT)) continue;
+      // FE1Q J6：起点、整条路径、起点往后 0.5 m 的倒车余量碰到出口圈 / keepClear 的直道不要（撞上以后倒不出去）
+      const blk = V.laneBlk(x, z, yaw, run, LIFT);
+      if (blk) { V.laneSkips.push(['chock', +x.toFixed(2), +z.toFixed(2), +yaw.toFixed(2), blk.s, blk.h]); continue; }
       // 撞停时叉尖在哪：往前 run；从那里沿两根货叉往前 1.8 m 打射线
       const tx = x + f.x * run, tz = z + f.z * run, c = Math.cos(yaw), s2 = Math.sin(yaw);
       let clear = true;
@@ -2315,6 +2490,8 @@ function installVeh() {
       let ok = true;
       for (let d = 0; d <= run - 0.05 && ok; d += 0.1) if (V.blockedAt(k, x + f.x * d, z + f.z * d, yaw, 0)) ok = false;
       if (!ok || !V.blockedAt(k, x + f.x * (run + 0.15), z + f.z * (run + 0.15), yaw, 0)) continue;
+      const blk = V.laneBlk(x, z, yaw, run, 0);   // FE1Q J6：同 chockLane
+      if (blk) { V.laneSkips.push(['pillar', +x.toFixed(2), +z.toFixed(2), +yaw.toFixed(2), blk.s, blk.h]); continue; }
       return { x, z, yaw, run };
     }
     return null;
@@ -2412,6 +2589,10 @@ async function runVeh(browser, base) {
       const ok = rows.every(r => r.av && r.av.mode === 'drive' && r.av.key === K && r.av.visible && r.av.seatModel && r.d != null && r.d < 0.1);
       check('V4 对方看到的人形是坐姿，钉在座椅 10 cm 以内（两侧都看）', ok, rows);
       check('V4 坐着的人穿的是司机自己的制服色（蓝）', rows.every(r => r.av && r.av.skin === 'blue' && r.av.suitHex === want), { want, got: rows.map(r => r.av && [r.av.skin, r.av.suitHex]) });
+      // FE1P H10：换皮肤只换制服 —— 手套、靴子和他走路时的 glb 一样深；蓝色的手、鞋头不从手套、靴子里露出来
+      const sg = await ev(watcher, () => __t.seatGear());
+      check('V4 坐着的人手套、靴子的颜色和他走路时的 hazmat.glb 一样（高画质 sRGB 色阶差 ≤1，低画质 ≤6），制服色的手不包住手套、脚掌不伸出靴子',
+        !!sg && sg.gloveD <= sg.tol && sg.bootD <= sg.tol && sg.outG === 0 && sg.outB === 0, sg);
       check('V4 名牌在护顶上方，从车两侧看透明度都是 0.95', rows.every(r => r.av && r.av.tag && r.av.tag.opacity === 0.95 && r.av.tag.y > r.seat.y + 1.0), rows.map(r => r.av && r.av.tag));
       // 反过来：司机看站在车旁的对方，名牌也是 0.95
       const tagD = await ev(driver, () => { const a = BR.coop.debugInfo().avatar; return a && a.tag; });
@@ -2499,13 +2680,23 @@ async function runVeh(browser, base) {
       check('V7 司机下车（没坐着了），房主 levelState.vehicles 和司机最后位姿差 <1 cm（on 0）', !sd.seated && !!ls && Math.hypot(ls.x - pd.x, ls.z - pd.z) < 0.01 && ls.on === 0, { pd, ls, sd });
     });
     await step('V8 客机司机断线：车停住、还坐着；重连后车不瞬移；房主那边租约超时按最后位姿停车', async () => {
-      // 客机重新上车
-      await ev(driver, k => __v.standL(k, 1.2, 0.24), K);
+      // 客机重新上车。FE1Q：像真人一样等准心提示变成「上车」再按（以前站过去 0.6 s 就按，机器忙时 SwiftShader 一帧两三百毫秒，
+      // 刚瞬移过去准心还没更新到车上，空格按空，V8 / V12 偶尔连着挂；加了等待以后上不了车照样判失败，失败时记下当时准心对着什么）
+      // 返修 FE1Q · repair-r2：standAim（player.reset + 显式对准车身），等准心期间每秒重新对一次；没对上时记下现场（aimDiag）
+      const d0 = await ev(driver, k => __v.aimDiag(k), K);
+      await ev(driver, k => __v.standAim(k, 1.2, 0.24), K);
       await sleep(600);
+      let aimOk = false;
+      for (let t = 0; t < 8 && !aimOk; t++) {
+        aimOk = await waitFor(driver, k => { const c = BR.interact.current; return !!c && c.kind === 'vehicle' && c.key === k && (!c.short || c.short.ok !== false); }, K, 1000);
+        if (!aimOk) await ev(driver, k => __v.standAim(k, 1.2, 0.24), K);
+      }
+      const cur0 = await ev(driver, () => __v.cur()), d1 = aimOk ? null : await ev(driver, k => __v.aimDiag(k), K);
+      if (!aimOk) info('V8 客机站到车右侧 8 s 准心都没对上车（现场）', { before: d0, after: d1 });
       await ev(driver, () => __v.tap('Space'));
       await ev(driver, () => __v.untilRun());
       const s0 = await ev(driver, () => __v.seat());
-      if (s0.seated !== K) { check('V8 客机重新坐上车', false, s0); return; }
+      if (s0.seated !== K) { check('V8 客机重新坐上车', false, Object.assign({ aimOk, cur0, before: d0, after: d1 || await ev(driver, k => __v.aimDiag(k), K) }, s0)); return; }
       await ev(driver, k => __v.accelTo(k, 'KeyS', 1.5, 3), K);
       const n0 = await ev(driver, () => __v.notes.length);
       await ctxB.setOffline(true);
@@ -2633,6 +2824,11 @@ async function runVeh(browser, base) {
     await step('V13 客机司机全速撞上去、货叉上的东西整排往前甩出去：房主算轨迹、写 levelState，客机照房主的摆（两边差 <1 cm）', async () => {
       const lane = await ev(watcher, k => __v.throwLane(k), K);
       if (!lane) { check('V13 找到一条全速撞车轮挡 / 柱子的直道', false); return; }
+      // FE1Q J6：这条直道撞上以后倒得出去（起点、路上、起点往后 0.5 m 都不碰出口圈 / keepClear）；顺带记下这一局的种子（coop 的种子每次随机）
+      const lchk = await ev(watcher, l => ({ blk: __v.laneBlk(l.x, l.z, l.yaw, l.run, l.lift || 0), seed: BR.game.seed >>> 0, levelSeed: BR.world.levelSeed,
+        nExits: BR.world.blockers({}).length, skipped: __v.laneSkips.length, skipEx: __v.laneSkips.slice(0, 4) }), lane);
+      check('V13 直道（种子 ' + lchk.seed + '，' + (lane.open ? '车轮挡' : '柱子') + ' ' + [lane.x, lane.z, lane.yaw].map(v => +(+v).toFixed(2)).join(', ') + '）起点、整条路径、起点往后 0.5 m 倒车余量都不碰出口圈 / keepClear（挑的时候跳过了 ' + lchk.skipped + ' 条碰到的）',
+        !lchk.blk, Object.assign({ lane }, lchk));
       await clearLane();
       const placed = await placeAt(lane);
       // 左货叉前后 4 只罐头（按往货叉上丢时的间隔）
@@ -2821,11 +3017,8 @@ async function runVeh(browser, base) {
       check('V14b 要不回租约：客机被放下车，提示「没连上，再试一次」', out && !mid.seated && mid.notes.some(t => /没连上，再试一次/.test(t)), mid);
       check('V14b 消息补到以后：房主那边的车从 ' + (Math.hypot(host0.x - b1.pose.x, host0.z - b1.pose.z) * 100).toFixed(0) + ' cm 外挪到客机下车的地方（差 ' + (diff * 100).toFixed(1) + ' cm），levelState 跟着改，没人拿着租约',
         diff < 0.05 && !!a1.ls && Math.hypot(a1.ls.x - b1.pose.x, a1.ls.z - b1.pose.z) < 0.05 && !a1.leases.some(l => l[0] === 'k:' + K), { host0, a1, b1 });
-      // 后面 V9 / V11 要客机接着开
-      await ev(driver, k => __v.standL(k, 1.2, 0.24), K);
-      await sleep(600);
-      await ev(driver, () => __v.tap('Space'));
-      await ev(driver, () => __v.untilRun());
+      // 后面 V9 / V11 要客机接着开（返修 FE1Q · repair-r3：照 V8 的办法等准心提示变成「上车」再按，见 remountGuest）
+      await remountGuest(driver, K, 'V14 后');
       await sleep(800);
     });
     // V14c（FE1 返修 r3）：客机晚到的 rel 遇到「这期间车被挪过」—— 房主 hostRel 的 vehFin 拒绝分支。客机开着车时出站消息被攒住，
@@ -2873,11 +3066,8 @@ async function runVeh(browser, base) {
         stay < 0.01 && lsStay && !a1.seated, { a1, hp1 });
       check('V14c 客机那边的车从 ' + (gFar * 100).toFixed(0) + ' cm 外被拉到房主那边的位置（差 ' + (gdiff * 100).toFixed(1) + ' cm），两边都没人拿着租约',
         gdiff < 0.05 && !a1.leases.some(l => l[0] === 'k:' + K) && !b1.seated && b1.lease !== 'me', { a1, b1, gp0 });
-      // 后面 V9 / V11 要客机接着开
-      await ev(driver, k => __v.standL(k, 1.2, 0.24), K);
-      await sleep(600);
-      await ev(driver, () => __v.tap('Space'));
-      await ev(driver, () => __v.untilRun());
+      // 后面 V9 / V11 要客机接着开（返修 FE1Q · repair-r3：照 V8 的办法等准心提示变成「上车」再按，见 remountGuest）
+      await remountGuest(driver, K, 'V14 后');
       await sleep(800);
     });
     await step('V9 客机开着车、车在房主 4 块以外：房主那边一只测试实体摆到车上会被推出来', async () => {
@@ -2904,7 +3094,10 @@ async function runVeh(browser, base) {
       await sleep(1500);
     });
     await step('V11 联机死亡结算：3 m/s 时司机倒下，车 0.6 s 内停住、货叉不动，人落在车旁', async () => {
-      const s0 = await ev(driver, () => __v.seat());
+      let s0 = await ev(driver, () => __v.seat());
+      // 返修 FE1Q · repair-r3（coop 第三个随机种子负载 ~9 时挂过一次：V14c 结尾客机站过去 0.6 s 就按空格，准心还没对上车，没坐上去）：
+      // 前提不成立先照 V8 的办法重新上一次车，还不行才判失败
+      if (s0.seated !== K) { info('V11 前客机没坐在车上，重新上车', s0); s0 = await remountGuest(driver, K, 'V11 前'); }
       if (s0.seated !== K) { check('V11 客机还坐在车上', false, s0); return; }
       await ev(driver, () => __v.hold('KeyS', 1.5));
       await ev(driver, k => __v.untilStop(k, 3), K);
@@ -2948,6 +3141,9 @@ async function runVeh(browser, base) {
       await ev(B, a => { const f = { x: -Math.sin(a.l.yaw), z: -Math.cos(a.l.yaw) }; const P = BR.player; P.x = a.l.x - f.x * 6; P.z = a.l.z - f.z * 6; P.vx = 0; P.vz = 0; return 0; }, { l: lane });
       await ev(A, k => __v.standL(k, -1.2, 0.24), K);
       await sleep(600);
+      // FE1Q 整合：和 V8 一样等准心提示变成「上车」再按（房主刚刷新完页面、机器忙时准心还没更新到车上，空格按空，V15 偶尔挂）；上不了车照样判失败
+      const aimOk = await waitFor(A, k => { const c = BR.interact.current; return !!c && c.kind === 'vehicle' && c.key === k && (!c.short || c.short.ok !== false); }, K, 8000);
+      const cur0 = await ev(A, () => __v.cur());
       await ev(A, () => __v.tap('Space'));
       const ph = await ev(A, () => __v.untilRun());
       await sleep(500);
@@ -2959,7 +3155,7 @@ async function runVeh(browser, base) {
       check('V15 房主刷新页面后重开营地、房主撞上去（' + (ta ? ta.v0 : '?') + ' m/s，编号 ' + (ta && ta.id) + '，上一场客机见过 ' + oldIds.length + ' 个编号）：房主自己算（by me），客机照房主的摆（by host、同一个编号），' +
         '两边那只罐头位置一样（差 <1 cm）' + (lane.open ? '、客机货叉上不剩东西' : ''),
         placed && pa && pb && ph === 'run' && !!ta && ta.by === 'me' && !!ta.id && !oldIds.includes(ta.id) && !!tb && tb.by === 'host' && tb.id === ta.id && sameBoth(ra, rb, ta, ['fkt-can9'], lane.open) &&
-        (!lane.open || !Object.values(rb.riders || {}).some(a => a.includes('fkt-can9'))), { lane, oldIds, ta, tb, ra, rb });
+        (!lane.open || !Object.values(rb.riders || {}).some(a => a.includes('fkt-can9'))), { ph, aimOk, cur0, placed, pa, pb, lane, oldIds, ta, tb, ra, rb });
     });
   } finally {
     await Promise.all([A, B].map(p => ev(p, () => { try { if (BR.coop.phase !== 'idle') BR.coop.leave(); } catch (e) { /* 忽略 */ } return 0; }).catch(() => {})));

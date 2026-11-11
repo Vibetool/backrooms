@@ -15,10 +15,20 @@
 // 任一检查失败或页面出现 console.error / 未捕获异常时退出码为 1。
 // FE1 叉车（2026-10-06）：drive 段在 640×360、844×390、390×844、360×640 四种尺寸上查开车时的触屏键（「升」「降」「下车」不重叠、
 //   冲刺 / 丢弃变灰、按住「升」货叉升高、点「下车」恢复），截图 tests/output/mobile/<设备>-drive.png。
+//   FE1P H15：竖屏（390×844、360×800、360×640、320×568）开车时摇杆往八个方向推满（再推过头一点），摇杆圆头和开车提示框不相交（DR9）；
+//   提示框折行以后行末不挂「·」（DR4d）。360×800（android800-p）只跑开车那一段。返修 r1：摇杆是浮动的，DR9 从待机中心往上 0–90 px、
+//   左右 ±30 px 和摇杆区上沿按下都推一遍；竖屏开车时摇杆区上沿收到提示框底边 + 推得到的半径以下，上沿以上归转视角（DR9b）。
+//   返修 r2：开车时来一条两三行的长 toast（断电那条「闪烁：叉车大灯会把你照亮……」）不压触屏键、待机摇杆和开车提示框（DR10，所有跑开车段的设备）；
+//   下车以后 <html> 上的 hud-stick-cap 和 --hud-stick-top 清掉、摇杆区上沿回到上车前、原来上沿以上的左半屏按下照常起摇杆（DR7b）；
+//   横屏开车不收摇杆区（DR9c）。
+//   FE1Q J4：竖屏开车时手指从待机摇杆中心一路往上拖到屏幕顶、斜着拖到提示框中心，圆头和底盘都不碰提示框（DR9d，input.js 把圆心夹在摇杆区上沿以下）。
+//   FE1Q J5：矮横屏（640×360、568×320）站着连发两条两行 toast，不压触屏键、「实体」键和准心提示（A3c，压到就往上长）；844×390 游玩模式照旧留在右上角；
+//   最早那条收掉以后剩下的不跳回去（A3d）；再来断电长提示也不压（A3e）。568×320（se1-l）只跑这一段。
 // 可选参数：设备名只跑这几台；--sec game,coop 只跑这几段（调试用，all.mjs 不带参数全跑）。
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
@@ -92,9 +102,13 @@ const DEVICES = {
   // 844×390（iPhone 13/14 横屏）：FE1 叉车开车时的触屏键（drive 情境）四种尺寸之一
   'iphone13-l': { w: 844, h: 390, dpr: 3, ua: UA.ios, phone: true, insets: { top: 0, bottom: 21, left: 47, right: 47 } },
   'android-p': { w: 360, h: 640, dpr: 2, ua: UA.android, phone: true, blankFirst: true },
+  // 360×800（常见安卓竖屏）：FE1P H15 摇杆推满不盖住开车提示框，只跑开车那一段
+  'android800-p': { w: 360, h: 800, dpr: 3, ua: UA.android, phone: true },
   // 320×568（iPhone SE 一代竖屏）：方案要求的四种尺寸以外最窄最矮的，只跑开车那一段（FE1 返修 r2：提示行以前在这里压住物品名）
   'se1-p': { w: 320, h: 568, dpr: 2, ua: UA.ios, phone: true, tiny: true },
   'android-l': { w: 640, h: 360, dpr: 2, ua: UA.android, phone: true },
+  // 568×320（iPhone SE 一代横屏）：FE1Q J5 矮横屏站着时 toast 不压触屏键和准心提示，只跑这一段
+  'se1-l': { w: 568, h: 320, dpr: 2, ua: UA.ios, phone: true },
   'ipadmini-p': { w: 744, h: 1133, dpr: 2, ua: UA.mac, ipad: true },
   'ipadair-l': { w: 1180, h: 820, dpr: 2, ua: UA.mac, ipad: true },
   // 桌面参照：不开触屏模拟，确认移动端改动没带坏鼠标键盘行为
@@ -1869,6 +1883,88 @@ async function secA3b(D) {
   await goHome(D);
 }
 
+// A3c（FE1Q J5，FE1 起就有的毛病，验收员 play r3 m4）：矮横屏（640×360、568×320）站着时 toast 默认在右上角暂停键下面那一列，
+// 连着来两条两行的提示，那一列一直排到「冲刺」「丢弃」键和准心提示「点「互动」上车」上，测试模式第一条就压着「实体」键。
+// 修后：那一列压到触屏键、待机摇杆、「实体」、开麦键或准心提示就改成往上长（居中，底边贴着准心上面，放不下的从最早的收掉）。
+// 站在出生柱间那台叉车左侧、对准车身（准心提示「点「互动」上车」显示着），连发两条两行 toast（往货叉上丢东西、叉面满了），量：
+// 看得见的每条 toast（不含正在淡出的）和看得见的触屏键、待机摇杆、「实体」键、开麦键、准心提示都不相交（各留 2 px）、整条在视口里、最新那条在。
+// 844×390 照旧（keep）：游玩模式这两条留在右上角那一列、两条都在、不压东西（测试模式右上角有「实体」键，照样往上长）。
+// A3d：最早那条到时间收掉以后，剩下那条不跳回右上角（往上长了就一直往上长，到这一批都收掉为止）、底边不动。
+// A3e：再来断电那条长提示，同样不压东西。截图 tests/output/mobile/<设备>-short-toast-<模式>.png
+const A3C_T1 = '罐头放到了左边货叉上，靠车那头还空着，再丢一个就放在它旁边';
+const A3C_T2 = '这一段叉面满了，东西放到旁边地上了，靠车那头还空着';
+function shortToastMeasure() {
+  const M = __m, vis = e => !!e && M.vis(e);
+  for (const e of document.querySelectorAll('.hud-toast:not(.hud-toast-out)')) { try { for (const a of e.getAnimations()) a.finish(); } catch (err) { /* 老浏览器 */ } }
+  const R = e => { const b = e.getBoundingClientRect(); return { l: b.left, t: b.top, r: b.right, b: b.bottom }; };
+  const toasts = M.qa('.hud-toast').filter(e => vis(e) && !e.classList.contains('hud-toast-out')).map(e => Object.assign({ n: e.textContent.slice(0, 8), text: e.textContent }, R(e)));
+  const blocks = [];
+  for (const e of M.qa('.touch-root .touch-btn')) if (vis(e)) blocks.push(Object.assign({ n: e.textContent.trim() || e.className }, R(e)));
+  const sk = M.q('.touch-stick'); if (vis(sk)) blocks.push(Object.assign({ n: 'stickIdle' }, R(sk)));
+  for (const [sel, n] of [['.test-entry', '实体'], ['.coop-mic', '开麦'], ['.hud-prompt', 'prompt']]) { const e = M.q(sel); if (vis(e)) blocks.push(Object.assign({ n }, R(e))); }
+  const hits = [];
+  for (const a of toasts) for (const b of blocks) if (a.l < b.r + 2 && a.r > b.l - 2 && a.t < b.b + 2 && a.b > b.t - 2) hits.push(a.n + '×' + b.n);
+  const r4 = o => [o.l, o.t, o.r, o.b].map(v => Math.round(v * 10) / 10);
+  const pr = M.q('.hud-prompt');
+  return { toasts: toasts.map(t => ({ n: t.n, text: t.text, box: r4(t) })), hits, out: toasts.filter(t => !M.inView(t)).map(t => t.n),
+    up: document.querySelector('.hud-toasts').classList.contains('hud-toasts-up'), prompt: vis(pr) ? pr.innerText.replace(/\s+/g, ' ').trim() : '',
+    blocks: blocks.map(b => b.n + ' ' + r4(b).join(',')) };
+}
+async function a3c(D, mode, keep) {
+  await goHome(D);
+  await startGame(D, { mode, levelId: '1', seed: 12345 });
+  await D.step(0.3);
+  const k = await D.ev(() => {
+    const c = BR.world.chunks().find(q => q.key === '0,0');
+    const f = ((c && c.res.data && c.res.data.forklifts) || []).find(q => q.x > 12 && q.x < 20 && q.z > 12 && q.z < 20);
+    if (!f) return null;
+    const cy = Math.cos(f.rot), sy = Math.sin(f.rot);
+    const W = (lx, lz) => ({ x: f.x + cy * lx + sy * lz, z: f.z - sy * lx + cy * lz });
+    const st = W(-1.2, 0.24), seat = W(0, 0.24);
+    BR.player.reset({ x: st.x, y: 0, z: st.z, yaw: Math.atan2(-(seat.x - st.x), -(seat.z - st.z)) }, { full: false });
+    __br.step(0.05);
+    BR.interact.aimAt(seat.x, 1.25, seat.z);
+    __br.step(0.1);
+    // 层级大标题不在这一项的范围里（进层 5 s 的过场，以前在右上角也会叠上）：收掉，免得截图里挡着
+    const t = document.querySelector('.hud-title'); if (t) t.hidden = true;
+    return f.key;
+  });
+  if (!k) throw new Error('出生柱间没有叉车');
+  const tag = D.dev.w + '×' + D.dev.h + ' ' + (mode === 'test' ? '测试模式' : '游玩');
+  // 两条两行的：第一条 5 s 后自己收掉（A3d 用），第二条留着。同一个 evaluate 里发完、推一帧、量（不等墙钟，第一条不会提前收掉）
+  const m1 = await D.ev(([a, b]) => { BR.hud.toast(a, 5000); __br.step(0.02); BR.hud.toast(b, 60000); __br.step(0.02); __br.step(0.02); return 0; }, [A3C_T1, A3C_T2])
+    .then(() => D.ev(shortToastMeasure));
+  const newest = m1.toasts.some(t => t.text === A3C_T2);
+  D.check('A3c ' + tag + ' 站着对准叉车（准心提示「' + m1.prompt + '」）连发两条两行 toast：不压触屏键、待机摇杆、「实体」/开麦键和准心提示，整条在视口里，最新那条在' +
+    '（' + (m1.up ? '往上长 ' : '右上角 ') + m1.toasts.map(t => JSON.stringify(t.box)).join(' ') + '）',
+    /^点「互动」 ?上车/.test(m1.prompt) && newest && m1.hits.length === 0 && m1.out.length === 0, m1);
+  if (keep) D.check('A3c ' + tag + ' 照旧：两条都留在右上角那一列（不往上长）', !m1.up && m1.toasts.length === 2, { up: m1.up, toasts: m1.toasts.map(t => t.n + ' ' + t.box.join(',')) });
+  await shotTo(D, 'short-toast-' + mode);
+  // A3d：等第一条到时间收掉（5 s 墙钟 + 淡出 0.28 s），推一帧，量剩下那条
+  const had1 = m1.toasts.some(t => t.text === A3C_T1);
+  const gone = await D.page.waitForFunction(t => !Array.from(document.querySelectorAll('.hud-toast')).some(e => e.textContent === t), A3C_T1, { timeout: 15000, polling: 200 }).then(() => true, () => false);
+  await D.step(0.05);
+  const m2 = await D.ev(shortToastMeasure);
+  const b0 = (m1.toasts.find(t => t.text === A3C_T2) || {}).box, b1 = (m2.toasts.find(t => t.text === A3C_T2) || {}).box;
+  // 只放得下最新那条时（568×320 测试模式），最早那条一出来就被收掉了（had1 = false）：同样等它移走、推一帧，剩下那条不能动
+  D.check('A3d ' + tag + ' 最早那条' + (had1 ? '到时间' : '（放不下，一出来就）') + '收掉以后，剩下那条' + (m1.up ? '不跳回右上角（照样往上长、底边不动）' : '照样在右上角那一列（往上补位）') + '，不压东西',
+    gone && !!b0 && !!b1 && m2.up === m1.up && (!m1.up || Math.abs(b1[3] - b0[3]) <= 1) && m2.hits.length === 0 && m2.out.length === 0,
+    { had1, gone, up0: m1.up, up1: m2.up, b0, b1, hits: m2.hits });
+  // A3e：再来断电那条长提示
+  await D.ev(t => { BR.hud.toast(t, 60000); __br.step(0.02); __br.step(0.02); return 0; }, DR10_LONG);
+  const m3 = await D.ev(shortToastMeasure);
+  D.check('A3e ' + tag + ' 站着再来断电那条长提示：看得见的 toast 不压触屏键、待机摇杆、「实体」/开麦键和准心提示，整条在视口里，长提示在' +
+    '（' + (m3.up ? '往上长 ' : '右上角 ') + m3.toasts.map(t => JSON.stringify(t.box)).join(' ') + '）',
+    m3.toasts.some(t => /^闪烁/.test(t.text)) && m3.hits.length === 0 && m3.out.length === 0, m3);
+  await shotTo(D, 'short-toast-' + mode + '-long');
+  await goHome(D);
+}
+async function secShortToast(D) {
+  const keep = D.dev.w >= 800;   // 844×390：游玩模式两条两行的本来就放得下，照旧留在右上角
+  await sub(D, 'A3c-casual', () => a3c(D, 'casual', keep));
+  await sub(D, 'A3c-test', () => a3c(D, 'test', false));
+}
+
 async function secGame(D) {
   const { key, dev } = D;
   const portrait = dev.h > dev.w;
@@ -2632,6 +2728,16 @@ async function d11b(D) {
         await D.t.drag(body.l + 30, body.b - 12, body.l + 30, body.t + 12, 10, 16);
         await sleep(250);
       }
+      // 返修 FE1Q · repair-r1（验收员 tests）：机器很忙（负载 ~40）时触摸拖动偶尔没被当成滚动（HEAD 同样负载下 3 次里 2 次 touched 0，
+      // 负载 3–8 时从没出现过）。没滚起来就等一下、拖慢一点再拖一回；还是 0 记下来，最后记 SKIP（前提「触摸能滚」不成立），不判 FAIL ——
+      // tests/all.mjs 会在负载降下来以后补测这台设备，补测还 SKIP 才算失败
+      let touched0 = await D.ev(() => Math.round(document.querySelector('.ws-panelslide-body').scrollTop));
+      if (touched0 === 0) {
+        await sleep(900);
+        for (let s = 0; s < 2; s++) { await D.t.drag(body.l + 30, body.b - 12, body.l + 30, body.t + 12, 16, 24); await sleep(400); }
+        touched0 = await D.ev(() => Math.round(document.querySelector('.ws-panelslide-body').scrollTop));
+      }
+      if (touched0 === 0) { res = { vh: h, touchedZero: true }; tries.push({ vh: h, touched: 0 }); break; }
       // 先确认触摸真能滚，再直接滚到底：实体列表有几千像素，真拖到底要几十下
       const entity = await D.ev(() => {
         const b = document.querySelector('.ws-panelslide-body'), touched = Math.round(b.scrollTop);
@@ -2654,6 +2760,7 @@ async function d11b(D) {
     const vp = D.page.viewportSize();
     if (!vp || vp.height !== H) { await D.page.setViewportSize({ width: W, height: H }); await sleep(600); }
   }
+  if (res && res.touchedZero) { D.skip(label, '机器太忙：触摸拖动两回都没把实体面板滚起来（前提「触摸能滚」不成立，负载 ' + os.loadavg()[0].toFixed(1) + '）：' + JSON.stringify(tries)); return; }
   const last = tries[tries.length - 1];
   if (!res || !last || last.exitMax < last.need) { D.skip(label, '出口面板在这几个视口高度下都滚不出一个按钮高，沿用滚动位置的问题测不出：' + JSON.stringify(tries)); return; }
   D.check(label, res.entity.kind === 'entity' && res.entity.touched > 0 && res.entity.st >= res.entity.max - 1 && res.exit.kind === 'exit' && !!res.exit.hit && res.exit.hit.ok, Object.assign({ tries }, res));
@@ -2973,13 +3080,22 @@ function driveLayout(env) {
   const keys = ['liftUp', 'liftDown', 'interact', 'use', 'pause'].map(n => B[n]).filter(b => b && b.shown);
   const stick = Object.assign({ n: 'stickIdle' }, M.box('.touch-stick'));
   const lineEl = M.qa('.hud-drive').find(e => M.vis(e));
-  const line = lineEl ? Object.assign({ n: 'driveLine', text: lineEl.innerText.replace(/\s+/g, ' ').trim() }, M.box(lineEl)) : null;
+  // 文字按 textContent 读（FE1P H15：行末的「 ·」藏起来了但还在 DOM 里，innerText 会把它漏掉）
+  const line = lineEl ? Object.assign({ n: 'driveLine', text: lineEl.textContent.replace(/\s+/g, ' ').trim() }, M.box(lineEl)) : null;
   // 「按住「升」「降」动货叉 ·」这一段有没有被拆成两行（320 宽竖屏以外都不该拆）；用的是哪一档字号
   if (line) {
     const ph = lineEl.querySelector('.hud-drive-phrase'), segs = ph ? ph.querySelectorAll('.hud-drive-seg') : [];
     line.split = segs.length > 1 && Math.round(segs[0].getBoundingClientRect().top) !== Math.round(segs[1].getBoundingClientRect().top);
     line.mode = BR.hud.drive && BR.hud.drive.place ? BR.hud.drive.place.mode : '';
     line.lines = new Set([...lineEl.querySelectorAll('.hud-drive-seg')].map(e => Math.round(e.getBoundingClientRect().top))).size;
+    // 每一行最后一段的「 ·」看不看得见（FE1P H15：折行以后行末不许挂着点）；中间的点要看得见
+    const sg = [...lineEl.querySelectorAll('.hud-drive-seg')];
+    line.dots = sg.map((e, i) => {
+      const d = e.querySelector('.hud-drive-dot');
+      if (!d) return null;
+      const nx = sg[i + 1], end = !nx || nx.getBoundingClientRect().top > e.getBoundingClientRect().top + 2;
+      return { end, shown: getComputedStyle(d).visibility !== 'hidden' };
+    }).filter(Boolean);
   }
   const prEl = M.q('.hud-prompt');
   const prompt = prEl && M.vis(prEl) ? Object.assign({ n: 'prompt', text: prEl.innerText.replace(/\s+/g, ' ').trim() }, M.box(prEl)) : null;
@@ -2999,8 +3115,124 @@ function driveLayout(env) {
   return { B, stick, line, prompt, hits, out, ins, te, teHits, invHits, ctx: BR.input.context, mode: BR.interact.mode, seated: BR.vehicles && BR.vehicles.seated,
     boxes: group.concat([line, prompt].filter(Boolean)).map(it => it.n + ' ' + [it.l, it.t, it.r, it.b].map(Math.round).join(',')) };
 }
+// DR9（FE1P H15，返修 r1）：竖屏开车，摇杆是浮动的（左边摇杆区哪里按下哪里起摇杆）。手指从这些地方按下：待机摇杆中心往上 0/30/60/90 px、
+// 左右 ±30 px（拇指按偏），摇杆区上沿往下 4 px 的左、中、右三处；每处往八个方向推满（拖 r）、再推过头（拖 1.2r，圆心跟着手指走），
+// 量摇杆圆头（.touch-knob）和开车提示框的屏幕矩形：一次都不相交。按在摇杆区上沿以上（左半屏）不起摇杆、改成转视角。
+// 不推进模拟（车不动），量完抬手。待机中心往上 60 px 再往上推过头那一下截图 tests/output/mobile/<设备>-drive-stick-up.png
+async function dr9(D, lay0) {
+  const st = lay0.stick, r = (st.r - st.l) / 2, cx = st.cx, cy = st.cy;
+  const cap = await D.ev(() => { const p = BR.hud.drive && BR.hud.drive.place; const z = __m.q('.touch-zone-l'); return { top: p ? p.stickTop : null, R: p ? p.stickReach : null, ok: p ? p.stickOk : null, zoneTop: z ? Math.round(z.getBoundingClientRect().top) : null, W: innerWidth }; });
+  const starts = [];
+  for (const up of [0, 30, 60, 90]) for (const dx of [-30, 0, 30]) starts.push({ tag: '待机中心' + (up ? '往上 ' + up : '') + (dx ? (dx > 0 ? ' 右 ' : ' 左 ') + Math.abs(dx) : ''), x: cx + dx, y: cy - up, shot: up === 60 && dx === 0 });
+  const zt = cap.zoneTop || 0;
+  for (const fx of [0.06, 0.25, 0.47]) starts.push({ tag: '摇杆区上沿 x ' + Math.round(cap.W * fx), x: Math.round(cap.W * fx), y: zt + 4 });
+  const hits = [], seen = [];
+  let id = 61, notStick = 0;
+  // 这一段要按几百下：先停掉渲染（SwiftShader 纯 CPU，一帧几百毫秒；量的是 DOM 矩形，和画不画 3D 无关），截图前后再开
+  const quiet = on => D.ev(q => { if (q) { if (!window.__dr9r) { window.__dr9r = BR.gfx.render; BR.gfx.render = () => {}; } } else if (window.__dr9r) { BR.gfx.render = window.__dr9r; window.__dr9r = null; } return 0; }, on);
+  await quiet(true);
+  for (const p0 of starts) {
+    for (const k of [1, 1.2]) {
+      for (let a = 0; a < 8; a++) {
+        const ang = a * Math.PI / 4, tx = p0.x + Math.sin(ang) * r * k, ty = p0.y - Math.cos(ang) * r * k;
+        await D.t.down(id, p0.x, p0.y);
+        await D.t.move(id, (p0.x + tx) / 2, (p0.y + ty) / 2);
+        await D.t.move(id, tx, ty);
+        const m = await D.ev(() => {
+          const kn = __m.q('.touch-knob'), ln = __m.qa('.hud-drive').find(e => __m.vis(e)), on = !!__m.q('.touch-stick.touch-on');
+          return { on, knob: kn ? __m.box(kn) : null, line: ln ? __m.box(ln) : null, hit: !!kn && !!ln && __m.inter(__m.box(kn), __m.box(ln), 0) };
+        });
+        if (p0.shot && k > 1 && a === 0) { await quiet(false); await D.ev(() => { BR.gfx.render(0); return 0; }); await shotTo(D, 'drive-stick-up'); await quiet(true); }
+        await D.t.up(id); id++;
+        if (!m.on) notStick++;
+        const tag = p0.tag + ' ' + (k === 1 ? '推满' : '推过头') + ' ' + Math.round(ang * 180 / Math.PI) + '°';
+        seen.push(tag);
+        if (!m.knob || !m.line || m.hit) hits.push({ tag, knob: m.knob && [m.knob.l, m.knob.t, m.knob.r, m.knob.b].map(Math.round), line: m.line && [m.line.l, m.line.t, m.line.r, m.line.b].map(Math.round) });
+      }
+    }
+  }
+  await quiet(false);
+  // 摇杆区上沿以上 20 px（左半屏）按下拖动：不起摇杆，改成转视角
+  const yaw0 = await D.ev(() => BR.player.yaw);
+  const ax = Math.round(cap.W * 0.25), ay = Math.max(8, zt - 20);
+  await D.t.down(id, ax, ay);
+  await D.t.move(id, ax + 20, ay);
+  await D.t.move(id, ax + 40, ay);
+  const above = await D.ev(() => ({ on: !!__m.q('.touch-stick.touch-on') }));
+  await D.t.up(id); id++;
+  await D.step(0.05);
+  const yaw1 = await D.ev(() => BR.player.yaw);
+  await D.step(0.3);
+  const line = lay0.line && [lay0.line.l, lay0.line.t, lay0.line.r, lay0.line.b].map(Math.round);
+  D.data.dr9 = { line, stick: [st.l, st.t, st.r, st.b].map(Math.round), cap, starts: starts.length, n: seen.length, notStick };
+  D.check('DR9 竖屏开车：从待机摇杆中心（往上 0–90 px、左右 ±30 px）和摇杆区上沿按下，往八个方向推满、再推过头（1.2 倍半径），圆头和开车提示框一次都不相交（' + seen.length + ' 次）',
+    seen.length === starts.length * 16 && hits.length === 0 && cap.ok === true && notStick === 0,
+    { hits: hits.slice(0, 4), nHits: hits.length, notStick, line, stick: D.data.dr9.stick, cap, mode: lay0.line && lay0.line.mode, upper: lay0.line && lay0.line.upper });
+  D.check('DR9b 竖屏开车：摇杆区上沿收到提示框底边 + 推得到的半径以下，上沿以上的左半屏按下不起摇杆、拖动转视角', cap.zoneTop != null && cap.zoneTop === cap.top && !!line && cap.zoneTop >= line[3] + cap.R &&
+    cap.zoneTop <= st.t && !above.on && Math.abs(yaw1 - yaw0) > 1e-3, { zoneTop: cap.zoneTop, top: cap.top, R: cap.R, lineB: line && line[3], stickT: Math.round(st.t), aboveOn: above.on, dYaw: +(yaw1 - yaw0).toFixed(4) });
+  // DR9d（FE1Q J4，js/core/input.js moveStick 竖屏开车时把圆心夹在摇杆区上沿以下）：手指从待机摇杆中心按下，每步 20 px 一路往上拖到屏幕顶；再从待机中心按下、斜着拖到开车提示框中心。每一步摇杆圆头（.touch-knob）
+  // 和底盘（.touch-stick）都不碰开车提示框（返修 r2，验收员 play / tests / spec 的 H15「推到任何位置」）
+  {
+    const line = lay0.line && [lay0.line.l, lay0.line.t, lay0.line.r, lay0.line.b];
+    const paths = [
+      { tag: '往上拖到屏幕顶', to: (i, n) => [cx, cy - (cy - 2) * i / n] },
+      { tag: '斜着拖到提示框中心', to: (i, n) => [cx + ((line[0] + line[2]) / 2 - cx) * i / n, cy + ((line[1] + line[3]) / 2 - cy) * i / n] },
+    ];
+    const bad = [];
+    let nStep = 0, pid = 90;
+    for (const p of paths) {
+      const n = Math.max(2, Math.ceil(cy / 20));
+      await D.t.down(pid, cx, cy);
+      for (let i = 1; i <= n; i++) {
+        const [x, y] = p.to(i, n);
+        await D.t.move(pid, x, y);
+        const m = await D.ev(() => {
+          const kn = __m.q('.touch-knob'), base = __m.q('.touch-stick'), ln = __m.qa('.hud-drive').find(e => __m.vis(e));
+          const L = ln && __m.box(ln);
+          return { knob: !!kn && !!L && __m.inter(__m.box(kn), L, 0), base: !!base && !!L && __m.inter(__m.box(base), L, 0), k: kn && __m.box(kn) };
+        });
+        nStep++;
+        if (m.knob || m.base) bad.push({ tag: p.tag, i, x: Math.round(x), y: Math.round(y), knob: m.k && [m.k.l, m.k.t, m.k.r, m.k.b].map(Math.round) });
+      }
+      await D.t.up(pid); pid++;
+      await D.step(0.05);
+    }
+    D.check('DR9d 竖屏开车：从待机摇杆中心按下一路往上拖到屏幕顶、斜着拖到提示框中心，每一步圆头和底盘都不碰开车提示框（' + nStep + ' 步）',
+      nStep > 10 && bad.length === 0, { bad: bad.slice(0, 4), nBad: bad.length, line });
+  }
+}
+// DR10（返修 r2，验收员 play）：开车时来两条 toast —— 一条短的、紧跟着断电那条 53 个字的长提示（和断电时一样），等淡入做完（0.18 s 墙钟）量：
+// 看得见的每条 toast（不含正在淡出收掉的）和看得见的触屏键、待机摇杆圆、开车提示框都不相交（各留 2 px）。竖屏开车提示框在准心上方时，
+// toast 往上长、排在它上面；以前留在准心下面的默认位置，盖住「升」「降」，320×568 还盖住摇杆。截图 tests/output/mobile/<设备>-drive-toast.png
+const DR10_LONG = '闪烁：叉车大灯会把你照亮，对准仪表台的大灯开关点「关大灯」键可以关掉，或者下车找亮着绿色应急灯的门躲进小屋';
+async function dr10(D) {
+  await D.ev(t => { BR.hud.toast('灯光闪了一下……万籁俱寂', 6000); __br.step(0.05); BR.hud.toast(t, 8800); __br.step(0.05); __br.step(0.05); return 0; }, DR10_LONG);
+  // 淡入动画是墙钟的 0.18 s，SwiftShader 一帧可能就要好几百毫秒：直接把淡入（和它带的 6 px 位移）做完再量，不靠等
+  await D.ev(() => { for (const e of document.querySelectorAll('.hud-toast:not(.hud-toast-out)')) { try { for (const a of e.getAnimations()) a.finish(); } catch (err) { /* 老浏览器 */ } } return 0; });
+  await D.page.waitForTimeout(100);
+  const m = await D.ev(() => {
+    const M = __m, vis = e => !!e && M.vis(e);
+    const R = e => { const b = e.getBoundingClientRect(); return { l: b.left, t: b.top, r: b.right, b: b.bottom }; };
+    const toasts = M.qa('.hud-toast').filter(e => vis(e) && !e.classList.contains('hud-toast-out')).map(e => Object.assign({ n: 'toast', text: e.textContent.slice(0, 12) }, R(e)));
+    const blocks = [];
+    for (const e of M.qa('.touch-root .touch-btn')) if (vis(e)) blocks.push(Object.assign({ n: e.textContent.trim() || e.className }, R(e)));
+    const sk = M.q('.touch-stick'); if (sk && M.vis(sk)) blocks.push(Object.assign({ n: 'stickIdle' }, R(sk)));
+    const ln = M.qa('.hud-drive').find(e => M.vis(e)); if (ln) blocks.push(Object.assign({ n: 'driveLine' }, R(ln)));
+    const hits = [];
+    for (const a of toasts) for (const b of blocks) if (a.l < b.r + 2 && a.r > b.l - 2 && a.t < b.b + 2 && a.b > b.t - 2) hits.push(a.text + '×' + b.n);
+    const r4 = o => [o.l, o.t, o.r, o.b].map(Math.round);
+    return { toasts: toasts.map(t => t.text + ' ' + r4(t).join(',')), long: toasts.some(t => /^闪烁/.test(t.text)), hits, blocks: blocks.map(b => b.n + ' ' + r4(b).join(',')),
+      up: document.querySelector('.hud-toasts').classList.contains('hud-toasts-up') };
+  });
+  await shotTo(D, 'drive-toast');
+  D.check('DR10 开车时来一条短 toast、紧跟着断电那条长提示：看得见的 toast 不压触屏键、待机摇杆和开车提示框（' + m.toasts.length + ' 条）', m.long && m.hits.length === 0, m);
+  // 收掉，免得挡后面几项
+  await D.ev(() => { for (let i = 0; i < 20; i++) __br.step(0.5); return 0; });
+  await D.page.waitForTimeout(350);
+}
 async function secDrive(D) {
   const safe = !!D.dev.insets;
+  const portrait = D.dev.h > D.dev.w;
   const env = safe && D.envOk ? D.env : null;
   await goHome(D);
   await startGame(D, { mode: 'test', levelId: '1', seed: 12345 });
@@ -3020,6 +3252,7 @@ async function secDrive(D) {
     return f.key;
   });
   if (!k) throw new Error('出生柱间没有叉车');
+  const zone0 = await D.ev(() => { const z = __m.q('.touch-zone-l'); const b = z.getBoundingClientRect(); return { t: Math.round(b.top), l: Math.round(b.left), r: Math.round(b.right), b: Math.round(b.bottom) }; });
   const pre = await D.ev(() => { const el = document.querySelector('.hud-prompt'); const c = BR.interact.current; return { p: el && !el.hidden ? el.innerText.replace(/\s+/g, ' ').trim() : '', kind: c && c.kind }; });
   D.check('DR1 触屏对准停着的叉车：提示「点「互动」上车」', pre.kind === 'vehicle' && /^点「互动」 ?上车/.test(pre.p) && !/空格/.test(pre.p), pre);
   const ib = await D.ev(() => __m.box('.touch-root .touch-btn-interact'));
@@ -3079,6 +3312,14 @@ async function secDrive(D) {
   if (D.dev.tiny) D.check('DR4b 320 宽竖屏：开车提示行最多 4 行（这里允许「按住「升」「降」」和「动货叉」之间折行）', !!lay.line && lay.line.lines <= 4, { split: lay.line && lay.line.split, lines: lay.line && lay.line.lines, mode: lay.line && lay.line.mode, upper: lay.line && lay.line.upper });
   else D.check('DR4b 开车提示行每一段整段不折行（「按住「升」「降」动货叉 ·」不拆成两行），最多 3 行', !!lay.line && !lay.line.split && lay.line.lines <= 3, { split: lay.line && lay.line.split, lines: lay.line && lay.line.lines, mode: lay.line && lay.line.mode });
   D.check('DR4c 手里拿着东西开车：提示行不压住物品名那一行和背包栏（字不叠字）', !!lay.line && lay.invHits.length === 0, { invHits: lay.invHits, line: lay.line && [lay.line.l, lay.line.t, lay.line.r, lay.line.b].map(Math.round), mode: lay.line && lay.line.mode, upper: lay.line && lay.line.upper });
+  D.check('DR4d 开车提示行折行以后，每行末尾不挂「·」（藏起来），行中间的「·」照常看得见',
+    !!lay.line && lay.line.dots.every(d => d.shown === !d.end), { lines: lay.line && lay.line.lines, dots: lay.line && lay.line.dots });
+  if (portrait) await sub(D, 'DR9', () => dr9(D, lay));
+  if (!portrait) {
+    const cap = await D.ev(() => ({ cls: document.documentElement.classList.contains('hud-stick-cap'), top: document.documentElement.style.getPropertyValue('--hud-stick-top') }));
+    D.check('DR9c 横屏开车：摇杆区不收（<html> 上没有 hud-stick-cap、没有 --hud-stick-top）', !cap.cls && !cap.top, cap);
+  }
+  await sub(D, 'DR10', () => dr10(D));
   {
     const hits = tns.filter(q => q.hit), noteSeen = tns.some(q => q.nv), together = tns.some(q => q.nv && q.tv);
     const dodged = !!obs8 && obs8.cut;
@@ -3116,6 +3357,24 @@ async function secDrive(D) {
   const aft = await D.ev(driveLayout, env);
   D.check('DR7 点「下车」下车：「升」「降」藏起来，「互动」恢复原名，冲刺、丢弃不再灰，提示行收起',
     aft.ctx === 'walk' && !aft.seated && !(aft.B.liftUp && aft.B.liftUp.shown) && !(aft.B.liftDown && aft.B.liftDown.shown) && !!aft.B.interact && aft.B.interact.text === '互动' && !aft.B.sprint.off && !aft.B.drop.off && !aft.line, { ctx: aft.ctx, B: aft.B, line: aft.line });
+  // DR7b（返修 r2，验收员 tests 的负对照 D：下车时不清摇杆区，mobile 照样全过）：下车以后摇杆区恢复成上车前的样子；
+  // 竖屏再在开车时那条上沿以上的左半屏按下：照常起摇杆
+  {
+    const z1 = await D.ev(() => { const z = __m.q('.touch-zone-l'); const b = z.getBoundingClientRect(); const de = document.documentElement;
+      return { t: Math.round(b.top), l: Math.round(b.left), r: Math.round(b.right), b: Math.round(b.bottom), cls: de.classList.contains('hud-stick-cap'), top: de.style.getPropertyValue('--hud-stick-top'), W: innerWidth }; });
+    let probe = null;
+    const capTop = D.data.dr9 && D.data.dr9.cap ? D.data.dr9.cap.zoneTop : null;
+    if (portrait && capTop > 40) {
+      const x = Math.round(z1.W * 0.25), y = Math.max(z1.t + 8, capTop - 30);
+      await D.t.down(25, x, y);
+      await D.t.move(25, x, y - 20);
+      probe = await D.ev(() => ({ on: !!__m.q('.touch-stick.touch-on') }));
+      probe.x = x; probe.y = y;
+      await D.t.up(25); await D.step(0.1);
+    }
+    D.check('DR7b 下车以后摇杆区恢复：<html> 上没有 hud-stick-cap / --hud-stick-top，摇杆区和上车前一样' + (probe ? '；开车时那条上沿以上按下照常起摇杆' : ''),
+      !z1.cls && !z1.top && z1.t === zone0.t && z1.l === zone0.l && z1.r === zone0.r && z1.b === zone0.b && (!probe || probe.on), { zone0, z1, capTop, probe });
+  }
   await goHome(D);
 }
 // =====================================================================
@@ -3148,6 +3407,7 @@ const PLANS = {
     ['toast', secToastL16],                                                                          // A9
     ['sanity', secSanity],                                                                           // E7
     ['drive', secDrive],                                                                             // FE1 叉车 640×360：DR1–DR7
+    ['toast-short', secShortToast],                                                                  // FE1Q J5 矮横屏站着 A3c–A3e
     ['workshop', secWorkshop],                                                                       // D6 D9 D5 D1 D2
   ],
   'iphone-p': [
@@ -3176,6 +3436,13 @@ const PLANS = {
   'iphone13-l': [
     ['drive', secDrive],                                                                             // FE1 叉车 844×390：DR1–DR7
     ['toast', secA3b],                                                                               // A3b（返修 r8）
+    ['toast-short', secShortToast],                                                                  // FE1Q J5：844×390 照旧（A3c keep）
+  ],
+  'se1-l': [
+    ['toast-short', secShortToast],                                                                  // FE1Q J5 568×320 站着 A3c–A3e
+  ],
+  'android800-p': [
+    ['drive', secDrive],                                                                             // FE1P H15 360×800：DR1–DR9
   ],
   'se1-p': [
     ['drive', secDrive],                                                                             // FE1 叉车 320×568：DR1–DR8（DR4b 放宽到 4 行、段可以拆开）

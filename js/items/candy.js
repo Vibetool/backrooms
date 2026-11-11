@@ -82,14 +82,49 @@ function drawBag(g, w, h) {
   g.fillText('糖果', w / 2, 262);
 }
 
-// 单颗包装糖：糖身 + 两头拧起来的包装纸
-function wrapped(x, z, hex, rotY) {
+// 单颗包装糖：糖身 + 两头拧起来的包装纸（糖身扁的那一面朝 ±y、长的方向顺着 x）
+function wrappedGeos() {
   const T = window.THREE;
   const body = new T.SphereGeometry(0.012, 6, 4).scale(1.3, 0.8, 1);
   const l = new T.ConeGeometry(0.009, 0.014, 6).rotateZ(Math.PI / 2).translate(0.021, 0, 0);
   const r = new T.ConeGeometry(0.009, 0.014, 6).rotateZ(-Math.PI / 2).translate(-0.021, 0, 0);
-  return [body, l, r].map(g => K.paint(g.rotateY(rotY).translate(x, 0.01, z), hex));
+  return [body, l, r];
 }
+const CANDY_THIN = 0.012 * 0.8;   // 糖身扁的那个方向的半厚
+const CANDY_IN = 0.0015;          // 糖身压进袋子侧面多深（袋子是软的，看不出缝）
+// 贴在袋子窄侧面外面、用一条透明胶带横着粘住的一颗（FE1P H7，验收员 ⑳e：以前两颗糖放在袋脚边，比底封口还低，
+// 放在地上、货叉上时袋子是站在两颗糖上、被垫歪 4°）：扁的那一面贴着侧面，长的方向竖着，整颗都比底封口高（下面那个拧角离袋底 ≥2.5 cm），
+// 不再当撑着袋子的脚。side = ±1（袋子右 / 左侧面 x = ±W/2），yc 糖心高度，roll 绕侧面法线转一点（两颗不一样斜）
+function sideCandy(W, side, yc, hex, roll) {
+  const x = side * (W / 2 + CANDY_THIN - CANDY_IN);
+  return wrappedGeos().map(g => K.paint(g.rotateZ(Math.PI / 2).rotateX(roll).translate(x, yc, 0), hex));
+}
+// 粘住那颗糖的透明胶带：横着跨过糖身最鼓的一圈，两头贴在袋子侧面上（比糖面、袋面都高 0.5 mm，不穿进去）。双面都画（透明的从里外都看得见）
+function sideTape(W, side, yc, roll) {
+  const T = window.THREE, h = 0.009, off = 0.0005, b = -(CANDY_THIN - CANDY_IN) + off;
+  // 糖心坐标里的一圈（z, 往外多远）：袋面 → 糖身最宽处 → 45° 那圈 → 顶上 → 对称回来（低多边形糖身的顶点 + 0.5 mm）
+  const path = [[-0.0155, b], [-0.012, off], [-0.0085 * 1.04, 0.0068 + off], [0, CANDY_THIN + off], [0.0085 * 1.04, 0.0068 + off], [0.012, off], [0.0155, b]];
+  const P = [];
+  for (let i = 0; i + 1 < path.length; i++) {
+    const [z0, x0] = path[i], [z1, x1] = path[i + 1];
+    const q = [[x0, -h / 2, z0], [x1, -h / 2, z1], [x1, h / 2, z1], [x0, h / 2, z0]];
+    for (const t of [[0, 1, 2], [0, 2, 3], [0, 2, 1], [0, 3, 2]]) for (const k of t) P.push(q[k][0], q[k][1], q[k][2]);
+  }
+  const g = new T.BufferGeometry();
+  g.setAttribute('position', new T.Float32BufferAttribute(P, 3));
+  if (side < 0) g.scale(-1, 1, 1);
+  g.rotateX(roll).translate(side * (W / 2 + CANDY_THIN - CANDY_IN), yc, 0);
+  g.computeVertexNormals();
+  return g;
+}
+const SIDE_CANDY = [[1, 0.052, 0xd94f4f, 0.18], [-1, 0.066, 0xc0c4cc, -0.22]];   // 右侧红的低一点、左侧银的高一点
+// 袋子半厚（nx、ny ∈ [−1, 1] 是袋宽、袋高方向的位置；网格 4×4 段，顶点在 0、±0.5、±1）：中间一块（|nx|、|ny| ≤ 0.5）一样鼓 BAG_MID，
+// 往左右两边收到 65%（侧面还有 3.4 cm 厚，侧面那两颗糖贴得住），往上下两头收到 10%（封口那里只剩 5 mm）。
+// 中间那块是平的：倒下来是那一块面整个着地（放得稳的静止姿态一次倒平，不会斜着靠在一个鼓包尖上、往一边歪）
+const BAG_MID = 0.026;
+function bagFall(n, k) { const a = Math.abs(n); return a <= 0.5 ? 1 : 1 - k * (a - 0.5) / 0.5; }
+function bagHalf(nx, ny) { return BAG_MID * bagFall(nx, 0.35) * bagFall(ny, 0.9); }
+const SEAL_T = 0.0016;            // 封口压边厚度（放大 1.25 倍后 2 mm）
 
 BR.itemTypes.register({
   type: 'candy', en: 'Candy (1 lb bag)', zh: '糖果（一磅装）', version: 'wikidot-en',
@@ -118,24 +153,26 @@ BR.itemTypes.register({
   build() {
     const T = window.THREE;
     const W = 0.11, HGT = 0.15, D = 0.03;
-    // 枕形包装袋：盒子中间一圈顶点往外鼓
-    const bag = new T.BoxGeometry(W, HGT, D, 2, 3, 1);
+    // 枕形包装袋（返修 r1，验收员：以前底封口做成 1.9 cm 厚的方块，袋子靠它笔直立在地上，不像真的一袋糖）：
+    // 正反两面鼓起来，中间那一块一样高（bagHalf，躺下来是一块面着地、不是一个尖）；
+    // 上下两头往封口收扁（只剩 5 mm 厚），封口是 2 mm 厚的压边（放大后），立不住 —— 放在地上、货叉上会倒平，正面或背面朝上躺着。
+    const bag = new T.BoxGeometry(W, HGT, D, 4, 4, 1);
     const pos = bag.attributes.position;
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-      const k = (1 - Math.abs(x) / (W / 2) * 0.8) * (1 - Math.abs(y) / (HGT / 2) * 0.7);
-      pos.setZ(i, z + Math.sign(z) * 0.012 * k);
+      pos.setZ(i, Math.sign(z) * bagHalf(x / (W / 2), y / (HGT / 2)));
     }
     bag.computeVertexNormals();
     bag.translate(0, HGT / 2 + 0.006, 0);
     const solid = [
-      K.paint(K.box(W + 0.002, 0.012, D * 0.5, 0, HGT + 0.001), 0x9fb3ba),   // 顶部压花封口
-      K.paint(K.box(W + 0.002, 0.008, D * 0.5, 0, 0.002), 0x9fb3ba),         // 底部封口
-    ].concat(wrapped(0.085, 0.02, 0xd94f4f, 0.4), wrapped(-0.08, -0.015, 0xc0c4cc, -0.9));
+      K.paint(K.box(W + 0.002, 0.012, SEAL_T, 0, HGT + 0.001), 0x9fb3ba),   // 顶部压花封口（薄压边）
+      K.paint(K.box(W + 0.002, 0.008, SEAL_T, 0, 0.002), 0x9fb3ba),         // 底部封口（薄压边）
+    ].concat(...SIDE_CANDY.map(c => sideCandy(W, c[0], c[1], c[2], c[3])));
     return K.assemble({
       name: 'candy', scale: 1.25,
       solid,
       labels: [[bag, K.labelMat('candy_bag', 256, 288, drawBag)]],
+      glass: SIDE_CANDY.map(c => [sideTape(W, c[0], c[1], c[3]), 0xf2f6ff, 0.38]),
     });
   },
   use() {

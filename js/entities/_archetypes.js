@@ -307,12 +307,14 @@ function reach(e, t) {
   return r + (t.kind === 'player' ? BR.config.player.radius : num(t.ref.r, 0.4));
 }
 
-// 近战一步：够得着就出手/等冷却（返回 'hit' | 'wait'），够不着或隔墙没打到返回 false（调用方继续靠近）
-function melee(e, api, t) {
+// 近战一步：够得着就出手/等冷却（返回 'hit' | 'wait'），够不着或隔墙没打到返回 false（调用方继续靠近）。
+// 'hit' = 起手了；扣血要等胳膊抡到最前（entities.js「近战出手时机」），onLand(e, t, api) 在真的打中那一刻才调（没打中不调）。
+// 骨架的 onAttack 一律经这里交给 onLand —— 悲尸的划伤感染跟着扣血走，不在起手时就感染上
+function melee(e, api, t, onLand) {
   if (!t || !t.ref || !e.def.attack) return false;
   if (t.dist > reach(e, t)) return false;
   if (e.cooldown > 0) { e.state = 'attack'; api.faceToward(e, t.ref.x, t.ref.z); return 'wait'; }
-  if (api.attack(e, t)) { e.state = 'attack'; return 'hit'; }
+  if (api.attack(e, t, typeof onLand === 'function' ? onLand : undefined)) { e.state = 'attack'; return 'hit'; }
   return false;
 }
 
@@ -749,10 +751,11 @@ function buildFace(b, feats, hr, headY) {
   if (F.jaw) b.box('head', 'head', [hr * 0.62, hr * 0.26, hr * 0.48], [0, headY - hr * 0.82, -hr * 0.48]);
 }
 // 手指：claws:0 且 hands 时才加（claws>0 保留原来的爪造型，不重复叠手指），四指+一根拇指，body 槽位
-function buildFingers(b, bone, x, handY, H, th) {
-  const fw = 0.011 * H * th, fl = 0.05 * H;
-  for (let i = 0; i < 4; i++) b.box(bone, 'body', [fw, fl, fw], [x, handY - 0.06 * H, (i - 1.5) * 0.017 * H - 0.02 * H]);
-  b.box(bone, 'body', [fw * 1.1, fl * 0.7, fw * 1.1], [x + (x < 0 ? -1 : 1) * 0.02 * H, handY - 0.02 * H, 0.025 * H]);
+// slot / o（{ tint }）可选：防化服的手套（hazmat）用 gear 槽位、手套色；不给就是原来的 body 槽位，几何一点不变
+function buildFingers(b, bone, x, handY, H, th, slot, o) {
+  const fw = 0.011 * H * th, fl = 0.05 * H, sl = slot || 'body', op = o || undefined;
+  for (let i = 0; i < 4; i++) b.box(bone, sl, [fw, fl, fw], [x, handY - 0.06 * H, (i - 1.5) * 0.017 * H - 0.02 * H], op);
+  b.box(bone, sl, [fw * 1.1, fl * 0.7, fw * 1.1], [x + (x < 0 ? -1 : 1) * 0.02 * H, handY - 0.02 * H, 0.025 * H], op);
 }
 // 衣着细节：领口/腰带叠在躯干骨骼上，袖口/口袋/裤腿褶叠在对应手臂/腿骨骼上，全部 body 槽位、不新增材质槽位
 function buildLimbClothes(b, C, L, x, hx, H, th, handY, hipY, kneeY) {
@@ -1143,17 +1146,105 @@ function swarmPart(o, ctx) {
 // 测试人/玩家外形（拟态用）：防化服 + 玩家当前皮肤色（o.color 可指定别的制服色，联机队友坐车时用）。
 // 缺省用程序化仿制品（约 1k 三角面）：hazmat.glb 有一万八千面，拟态类实体一层刷十几只就压垮手机；
 // { full: true } 才借 test_dummy 的 build（和测试人一模一样，只适合单只特写）
-const HAZMAT_GEAR = 0x1b1b1d;   // gear 槽位基色：面罩/滤罐/手套/靴子/腰带，不随皮肤变
-// 顶点色 tint = 目标色分量 / 槽位基色分量（和 skin_stealer 的眼睛用同一套换算）。gear 槽位很深，
-// 反光条和金属件的乘数 >1 —— 正是 _TEMPLATE 6.10 写的"把这一块提亮到超过槽位材质色"：不新增材质槽位、
-// 不多一次 draw call，就能在同一个槽位里分出银色反光条、金属扣和更深的目镜玻璃
-function hazTint(target) {
-  const c = (hex, s) => ((hex >> s) & 255) / 255;
-  return [c(target, 16) / c(HAZMAT_GEAR, 16), c(target, 8) / c(HAZMAT_GEAR, 8), c(target, 0) / c(HAZMAT_GEAR, 0)];
+//
+// 颜色（FE1P H10，孩子看图挑的「队友一上车手和鞋头就变蓝」）：手套、靴子、防毒面具和测试人的 hazmat.glb 一样
+// （tools/blender_hazmat.py：手套 0x141414、靴子 0x111111、面罩 0x252525、目镜 0x0a0e11、滤罐 0x353535），换皮肤只换制服（body / head 槽位）。
+// 这些都是手写的 sRGB 色；glb 导出时转成了线性值，r147 的 legacyMode 下 setHex 不转换 —— 原来 gear 槽位直接用 0x1b1b1d，
+// 屏幕上亮了两倍多（像灰塑料），手套、靴子也就和站着的 glb 对不上。现在 gear 槽位的材质色和每块的 tint 都按线性值算
+// （同 skin.js / coop.js 的 linHex），乘出来就是 glb 那几个颜色。
+// 形状：人形的手掌方块（制服色）和手指原来把深色手套方块整个包在里面，高画质的脚掌方块从靴子前面伸出来 6 cm ——
+// 现在人形不长手和脚（hands / feet: false），手套 = 和原来手掌一样大的深色方块 + 深色手指（高画质），靴子里面没有别的东西。
+// 低画质（FE1Q J7，用户原话「面具和靴子不能换」）：gear 槽位材质色取手套色 0x141414，面罩框、滤罐、手套、靴子每块也按 glb 的颜色上 tint
+// （乘数按低档那份材质里实际存的值算，tests/visualhooks.mjs 低档白名单放开了窃皮者伪装的 gear 槽位）。原来低档整个 gear 一个颜色，
+// 面罩框比 glb 暗约 15 个色阶（线性 0.00784 ≈ sRGB 22，glb 是 37），滤罐暗约 31 个色阶。只多一个 color 属性，不加面、不加槽位、不多 draw call
+const HAZMAT_GEAR = 0x1b1b1d;   // gear 槽位的设计色（sRGB）：面罩/滤罐/腰带/压胶条，不随皮肤变
+const HAZ_SRGB = {
+  tape: 0xd8dce2,    // 反光条：银白
+  metal: 0x9aa0a6,   // 腰带扣、滤罐端盖、拉链头
+  glass: 0x0a0e11,   // 面罩视窗（= hazmat.glb 的 Visor）：比面罩本体更深，看得出是块玻璃
+  mask: 0x252525,    // 面罩框、呼气阀、头带、颈封、滤罐固定带（= hazmat.glb 的 Mask）
+  filter: 0x353535,  // 两侧滤罐（= hazmat.glb 的 Filter）
+  glove: 0x141414,   // 手套（= hazmat.glb 的 Gloves）
+  boot: 0x111111,    // 靴子、鞋底、靴口翻边（= hazmat.glb 的 Boots）
+};
+// sRGB 手写色 → 材质里该存的值（{ r, g, b } 线性）：legacyMode 下要自己转；关了 legacyMode 时 setHex 已经转过
+function hazLin(hex) {
+  const T = THREE_(), c = new T.Color();
+  c.setHex(hex);
+  const cm = T.ColorManagement;
+  if (!cm || cm.legacyMode !== false) c.convertSRGBToLinear();
+  return c;
 }
-const HAZ_TAPE = hazTint(0xd8dce2);    // 反光条：银白
-const HAZ_METAL = hazTint(0x9aa0a6);   // 腰带扣、滤罐端盖、拉链头
-const HAZ_GLASS = hazTint(0x0c1015);   // 面罩视窗：比面罩本体更深，看得出是块玻璃
+// 给 mat.lambert 的颜色值（setHex 以后材质里存的就是 hazLin 的值，按 8 位四舍五入；Color.getHex 是截断，很深的颜色会差出一截）
+function hazMatHex(hex) {
+  const T = THREE_(), cm = T.ColorManagement;
+  if (cm && cm.legacyMode === false) return hex;
+  const c = hazLin(hex), q = v => Math.max(0, Math.min(255, Math.round(v * 255)));
+  return (q(c.r) << 16) | (q(c.g) << 8) | q(c.b);
+}
+// 顶点色 tint = 目标线性色 / 槽位材质里实际存的值（和 skin_stealer 的眼睛同一套换算）。gear 槽位很深，
+// 反光条和金属件的乘数 >1 —— 正是 _TEMPLATE 6.10 写的"把这一块提亮到超过槽位材质色"：不新增材质槽位、
+// 不多一次 draw call，就能在同一个槽位里分出银色反光条、金属扣、更深的目镜玻璃，以及 glb 颜色的手套和靴子
+let HAZ_PAL = null;
+function hazPal() {
+  if (HAZ_PAL) return HAZ_PAL;
+  const T = THREE_(), gearHex = hazMatHex(HAZMAT_GEAR), base = new T.Color();
+  base.setHex(gearHex);
+  const lowGearHex = hazMatHex(HAZ_SRGB.glove), lowBase = new T.Color();
+  lowBase.setHex(lowGearHex);
+  const tint = (hex, b) => { const c = hazLin(hex); return [c.r / b.r, c.g / b.g, c.b / b.b]; };
+  HAZ_PAL = { gearHex, lowGearHex, low: {} };
+  for (const k in HAZ_SRGB) { HAZ_PAL[k] = tint(HAZ_SRGB[k], base); HAZ_PAL.low[k] = tint(HAZ_SRGB[k], lowBase); }
+  return HAZ_PAL;
+}
+// 手套：和人形原来的手掌方块一样大（宽 0.035H·th+0.01、高 0.06H、厚 0.05H·th+0.01，中心 handY−0.005H），
+// 高画质再加四指一拇指（和 buildFingers 同样的方块），全部在 gear 槽位、手套色
+function hazGlove(b, L, x, d, th, hi, glove) {
+  const H = d.H, o = glove ? { tint: glove } : null;
+  b.box('fore' + L, 'gear', [0.035 * H * th + 0.01, 0.06 * H, 0.05 * H * th + 0.01], [x, d.handY - 0.005 * H, 0], o);
+  if (hi) buildFingers(b, 'fore' + L, x, d.handY, H, th, 'gear', o);
+}
+// 面罩和靴子的形状照 hazmat.glb（返修 FE1Q · repair-r1，验收员 play：「队友一坐上车，防毒面具和靴子的形状就变了」——
+// 站着是 glb 的圆脸罩 + 两侧圆滤罐 + 圆头高筒靴，坐上车以前换成方块面罩、方块靴子；用户原话「面具和靴子不能换」）。
+// 尺寸取 tools/blender_hazmat.py：面罩椭球半径 x 0.098 / y 0.118 / z 0.075、大视野目镜是椭球上半截一条带子、下巴一个呼气阀、
+// 两侧各一个圆滤罐（半径 4.3 cm，在椭球 (±1.2, −0.3) 处顺着表面法线伸出去）；靴筒到离地 0.365 m、靴头是圆的、靴口一圈反光条。
+// 程序化人形的兜帽比 glb 的头大一圈（headSize 1.3），面罩椭球中心往前挪到兜帽前脸外 2.5 cm，大小和 glb 一样
+const HZ_MASK = { r: [0.098, 0.118, 0.075], y: 1.6, z: -0.135 };
+// 椭球 (cx, cy, cz)、半径 R 上，方位 th（0 = 正前、+ = 往 +x）、仰角 ph 处的点和外法线
+function hzOnMask(th, ph) {
+  const R = HZ_MASK.r, d = [Math.sin(th) * Math.cos(ph), Math.sin(ph), -Math.cos(th) * Math.cos(ph)];
+  const p = [R[0] * d[0], HZ_MASK.y + R[1] * d[1], HZ_MASK.z + R[2] * d[2]];
+  const n = [d[0] / R[0], d[1] / R[1], d[2] / R[2]], l = Math.hypot(n[0], n[1], n[2]);
+  return { p, n: [n[0] / l, n[1] / l, n[2] / l] };
+}
+function hzAlong(a, n, t) { return [a[0] + n[0] * t, a[1] + n[1] * t, a[2] + n[2] * t]; }
+// 面罩：椭球脸罩（面罩色）+ 上半截一条深色目镜（同心、半径大 3%，离脸罩 2–4 mm）+ 呼气阀（高画质）+ 两侧圆滤罐（高画质带金属端盖）
+function hzMask(b, hi, Q, P) {
+  const T = THREE_(), R = HZ_MASK.r, mask = { tint: Q.mask };
+  const face = new T.SphereGeometry(1, hi ? 12 : 8, hi ? 8 : 6);
+  face.scale(R[0], R[1], R[2]); face.translate(0, HZ_MASK.y, HZ_MASK.z);
+  b.geo('head', 'gear', face, mask);
+  // 目镜：椭球上 y 相对中心 +0.015…+0.08、正前方 ±60°（SphereGeometry：phi 从 3π/2 往两边是正前方 −z，theta 从顶上量）
+  const k = 1.03, ry = R[1] * k, t0 = Math.acos(0.08 / ry), t1 = Math.acos(0.015 / ry);
+  const visor = new T.SphereGeometry(1, hi ? 8 : 6, hi ? 2 : 1, 1.5 * Math.PI - Math.PI / 3, 2 * Math.PI / 3, t0, t1 - t0);
+  visor.scale(R[0] * k, ry, R[2] * 1.05); visor.translate(0, HZ_MASK.y, HZ_MASK.z);
+  b.geo('head', 'gear', visor, { tint: Q.glass });
+  if (hi) { const v = hzOnMask(0, -0.53); b.limb('head', 'gear', hzAlong(v.p, v.n, -0.01), hzAlong(v.p, v.n, 0.026), 0.03, 0.027, 10, mask); }
+  for (const s of [-1, 1]) {
+    const f = hzOnMask(s * 1.2, -0.3);
+    b.limb('head', 'gear', hzAlong(f.p, f.n, -0.005), hzAlong(f.p, f.n, 0.05), 0.043, 0.043, hi ? 12 : 8, { tint: Q.filter });
+    if (hi) b.limb('head', 'gear', hzAlong(f.p, f.n, 0.05), hzAlong(f.p, f.n, 0.056), 0.026, 0.024, 10, { tint: P.metal });   // 滤罐端盖
+  }
+}
+// 靴子：靴筒（圆台，套住小腿，到离地 0.365）+ 靴脚（横着的扁圆柱）+ 圆靴头（前半个扁椭球）。x = 小腿中线
+function hzBoot(b, L, x, hi, boot) {
+  const T = THREE_();
+  b.limb('shin' + L, 'gear', [x, 0.05, -0.005], [x, 0.365, 0], 0.066, 0.08, hi ? 10 : 8, boot);
+  b.limb('shin' + L, 'gear', [x, 0.038, 0.085], [x, 0.038, -0.12], 0.056, 0.056, hi ? 10 : 8, 0.68, boot);
+  const toe = new T.SphereGeometry(1, hi ? 8 : 6, hi ? 4 : 3, Math.PI, Math.PI);
+  toe.scale(0.056, 0.038, 0.075); toe.translate(x, 0.038, -0.12);
+  b.geo('shin' + L, 'gear', toe, boot);
+}
 function hazmat(ctx, o) {
   o = o || {};
   if (o.full) {
@@ -1163,32 +1254,37 @@ function hazmat(ctx, o) {
       catch (err) { once('hazmat', () => console.warn('[arch] 借用测试人模型失败，改用程序化防化服', err)); }
     }
   }
-  // o.color（FE1：联机队友坐在叉车上时的坐姿人形）指定制服色，缺省仍取玩家当前皮肤色。材质走 mat.lambert 的缓存，
+  // o.color（FE1：联机队友坐在叉车上时的坐姿人形）指定制服色 —— 直接当材质色用（coop.js 已经按 skin.apply 的办法转过线性）。
+  // 缺省取玩家当前皮肤色，按 skin.apply 一样转线性（拟态伪装成测试人：测试人的 glb 制服也是这么上色的）。材质走 mat.lambert 的缓存，
   // 缓存键里带着颜色：给了别的颜色就是另一份材质，拟态实体（不传 o.color）共用的那份不受影响；几何缓存键不看颜色，照旧共享
   const suit = o.color != null && Number.isFinite(+o.color) ? (+o.color >>> 0) & 0xffffff
-    : BR.skin && has(BR.skin, 'color') ? BR.skin.color() : 0xd8b21f;
+    : hazMatHex(BR.skin && has(BR.skin, 'color') ? BR.skin.color() : 0xd8b21f);
   const hi = resolveDetail(o.detail) === 'high';
+  const P = hazPal();
   return humanoid({
-    height: 1.8, bulk: 1.35, headSize: 1.3, neck: 0.4, key: 'hazmat_lite_v2', detail: o.detail,
-    colors: { body: suit, head: suit, gear: 0x1b1b1d },   // body/head 是制服，跟着 BR.skin 变色；gear 固定深色，面罩/滤罐/手套/靴子/腰带不随皮肤变
+    height: 1.8, bulk: 1.35, headSize: 1.3, neck: 0.4, key: 'hazmat_lite_v4', detail: o.detail,
+    hands: false, feet: false,   // 手和脚由下面的手套、靴子代替（不再有制服色的手掌、手指、脚掌藏在里面或者伸出来）
+    // body/head 是制服，跟着皮肤变色；gear 固定深色，面罩/滤罐/手套/靴子/腰带不随皮肤变
+    colors: { body: suit, head: suit, gear: hi ? P.gearHex : P.lowGearHex },
     extend(b, d) {
-      const hr = d.headR, hy = d.headY;
+      const hr = d.headR, hy = d.headY, TH = 1.35;   // TH = 上面传的 bulk（thin 0）
+      const HAZ_TAPE = P.tape, HAZ_METAL = P.metal, HAZ_GLASS = P.glass;
+      // 每块按 glb 的颜色上 tint：高画质相对 gear 设计色，低画质相对手套色（低档那份材质）算乘数（FE1Q J7）
+      const Q = hi ? P : P.low;
+      const glove = Q.glove, boot = { tint: Q.boot }, mask = { tint: Q.mask };
       if (hi) b.sphere('head', 'head', hr * 1.12, [0, hy + hr * 0.12, hr * 0.02], [1, 0.82, 1.05], [8, 6]);              // 兜帽轮廓：罩在头骨外一层，制服色（head 槽位）
-      b.box('head', 'gear', [hr * 1.25, hr * 0.95, hr * 0.5], [0, hy - hr * 0.15, -hr * 0.8]);                           // 面罩框
-      // 原来这里是两颗目镜小球：兜帽球面在 z ≈ -0.184 就把它们盖住了，正面只剩两个黑点（M1 打分原话"面罩只是几颗黑块"）。
-      // 改成下面 high 档里那一整片伸到兜帽前面的观察窗，和测试人 hazmat.glb 的大视野面罩对上；low 档还是只有面罩框，不受影响
-      if (hi) for (const s of [-1, 1]) b.limb('head', 'gear', [s * hr * 0.75, hy - hr * 0.35, -hr * 0.85], [s * hr * 0.8, hy - hr * 0.4, -hr * 1.25], hr * 0.22, hr * 0.25, 6);   // 两侧滤罐
-      else b.limb('head', 'gear', [0, hy - hr * 0.45, -hr * 1.0], [0, hy - hr * 0.5, -hr * 1.45], hr * 0.32, hr * 0.36, 8);                     // 低画质简版：单个中置滤罐
+      // 面罩（圆脸罩 + 目镜 + 呼气阀 + 两侧圆滤罐，照 hazmat.glb 的形状；低画质少几段、不要呼气阀和端盖，轮廓一样）—— 见 hzMask
+      hzMask(b, hi, Q, P);
       if (hi) b.box('spine', 'gear', [0.02, (d.shoulderY - d.hipY) * 0.68, 0.015], [0, (d.shoulderY + d.hipY) / 2, -d.headR * 0.95]);   // 胸前拉链条
       if (hi) b.limb('hips', 'gear', [0, d.hipY + 0.02, 0], [0, d.hipY - 0.015, 0], d.hipW * 1.55, d.hipW * 1.62, 8);    // 腰带
       if (hi) b.box('hips', 'gear', [0.05, 0.06, 0.045], [d.hipW * 0.75, d.hipY - 0.04, 0.04]);                          // 小包
+      const shinR = y => U.lerp(0.032 * d.H * TH, 0.022 * d.H * TH, U.clamp((d.kneeY - y) / (d.kneeY - 0.045 * d.H), 0, 1));   // 小腿圆台在 y 处的半径
       for (const s of [-1, 1]) {
         const L = s < 0 ? 'L' : 'R';
         if (hi) b.limb('fore' + L, 'gear', [s * d.shoulderW, d.handY + 0.05, 0], [s * d.shoulderW, d.handY + 0.035, 0], 0.024, 0.03, 6);   // 腕部胶带环
-        b.box('fore' + L, 'gear', [0.09, 0.1, 0.1], [s * d.shoulderW, d.handY, 0]);                                      // 手套
-        if (hi) b.limb('shin' + L, 'gear', [s * d.hipW, 0.17, -0.03], [s * d.hipW, 0.155, -0.03], 0.05, 0.058, 6);       // 踝部胶带环
-        b.box('shin' + L, 'gear', [0.14, 0.13, 0.27], [s * d.hipW, 0.065, -0.03]);                                       // 靴子
-        if (hi) b.box('shin' + L, 'gear', [0.15, 0.02, 0.29], [s * d.hipW, 0.01, -0.03]);                                // 靴子鞋底
+        hazGlove(b, L, s * d.shoulderW, d, TH, hi, glove);                                                               // 手套（手掌 + 手指）
+        // 靴子：圆头高筒靴（照 hazmat.glb，见 hzBoot）。原来的方块靴子、鞋底、踝部胶带环（现在在靴筒里面）不要了
+        hzBoot(b, L, s * d.hipW, hi, boot);
       }
       if (!hi) return;
       // ---------- M2 打磨：可指认的防化服细节（只在 high 档加形状，low 档保持上面那套简版） ----------
@@ -1197,28 +1293,22 @@ function hazmat(ctx, o) {
       // 全部叠在已有的 body / gear 槽位上（不新增槽位、不多 draw call），颜色差别一律走顶点色 tint。
       // 形状一律挑便宜的：能用方块说清楚的就不用圆柱 —— 圆柱两端的盖子埋在衣服里看不见，白花一倍面数。
       // 这份构件和窃皮者真身共用 4000 面的预算（真身归另一个组），所以这里能省则省
-      const H = d.H, shY = d.shoulderY, sw = d.shoulderW, hw = d.hipW, TH = 1.35;   // TH = 上面传的 bulk
+      const H = d.H, shY = d.shoulderY, sw = d.shoulderW, hw = d.hipW;   // TH（上面传的 bulk）、shinR 在 extend 开头
       const lerpR = (y, y0, y1, r0, r1) => r0 + (r1 - r0) * U.clamp((y - y0) / (y1 - y0), 0, 1);
       const armR = y => lerpR(y, shY - 0.005 * H, d.elbowY, 0.03 * H * TH, 0.024 * H * TH);
       const foreR = y => lerpR(y, d.elbowY, d.handY + 0.02 * H, 0.024 * H * TH, 0.018 * H * TH);
-      const shinR = y => lerpR(y, d.kneeY, 0.045 * H, 0.032 * H * TH, 0.022 * H * TH);
 
-      // 面罩：一整片伸到兜帽前面的深色观察窗（z 要比兜帽球面的 -1.16·hr 更靠前，否则被黄兜帽吃掉）+ 呼气阀 + 头带 + 颈封
-      b.box('head', 'gear', [hr * 1.3, hr * 0.52, hr * 0.16], [0, hy - hr * 0.04, -hr * 1.3], { tint: HAZ_GLASS });
-      b.box('head', 'gear', [hr * 0.44, hr * 0.32, hr * 0.24], [0, hy - hr * 0.62, -hr * 1.16]);
-      b.limb('head', 'gear', [0, hy + hr * 0.5, hr * 0.02], [0, hy + hr * 0.45, hr * 0.02], hr * 1.08, hr * 1.1, 6, 1.06);
-      b.limb('head', 'gear', [0, shY + 0.028, 0], [0, shY - 0.004, 0], 0.076, 0.084, 6);
-      for (const s of [-1, 1]) {
-        b.box('head', 'gear', [hr * 0.34, hr * 0.34, hr * 0.1], [s * hr * 0.81, hy - hr * 0.41, -hr * 1.3], { tint: HAZ_METAL });   // 滤罐端盖
-        b.box('head', 'gear', [hr * 0.1, hr * 0.17, hr * 0.46], [s * hr * 0.68, hy - hr * 0.38, -hr * 1.0]);                        // 滤罐固定带
-      }
+      // 面罩的头带 + 颈封（脸罩、目镜、呼气阀、滤罐见 hzMask）
+      b.limb('head', 'gear', [0, hy + hr * 0.5, hr * 0.02], [0, hy + hr * 0.45, hr * 0.02], hr * 1.08, hr * 1.1, 6, 1.06, mask);
+      b.limb('head', 'gear', [0, shY + 0.028, 0], [0, shY - 0.004, 0], 0.076, 0.084, 6, mask);
 
       // 反光条：上臂、前臂、小腿各一道，胸前和兜帽各一圈 —— 隔着走廊先认出来的就是这几条
       for (const s of [-1, 1]) {
         const L = s < 0 ? 'L' : 'R';
         b.limb('arm' + L, 'gear', [s * sw, 1.35, 0], [s * sw, 1.29, 0], armR(1.35) + 0.004, armR(1.29) + 0.004, 5, { tint: HAZ_TAPE });
         b.limb('fore' + L, 'gear', [s * sw, 0.95, 0], [s * sw, 0.89, 0], foreR(0.95) + 0.004, foreR(0.89) + 0.004, 5, { tint: HAZ_TAPE });
-        b.limb('shin' + L, 'gear', [s * hw, 0.33, 0], [s * hw, 0.27, 0], shinR(0.33) + 0.004, shinR(0.27) + 0.004, 5, { tint: HAZ_TAPE });
+        // 靴口反光条（照 glb：盖住靴筒和裤腿的接缝）。10 段、半径 8.6 cm：边心距 8.18 cm 比靴筒（10 段、外接 8 cm）大，靴筒的棱不从反光条里戳出来
+        b.limb('shin' + L, 'gear', [s * hw, 0.395, 0], [s * hw, 0.35, 0], 0.086, 0.086, 10, { tint: HAZ_TAPE });
       }
       b.limb('spine', 'gear', [0, 1.27, 0], [0, 1.21, 0], 0.199, 0.196, 6, 0.82, { tint: HAZ_TAPE });
       b.limb('head', 'gear', [0, hy + hr * 0.85, hr * 0.02], [0, hy + hr * 0.79, hr * 0.02], hr * 0.75, hr * 0.8, 6, 1.06, { tint: HAZ_TAPE });
@@ -1239,8 +1329,6 @@ function hazmat(ctx, o) {
         b.box('shin' + L, 'body', [0.085, 0.1, 0.022], [s * hw, 0.47, -0.082]);
         b.box('leg' + L, 'gear', [0.07, 0.095, 0.024], [s * (hw + 0.052), 0.72, -0.07]);
         b.box('leg' + L, 'gear', [0.076, 0.02, 0.028], [s * (hw + 0.052), 0.775, -0.072]);
-        b.limb('shin' + L, 'gear', [s * hw, 0.135, -0.03], [s * hw, 0.112, -0.03], 0.082, 0.089, 5);
-        b.box('shin' + L, 'gear', [0.018, 0.05, 0.06], [s * (hw + 0.072), 0.1, -0.03]);
       }
 
       // 腰带扣（扣片 + 扣舌）、胸前口袋和袋盖、上半段拉链和拉链头。
@@ -1775,8 +1863,17 @@ function twitch(rig, t, amt, seed) {
   addRot(rig, (h & 256) ? 'armL' : 'armR', r2 * amt * 1.2, 0, r3 * amt);
   addRot(rig, 'spine', 0, 0, r1 * amt * 0.3);
 }
-// 攻击一个冷却周期 k∈[0,1)：蓄力 → 出手 → 收回
-function strikeCurve(k) { return k < 0.22 ? -0.4 * (k / 0.22) : k < 0.38 ? U.lerp(-0.4, 1, (k - 0.22) / 0.16) : Math.max(0, 1 - (k - 0.38) / 0.4); }
+// 攻击一个冷却周期 k∈[0,1)：蓄力 → 出手 → 收回。STRIKE_PEAK 处到峰值（swipe 胳膊抡到最前、bite 嘴合上），
+// entities.js 就在这一刻扣血（STRIKE_HIT_K，同一个数，改一个要两个一起改；tests/infection.mjs 核对）
+const STRIKE_PEAK = 0.38;
+function strikeCurve(k) { return k < 0.22 ? -0.4 * (k / 0.22) : k < STRIKE_PEAK ? U.lerp(-0.4, 1, (k - 0.22) / (STRIKE_PEAK - 0.22)) : Math.max(0, 1 - (k - STRIKE_PEAK) / 0.4); }
+// 这一帧在攻击周期的哪里：房主 / 单机从这一下起手（entities 记的 attackStart）算，扣血那一刻正好是 STRIKE_PEAK；
+// 抡完一轮还没起下一手（隔墙够不着之类）就停在收回的姿势，不空抡。客机没有起手时刻，照旧按进入 attack 状态的时刻一轮轮循环
+function strikePhase(e, api, t, u, cd) {
+  const s0 = has(api, 'attackStart') ? api.attackStart(e) : null;
+  if (s0 != null && t >= s0 && t - s0 < 3 * cd) return Math.min(0.999, (t - s0) / cd);
+  return ((t - u.stateAt) % cd) / cd;
+}
 function strike(rig, k, kind) {
   const v = strikeCurve(k);
   switch (kind) {
@@ -1907,7 +2004,7 @@ function auto(e, dt, api, cfg, u) {
       if (rig.meta.chains && rig.meta.chains.length) sway(rig, t + u.seed, num(cfg.sway, 0.25) * (1 + amt * 0.5), cfg.swaySpeed);
       if (e.state === 'attack') {
         const cd = Math.max(0.2, num(e.def.attack && e.def.attack.cooldown, 1));
-        strike(rig, ((t - u.stateAt) % cd) / cd, cfg.strike || (gait === 'quad' ? 'bite' : 'swipe'));
+        strike(rig, strikePhase(e, api, t, u, cd), cfg.strike || (gait === 'quad' ? 'bite' : 'swipe'));
       }
     }
   }
@@ -2056,8 +2153,8 @@ function stalker(opts) {
         if (now < a.until && t.dist > reach(e, t)) { e.state = 'alert'; api.faceToward(e, t.x, t.z); return; }
         a.mode = 'chase';
       }
-      const m = melee(e, api, t);
-      if (m) { if (m === 'hit' && typeof o.onAttack === 'function') o.onAttack(e, t, api); return; }
+      const m = melee(e, api, t, o.onAttack);
+      if (m) return;
       e.state = 'chase';
       api.moveToward(e, t.x, t.z, speedOf(e, 'run', o.chaseSpeed));
       return;
@@ -2130,8 +2227,8 @@ function pack(opts) {
     if (t) {
       if (now - p.rallyAt > 0.5) { p.rally = { x: t.x, z: t.z }; p.rallyAt = now; }
       if (o.howl && now - p.howlAt > o.howlCooldown) { p.howlAt = now; cry(e, o.howl, { cooldown: 1, hear: 45 }); }
-      const m = melee(e, api, t);
-      if (m) { if (m === 'hit' && typeof o.onAttack === 'function') o.onAttack(e, t, api); return; }
+      const m = melee(e, api, t, o.onAttack);
+      if (m) return;
       if (o.flank && n > 1 && t.dist > o.flankRadius * 0.8) {
         // 以"目标 → 群重心"方向为基准，每只分一个扇区角，从几个方向同时逼近，堵住退路
         let cx = 0, cz = 0;
@@ -2179,8 +2276,8 @@ function flyer(opts) {
       a.orbit = null;
       if (a.mode === 'climb' && now < a.until) { e.state = 'climb'; api.flee(e, t.x, t.z, speedOf(e, 'run', o.chaseSpeed) * 0.7); return; }
       if (t.dist <= o.diveRange) {
-        const m = melee(e, api, t);
-        if (m === 'hit') { a.mode = 'climb'; a.until = now + o.climbSec; if (typeof o.onAttack === 'function') o.onAttack(e, t, api); return; }
+        const m = melee(e, api, t, o.onAttack);
+        if (m === 'hit') { a.mode = 'climb'; a.until = now + o.climbSec; return; }   // 抡的那一下（起手到打到）entities 不让它想事，打完才拉起
         if (m) return;
         a.mode = 'dive'; e.state = 'dive';
         api.moveToward(e, t.x, t.z, o.diveSpeed != null ? speedOf(e, 'run', o.diveSpeed) : speedOf(e, 'run') * 1.4);
@@ -2234,8 +2331,8 @@ function ambush(opts) {
       if (e.x !== a.homeX || e.z !== a.homeZ) { e.x = a.homeX; e.z = a.homeZ; }
       if (t) {
         api.faceToward(e, t.x, t.z);
-        const m = melee(e, api, t);
-        if (m) { if (m === 'hit' && typeof o.onAttack === 'function') o.onAttack(e, t, api); return; }
+        const m = melee(e, api, t, o.onAttack);
+        if (m) return;
       }
       e.state = t && (o.revealRange <= 0 || t.dist <= o.revealRange) ? 'lurk' : 'hide';
       lure(e, api, o);
@@ -2243,8 +2340,8 @@ function ambush(opts) {
     }
     if (a.mode === 'strike') {
       if (t && now < a.until) {
-        const m = melee(e, api, t);
-        if (m) { if (m === 'hit' && typeof o.onAttack === 'function') o.onAttack(e, t, api); return; }
+        const m = melee(e, api, t, o.onAttack);
+        if (m) return;
         e.state = 'strike';
         api.moveToward(e, t.x, t.z, o.strikeSpeed != null ? speedOf(e, 'run', o.strikeSpeed) : speedOf(e, 'run') * 1.3);
         return;
@@ -2374,8 +2471,8 @@ function wanderer(opts) {
     const t = acquire(e, api, o);
     if (t) {
       if (wantsFlee(e)) { a.threat = { x: t.x, z: t.z }; a.fleeUntil = now + o.fleeSec; e.state = 'flee'; api.flee(e, t.x, t.z, speedOf(e, 'run')); return; }
-      const m = melee(e, api, t);
-      if (m) { if (m === 'hit' && typeof o.onAttack === 'function') o.onAttack(e, t, api); return; }
+      const m = melee(e, api, t, o.onAttack);
+      if (m) return;
       e.state = 'chase';
       api.moveToward(e, t.x, t.z, speedOf(e, 'run'));
       return;
@@ -2424,8 +2521,8 @@ function guide(opts) {
     if (o.engage && e.def.attack) {
       const t = acquire(e, api, o);
       if (t && (!P || Math.hypot(t.x - P.x, t.z - P.z) <= o.leash)) {
-        const m = melee(e, api, t);
-        if (m) { if (m === 'hit' && typeof o.onAttack === 'function') o.onAttack(e, t, api); return; }
+        const m = melee(e, api, t, o.onAttack);
+        if (m) return;
         e.state = 'guard';
         api.moveToward(e, t.x, t.z, speedOf(e, 'run'));
         return;
@@ -2485,8 +2582,8 @@ function hazardEntity(opts) {
     const t = acquire(e, api, { sight: Math.max(o.seekRange, reach(e, null) + 1), canTarget: o.canTarget });
     if (o.sanityPerSec > 0 && o.sanityRadius > 0) sanityPulse(e, api, o.sanityRadius, o.sanityPerSec, 1);
     if (t) {
-      const m = melee(e, api, t);
-      if (m) { if (m === 'hit' && typeof o.onAttack === 'function') o.onAttack(e, t, api); return; }
+      const m = melee(e, api, t, o.onAttack);
+      if (m) return;
     }
     if (o.creep > 0) {
       if (t) { e.state = 'creep'; api.moveToward(e, t.x, t.z, o.creep); }
@@ -2589,7 +2686,7 @@ BR.arch = {
   // 视觉钩子（ENGINE_PLAN M1 AA）：淡出淡入、共享粒子池；每实例材质见 wrap 返回的 u.slotMat
   fx: { vanish: fxVanish, appear: fxAppear, update: fxUpdate, burst: fxBurst, clear: poolClear, debugInfo: fxDebug, FADE_SEC, SLOTMAT_FAR, POOL_MAX },
   // 动画
-  anim: { pose, addRot, addPos, biped, crawl, quad, flap, sway, breathe, twitch, strike, swarm: swarmAnim, auto, lodStep },
+  anim: { pose, addRot, addPos, biped, crawl, quad, flap, sway, breathe, twitch, strike, strikeCurve, STRIKE_PEAK, strikePhase, swarm: swarmAnim, auto, lodStep },
   animate,
 };
 })();

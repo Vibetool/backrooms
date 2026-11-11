@@ -25,7 +25,8 @@
 //              S12c 斜放的地牛：4 个方向、正对和偏心全速开过去，都贴着地牛的真实形状停下（那块 1 m 老碰撞体不再挡车）；
 //              S12d 叉上两只罐头全速撞斜放的地牛：没有一只落进那块老碰撞体（人和准心照旧被它挡；被地牛挡住的留在叉上），落地的都能「空格 拾取」
 //   lift       R 1 s 升 0.45±0.03、inner = carriage/2、杆 >0.3、松开即停、C 到底 fk_end；管子下升不上去（离管底 1–3 cm、提示、fk_strain）、
-//              举着往管子底下开会停；货叉下有人 / 有瓶子停在上面并提示；花园段藤蔓每帧不进护顶 / 门架 / 胸口 +0.1 m、离开 2 s 逐位恢复
+//              举着往管子底下开会停；货叉下有人 / 有瓶子停在上面并提示；花园段藤蔓每帧不进看得见的护顶架、门架零件（FE1Q J3 藤蔓挡体；贴着 0–1 cm，
+//              精确距离见 tests/forklift_polish.mjs vine）、离胸口 ≥0.1 m，离开 2 s 逐位恢复
 //   items      单机货叉上丢罐头：叉面 ±1 cm、跟着升 0.45、开 3 m 相对误差 <1 cm、降到底还在叉面上；两叉中间、叉面 1.6 m 时落地；
 //              走开 4 块、离开这一层再回来还在；降到底能捡；I17 站在原地往同一根货叉上连丢：沿货叉排开不叠（两两隔两件模型半径之和），
 //              离瞄准点都不超过 15 cm；那附近放不下了再丢：东西落在这根货叉旁边的地上（返修 r5 裁定 ③），这根货叉别处还空着提示
@@ -52,6 +53,7 @@
 //              I12s 甩到地上的火盐 / 微波餐 / PTG-B / 皇家口粮真键盘长按空格拖开再松手（加 items.move 不给 y 那条路）：最低顶点离地 ≤1 mm、drop 记录 y = 地面 − rest.bot、朝向不变，换层回来一样；
 //              I21b 再扫 PTG-B 相对车头 24 个朝向 + r13 报过的斜放；I23 再加「挨得很近」（前后只隔 3 mm、朝向不转）；I25 叉尖前地上有罐头、圆东西靠叉尖留在叉上：放得稳、不停在叉尖边上、不往回退；
 //              I26 2.05 m/s PTG-B 跟在别的东西后面（__fk.fineRun 1/240 s 和 1/30 s）：离货叉、离地 >2 mm、差分里没有碰着 / 离开货叉关键帧的每一步重心竖直加速度 ≥0.8 g；
+//              I26b（FE1P H13）翻下叉尖 → 整件离开货叉那一刻（mode 2 → 3）看得见的重心竖直速度两边接得上（__fk.fineSwitch 0.05 ms 细步长，差 ≤2 mm/s；PTG-B 3.9 m/s 等 7 种摆法）；
 //              I14 叉面最低撞柱子、I14b / I14c / I14d 叉面 0.5 m 撞带柱础的方柱、I14e 叉面最低撞柱础后按住 W、I16 / I16c 叉尖顶着小屋墙、I16d 叉面最低顶墙每种物资各一件：
 //              整排往前挪到碰上为止、全部留在叉上（stay:blocked）；I16e / I16f 真键盘顶墙撞上、撞后按住 W：一件没掉时不提示「还在往下掉」，只锁几帧时什么都不说；I14f 柱子只挡住左叉：左叉那排留下、右叉照常落；I14g 不捡、原地再摆再撞：这一排少滑一段；
 //              I16b 叉面 1.2 m 和满升真开（限速到不了 2 m/s，不甩）；I15 倒车撞上不掉；I18 叉尖离货架 20–30 cm：翻下去的落在叉尖和货架之间、没过叉尖的留在叉上。
@@ -63,10 +65,12 @@
 //   exits      朝出口开：OBB 不进出口圈 +0.4、「前面是出口」、3 s 不换层；看哪边从哪边下、一边挡住换边、两边挡住车尾、三面挡住提示并留在车上；
 //              三面挡住时死亡：人落在空地（不在 OBB、出口圈）；下车落点不在出口圈；3 m/s 按空格 0.6 s 内停住下车
 //   life       下车写 levelState.vehicles（没有 d、w）、货叉高度保留、「货叉还举着」只说一次；走开 4 块网格段释放、'veh|' OBB 还在；
-//              回来 / 换层回来位姿 <1 mm、原位置网格段藏掉、原位置没碰撞；死在车上回到 walk；回主页车回原位；工坊编辑态没有 vehicle 候选
+//              回来 / 换层回来位姿 <1 mm、原位置网格段藏掉、原位置没碰撞（出生车 J2 起是运行时车；repair-r1 起另拿一台区块里停着的车 F4b–F6b
+//              再走一遍：开走 → 走到 loadR + 3 块外区块卸掉 → 回来 / 换层回来，重建的区块里原位置那段又叠成一点）；死在车上回到 walk；回主页车回原位；
+//              工坊编辑态没有 vehicle 候选
 //   pause      单机暂停 2 s 车和货叉不动；输入被关掉（联机暂停 / 结算 / 切后台走的同一条 null 输入路径）3 m/s 0.6 s 内停住、
 //              货叉不动、雷达照常；单机切后台（visibilitychange）时整局暂停、车不动
-//   nightmare  噪音（怠速 ≈0.25、行驶 ≥0.6、倒车 ≥0.8）、车侧 6 m 的敌对 3 s 内发现坐着的人、车尾 1 m 打得到、货叉尖外 0.3 m 打不到且 10 s 内绕到车侧、
+//   nightmare  噪音（怠速 ≈0.25、行驶 ≥0.6、倒车 ≥0.8）、车侧 6 m 的敌对 3 s 内发现坐着的人、车尾外 1 m 放的敌对 6 s 内绕过来打到人（FE1P H11：攻击距离量到司机身体，车尾够不着，绕到车尾侧角）、货叉尖外 0.3 m 打不到且 10 s 内绕到车侧、
 //              开过未密封水坑不掉理智
 //   dark       L1 断电：车前 4 m 地面亮度 ≥ 断电环境 3 倍（灯池里有大灯）、车尾 2 m ≤1.5 倍、顶墙时光源在墙前 0.3 m 且墙另一侧 2 m ≤1.2 倍；
 //              下车大灯撤掉、灯罩是暗色不开洞；仪表台大灯开关（家长定的规则，在下一次断电里试）：K9 点火默认开、司机在 lightAt 里被照亮；
@@ -78,7 +82,7 @@
 //              开着车 + 5 台开过的车 calls ≤120（高低画质）；_step 1000 步平均 ≤0.6 ms；新音效离线渲染无 NaN、峰值 <0 dBFS
 //   --shots    各组额外存几张佐证截图（dark、perf 本来就要截图量像素，不受影响）
 // 每个 page.evaluate 记下用了多久，汇总前打一行「最慢的 page.evaluate」（返修 r6 裁定 ⑥：单次不超过 60 s；撞车那几段用 __fk.crashGen 每次最多推 30 帧）
-//   --sub      items 组只跑其中几段：stack（I17 系列）、field（I12d–I12h、I19 系列、I20 系列、I21、I17b、I14b–I14g、I16d）、throw（I12–I15 和 field）、high（I16 系列）、carton（I18）
+//   --sub      items 组只跑其中几段：stack（I17 系列）、field（I12d–I12h、I19 系列、I20 系列、I21、I17b、I14b–I14g、I16d）、throw（I12–I15 和 field）、high（I16 系列）、carton（I18）、i26b（只跑 I26b，FE1P）
 // 每组的数值和截图写 tests/output/forklift/<组>/；汇总行「检查 N 项，失败 M 项」「页面报错 K 条」（tests/all.mjs 按它判定）。
 // 任一检查失败或页面出现 console.error / 未捕获异常时退出码为 1。
 import http from 'node:http';
@@ -92,9 +96,10 @@ const require = createRequire(import.meta.url);
 const { chromium } = require('/Users/xuanjiang/Downloads/project/ESP-S3/rocket-launch-3d/node_modules/playwright-core');
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const OUT_BASE = path.join(ROOT, 'tests', 'output', 'forklift');
 const argv = process.argv.slice(2);
 const argOf = n => { const i = argv.indexOf('--' + n); return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : null; };
+// --out <目录>（FE1P）：数值和截图写到别的目录（几路同时跑同一组时不互相覆盖）；缺省 tests/output/forklift
+const OUT_BASE = argOf('out') ? path.resolve(argOf('out')) : path.join(ROOT, 'tests', 'output', 'forklift');
 const ALL_GROUPS = ['data', 'mount', 'drive', 'crash', 'side', 'lift', 'items', 'exits', 'life', 'pause', 'nightmare', 'dark', 'perf'];
 const GROUPS = argOf('group') ? argOf('group').split(',').map(s => s.trim()).filter(Boolean) : ALL_GROUPS.slice();
 const SHOTS = argv.includes('--shots');
@@ -358,6 +363,8 @@ function installHelpers() {
   // 整个在举起来的货叉正下方（叉子投影里、比叉底还低：只能是穿过货叉掉下去的）
   // 物资模型的水平半径：模型所有顶点离它竖直转轴（原点）最远的水平距离，按类型量一次（转多少都一样）。
   // 返修 r4 以前按包围球半径 × 0.8，细高的瓶子大了 2.5 倍（水瓶 0.111，模型 0.044）
+  // 算实物的网格（FE1P H6）：光晕、发光体（物资 build 时标 userData.glow）不算 —— 和 items.rest、vehicles.js 量外形同一个口径
+  F.solid = n => (BR.items && typeof BR.items.solidMesh === 'function' ? BR.items.solidMesh(n) : !!(n && n.isMesh) && !(n.userData && n.userData.glow));
   F._foot = {};
   F.foot = p => {
     const ty = String(p.type);
@@ -366,6 +373,7 @@ function installHelpers() {
       const o = p.obj.matrixWorld.elements;
       let m = 0;
       p.obj.traverse(n => {
+        if (!F.solid(n)) return;   // 光晕、发光体不是实物（FE1P H6）
         const pos = n.isMesh && n.geometry && n.geometry.attributes.position;
         if (!pos) return;
         const e = n.matrixWorld.elements;
@@ -390,6 +398,7 @@ function installHelpers() {
     p.obj.updateMatrixWorld(true);
     const st = step || 1;
     p.obj.traverse(n => {
+      if (!F.solid(n)) return;   // 光晕、发光体不是实物（FE1P H6）
       const pos = n.isMesh && n.geometry && n.geometry.attributes.position;
       if (!pos) return;
       const e = n.matrixWorld.elements;
@@ -422,6 +431,7 @@ function installHelpers() {
     const inv = p.obj.matrixWorld.clone().invert(), v = new THREE.Vector3(), V = [];
     let A = 0, cx = 0, cy = 0, cz = 0;
     p.obj.traverse(n => {
+      if (!F.solid(n)) return;   // 光晕、发光体不是实物（FE1P H6）
       const g = n.isMesh && n.geometry, pos = g && g.attributes.position;
       if (!pos) return;
       const M = new THREE.Matrix4().multiplyMatrices(inv, n.matrixWorld), P = [];
@@ -444,6 +454,7 @@ function installHelpers() {
     p.obj.updateMatrixWorld(true);
     const v = new THREE.Vector3(), pts = [], inS = strip || (() => true);
     p.obj.traverse(n => {
+      if (!F.solid(n)) return;   // 光晕、发光体不是实物（FE1P H6）
       const g = n.isMesh && n.geometry, pos = g && g.attributes.position;
       if (!pos) return;
       const P = [];
@@ -542,6 +553,7 @@ function installHelpers() {
     p.obj.updateMatrixWorld(true);
     const inv = p.obj.matrixWorld.clone().invert(), v = new THREE.Vector3(), H = 0.005, meshes = [];
     p.obj.traverse(n => {
+      if (!F.solid(n)) return;   // 光晕、发光体不是实物（FE1P H6）
       const g = n.isMesh && n.geometry, pos = g && g.attributes.position;
       if (!pos) return;
       const P = [];
@@ -714,6 +726,7 @@ function installHelpers() {
     p.obj.updateMatrixWorld(true);
     const inv = p.obj.matrixWorld.clone().invert(), v = new THREE.Vector3(), out = [];
     p.obj.traverse(n => {
+      if (!F.solid(n)) return;   // 光晕、发光体不是实物（FE1P H6）
       const g = n.isMesh && n.geometry, pos = g && g.attributes.position;
       if (!pos) return;
       const P = []; for (let i = 0; i < pos.count; i++) { v.fromBufferAttribute(pos, i).applyMatrix4(n.matrixWorld).applyMatrix4(inv); P.push([v.x, v.y, v.z]); out.push(v.x, v.y, v.z); }
@@ -758,6 +771,7 @@ function installHelpers() {
     let lo = Infinity;
     p.obj.updateMatrixWorld(true);
     p.obj.traverse(n => {
+      if (!F.solid(n)) return;   // 光晕、发光体不是实物（FE1P H6）
       const g = n.isMesh && n.geometry, pos = g && g.attributes.position;
       if (!pos) return;
       const idx = g.index, nt = idx ? idx.count / 3 : pos.count / 3;
@@ -1045,6 +1059,36 @@ function installHelpers() {
       return { crashed: true, v0: last.v0, pre: F.r(pre), how: last.how, kf: last.kf, tr };
     } finally { BR.gfx.render = render0; F._hovCrash = null; F._hovSurf = null; }
   };
+  // mode 2 → 3（翻下叉尖 → 整件离开货叉）那一刻看得见的重心竖直速度接不接得上（FE1P H13，验收员 r15：3.9 m/s PTG-B 那一刻差 4–5 cm/s）：
+  // 撞上以后按 1/240 s 走到最后一个 mode 2 关键帧前 2 ms，再按 0.05 ms 走 6 ms；切换时刻两边各取 0.5 ms 里的点做二次拟合求导，返回 { vb, va, dv }（m/s）
+  F.fineSwitch = (k, id, v0) => {
+    const n0 = BR.vehicles.debugInfo().throws.length, render0 = BR.gfx.render;
+    BR.gfx.render = () => {};
+    try {
+      BR.vehicles._step(1 / 60, { throttle: 0, steer: 0, lift: 0 }, k);
+      const v = BR.vehicles.byKey(k); v.sim.spd = v0; v.pose.spd = v0;
+      for (let i = 0; i < 90; i++) { BR.vehicles._step(1 / 30, { throttle: 1, steer: 0, lift: 0 }, k); if (BR.vehicles.debugInfo().throws.length > n0) break; }
+      const tt = BR.vehicles.debugInfo().throws, last = tt.length > n0 ? tt[tt.length - 1] : null;
+      if (!last) return { crashed: false };
+      const kf = ((last.kf || []).find(e => e[0] === id) || [id, []])[1], m2 = kf.filter(q => q[1] === 2), tb = m2.length ? m2[m2.length - 1][0] : null;
+      const how = (last.how || []).find(h => String(h[0]) === id);
+      if (tb == null || !kf.some(q => q[1] === 3)) return { crashed: true, v0: last.v0, how: how && how[1], tb: null };
+      const ftOf = () => { const m = new Map(BR.vehicles.debugInfo().fallT || []); return m.get(id); };
+      for (let i = 0; i < 2000; i++) { const ft = ftOf(); if (ft == null || ft >= tb - 0.002) break; __br.step(Math.min(1 / 240, tb - 0.002 - ft + 1e-6)); }
+      const pts = [];
+      for (let i = 0; i < 120; i++) { __br.step(0.00005); const p = BR.items.find(id), ft = ftOf(); if (p && p.obj && ft != null) pts.push([ft, F.comW(p)[1]]); }
+      const fit = (A, t) => {   // 最小二乘 y = c0 + c1 (x − t) + c2 (x − t)²，返回 c1
+        if (A.length < 3) return null;
+        const S = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], R = [0, 0, 0];
+        for (const [x, y] of A) { const u = x - t, f = [1, u, u * u]; for (let i = 0; i < 3; i++) { R[i] += f[i] * y; for (let j = 0; j < 3; j++) S[i][j] += f[i] * f[j]; } }
+        const det = M => M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) - M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) + M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]);
+        const D = det(S);
+        return Math.abs(D) < 1e-30 ? null : det(S.map((r, i) => [r[0], R[i], r[2]])) / D;
+      };
+      const vb = fit(pts.filter(q => q[0] <= tb - 1e-7 && q[0] >= tb - 0.0005), tb), va = fit(pts.filter(q => q[0] >= tb + 1e-7 && q[0] <= tb + 0.0005), tb);
+      return { crashed: true, v0: last.v0, how: how && how[1], tb, vb: vb == null ? null : F.r(vb, 1e5), va: va == null ? null : F.r(va, 1e5), dv: vb == null || va == null ? null : F.r(va - vb, 1e5) };
+    } finally { BR.gfx.render = render0; }
+  };
   F.crashStart = (k, ids, o) => { F._cr = F.crashGen(k, ids, o); return F.crashMore(); };
   F.crashMore = () => { const r = F._cr.next(); if (r.done) { F._cr = null; return { done: true, value: r.value }; } return { done: false, frames: r.value }; };
   F.crashRun = (k, ids, o) => { const g = F.crashGen(k, ids, o); let r = g.next(); while (!r.done) r = g.next(); return r.value; };
@@ -1246,7 +1290,23 @@ function installHelpers() {
       const boxes = F.boxesAt(px, pz, yaw, o.lift || 0);
       const inT = boxes.some(b => BR.phys.overlapOBB(b, { tol: 0, ignoreKey: pk }) && obbHitsBox(b, box));
       if (!inT) continue;
-      return { x: sx, z: sz, yaw, run, off, contact: sw.d, hits: sw.hits };
+      const lane = { x: sx, z: sz, yaw, run, off, contact: sw.d, hits: sw.hits };
+      if (typeof o.reject === 'function' && o.reject(lane)) continue;
+      return lane;
+    }
+    return null;
+  };
+  // 从起点往后 back 米到往前 run 米这一路上，车的 14 个 OBB（lift 时）碰不碰出口圈 / keepClear（BR.world.blockers：车开进去以后
+  // 倒车会被「后面是出口」挡住）。返修 FE1Q · J6（主会话裁定）：选撞车直道时碰到的跳过。返回 { s, kind, why } | null
+  F.exitHit = (x, z, yaw, lift, run, back) => {
+    const BL = (BR.world && typeof BR.world.blockers === 'function' ? BR.world.blockers({}) : null) || [];
+    if (!BL.length) return null;
+    const f = F.fwd(yaw);
+    for (let s = -(back || 0); s <= run + 1e-6; s += 0.05) {
+      for (const o of F.boxesAt(x + f.x * s, z + f.z * s, yaw, lift || 0)) for (const b of BL) {
+        const hit = b.r != null ? !!BR.phys.circleVsObb(b.x, b.z, b.r, o) : obbHitsBox(o, { minX: b.x0, maxX: b.x1, minZ: b.z0, maxZ: b.z1 }, 0);
+        if (hit) return { s: Math.round(s * 100) / 100, kind: b.kind, why: b.why || '' };
+      }
     }
     return null;
   };
@@ -1385,11 +1445,12 @@ async function gData(browser) {
       const k = __fk.spawnKey(), f = k && __fk.fkData(k), rec = k && __fk.rec(k);
       const pk = rec && rec.physKey;
       const R = pk ? BR.phys.records(pk) : { solids: [], obbs: [] };
-      return { k, f: f && { x: f.x, z: f.z, rot: f.rot, i: f.i, runtime: f.runtime, detail: f.detail, solid: f.solid }, rec, pk,
+      return { k, f: f && { x: f.x, z: f.z, rot: f.rot, i: f.i, runtime: f.runtime, detail: f.detail, solid: f.solid }, rec, pk, tier: k ? BR.vehicles.debugInfo().tiers[k] || null : null,
         solids: R.solids.length, obbs: R.obbs.length, names: R.obbs.map(o => o.name), keys: Array.from(new Set(R.obbs.map(o => o.key))).slice(0, 3) };
     });
     const k = r0.k;
-    check('D1 种子 12345：出生柱间叉车在 (16.4, 16.91)，key 1@0,0#v<i>', !!k && /^1@0,0#v\d+$/.test(k) && Math.abs(r0.f.x - 16.4) < 0.05 && Math.abs(r0.f.z - 16.91) < 0.05 && !r0.f.runtime, r0);
+    // 返修 FE1Q · J2（主会话裁定）：出生块里的车一律是运行时车（不在区块几何里），一载入就用载具网格画（高画质 mid）
+    check('D1 种子 12345：出生柱间叉车在 (16.4, 16.91)，key 1@0,0#v<i>，运行时车（J2）、载具网格里是 mid', !!k && /^1@0,0#v\d+$/.test(k) && Math.abs(r0.f.x - 16.4) < 0.05 && Math.abs(r0.f.z - 16.91) < 0.05 && r0.f.runtime === true && r0.tier === 'mid', r0);
     if (!k) return;
     check('D2 停着时 phys 里是 14 个 OBB（' + (r0.pk || '?') + '#<部件>），原来的外接 AABB 已经不在', r0.obbs === 14 && r0.solids === 0 && r0.names.includes('forkL') && r0.names.includes('roof'), r0);
 
@@ -1437,6 +1498,8 @@ async function gData(browser) {
         const v = __fk.veh(k), c = v.chunk || BR.world.chunks().find(q => q.key === '0,0');
         const meshes = [];
         (c.res.group || c.group).traverse(o => { if (o.isMesh) meshes.push(o); });
+        // 运行时车（J2：出生块里的车）、开过的车画在全层共用的载具网格里（顶点是世界坐标、每帧在 CPU 上更新）：一起打
+        BR.gfx.scene.traverse(o => { if (o.isMesh && /^vehicles kit:/.test(o.name || '') && o.visible) { o.geometry.computeBoundingSphere(); o.geometry.computeBoundingBox(); meshes.push(o); } });
         const rc = new THREE.Raycaster();
         const toC = __fk.W(k, 0, -0.4);
         const base = Math.atan2(toC.x - P.x, toC.z - P.z);
@@ -2251,7 +2314,8 @@ async function gLift(browser) {
     check('L8 货叉 0.5 m 开过地上的瓶子再按 C：停在瓶子上面，提示「货叉下面有东西」', fb5 != null && !!r8.item && r8.forkR >= r8.item.top - 0.005 && r8.forkR <= r8.item.top + 0.05 && r8.notes.includes('货叉下面有东西'), { lz, r8 });
     await dismount(page);
 
-    // 花园段藤蔓（种子 1：(-1,0)、(-1,1)、(-2,0) 是花园段）：每一帧藤蔓顶点不进护顶、门架、司机胸口外扩 0.1 m；车走开 2 s 后逐位恢复
+    // 花园段藤蔓（种子 1：(-1,0)、(-1,1)、(-2,0) 是花园段）：每一帧藤蔓顶点不进看得见的护顶架、门架零件（FE1Q J3 藤蔓挡体，贴着 0–1 cm 由
+    // tests/forklift_polish.mjs vine 量精确距离）、离司机胸口 ≥0.1 m；车走开 2 s 后逐位恢复
     await startL1(page, { seed: 1 });
     const kv = await ev(page, () => __fk.spawnKey());
     const vine = await ev(page, k => {
@@ -2302,7 +2366,8 @@ async function gLift(browser) {
           m.updateMatrixWorld(true);
           const arr = m.geometry.attributes.position.array, M = m.matrixWorld;
           const top = a.v.top, len = Math.hypot(a.v.bot[0] - top[0], a.v.bot[1] - top[1], a.v.bot[2] - top[2]);
-          const vols = __fk.obbs(a.k).filter(b => /roof|post|mast|carriage/.test(b.name)).map(b => Object.assign({}, b, { hx: b.hx + 0.1, hz: b.hz + 0.1, minY: b.minY - 0.1, maxY: b.maxY + 0.1 }));
+          // 看得见的护顶架、门架零件（FE1Q J3 藤蔓挡体：sim.vineVolumes，物理 OBB 不再用；藤蔓贴着它们 0–1 cm、不穿进去，精确距离见 tests/forklift_polish.mjs vine）
+          const sim = BR.forklift.byKey(a.k), V = sim.vineVolumes(BR.vehicles.seated === a.k);
           const ch = BR.vehicles.chestOf(BR.player), G = __fk.geo(), e = G.eye || { x: 0, y: 1.8, z: 0.16 }, ew = __fk.W(a.k, e.x, e.z, e.y);
           const hits = [];
           const v3 = new THREE.Vector3();
@@ -2310,7 +2375,7 @@ async function gLift(browser) {
           for (let q = a.v.v[0]; q < a.v.v[1]; q++) {
             v3.set(arr[q * 3], arr[q * 3 + 1], arr[q * 3 + 2]).applyMatrix4(M);
             if (top[1] - v3.y < 0.05 * len) continue;   // 只看下段（离挂点 5% 以下）
-            for (const b of vols) if (BR.phys.pointInObb(b, v3.x, v3.y, v3.z)) { hits.push(b.name); break; }
+            { const h = BR.forklift._geom.vineHit(V, v3.x, v3.y, v3.z); if (h) hits.push(h); }
             if (ch) {
               // 胸口到头顶这一段外扩 0.1 m
               const ax = ch.x, ay = ch.y, az = ch.z, bx = ew.x, by = ew.y + 0.12, bz = ew.z;
@@ -2336,7 +2401,7 @@ async function gLift(browser) {
       const after = await snapV();
       let diff = 0;
       for (let i = 0; i < before.length; i++) if (before[i] !== after[i]) diff++;
-      check('L9 花园段开到藤蔓底下：藤蔓下段的顶点每一帧都不在护顶、门架、司机胸口外扩 0.1 m 的范围里（' + frames + ' 帧）', pmv.mounted && moved && badF.length === 0, { bad: badF.slice(0, 8), vine: { ck: vine.ck, i: vine.i, bot: vine.v.bot, top: vine.v.top }, changedWhileNear: changed });
+      check('L9 花园段开到藤蔓底下：藤蔓下段的顶点每一帧都不在看得见的护顶架、门架零件（FE1Q J3 藤蔓挡体）里、离司机胸口 ≥0.1 m（' + frames + ' 帧）', pmv.mounted && moved && badF.length === 0, { bad: badF.slice(0, 8), vine: { ck: vine.ck, i: vine.i, bot: vine.v.bot, top: vine.v.top }, changedWhileNear: changed });
       check('L10 车离开 2 s 后藤蔓顶点逐位恢复原样', diff === 0, { diff, n: before.length });
     }
   } finally {
@@ -2461,6 +2526,7 @@ async function gItems(browser) {
       if (SUB.includes('throw')) await throwChecks(page, k);
       if (SUB.includes('high')) await throwHighChecks(page, k);
       if (SUB.includes('carton')) await throwCartonCheck(page, k);
+      if (SUB.includes('i26b')) { const lane = await chockLane(page, k); if (lane) await switchCont26b(page, k, lane); else check('I26b 找到一条能全速撞上车轮挡的直道', false); }
       return;
     }
     // I1 左货叉中线上丢一只罐头：落在叉面上
@@ -2710,8 +2776,10 @@ function chockLane(page, k) {
     let front = 0;
     for (const o of G.obbs(a.L)) if (o.cy - o.hy < 0.12) front = Math.min(front, o.cz - Math.abs(o.hz));
     const stops = __fk.allSolids(b => Math.abs(b.h - 0.12) < 0.01 && Math.max(b.w, b.d) > 1.4 && Math.min(b.w, b.d) < 0.25);
+    // 返修 FE1Q · J6：起点、整条直道、起点往后 0.5 m 的倒车余量，车碰到出口圈 / keepClear 的直道跳过（倒车会被「后面是出口」挡住）
+    const reject = l => !!__fk.exitHit(l.x, l.z, l.yaw, a.L, l.run + 0.1, 0.5);
     for (const b of stops) {
-      const l = __fk.laneTo(a.k, b, { runs: [3.5, 3, 2.5], offs: [0, 0.15, -0.15], lift: a.L, frontZ: front });
+      const l = __fk.laneTo(a.k, b, { runs: [3.5, 3, 2.5], offs: [0, 0.15, -0.15], lift: a.L, frontZ: front, reject });
       if (l) return Object.assign(l, { box: b, front });
     }
     return null;
@@ -2792,7 +2860,8 @@ async function throwChecks(page, k) {
   const lie12b = await ev(page, a => __fk.lieState(a.k, a.ids), { k, ids });
   check('I12b 离开这一层再回来：甩出去的罐头还在落点（差 <1 cm），不在货叉上，照样静静躺着（不浮不转）', c12b.every((c, i) => onGround(c) && Math.hypot(c.x - c12[i].x, c.z - c12[i].z) < 0.01) &&
     lie12b.every(c => c.still && Math.abs(c.objDy) < 1e-4), { c12, c12b, lie12b });
-  // I12c 叉面 0.5 m 在同一条车轮挡直道上全速撞上：两只罐头从叉面高度往前翻下去，最靠车那件（每根货叉就这一件）离叉尖 L(车速) ±5 cm
+  // I12c 叉面 0.5 m 在同一条车轮挡直道上全速撞上：两只罐头从叉面高度往前翻下去，最靠车那件（每根货叉就这一件）离叉尖 = max(L(v), v²/(0.8g) − 撞上时离叉尖) ±5 cm
+  //   （返修 r12 裁定 A 起 L(v) 是下限，见 rearWant；以前这里写的「离叉尖 L(车速) ±5 cm」过期了，FE1P H13）
   {
     const ids12c = ['i12c-a', 'i12c-b'];
     const set12c = await ev(page, a => {
@@ -3020,6 +3089,35 @@ const benchMs = (page, k, v) => ev(page, a => { const r = BR.vehicles._benchThro
 // 每次量的时候记下 1 分钟平均负载，超了 8 ms 但当时负载超过核数，记一条 WARN（打出负载）不判失败；负载不高时超了照样失败
 const CORES = Math.max(1, (os.cpus() || []).length || 1);
 const loadNow = () => { try { return os.loadavg()[0]; } catch (e) { return 0; } };
+async function switchCont26b(page, k, lane) {
+  // I26b（FE1P H13，验收员 r15）翻下叉尖（mode 2）→ 整件离开货叉（mode 3）那一刻，看得见的重心竖直速度两边接得上：0.05 ms 细步长、两边各 0.5 ms 二次拟合求导，
+  //   差 ≤ 2 mm/s（以前 PTG-B 3.9 m/s 差 4–5 cm/s，别的东西差约 5 mm/s：位置串按半隐式欧拉积分，交出去的速度少了半步；关键帧时刻又取整到 0.1 ms）。每次只摆一件
+  const G = await ev(page, () => { const G = __fk.geo(); return { travel: G.carriageTravel || 2.6, base: (G.forkY || 0.015) + (G.forkT || 0.04) }; });
+  const L05 = (0.505 - G.base) / G.travel;
+  const laneLow = await ev(page, a => { const f = __fk.fwd(a.l.yaw), d = Math.max(0, a.l.contact - 0.12); return { x: a.l.x + f.x * d, z: a.l.z + f.z * d, yaw: a.l.yaw }; }, { l: lane });
+  const setup = (lift, list, l) => ev(page, a => {
+    for (const id of (BR.vehicles.debugInfo().riders[a.k] || [])) BR.items.remove(id);
+    for (const p of BR.items.list.slice()) if (/^i26b-/.test(p.id)) BR.items.remove(p.id);
+    __fk.place(a.k, a.l.x, a.l.z, a.l.yaw, a.lift); __br.step(0.2);
+    for (const p of BR.items.list.slice()) { if (p.owner || a.list.some(q => q[0] === p.id)) continue; const l = __fk.L(a.k, p.x, p.z); if (l.z < -1 && l.z > -10.5 && Math.abs(l.x) < 1.5) { BR.items.remove(p.id); if (BR.levelState) BR.levelState.set('1', 'drop', p.id, null); } }
+    const ok = a.list.map(q => __fk.putOnFork(a.k, q[0], q[1], q[2], q[3], q[4]));
+    __br.step(0.1);
+    return { ok };
+  }, { k, l, lift, list });
+  {
+    const list26b = [['i26b-a', 'ptg_b', -0.28, -1.667, -1.5476, 3.9], ['i26b-b', 'ptg_b', 0.28, -1.489, -1.5732, 3.9], ['i26b-c', 'ptg_b', -0.28, -2.0, 1.5708, 3.9],
+      ['i26b-d', 'ptg_b', 0.28, -1.9, 0, 2.05], ['i26b-e', 'firesalt', 0.28, -1.9, 0.4, 2.05], ['i26b-f', 'lightning_in_a_bottle', -0.28, -2.03, 3.512, 3.9], ['i26b-g', 'candy', 0.28, -1.95, 0, 3.9]];
+    const res26b = [];
+    for (const q of list26b) {
+      const set = await setup(L05, [q.slice(0, 5)], laneLow);
+      await parkPlayerBehind(page, laneLow);
+      const r = await ev(page, a => __fk.fineSwitch(a.k, a.id, a.v0), { k, id: q[0], v0: q[5] });
+      res26b.push(Object.assign({ id: q[0], ty: q[1], put: set.ok[0] }, r));
+    }
+    check('I26b 翻下叉尖 → 整件离开货叉那一刻看得见的重心竖直速度接得上（差 ≤2 mm/s）：' + res26b.map(r => r.ty + ' 撞前 ' + r.v0 + ' m/s ' + (r.dv == null ? '?' : (r.dv * 1000).toFixed(2) + ' mm/s')).join('、'),
+      res26b.every(r => r.put && r.crashed && r.how === 'fwd' && r.dv != null && Math.abs(r.dv) <= 0.002), res26b);
+  }
+}
 async function throwFieldChecks(page, k, lane) {
   const G = await ev(page, () => { const G = __fk.geo(); return { travel: G.carriageTravel || 2.6, base: (G.forkY || 0.015) + (G.forkT || 0.04) }; });
   const L05 = (0.505 - G.base) / G.travel;
@@ -3501,6 +3599,7 @@ async function throwFieldChecks(page, k, lane) {
       res26.length === 2 && res26.every(x => x.put.every(Boolean) && x.crashed && x.v0 >= 2 && x.v0 <= 2.15 && x.how.length === 5 && x.how.every(h => h === 'fwd') && x.per.every(q => q.n >= 5 && q.bad.length === 0)) &&
       ptg26.every(q => q.m2 >= 2), res26);
   }
+  await switchCont26b(page, k, lane);
   // I20c 混装（杏仁水、罐头、汽水、水瓶、热可可、金枪鱼罐头、蛾子果冻，每根货叉最多想摆 9 件，按货叉长度摆得下 7 + 7 件），叉面 0.5 m、撞前约 2.05 m/s，
   // 换三组 id（物资按 id 定朝向）
   {
@@ -4182,7 +4281,7 @@ async function gLife(browser) {
   try {
     await startL1(page, { seed: SEED });
     const k = await ev(page, () => __fk.spawnKey());
-    const orig = await ev(page, k => { const f = __fk.fkData(k); return { x: f.x, z: f.z, rot: f.rot, spans: f.spans, pk: __fk.physKey(k) }; }, k);
+    const orig = await ev(page, k => { const f = __fk.fkData(k); return { x: f.x, z: f.z, lx: f.lx, lz: f.lz, rot: f.rot, spans: f.spans, runtime: !!f.runtime, pk: __fk.physKey(k) }; }, k);
     // 原地上车，倒车 2 s 开出原来的车位，升一点货叉，下车
     const pm = await mountCar(page, k, 'left');
     await hold(page, 'KeyS', 2.0);
@@ -4222,21 +4321,88 @@ async function gLife(browser) {
         };
         const sp = a.orig.spans || {};
         const wearOk = (sp.wear || []).every(r => collapsed('kit:decal', r) !== false);
+        // 运行时车（返修 FE1Q · J2：出生块里的车）本来就不在区块几何里：原位置 0.1–2.5 m 高、车身占地里没有区块的 kit:prop 顶点，就算「藏掉了」
+        let noChunk = null;
+        if (a.orig.runtime) {
+          const m = g.children.find(o => o.isMesh && o.name === 'kit:prop'), A = m ? m.geometry.attributes.position.array : [];
+          const c0 = Math.cos(a.orig.rot), s0 = Math.sin(a.orig.rot), ox = a.orig.lx, oz = a.orig.lz;   // 区块网格的顶点是区块本地坐标
+          noChunk = true;
+          for (let i = 0; i < A.length && noChunk; i += 3) {
+            const dx = A[i] - ox, dz = A[i + 2] - oz, lx = c0 * dx - s0 * dz, lz = s0 * dx + c0 * dz;
+            if (A[i + 1] > 0.1 && A[i + 1] < 2.5 && Math.abs(lx) < 0.55 && lz > -1.25 && lz < 1.2) noChunk = false;
+          }
+        }
         const R = BR.phys.records(a.orig.pk);
         const fw = { x: a.orig.x + Math.cos(a.orig.rot) * 0 + Math.sin(a.orig.rot) * -1.6, z: a.orig.z - Math.sin(a.orig.rot) * 0 + Math.cos(a.orig.rot) * -1.6 };
         return {
           d: Math.hypot(p.x - a.saved.x, p.z - a.saved.z), dyaw: Math.abs(p.yaw - a.saved.yaw), dlift: Math.abs(p.lift - a.saved.lift),
-          prop: collapsed('kit:prop', sp.prop), wearOk, parked: R.solids.length + R.obbs.length,
+          prop: a.orig.runtime ? noChunk : collapsed('kit:prop', sp.prop), wearOk, parked: R.solids.length + R.obbs.length,
           origHit: BR.phys.overlapCircle(fw.x, fw.z, 0.3, 0.02, 1.7),
         };
       }, { k, saved, orig });
     };
     const b1 = await checkBack('back');
-    check('F5 走远回来：车的位姿和货叉高度误差 <1 mm，原位置的区块网格那段已藏掉（顶点叠成一点），原位置没有碰撞', b1.d < 1e-3 && b1.dyaw < 1e-3 && b1.dlift < 1e-3 && b1.prop === true && b1.wearOk && b1.parked === 0 && !b1.origHit, b1);
+    check('F5 走远回来：车的位姿和货叉高度误差 <1 mm，原位置的区块网格那段已藏掉（顶点叠成一点；J2 运行时车本来就不在区块几何里），原位置没有碰撞', b1.d < 1e-3 && b1.dyaw < 1e-3 && b1.dlift < 1e-3 && b1.prop === true && b1.wearOk && b1.parked === 0 && !b1.origHit, b1);
     await goTo(page, '0');
     await goTo(page, '1');
     const b2 = await checkBack('level');
     check('F6 离开这一层再回来：位姿和货叉高度误差 <1 mm，原位置网格段藏掉、没有碰撞', b2.d < 1e-3 && b2.dyaw < 1e-3 && b2.dlift < 1e-3 && b2.prop === true && b2.wearOk && b2.parked === 0 && !b2.origHit, b2);
+    // 返修 FE1Q · repair-r1（验收员 tests）：J2 以后出生块的车是运行时车，上面 F5 / F6「原位置那段藏掉」对它是空的（本来就不在区块几何里）。
+    // 再拿一台区块里停着的车（种子 12345 的 1@1,0#v0；没有就取 BR.vehicles.list() 里第一台 runtime false、没开过的）走一遍：
+    // 开走 → 走到它那块 loadR + 3 块以外（区块卸掉、载具网格释放）→ 回来 / 换层再回来：区块重建以后原位置那段又叠成一点、原位置没有碰撞、位姿不变
+    {
+      const k2 = await ev(page, () => { const L = BR.vehicles.list(), v = L.find(q => q.key === '1@1,0#v0' && !q.runtime && !q.driven) || L.find(q => !q.runtime && !q.driven); return v ? v.key : null; });
+      const o2 = k2 && await ev(page, k => { const f = __fk.fkData(k); return f && { x: f.x, z: f.z, lx: f.lx, lz: f.lz, rot: f.rot, spans: f.spans, runtime: !!f.runtime, pk: __fk.physKey(k), chunk: f.chunk, detail: f.detail }; }, k2);
+      let m2 = k2 ? await mountCar(page, k2, 'left') : { ok: false };
+      if (k2 && !m2.ok) { await ev(page, () => { BR.player.pitch = 0; __br.step(0.2); return 0; }); m2 = await mountCar(page, k2, 'right'); }
+      let moved = 0;
+      if (m2.ok) {
+        for (const key of ['KeyS', 'KeyW']) {
+          await hold(page, key, 2.0);
+          await step(page, 1.0);
+          moved = await ev(page, a => { const p = __fk.pose(a.k); return Math.hypot(p.x - a.o.x, p.z - a.o.z); }, { k: k2, o: o2 });
+          if (moved > 1.8) break;
+        }
+        await ev(page, () => { __fk.clear(); return 0; });
+        await dismount(page);
+      }
+      const saved2 = k2 && await ev(page, k => __fk.pose(k), k2);
+      const R0 = await ev(page, () => Math.max(0, (BR.config.world && BR.config.world.loadRadius) | 0) || 2);
+      const [ccx, ccz] = o2 ? o2.chunk.split(',').map(Number) : [0, 0];
+      await ev(page, a => { __fk.stand((a.cx + a.R + 3) * 32 + 16, a.cz * 32 + 16, 0); __br.step(1.5); return 0; }, { cx: ccx, cz: ccz, R: R0 });
+      const away = k2 && await ev(page, a => ({ promoted: BR.vehicles.debugInfo().promoted.includes(a.k), loaded: BR.world.chunks().some(c => c.key === a.ck), obbs: BR.phys.records('veh|' + a.k).obbs.length }), { k: k2, ck: o2.chunk });
+      check('F4b 区块里停着的车（' + k2 + '，停放档 ' + (o2 && o2.detail) + '）开走 ' + moved.toFixed(2) + ' m 下车，走到它那块 loadR + 3 块以外：那块卸掉了、载具网格里这台车释放了，veh| 的 14 个 OBB 还在',
+        !!k2 && !!o2 && !o2.runtime && !!o2.spans && m2.ok && moved > 1.8 && !!away && !away.promoted && !away.loaded && away.obbs === 14, { k2, o2: o2 && { chunk: o2.chunk, detail: o2.detail, runtime: o2.runtime }, mount: m2.ok, moved, away });
+      const back2 = async () => {
+        await ev(page, a => { __fk.stand(a.cx * 32 + 16, a.cz * 32 + 16, 0); __br.step(1.5); return 0; }, { cx: ccx, cz: ccz });
+        return ev(page, a => {
+          const p = __fk.pose(a.k), c = BR.world.chunks().find(q => q.key === a.o.chunk);
+          if (!c) return { noChunk: true };
+          const g = c.res.group || c.group;
+          const collapsed = (mk, r) => {
+            const m = g.children.find(o => o.isMesh && o.name === mk);
+            if (!m || !r) return null;
+            const A = m.geometry.attributes.position.array, x = A[r[0] * 3], y = A[r[0] * 3 + 1], z = A[r[0] * 3 + 2];
+            for (let i = r[0]; i < r[1]; i++) if (A[i * 3] !== x || A[i * 3 + 1] !== y || A[i * 3 + 2] !== z) return false;
+            return true;
+          };
+          const sp = a.o.spans || {}, R = BR.phys.records(a.o.pk);
+          const fw = { x: a.o.x + Math.sin(a.o.rot) * -1.6, z: a.o.z + Math.cos(a.o.rot) * -1.6 };
+          return { d: Math.hypot(p.x - a.saved.x, p.z - a.saved.z), dyaw: Math.abs(p.yaw - a.saved.yaw), dlift: Math.abs(p.lift - a.saved.lift),
+            prop: collapsed('kit:prop', sp.prop), wearOk: (sp.wear || []).every(r => collapsed('kit:decal', r) !== false), parked: R.solids.length + R.obbs.length,
+            origHit: BR.phys.overlapCircle(fw.x, fw.z, 0.3, 0.02, 1.7) };
+        }, { k: k2, o: o2, saved: saved2 });
+      };
+      if (k2 && o2) {
+        const c1 = await back2();
+        check('F5b 走远回来（区块重建）：' + k2 + ' 的位姿和货叉高度误差 <1 mm，原位置的区块网格那段（kit:prop 车身 + 磨损贴花）又叠成一点，原位置没有碰撞', c1.d < 1e-3 && c1.dyaw < 1e-3 && c1.dlift < 1e-3 && c1.prop === true && c1.wearOk && c1.parked === 0 && !c1.origHit, c1);
+        await goTo(page, '0');
+        await goTo(page, '1');
+        const c2 = await back2();
+        check('F6b 离开这一层再回来：' + k2 + ' 位姿误差 <1 mm，原位置网格段藏掉、没有碰撞', c2.d < 1e-3 && c2.dyaw < 1e-3 && c2.dlift < 1e-3 && c2.prop === true && c2.wearOk && c2.parked === 0 && !c2.origHit, c2);
+      } else { check('F5b 走远回来（区块里停着的车）', false, { k2, o2 }); check('F6b 离开这一层再回来（区块里停着的车）', false, { k2, o2 }); }
+      await ev(page, () => { __fk.stand(16, 30, 0); __br.step(1.0); return 0; });
+    }
     // 死在车上：回到 walk，人在落点上
     await mountCar(page, k, 'left');
     await ev(page, () => { __fk.clear(); BR.player.damage({ hp: 9999 }); __br.step(0.8); return 0; });
@@ -4381,14 +4547,14 @@ async function gNightmare(browser) {
     check('N2 测试敌对实体放在车侧 6 m、视线畅通：按它自己的感知周期 3 s 内发现坐着的人', !!side && seenAt != null && seenAt <= 3.0, { side, seenAt });
     if (side && side.id) await ev(page, id => { __fk.dropEnt(id); __br.step(0.1); return 0; }, side.id);
     await keepAlive();
-    // N3 车尾 1.0 m：打得到坐着的人
+    // N3 车尾外 1.0 m 放的敌对：6 s 内打到坐着的人（FE1P H11 起攻击距离量到司机身体，车尾够不着司机，它会绕到车尾侧角出手）
     const rear = await ev(page, k => { const w = __fk.W(k, 0, 1.295 + 1.0 + 0.4); __fk.dmg.length = 0; return __fk.ent('_dev_hostile', w.x, w.z, 'nrear'); }, k);
     let hitRear = null;
     for (let i = 1; i <= 180 && !hitRear; i++) {
       const r = await ev(page, a => { __br.step(1 / 30); const d = __fk.dmg.filter(x => x.hp > 0 && x.src && String(x.src).indexOf(a.id) >= 0); const e = BR.entities.get(a.id); const l = e ? __fk.L(a.k, e.x, e.z) : null; if (BR.player.hp < 60) BR.player.hp = 100; return d.length ? { t: a.i / 30, l } : null; }, { id: rear, k, i });
       if (r) hitRear = r;
     }
-    check('N3 敌对实体放在车尾外 1.0 m：打得到坐在车上的人（叉车不是安全屋）', !!rear && !!hitRear, { hitRear, dmg: await ev(page, () => __fk.dmg.slice(0, 3)) });
+    check('N3 敌对实体放在车尾外 1.0 m：6 s 内绕过来打到坐在车上的人（叉车不是安全屋）', !!rear && !!hitRear, { hitRear, dmg: await ev(page, () => __fk.dmg.slice(0, 3)) });
     await ev(page, id => { __fk.dropEnt(id); __br.step(0.2); BR.player.hp = 100; return 0; }, rear);
     // N4 货叉尖外 0.3 m：打不到；10 s 内绕到车侧
     const front = await ev(page, k => { const w = __fk.W(k, 0, -2.1 - 0.3 - 0.4); __fk.dmg.length = 0; return __fk.ent('_dev_hostile', w.x, w.z, 'nfront'); }, k);
