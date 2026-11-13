@@ -10,7 +10,8 @@
 //   和 forklift-timing（--group timing --strict-timing：计时类检查，全量跑完、负载降到核数一半以下再单独跑、真判，返修 r12）
 //   dark、perf 两组要截图量像素，算截图类（--quick 跳过）；tests/forklift_probe.mjs 是只读探针（出表给主会话和家长看），不自动跑。
 // 叉车打磨（FE1P，2026-11）：tests/forklift_polish.mjs 拆成 forklift_polish（--group light,vine：大灯不透墙要量像素，算截图类）
-//   和 forklift_polish-coop（--group coop：两页联机，失败了等负载降下来单独重跑真判）两项。
+//   和 forklift_polish-coop（--group coop：两页联机，失败了等负载降下来单独重跑真判）两项；FE1R 起再加 forklift_polish-k2（--group k2）
+//   和 forklift_polish-fe1r（--group k1,smooth,ws,lift,drive），都算截图类。
 //
 // 跑哪些（按这个顺序）：
 //   1. tests/ 下的回归脚本：phys.test.js、smoke、kit、items、coop、camp、settings、workshop、workshop_core、workshop_ui、infection、visualhooks，
@@ -108,17 +109,21 @@ function buildItems() {
       // coop（H14 联机客机开车房主那边 lift 不往回掉，两页联机、内存假 room.php）另一项，有墙钟等待，失败了等负载降下来单独重跑真判
       items.push({ name: 'forklift_polish', args: ['tests/forklift_polish.mjs', '--group', 'light,vine'], shots: true, retry: 0, retryAlone: 1, timeoutMin: 45, doneMark: DONE_DEFAULT });
       items.push({ name: 'forklift_polish-coop', args: ['tests/forklift_polish.mjs', '--group', 'coop'], shots: false, retry: 0, lowRetry: true, timeoutMin: 30, doneMark: DONE_DEFAULT });
+      // FE1R（2026-11）：k2（K2 车前地面亮 / 墙后暗 / lightAt 一致，三个种子各 ≥150 个随机位姿 + 点名位姿 + L-ceiling，负载 20–30 时约 25 分钟、
+      // 60 以上约 2 小时）单独一项；k1（窄东西）、smooth（12 条真键盘路线逐帧平滑）、ws（工坊灯光设置不管大灯）、lift（F1 / F3 / F4）、drive（F2 后轮）一项
+      items.push({ name: 'forklift_polish-k2', args: ['tests/forklift_polish.mjs', '--group', 'k2'], shots: true, retry: 0, retryAlone: 1, timeoutMin: 120, doneMark: DONE_DEFAULT });
+      items.push({ name: 'forklift_polish-fe1r', args: ['tests/forklift_polish.mjs', '--group', 'k1,smooth,ws,lift,drive'], shots: true, retry: 0, retryAlone: 1, timeoutMin: 60, doneMark: DONE_DEFAULT });
       continue;
     }
     if (f === 'forklift_l1.mjs') {
       // L1 叉车数据与可动模型：--quick 只跑 10 个种子；本机有快照（tests/output/golden-tags/<标签>/forklift_l1.json，gitignore）就带 --against 逐项比对，
-      // 优先 FE1P-final（FE1Q J12：J2 出生块车改运行时车、J10 链轮 12 棱、J11 停着的车补面以后重拍的），没有再用开工前的 FE1-before；
-      // 都没有就只跑不依赖快照的检查（快照怎么重拍见 forklift_l1.mjs 文件头）
+      // 优先 FE1R-final（FE1R K13：停放档只剩 high / mid / lite / low、low ↔ drvLow 合一、K4 车架、K8 圆零件、K9–K12、M-gaps、M-fork 以后重拍的），
+      // 没有再用 FE1P-final（FE1Q J12），再没有用开工前的 FE1-before；都没有就只跑不依赖快照的检查（快照怎么重拍见 forklift_l1.mjs 文件头）
       const args = ['tests/forklift_l1.mjs'];
       if (QUICK) args.push('--quick');
-      const fl1Tag = ['FE1P-final', 'FE1-before'].find(t => fs.existsSync(path.join(TESTS, 'output', 'golden-tags', t, 'forklift_l1.json')));
+      const fl1Tag = ['FE1R-final', 'FE1P-final', 'FE1-before'].find(t => fs.existsSync(path.join(TESTS, 'output', 'golden-tags', t, 'forklift_l1.json')));
       if (fl1Tag) args.push('--against', fl1Tag);
-      items.push({ name: 'forklift_l1', args, shots: false, retry: 0, timeoutMin: 25, doneMark: DONE_DEFAULT });
+      items.push({ name: 'forklift_l1', args, shots: false, retry: 0, timeoutMin: 45, doneMark: DONE_DEFAULT });
       continue;
     }
     const src = fs.readFileSync(path.join(TESTS, f), 'utf8');
@@ -133,6 +138,8 @@ function buildItems() {
       // mobile 负载高时记 SKIP（前提不成立，没真测到）：低负载时只补记了 SKIP 的那几台设备，补测里还有 SKIP 算失败
       skipRetry: f === 'mobile.mjs',
       timeoutMin: TIMEOUT_OF[f] || 25,
+      // coop（返修 FE1R · repair-r5，验收员 tests：负载 56 时整项 50 分钟超时）：总时限按开跑那一刻的负载放宽（× 负载 / 核数，夹在 1–2 倍）
+      loadScale: f === 'coop.mjs',
       doneMark: DONE_DEFAULT,
     });
   }
@@ -184,7 +191,7 @@ function runOne(item, logFile) {
     };
     child.stdout.on('data', onData);
     child.stderr.on('data', onData);
-    const limit = (TIMEOUT_MIN || item.timeoutMin) * 60000;
+    const limit = (TIMEOUT_MIN || item.timeoutMin) * 60000 * (item.loadScale ? Math.min(2, Math.max(1, os.loadavg()[0] / os.cpus().length)) : 1);
     const timer = setTimeout(() => { timedOut = true; killTree(child); }, limit);
     const finish = (code, signal, spawnErr) => {
       if (settled) return;
@@ -251,7 +258,7 @@ const fmtMs = ms => {
   const s = Math.round(ms / 1000);
   return s < 60 ? s + 's' : Math.floor(s / 60) + 'm' + String(s % 60).padStart(2, '0') + 's';
 };
-const LABEL = { pass: '通过', fail: '失败', timeout: '超时', quick: '跳过(--quick)', nobase: '无基线跳过' };
+const LABEL = { pass: '通过', fail: '失败', timeout: '超时', quick: '跳过(--quick)', nobase: '无基线跳过', loadskip: '负载高没真测' };
 
 // ---------- 主流程 ----------
 const summary = [];
@@ -275,9 +282,11 @@ function report() {
     `===== tests/all.mjs 汇总${QUICK ? '（--quick）' : ''} =====`,
     table(head, rows),
     '',
-    `共 ${summary.length} 项：通过 ${summary.filter(r => r.status === 'pass').length}，失败 ${bad.length}，跳过 ${summary.filter(r => r.status === 'quick' || r.status === 'nobase').length}；总耗时 ${fmtMs(Date.now() - t0)}`,
+    `共 ${summary.length} 项：通过 ${summary.filter(r => r.status === 'pass').length}，失败 ${bad.length}，跳过 ${summary.filter(r => r.status === 'quick' || r.status === 'nobase' || r.status === 'loadskip').length}；总耗时 ${fmtMs(Date.now() - t0)}`,
   ];
   if (lagged) lines.push(`* ${lagged} 项打印完汇总后 ${EXIT_GRACE_MS / 1000}s 仍未退出（浏览器关闭被拖住），已结束进程、按汇总行判定`);
+  const ls = summary.filter(r => r.status === 'loadskip');
+  if (ls.length) lines.push(`负载高没真测（计时类，L8：负载降不下来时只记不判）：${ls.map(r => r.name + '（' + (r.loadNote || '') + '）').join('，')}`);
   const sk = summary.filter(r => r.skips > 0);
   if (sk.length) lines.push(`记 SKIP 的检查（前提不成立，没真测到，见各自日志里的 SKIP 行）：${sk.map(r => r.name + ' ' + r.skips + ' 项').join('，')}`);
   lines.push(bad.length ? '失败项日志：' + bad.map(r => path.relative(ROOT, r.log)).join('  ') : '全部通过');
@@ -431,9 +440,23 @@ async function main() {
     while (os.loadavg()[0] > half && Date.now() - t0 < 900000) await new Promise(r => setTimeout(r, 5000));
     console.log(`（${name}：负载 ${os.loadavg()[0].toFixed(1)}，开始单独跑、真判）`);
   };
+  // forklift-timing（返修 FE1R · repair-r5，验收员 tests，照主会话 L8「只有负载 <4 时 T1 >8 ms 才报」）：等 15 分钟负载没降到核数一半以下的，
+  // 再多等 15 分钟；还是降不下来就照样跑，但这一遍只有计时类检查（T1 / T2 / T3、单次 page.evaluate ≤60 s）挂、而且跑的前后负载都还高于核数一半时，
+  // 记成「负载高没真测」（loadskip，汇总里单列，不算失败）—— 别的检查挂了、或者负载降下来以后挂了，照旧算失败
   for (const i of lowLoad) {
     await waitLow(items[i].name);
+    const half = os.cpus().length * 0.5;
+    if (os.loadavg()[0] > half) await waitLow(items[i].name + '（再等 15 分钟）');
+    const l0 = os.loadavg()[0];
     await runItem(i, true, true);
+    const l1 = os.loadavg()[0], rc = recs[i];
+    if (rc && rc.status === 'fail' && Math.min(l0, l1) > half && rc.log && fs.existsSync(rc.log)) {
+      const fails = fs.readFileSync(rc.log, 'utf8').split('\n').filter(l => /^FAIL /.test(l));
+      if (fails.length && fails.every(l => /^FAIL \[timing\] (T[123] |单次 page\.evaluate)/.test(l))) {
+        recs[i] = Object.assign({}, rc, { status: 'loadskip', loadNote: '负载 ' + l0.toFixed(1) + ' → ' + l1.toFixed(1) + '（> ' + half.toFixed(1) + '），计时类没真测' });
+        console.log(`${items[i].name}  负载 ${l0.toFixed(1)} → ${l1.toFixed(1)}，只有计时类检查没过：记成「负载高没真测」，不算失败（L8）`);
+      }
+    }
   }
   // 低负载补测（返修 r13 裁定 G）：按补测这一遍判
   for (const q of lowQ) {

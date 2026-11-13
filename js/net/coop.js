@@ -494,7 +494,7 @@ function renderLobby() {
   D.vLive.hidden = view !== 'live';
   if (view === 'live') {
     const who = '「' + (S.peerName || '队友') + '」';
-    D.peerLine.textContent = p === 'active' ? '已连接：' + who + ' · 你是' + (S.role === 'host' ? '房主' : '客机')
+    D.peerLine.textContent = p === 'active' ? '已连接：' + who + ' · 你是' + (S.role === 'host' ? '房主' : '客人')   // FE1R UI-9：玩家看得到的字里不说「客机」
       : p === 'reconnecting' ? '和' + who + '的连接断了，正在重连…'
       : hosting() ? '等朋友来' + (S.peerName && p !== 'hosting' ? ' · ' + who + '正在连线…' : '')
       : p === 'creating' ? '正在开营地…'
@@ -1354,7 +1354,7 @@ function onHello(m) {
   if (S.helloTimer) { clearTimeout(S.helloTimer); S.helloTimer = 0; }
   S.gotHello = true;
   if (m.name) S.peerName = stripTag(String(m.name)).slice(0, 16);
-  if (!S.peerName) S.peerName = S.role === 'host' ? '客机' : '房主';
+  if (!S.peerName) S.peerName = S.role === 'host' ? '客人' : '房主';   // FE1R UI-9：对方没起名时的默认昵称
   S.peerCaps = new Set(Array.isArray(m.caps) ? m.caps.filter(c => typeof c === 'string').slice(0, 32) : []);
   // 对方没有营地这一套（旧版）：拒绝配对。旧版那边只会看到这边离开、回到 idle
   if (!S.peerCaps.has('camp1')) { refuseOld(); return; }
@@ -2598,10 +2598,18 @@ function keepSeatedVeh(ls, lv) {
   else ls.vehicles = [[vs, mine]];
 }
 // 本机姿态：别的系统用 setPose 设过就按它；没设过但坐在叉车上 = ['drive', 车 key]（对方据此把人形摆成坐姿、给租约保活）
+// 上下车那 0.5 s（FE1R A1，以前房主那边：客机一按上车，人形瞬间坐到座椅上；一按下车，站着的人形从座椅里浮着往外飘，半截插在车里）：
+//   上车（player.mountState.phase 'in'，vehicles 已经算坐上了）→ ['drive', key, 'in']：前两项和以前一样（别处照旧当「坐着开车」），
+//     第三项告诉对方「人还在往上爬」；下车（'out'，vehicles 已经放开了座位）→ ['exit', key]：对方照旧画坐姿，等落地（'out' 结束）才换站姿
 function myPoseNow() {
-  if (S.myPose) return S.myPose;
-  const vs = vehSeated();
-  return vs ? ['drive', str(vs)] : null;
+  const vs = vehSeated(), ms = BR.player && BR.player.mountState;
+  if (vs) S.lastSeatKey = vs;
+  const ph = ms && (ms.phase === 'in' || ms.phase === 'out') ? ms.phase : null;
+  // 坐着开车时 interact 已经 setPose('drive', key)（S.myPose）：上车那 0.5 s 在后面加一个 'in'
+  if (S.myPose) return ph === 'in' && S.myPose[0] === 'drive' ? [S.myPose[0], S.myPose[1], 'in'] : S.myPose;
+  // 下车那 0.5 s player 已经放开了车（mountState.key 是 null），用最后坐过的那台车
+  if (ph === 'out') { const k = ms.key != null ? ms.key : S.lastSeatKey; if (k != null) return ['exit', str(String(k).replace(/^k:/, ''))]; }
+  return vs ? (ph === 'in' ? ['drive', str(vs), 'in'] : ['drive', str(vs)]) : null;
 }
 // 房主坐在车上却没有这台车的租约（重连时 releaseMine 放掉了）：补回来，客机那边才知道这台车有人开
 function hostVehLease() {
@@ -2961,7 +2969,8 @@ function keepAlive(h, lv) {
 }
 function onPeerPose(p) {
   const v = Array.isArray(p) && typeof p[0] === 'string' ? { mode: p[0].slice(0, 12), key: str(p[1]) } : null;
-  const sig = v ? v.mode + '|' + v.key : '';
+  if (v && p[2] === 'in') v.ph = 'in';   // 上车那 0.5 s（FE1R A1）
+  const sig = v ? v.mode + '|' + v.key + '|' + (v.ph || '') : '';
   if (sig === S.peerPoseSig) return;
   S.peerPoseSig = sig;
   S.peerPose = v;
@@ -3797,7 +3806,8 @@ function onMe(m) {
   if (lv !== R.lv || (last && U.dist2(last.x, last.z, m.x, m.z) > SNAP_DIST * SNAP_DIST)) a.length = 0;
   R.lv = lv;
   const t = nowMs() / 1000;
-  a.push({ t, x: m.x, y: m.y, z: m.z, yaw: isNum(m.yaw) ? m.yaw : 0, pitch: isNum(m.pitch) ? m.pitch : 0 });
+  // 姿态跟位置一起存（FE1R A1）：人形按晚一个包的位置画，姿态也按同一时刻的，不然下车落地那一刻站姿先到、位置还在半空
+  a.push({ t, x: m.x, y: m.y, z: m.z, yaw: isNum(m.yaw) ? m.yaw : 0, pitch: isNum(m.pitch) ? m.pitch : 0, pose: S.peerPose });
   if (a.length > 24) a.splice(0, a.length - 24);
   R.lastRecv = t;
 }
@@ -3817,6 +3827,7 @@ function sampleAt(t, out) {
   out.z = U.lerp(p.z, q.z, k);
   out.yaw = p.yaw + U.angleDiff(p.yaw, q.yaw) * k;
   out.pitch = U.lerp(p.pitch, q.pitch, k);
+  out.pose = k >= 1 ? q.pose : p.pose;
   return out;
 }
 
@@ -4003,16 +4014,27 @@ function updateTag(dt, hx, hy, hz, lx, ly, lz) {
 // （程序化防化服，约 1k 面、带骨骼）摆坐姿，钉在 BR.vehicles.seatWorld(key) 上：身体朝车头，头按对方相机相对车转（±90°），
 // 双手握方向盘。制服色用对方的皮肤色，和 skin.apply 一样先转线性，和他走路时的 glb 制服看起来一样。下车切回 glb。
 // 名牌坐车时摆在座椅上方 1.2 m（护顶上面），视线检查对准 chestOf(对方)
-const SEAT_HIP_UP = 0.08;        // 米：胯骨在坐垫顶面上方这么高（坐垫压下去一点）
-const SEAT_LEAN = 0.42;          // 弧度：上身前倾，手够得着方向盘
-// 返修 FE1Q · repair-r2（验收员 play / spec：以前大腿 1.32、人坐在坐垫正中，靴底悬在驾驶位地台上方 3.65 cm、靴跟插进发动机盖前脸 2.95 cm）：
-// 大腿 1.236（膝盖再低一点，小腿照旧竖直、靴底照旧水平）→ 靴底比地台顶面（0.615）高 3.4 mm、比防滑棱（0.618）高 0.6 mm；
-// 整个人往车头挪 SEAT_FWD（坐在坐垫靠前那半，胯骨照旧在坐垫上方 SEAT_HIP_UP）→ 靴跟在 z −0.110，离发动机盖前脸（−0.1）1 cm。
-// tests/forklift_l1.mjs polish「坐着的人脚踩在地台上」逐个顶点查
-const SEAT_THIGH = 1.236;        // 弧度：大腿从竖直往前抬（接近水平，膝盖略低于胯），小腿竖直，脚落在驾驶舱地板上
-const SEAT_FWD = -0.05;          // 米：坐姿人形整个往车头（车本地 −Z）挪这么多
-const SEAT_SPLAY = 0.08;         // 弧度：两膝略分开
-const SEAT_GRIP = Math.PI / 3;   // 双手握在方向盘靠司机一侧、左右各偏 60° 的地方（轮缘上 4 点、8 点）
+// 坐姿的几个数（FE1R ACT-seat 重新定过，见下面 SEAT）。以前：胯骨在坐垫上方 0.08、上身前倾 0.42、大腿 1.236、整个人往车头 0.05、不缩放 ——
+// 头顶到 2.0915 m，比护顶横条底面（2.04）高 5 cm（high / mid z = 0 那根横条被兜帽顶穿进 2.1 cm），胯和大腿压进坐垫顶面 2 cm。
+// 现在只调坐姿（不抬护顶、不让横条躲开头）：
+//   hipUp 胯骨在坐垫顶面上方的高度、lean 上身前倾（弧度）、thigh 大腿从竖直往前抬（弧度，小腿跟着竖直）、fwd 整个人往车头（车本地 −Z）挪、
+//   splay 两膝分开、scale 整体缩放（≤3%）、neck 头颈在上身前倾以外再往前低一点（弧度，抬头低头另算）。
+// 验收（tests/forklift_l1.mjs polish 和 FE1R-actors 的探针，高 / 低画质同一套）：所有顶点离护顶各件（横条、纵梁、前后横梁，底面 2.04）≥1 cm，
+// 头转 ±1.5、抬头低头 ±0.6 都算；靴底离驾驶位地台顶面 0–5 mm、不低于防滑棱；没有顶点进发动机盖前脸和仪表台；压进坐垫顶面 ≤1 cm；
+// 离安全带各件 ≥1 cm；双手握在方向盘轮缘上
+// 返修 FE1R · repair-r4（主会话 L1：坐车的人从头到脚换成 hazmat.glb 的兜帽、躯干、靴子）：glb 鞋底最低点比程序化靴子低约 1 mm —— hipUp 0.09 → 0.092
+// （靴底照旧不低于防滑棱）。glb 的兜帽顶（1.80）比程序化的头顶（1.787）高 1.3 cm：试过上身多前倾（lean 0.58），头顶够了，但胳膊为了够方向盘肘往外撇，
+// 怪打肩膀时前臂插进司机上臂 2.2 cm（K6）；所以坐姿不动，glb 的头上件整体往下挪 1.3 cm 挂（_archetypes.js HZ_GLB_HEAD_DY，兜帽下沿照旧埋在躯干顶里）
+const SEAT = Object.freeze({ hipUp: 0.092, lean: 0.52, thigh: 1.16, fwd: -0.07, splay: 0.08, scale: 0.97, neck: 0.15 });
+let SP = SEAT;                   // 摆坐姿实际用的那一套（seatBody 的 o.tune 只在测试里临时换掉）
+const SEAT_HIP_UP = SEAT.hipUp;  // 米：胯骨在坐垫顶面上方这么高
+const SEAT_FWD = SEAT.fwd;       // 米：坐姿人形整个往车头（车本地 −Z）挪这么多
+// 手握方向盘（FE1R ACT-seat ②，以前方向盘怎么转手都不动，转过去辐条从手套里穿过）：方向盘摆正时双手握在轮缘靠司机一侧、
+// 从水平往下 60°（5 点、7 点钟，离 6 点钟的辐条 30°）。方向盘绕自己的轴转 −steer × steerRatio（vehicles.js），手跟着一起转；
+// 每转过 90° 倒一次手（松开往回挪 90° 再握住，带 10° 回差免得来回抖），所以手相对方向盘只会在离 6 点钟 ±30°、±60°、±120°、±150° 这几处 ——
+// 离三根辐条（3、6、9 点钟）都 ≥30°，两只手之间总是隔 60°、右手在右、左手在左，不交叉
+const SEAT_GRIP = Math.PI / 3;   // 摆正时：从水平往下 60°
+const GRIP_STEP = Math.PI / 2, GRIP_HYST = 10 * Math.PI / 180;
 const SEAT_TAG_UP = 1.2;         // 米：坐车时名牌在座椅上方这么高
 const HEAD_YAW_MAX = Math.PI / 2;
 const IKV = {};
@@ -4022,7 +4044,7 @@ function ikTmp() {
     Object.assign(IKV, {
       down: new THREE.Vector3(0, -1, 0), e: new THREE.Euler(0, 0, 0, 'YXZ'),
       qS: Q(), qSi: Q(), qA: Q(), qAi: Q(), qH: Q(),
-      piv: V3(), sh: V3(), tg: V3(), dv: V3(), pole: V3(), u: V3(), el: V3(), f: V3(), l: V3(),
+      piv: V3(), sh: V3(), tg: V3(), dv: V3(), pole: V3(), u: V3(), el: V3(), f: V3(), l: V3(), tn: V3(), z0: V3(), tA: V3(), cr: V3(), qT: Q(), qH2: Q(),
     });
   }
   return IKV;
@@ -4034,7 +4056,10 @@ function linHex(hex) {
   return c.getHex();
 }
 function skinHex(key) { return has(BR.skin, 'color') ? BR.skin.color(key) : suitColor(key); }
-function seatDetail() { const s = BR.game && BR.game.settings; return s && s.quality === 'low' ? 'low' : 'high'; }
+// 坐车的人形不分画质（FE1R K7，用户原话「面具和靴子不能换」）：低画质以前换成简版防化服（面罩没有呼气阀、滤罐没有端盖、身上没有反光条、
+// 拉链、腰带、小包），和站着的 hazmat.glb 不是一个样子。现在一律用 BR.arch.parts.hazmat 的 seat 版（高画质那一套细节、更圆的段数），
+// 场上最多一个坐姿人形，不算区块预算。detail 只留着给 seatBody 的调用方对账（high / low 结果一样）
+function seatDetail() { return 'seat'; }
 function dropSeat() {
   const st = R.seat;
   if (!st) return;
@@ -4043,6 +4068,7 @@ function dropSeat() {
   try { if (st.mesh.skeleton) st.mesh.skeleton.dispose(); } catch (err) { /* 忽略 */ }
   // 几何和材质是 BR.arch 的缓存（拟态实体也在用），不释放
 }
+function buildSeatMesh(hex) { return BR.arch.parts.hazmat(null, { color: hex, seat: true }); }
 function ensureSeat(hex, detail) {
   if (R.seat && R.seat.hex === hex && R.seat.detail === detail) return R.seat;
   const A = BR.arch, fn = A && A.parts && A.parts.hazmat;
@@ -4050,7 +4076,7 @@ function ensureSeat(hex, detail) {
   if (typeof fn !== 'function' || R.seatFail === sig) return null;
   dropSeat();
   let mesh = null;
-  try { mesh = fn(null, { color: hex, detail }); } catch (err) { warnOnce('seatAv', '坐姿人形建不出来', err); }
+  try { mesh = buildSeatMesh(hex); } catch (err) { warnOnce('seatAv', '坐姿人形建不出来', err); }
   const rig = mesh && mesh.userData && mesh.userData.rig, dims = rig && rig.meta && rig.meta.dims;
   const B = rig && rig.bones;
   if (!B || !dims || !B.spine || !B.head || !B.armL || !B.foreL || !B.legL || !B.shinL) { R.seatFail = sig; return null; }
@@ -4059,11 +4085,19 @@ function ensureSeat(hex, detail) {
   g.name = 'coop-peer-seat';
   g.add(mesh);
   R.obj.add(g);
-  R.seat = { g, mesh, rig, dims, hex, detail };
+  R.seat = { g, mesh, rig, dims, hex, detail, grip: 0 };
+  placeSeatGroup(R.seat);
   return R.seat;
 }
+// 坐姿人形的组（模型原点 = 脚底）挂在座椅根节点（坐垫顶面中心）下：整体缩放 SEAT.scale，胯骨落在坐垫上方 SEAT.hipUp，往车头挪 SEAT.fwd
+function placeSeatGroup(st) {
+  st.g.scale.setScalar(SP.scale);
+  st.g.position.set(0, SP.hipUp - st.dims.hipY * SP.scale, SP.fwd);
+}
 // 两段 IK：肩 S（模型坐标）→ 手握点 tg，上臂长 a、前臂长 b；肘往外、往下、略往后。结果写进 arm / fore 两根骨骼（父骨骼是脊柱）
-function armIK(T, armB, foreB, side, a, b) {
+// tan（可选，模型坐标，单位向量）：前臂再绕自己的轴拧一下，让骨骼本地 +z 顺着它（返修 FE1R · repair-r5：握拳的手套绕着轮缘，
+// 轮缘在手里顺着本地 z 方向穿过去 —— 见 _archetypes.js hzSeatGlove）。不给时和以前一样只摆方向（setFromUnitVectors 的最小转动）
+function armIK(T, armB, foreB, side, a, b, tan) {
   const dv = T.dv.subVectors(T.tg, T.sh);
   const dist = dv.length();
   if (dist < 1e-4) return;
@@ -4080,36 +4114,69 @@ function armIK(T, armB, foreB, side, a, b) {
   armB.quaternion.setFromUnitVectors(T.down, T.l.copy(u).applyQuaternion(T.qSi));
   T.qA.multiplyQuaternions(T.qS, armB.quaternion);
   T.qAi.copy(T.qA).invert();
-  foreB.quaternion.setFromUnitVectors(T.down, T.l.copy(f).applyQuaternion(T.qAi));
+  const fl = T.l.copy(f).applyQuaternion(T.qAi);
+  foreB.quaternion.setFromUnitVectors(T.down, fl);
+  if (tan) {
+    const z0 = T.z0.set(0, 0, 1).applyQuaternion(foreB.quaternion), tA = T.tA.copy(tan).applyQuaternion(T.qAi);
+    z0.addScaledVector(fl, -z0.dot(fl)); tA.addScaledVector(fl, -tA.dot(fl));
+    if (z0.lengthSq() > 1e-8 && tA.lengthSq() > 1e-8) {
+      z0.normalize(); tA.normalize();
+      T.qT.setFromAxisAngle(fl, Math.atan2(T.cr.crossVectors(z0, tA).dot(fl), z0.dot(tA)));
+      foreB.quaternion.premultiply(T.qT);
+    }
+  }
 }
-// 摆坐姿：回到绑定姿势 → 脊柱前倾、大腿抬平、小腿竖直、头按相对车的朝向转 → 两臂握方向盘
-function poseSeat(st, headYaw, pitch) {
-  const rig = st.rig, B = rig.bones, d = st.dims, H = d.H, T = ikTmp();
+// 方向盘转过的角度（绕方向盘自己的轴，司机看过去逆时针为正）= −steer × steerRatio；手跟着转，每 90° 倒一次手（见 SEAT_GRIP 那段）。
+// prevK：上一帧倒过几次手（回差用，没有就按就近取）。返回 { k, w }：w = 手相对摆正时转过的角度（−45°…45°，回差时最多 55°）
+function gripTurn(steer, prevK) {
+  const g = geoF();
+  const w = -(isNum(steer) ? steer : 0) * (g && isNum(g.steerRatio) ? g.steerRatio : 6);
+  let k = Math.round(w / GRIP_STEP);
+  if (isNum(prevK) && Math.abs(w - prevK * GRIP_STEP) <= GRIP_STEP / 2 + GRIP_HYST) k = prevK;
+  return { k, w: w - k * GRIP_STEP };
+}
+// 摆坐姿：回到绑定姿势 → 脊柱前倾、大腿抬平、小腿竖直、头按相对车的朝向转 → 两臂握方向盘（握点跟着方向盘转）
+// steer：这台车后轮转角（本机 / 对方的车：vehicles.byKey(key).pose.steer、vehiclesNet.remote(key).steer），缺省 0
+function poseSeat(st, headYaw, pitch, steer) {
+  const rig = st.rig, B = rig.bones, d = st.dims, H = d.H, T = ikTmp(), sc = SP.scale;
   for (let i = 0; i < rig.list.length; i++) { const it = rig.list[i]; it.bone.rotation.set(0, 0, 0); it.bone.position.copy(it.rest); }
-  B.spine.rotation.set(-SEAT_LEAN, 0, 0);
+  B.spine.rotation.set(-SP.lean, 0, 0);
   for (const s of [-1, 1]) {
     const L = s < 0 ? 'L' : 'R';
-    if (B['leg' + L]) B['leg' + L].rotation.set(SEAT_THIGH, 0, s * SEAT_SPLAY);
-    if (B['shin' + L]) B['shin' + L].rotation.set(-SEAT_THIGH, 0, 0);
+    if (B['leg' + L]) B['leg' + L].rotation.set(SP.thigh, 0, s * SP.splay);
+    if (B['shin' + L]) B['shin' + L].rotation.set(-SP.thigh, 0, 0);
   }
-  T.qS.setFromEuler(T.e.set(-SEAT_LEAN, 0, 0, 'XYZ'));
+  T.qS.setFromEuler(T.e.set(-SP.lean, 0, 0, 'XYZ'));
   T.qSi.copy(T.qS).invert();
-  // 头：模型坐标里先转 yaw 再抬 pitch（上身前倾不带着头歪）
-  T.qH.setFromEuler(T.e.set(U.clamp(pitch, -0.6, 0.6), U.clamp(headYaw, -HEAD_YAW_MAX, HEAD_YAW_MAX), 0, 'YXZ'));
+  // 头：模型坐标里先转 yaw 再抬 pitch（上身前倾不带着头歪），再整体往前低 SP.neck
+  T.qH.setFromEuler(T.e.set(U.clamp(pitch, -0.6, 0.6) - SP.neck, U.clamp(headYaw, -HEAD_YAW_MAX, HEAD_YAW_MAX), 0, 'YXZ'));
   B.head.quaternion.multiplyQuaternions(T.qSi, T.qH);
-  // 方向盘（车本地坐标）换到模型坐标：模型原点 = 座椅中心正下方、胯骨往下 hipY 的地方
+  // 方向盘（车本地坐标）换到模型坐标：模型原点 = 组的原点（座椅中心往下、往车头），再除以缩放
   const sw = geoF() && geoF().steerWheel, seat = geoPt('seat', 0, 1.16, 0.24);
   const wy = sw && isNum(sw.y) ? sw.y : 1.25, wz = sw && isNum(sw.z) ? sw.z : -0.5;
   const tilt = sw && isNum(sw.tilt) ? sw.tilt : 0.55, rr = sw && isNum(sw.r) ? sw.r : 0.16;
-  const cy = wy - (seat.y + SEAT_HIP_UP - d.hipY), cz = wz - (seat.z + SEAT_FWD);
+  const oy = seat.y + SP.hipUp - d.hipY * sc, oz = seat.z + SP.fwd;
+  const cy = (wy - oy) / sc, cz = (wz - oz) / sc, rm = rr / sc, sa = Math.sin(tilt), ca = Math.cos(tilt);
+  const gt = gripTurn(steer, st.grip);
+  st.grip = gt.k;
   const piv = T.piv.set(0, d.hipY + 0.08 * H, 0);
   const shY = d.shoulderY - 0.01 * H, a = shY - d.elbowY, b = d.elbowY - (d.handY - 0.04 * H);
   for (const s of [-1, 1]) {
     const L = s < 0 ? 'L' : 'R';
     if (!B['arm' + L] || !B['fore' + L]) continue;
     T.sh.set(s * d.shoulderW, shY, 0).sub(piv).applyQuaternion(T.qS).add(piv);
-    T.tg.set(s * rr * Math.cos(SEAT_GRIP), cy - rr * Math.sin(SEAT_GRIP) * Math.sin(tilt), cz + rr * Math.sin(SEAT_GRIP) * Math.cos(tilt));
-    armIK(T, B['arm' + L], B['fore' + L], s, a, b);
+    // 轮缘上的角：从 +x 往盘面里朝车头那一边量（L1 fkSteeringWheel 的 dir(a)）；右手摆正时 −60°、左手 −120°
+    const ang = (s > 0 ? -SEAT_GRIP : SEAT_GRIP - Math.PI) + gt.w;
+    T.tg.set(rm * Math.cos(ang), cy + rm * Math.sin(ang) * sa, cz - rm * Math.sin(ang) * ca);
+    // 轮缘在握点的切线（ang 增大的方向）；手套的拇指（本地 −z）朝着往 12 点钟那边：右手 +切线、左手 −切线 → 本地 +z = −s·切线
+    T.tn.set(Math.sin(ang), -Math.cos(ang) * sa, Math.cos(ang) * ca).multiplyScalar(s).normalize();
+    armIK(T, B['arm' + L], B['fore' + L], s, a, b, T.tn);
+    // 握拳那根骨骼（手指、拇指）绕本地 x 转，让它的本地 z 正好顺着轮缘切线（前臂只能绕自己的轴拧，轮缘和前臂不垂直的那一点斜度在这里补上）
+    const gB = B['grip' + L];
+    if (gB) {
+      const v = T.z0.copy(T.tn).applyQuaternion(T.qH2.multiplyQuaternions(T.qA, B['fore' + L].quaternion).invert());
+      gB.rotation.set(Math.atan2(-v.y, v.z), 0, 0);
+    }
   }
 }
 // 坐在驾驶座上的人（FE1P）：照 updateAvatar 的摆法另建一份坐姿人形（几何、材质是 BR.arch 的缓存，只多一副骨骼，用完就扔），
@@ -4121,53 +4188,79 @@ function seatBody(o) {
   o = o || {};
   const fn = BR.arch && BR.arch.parts && BR.arch.parts.hazmat;
   if (typeof fn !== 'function' || typeof THREE === 'undefined') return null;
-  const detail = o.detail === 'low' || o.detail === 'high' ? o.detail : seatDetail();
-  const mesh = fn(null, { color: linHex(skinHex(BR.DEFAULT_SKIN)), detail });
-  const rig = mesh && mesh.userData && mesh.userData.rig, dims = rig && rig.meta && rig.meta.dims;
-  if (!rig || !dims || !mesh.skeleton) return null;
-  const seat = geoPt('seat', 0, 1.16, 0.24);
-  const root = new THREE.Group(), g = new THREE.Group();
-  root.position.set(0, seat.y, seat.z);
-  g.position.set(0, SEAT_HIP_UP - dims.hipY, SEAT_FWD);
-  g.add(mesh);
-  root.add(g);
-  poseSeat({ rig, dims }, isNum(o.headYaw) ? o.headYaw : 0, isNum(o.pitch) ? o.pitch : 0);
-  root.updateMatrixWorld(true);
-  const sk = mesh.skeleton, geo = mesh.geometry, pos = geo.attributes.position, si = geo.attributes.skinIndex, sw = geo.attributes.skinWeight;
-  const mats = sk.bones.map((b, i) => new THREE.Matrix4().multiplyMatrices(b.matrixWorld, sk.boneInverses[i]));
-  const n = pos.count, out = new Float32Array(n * 3), v = new THREE.Vector3(), acc = new THREE.Vector3(), tmp = new THREE.Vector3();
-  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
-  const comp = (a, i, j) => (j === 0 ? a.getX(i) : j === 1 ? a.getY(i) : j === 2 ? a.getZ(i) : a.getW(i));   // r147 没有 getComponent
-  for (let i = 0; i < n; i++) {
-    v.fromBufferAttribute(pos, i);
-    acc.set(0, 0, 0);
-    let wsum = 0;
-    for (let j = 0; j < 4; j++) {
-      const w = comp(sw, i, j);
-      if (!(w > 0)) continue;
-      tmp.copy(v).applyMatrix4(mats[comp(si, i, j)]).multiplyScalar(w);
-      acc.add(tmp);
-      wsum += w;
+  const detail = o.detail === 'low' || o.detail === 'high' ? o.detail : 'high';   // 坐车人形不分画质（FE1R K7），只回填给调用方
+  const prevSP = SP;
+  if (o.tune && typeof o.tune === 'object') SP = Object.assign({}, SEAT, o.tune);   // 测试调坐姿用，算完就还原
+  try {
+    const mesh = buildSeatMesh(linHex(skinHex(BR.DEFAULT_SKIN)));
+    const rig = mesh && mesh.userData && mesh.userData.rig, dims = rig && rig.meta && rig.meta.dims;
+    if (!rig || !dims || !mesh.skeleton) return null;
+    const seat = geoPt('seat', 0, 1.16, 0.24);
+    const root = new THREE.Group(), g = new THREE.Group();
+    root.position.set(0, seat.y, seat.z);
+    const st = { g, rig, dims, grip: null };
+    placeSeatGroup(st);
+    g.add(mesh);
+    root.add(g);
+    poseSeat(st, isNum(o.headYaw) ? o.headYaw : 0, isNum(o.pitch) ? o.pitch : 0, isNum(o.steer) ? o.steer : 0);
+    root.updateMatrixWorld(true);
+    const sk = mesh.skeleton, geo = mesh.geometry, pos = geo.attributes.position, si = geo.attributes.skinIndex, sw = geo.attributes.skinWeight;
+    const mats = sk.bones.map((b, i) => new THREE.Matrix4().multiplyMatrices(b.matrixWorld, sk.boneInverses[i]));
+    const n = pos.count, out = new Float32Array(n * 3), v = new THREE.Vector3(), acc = new THREE.Vector3(), tmp = new THREE.Vector3();
+    const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+    const comp = (a, i, j) => (j === 0 ? a.getX(i) : j === 1 ? a.getY(i) : j === 2 ? a.getZ(i) : a.getW(i));   // r147 没有 getComponent
+    for (let i = 0; i < n; i++) {
+      v.fromBufferAttribute(pos, i);
+      acc.set(0, 0, 0);
+      let wsum = 0;
+      for (let j = 0; j < 4; j++) {
+        const w = comp(sw, i, j);
+        if (!(w > 0)) continue;
+        tmp.copy(v).applyMatrix4(mats[comp(si, i, j)]).multiplyScalar(w);
+        acc.add(tmp);
+        wsum += w;
+      }
+      if (wsum > 0) acc.multiplyScalar(1 / wsum);
+      out[i * 3] = acc.x; out[i * 3 + 1] = acc.y; out[i * 3 + 2] = acc.z;
+      min[0] = Math.min(min[0], acc.x); min[1] = Math.min(min[1], acc.y); min[2] = Math.min(min[2], acc.z);
+      max[0] = Math.max(max[0], acc.x); max[1] = Math.max(max[1], acc.y); max[2] = Math.max(max[2], acc.z);
     }
-    if (wsum > 0) acc.multiplyScalar(1 / wsum);
-    out[i * 3] = acc.x; out[i * 3 + 1] = acc.y; out[i * 3 + 2] = acc.z;
-    min[0] = Math.min(min[0], acc.x); min[1] = Math.min(min[1], acc.y); min[2] = Math.min(min[2], acc.z);
-    max[0] = Math.max(max[0], acc.x); max[1] = Math.max(max[1], acc.y); max[2] = Math.max(max[2], acc.z);
-  }
-  const tris = Math.round((geo.index ? geo.index.count : n) / 3);
-  const res = { verts: out, box: { min, max }, tris, dims: Object.assign({}, dims), detail };
-  if (o.keep) { mesh.frustumCulled = false; root.name = 'coop-seat-body'; res.group = root; }
-  else { try { sk.dispose(); } catch (err) { /* 忽略 */ } }
-  return res;
+    const tris = Math.round((geo.index ? geo.index.count : n) / 3);
+    const res = { verts: out, box: { min, max }, tris, dims: Object.assign({}, dims), detail, seat: Object.assign({}, SP), grip: st.grip };
+    if (o.parts) {
+      // 每个顶点的骨骼名下标（权重最大那根）和槽位名下标：res.boneNames[res.bone[i]]、res.slotNames[res.slot[i]]（测试量手套、靴子用）
+      const bone = new Uint8Array(n), slot = new Uint8Array(n);
+      for (let i = 0; i < n; i++) { let bw = -1, bi = 0; for (let j = 0; j < 4; j++) { const w = comp(sw, i, j); if (w > bw) { bw = w; bi = comp(si, i, j); } } bone[i] = bi; }
+      const idx = geo.index;
+      for (const gr of geo.groups) for (let i = gr.start; i < gr.start + gr.count; i++) slot[idx ? idx.getX(i) : i] = gr.materialIndex;
+      Object.assign(res, { bone, slot, boneNames: sk.bones.map(b => b.name), slotNames: rig.slots.slice(), index: idx ? Array.from(idx.array) : null });
+    }
+    if (o.keep) { mesh.frustumCulled = false; root.name = 'coop-seat-body'; res.group = root; }
+    else { try { sk.dispose(); } catch (err) { /* 忽略 */ } }
+    return res;
+  } finally { SP = prevSP; }
 }
 // 对方正坐在哪台车上：{ key, x, y, z, yaw（座椅世界坐标和车的朝向）, cx, cy, cz（胸口）, real } | null
-function peerDriveKey() {
-  const pp = S.peerPose;
-  if (!pp || pp.mode !== 'drive' || !pp.key) return null;
+// pp：按哪一份姿态（人形按晚一个包的样本姿态画，见 sampleAt；缺省对方此刻报的）。'exit'（下车那 0.5 s）也当坐着画
+function peerDriveKey(pp) {
+  if (pp === undefined) pp = S.peerPose;
+  if (!pp || (pp.mode !== 'drive' && pp.mode !== 'exit') || !pp.key) return null;
   return String(pp.key).replace(/^k:/, '');
 }
+// 对方那台车此刻的后轮转角（手跟着方向盘转）：联机里对方开的车先问 vehiclesNet.remote，再问 vehicles 的位姿；都没有当 0
+function peerSteer(key) {
+  try {
+    const N = BR.vehiclesNet, r = N && typeof N.remote === 'function' ? N.remote(key) : null;
+    if (r && isNum(r.steer)) return r.steer;
+  } catch (err) { /* 没有 */ }
+  try {
+    const Vh = V_(), v = Vh && has(Vh, 'byKey') ? Vh.byKey(key) : null;
+    if (v && v.pose && isNum(v.pose.steer)) return v.pose.steer;
+  } catch (err) { /* 没有 */ }
+  return 0;
+}
 function seatedPeer(c) {
-  const key = peerDriveKey();
+  const key = peerDriveKey(c.pose !== undefined ? c.pose : S.peerPose);
   if (!key) return null;
   const Vh = V_();
   let s = null;
@@ -4203,7 +4296,22 @@ function updateAvatar(dt) {
   const prevX = R.obj.position.x, prevZ = R.obj.position.z;
   const c = sampleAt(t - INTERP_DELAY, R.cur);
   const cam = BR.gfx && BR.gfx.camera;
-  const drv = seatedPeer(c);
+  let drv = seatedPeer(c), mountFeet = null;
+  // 上车那 0.5 s（FE1R A1）：对方的眼点离车中线还比踏板点（车本地 |x| 0.75）远 8 cm 以上，就照旧画站着的人形、脚踩在地上
+  // （不跟着眼点插值往踏板上浮）；再往里（快到踏板、要坐进去了）那一刻换成坐姿 —— 站着的 hazmat.glb 半宽 0.37，站到踏板点上
+  // 腿会插进底盘侧面 1.7 cm（A1 实测），提前 8 cm 换就碰不到车
+  if (drv && c.pose && c.pose.ph === 'in') {
+    const Vh = V_(), veh = has(Vh, 'byKey') ? Vh.byKey(drv.key) : null, p = veh && veh.pose;
+    if (p) {
+      const cs = Math.cos(p.yaw), sn = Math.sin(p.yaw), dx = c.x - p.x, dz = c.z - p.z, lx = cs * dx - sn * dz;
+      const sp = geoPt('stepPoint', 0.75, 0.35, -0.19), sx = Math.abs(sp.x);
+      if (Math.abs(lx) >= sx + 0.08) {
+        const g = has(BR.phys, 'groundY') ? +BR.phys.groundY(c.x, c.z) : (p.y || 0);
+        mountFeet = Number.isFinite(g) ? g : (p.y || 0);
+        drv = null;
+      }
+    }
+  }
   if (drv) {
     // 坐在叉车上：glb 藏起来，坐姿人形钉在驾驶座上
     const st = ensureSeat(linHex(skinHex(skin)), seatDetail());
@@ -4212,11 +4320,12 @@ function updateAvatar(dt) {
     R.obj.position.set(drv.x, drv.y, drv.z);
     R.obj.rotation.y = drv.yaw;
     const headYaw = U.angleDiff(drv.yaw, c.yaw);
-    if (st) { st.g.position.set(0, SEAT_HIP_UP - st.dims.hipY, SEAT_FWD); st.g.visible = true; poseSeat(st, headYaw, c.pitch); }
+    if (st) { placeSeatGroup(st); st.g.visible = true; poseSeat(st, headYaw, c.pitch, peerSteer(drv.key)); }
+    R.lastMode = 'drive';
     R.obj.visible = !!st && !(cam && U.dist2(cam.position.x, cam.position.z, drv.x, drv.z) < HIDE_NEAR * HIDE_NEAR);
     updateTag(dt, drv.x, drv.y + SEAT_TAG_UP, drv.z, drv.cx, drv.cy, drv.cz);
     R.dbg = {
-      mode: 'drive', key: drv.key, real: drv.real, visible: R.obj.visible, seatModel: !!st,
+      mode: 'drive', key: drv.key, real: drv.real, visible: R.obj.visible, seatModel: !!st, phase: c.pose && c.pose.mode === 'exit' ? 'exit' : (c.pose && c.pose.ph) || 'seat',
       seat: [r3(drv.x), r3(drv.y), r3(drv.z)], hips: [r3(drv.x), r3(drv.y + SEAT_HIP_UP), r3(drv.z)], yaw: r3(drv.yaw),
       headYaw: r3(U.clamp(headYaw, -HEAD_YAW_MAX, HEAD_YAW_MAX)), skin, skinHex: skinHex(skin), suitHex: st ? st.hex : null,
       tris: st ? Math.round((st.mesh.geometry.index ? st.mesh.geometry.index.count : st.mesh.geometry.attributes.position.count) / 3) : 0,
@@ -4227,11 +4336,13 @@ function updateAvatar(dt) {
   }
   if (R.seat) R.seat.g.visible = false;
   if (R.body) R.body.visible = true;
-  const feet = c.y - eyeHeight();
+  const feet = mountFeet != null ? mountFeet : c.y - eyeHeight();
   // 走动时轻微起伏，免得像雕像在地上滑
-  const speed = dt > 0 ? Math.min(6, Math.sqrt(U.dist2(prevX, prevZ, c.x, c.z)) / dt) : 0;
+  // 刚从坐姿换回站姿（下车落地那一帧）：根节点上一帧还在座椅上，不按这一跳算走路起伏
+  const speed = dt > 0 && R.lastMode === 'walk' ? Math.min(6, Math.sqrt(U.dist2(prevX, prevZ, c.x, c.z)) / dt) : 0;
+  R.lastMode = 'walk';
   R.walk += speed * dt * 2.2;
-  const bob = speed > 0.3 ? Math.abs(Math.sin(R.walk * Math.PI)) * 0.04 : 0;
+  const bob = speed > 0.3 && mountFeet == null ? Math.abs(Math.sin(R.walk * Math.PI)) * 0.04 : 0;
   R.obj.position.set(c.x, feet + bob, c.z);
   R.obj.rotation.y = c.yaw;   // 与相机同一套 yaw：面朝 -Z 的模型直接用
   if (R.head) R.head.rotation.x = U.clamp(c.pitch, -0.6, 0.6);
@@ -4239,7 +4350,7 @@ function updateAvatar(dt) {
   R.obj.visible = !(cam && U.dist2(cam.position.x, cam.position.z, c.x, c.z) < HIDE_NEAR * HIDE_NEAR);
   updateTag(dt, c.x, feet + 2.05, c.z, c.x, feet + 1.6, c.z);
   R.dbg = {
-    mode: 'walk', visible: R.obj.visible, x: r3(c.x), y: r3(feet), z: r3(c.z), skin,
+    mode: 'walk', visible: R.obj.visible, x: r3(c.x), y: r3(feet), z: r3(c.z), skin, mounting: mountFeet != null, yaw: r3(c.yaw),
     tag: R.tag ? { opacity: R.tag.material.opacity } : null,
   };
 }
@@ -4412,6 +4523,8 @@ BR.coop = {
       vehLast: Array.from(S.vehLast, ([k, l]) => [k, Object.assign({}, l)]),
       vehResv: Array.from(S.vehResv.keys()).map(k => [k, vehReserved(k)]),
       avatar: R.dbg ? JSON.parse(JSON.stringify(R.dbg)) : null,
+      // 最近几包对方位置和姿态（FE1R A1 调试：人形按晚一个包的样本画，姿态也跟着样本走）
+      peerSamples: R.samples.slice(-6).map(q => ({ t: r3(q.t), x: r3(q.x), y: r3(q.y), z: r3(q.z), pose: q.pose ? q.pose.mode + (q.pose.ph ? ':' + q.pose.ph : '') : null })),
       voice: { vol: A.vol, gain: A.voice ? A.voice.gain.value : null, ctx: A.ctx ? A.ctx.state : null },
     };
   },

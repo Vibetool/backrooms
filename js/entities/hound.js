@@ -49,6 +49,9 @@ A.register({
   // 依据：「能记住环境、在脑中绘制地图、能认脸」→ 有游荡巡逻而非固定原地；
   // 「成群狩猎」只见于未计入的论坛帖，density 里明确写 unverified → 不用群猎骨架(A.pack)，用单体追猎者；嗅觉选中版本未提，smell:false
   anim: { gait: 'crawl', stride: 1.1, strike: 'bite', stateSounds: { chase: 'growl' } },
+  // 打坐在叉车上的人（返修 FE1R · repair-r1：以前咬不到坐车的人，叉车成了安全屋）：扑起来、嘴咬到司机近侧肩膀外侧（_archetypes.js seatLeap），
+  // 扑的时候两条前腿往后收（不往下伸进发动机盖）。攻击距离、扣血、出手时机不变
+  seatStrike: { kind: 'leap', reach: 1.6, tuck: { armL: [-1.1, 0, 0], armR: [-1.1, 0, 0] } },
   // 依据：「四足行走；后腿结构使其无法直立」。形态改成四肢着地的人形后骨骼名也跟着换了（人形骨架是
   // armL/foreL/legL/shinL，四足骨架才是 legFL/shinFL…），所以 gait 由 'quad' 改成同样是四肢着地、
   // 但驱动人形骨骼名的 'crawl'——不改就会四条腿都不动。这是模型骨骼绑定的配套改动，不是行为/数值改动：

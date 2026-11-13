@@ -841,7 +841,8 @@ function updateMovement(dt, inp) {
     const n = Math.min(4, Math.ceil(dist / (PC.radius * 0.9)));
     let hitX = false, hitZ = false;
     for (let k = 0; k < n; k++) {
-      const r = BR.phys.moveCircle(player.x, player.z, PC.radius, dx / n, dz / n, feetY, PC.height);
+      // 对载具 OBB 用 vehRadius（FE1R A7：0.377，贴着叉车走手套不插进车身），对墙照旧 radius
+      const r = BR.phys.moveCircle(player.x, player.z, PC.radius, dx / n, dz / n, feetY, PC.height, PC.vehRadius);
       if (!r) break;
       player.x = num(r.x, player.x);
       player.z = num(r.z, player.z);

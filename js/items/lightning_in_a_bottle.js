@@ -28,7 +28,8 @@ const BLACK_SEEK = 12;
 const BLACK_EXPLODE_CHANCE = 0.35;
 const BLACK_EXPLODE_RADIUS = 4;
 
-const SEG = 12;
+// 段数（FE1R K8）：瓶身 28 段（⑳b 特写里瓶身半径约 135 px，弦高 0.85 px；以前 12 段看得出棱），瓶塞 16 段，瓶里的光团是 20×10 的球（⑳b 里半径约 80 px，弦高 ≤1 px；以前是二十面体，四个角）
+const SEG = 28, CORK_SEG = 16;
 const FLASK = [[0, 0], [0.03, 0.006], [0.045, 0.03], [0.048, 0.055], [0.042, 0.08], [0.026, 0.1], [0.013, 0.112], [0.013, 0.17], [0.016, 0.175]];
 const ZIG = [[-0.02, 0.088], [0.012, 0.07], [-0.01, 0.054], [0.018, 0.036], [-0.004, 0.016]];
 
@@ -159,10 +160,10 @@ VARIANTS.forEach((v) => {
       const T = window.THREE;
       const root = K.assemble({
         name: v.type, scale: 1.6,
-        solid: [K.paint(K.cyl(0.0145, 0.0125, 0.025, 8, 0.162), 0xb98a55)],
+        solid: [K.paint(K.cyl(0.0145, 0.0125, 0.025, CORK_SEG, 0.162), 0xb98a55)],
         glow: [
           [K.merge(boltGeo(0).concat(boltGeo(Math.PI / 2))), v.bolt],
-          [new T.IcosahedronGeometry(0.03, 0).translate(0, 0.05, 0), v.halo, v.haloOp],
+          [new T.SphereGeometry(0.03, 20, 10).translate(0, 0.05, 0), v.halo, v.haloOp],
         ],
         glass: [[K.lathe(FLASK, SEG), 0xd7ebf5, 0.3]],
       });
@@ -172,6 +173,7 @@ VARIANTS.forEach((v) => {
       return root;
     },
     use(player) {
+      if (K.seatedNoThrow(player)) return false;   // 坐在车上扔不出去，东西留在手里（FE1R F5）
       const t = strike(player, v);
       K.toast(t && t.player ? '瓶子摔开，闪电朝你打了过来！' : '瓶子摔开，闪电劈了出去');
       return true;

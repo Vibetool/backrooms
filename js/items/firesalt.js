@@ -117,13 +117,16 @@ BR.itemTypes.register({
     root.add(new T.Mesh(core, coreMat));
     // "一直在发光"：一圈半透明的暖光。光不是实物（userData.glow，FE1P H6）：放在地上、货叉上时晶体簇自己着地，光晕不算支撑也不算重心。
     // 球心在 y 0.066（返修 r1：以前 0.06，最低点比底座底面低 5 mm，放在地上、货叉上光晕下半截穿进地面 / 叉面）：最低点比底座底面高 1 mm
-    const halo = new T.Mesh(new T.IcosahedronGeometry(0.075, 1).translate(0, 0.066, 0), K.glowMat(0xff7a2a, 0.16));
+    // FE1R K8：光晕改成 36×18 的球（以前是细分一次的二十面体，0.6 m 看得出八边形的轮廓；⑳c 特写里光晕半径约 260 px，36 段弦高 1 px）。
+    // 最低点照旧是球心正下方 r（−9 mm），比底座底面高 1 mm
+    const halo = new T.Mesh(new T.SphereGeometry(0.075, 36, 18).translate(0, 0.066, 0), K.glowMat(0xff7a2a, 0.16));
     halo.userData.glow = true;
     root.add(halo);
     root.scale.setScalar(1.3);
     return root;
   },
   use(player) {
+    if (K.seatedNoThrow(player)) return false;   // 坐在车上扔不出去，东西留在手里（FE1R F5）
     const pt = K.throwPoint(player, THROW);
     explode(player, pt);
     K.toast('火盐砸碎了，炸开一团火花');

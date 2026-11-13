@@ -35,6 +35,9 @@
 //   按起手前的追击速度（最近一次 moveToward / flee 的速度，没有就用 def.speed.run）往追击点挪，挪到离目标「攻击距离 − LUNGE_IN」
 //   为止（不贴到人身上）；被墙、车身挡住就贴着滑，跟不上就算没打中。
 //   冷却、伤害数值不变，只是扣血的时刻后移。api.attackStart(e) / api.swinging(e) 给动画和测试读
+// 打坐在车上的人（FE1R K6，见「打坐在车上的人」一节）：只有胳膊（脸）够得着的怪出手，站在驾驶舱侧面车身外，扣血那一刻手正好贴着司机近侧肩膀；
+//   胳膊走的路、整个过程不插进车见 _archetypes.js strikeSeat / vehFit。被叉车挡住的目标先绕到车角（vehDetour），隔着车够不着（vehBetween）。
+//   shapeOf(e)：实体此刻按网格量的外形（几段竖直圆柱），给叉车的碰撞、雷达、降货叉用
 (function () {
 'use strict';
 const BR = window.BR;
@@ -326,7 +329,7 @@ function rideOf(P) {
         const body = st ? { x: st.x, z: st.z } : { x: ch.x, z: ch.z };
         const dx = body.x - cab.cx, dz = body.z - cab.cz;
         const bl = { x: cab.c * dx - cab.s * dz, z: cab.s * dx + cab.c * dz };
-        ride = { cab, chest: ch, body, bl, bx, rz };
+        ride = { cab, chest: ch, body, bl, bx, rz, key: raw && raw.key != null ? String(raw.key) : null };
       }
     } catch (err) {
       once('ride', () => console.error('[entities] 读坐车玩家的驾驶舱出错', err));
@@ -342,9 +345,23 @@ function reachOf(e, kind, ref) {
   return atk ? num(atk.range, 1.2) + targetRadius(kind, ref) : 0;
 }
 // 攻击距离量的那段水平距离：坐在车上的玩家量到司机身体（座椅上的人），其余量到目标位置
+// 返修 FE1R · repair-r1：没有胳膊、整只扑上去 / 伸一条肢体过去打坐车的人的怪（BR.arch.seatReach 的 mode 'leap' / 'chain'：猎犬、啼物、肢团、牧蛇、
+// 悲尸肉块、Nguithr'xurh），量的起点是它碰人的那一点（嘴 / 身体最前面、肢体根、蛇身抬起来那一节）在地上的位置 —— 啼物身子 1.8 m 长、
+// 牧蛇的头在原点前面 6 m，从原点量永远够不着；攻击距离的数值不变
 function strikeDist(e, kind, ref) {
   const ride = kind === 'player' ? rideOf(ref) : null;
   const p = ride ? ride.body : ref;
+  if (ride) {
+    const R = archReach(e);
+    if (R && R.mode && R.shR) {
+      // 朝向按「脸朝车侧面」算（出手那一刻就转成这样，见 attack）：从车前 / 车后沿车侧走过来的，到站点时还侧着身子
+      let yaw = e.yaw;
+      const vp = ride.key != null ? vehPose(ride.key) : null;
+      if (vp) { worldToCar(vp, e.x, e.z, planTmp); const sd = planTmp.x >= 0 ? 1 : -1, c0 = Math.cos(vp.yaw), s0 = Math.sin(vp.yaw); yaw = Math.atan2(sd * c0, -sd * s0); }
+      const c = Math.cos(yaw), s = Math.sin(yaw), mx = num(R.shR[0], 0), mz = num(R.shR[2], 0);
+      return Math.hypot(p.x - (e.x + c * mx + s * mz), p.z - (e.z - s * mx + c * mz));
+    }
+  }
   return Math.hypot(p.x - e.x, p.z - e.z);
 }
 // 站在车尾（追击点上）够得着司机的那一段车尾外沿：本地 x 的半宽（以司机身体的 x 为中心）；够不着返回 −1
@@ -384,11 +401,298 @@ function chasePoint(e, ride, out) {
   return out;
 }
 // 目标的追击点：坐车的玩家给车侧 / 车尾那一点，其余就是目标自己的位置。写进 t.x / t.z
+// 有胳膊打得到坐车的人的怪（FE1R K6）：追击点是驾驶舱侧面的站点（先绕到车角），见「打坐在车上的人」；记在 e._m.rideAim，moveToward 按 3 cm 算到点。
+// 别的目标：中间隔着叉车就先去车角（FE1R ACT-veh，见 vehDetour）
 function aimPoint(e, kind, ref, t) {
   const ride = kind === 'player' ? rideOf(ref) : null;
-  if (ride) { chasePoint(e, ride, chaseOut); t.x = chaseOut.x; t.z = chaseOut.z; }
+  e._m.rideAim = null;
+  // 一动不动的陷阱（Nguithr'xurh，repair-r1）：不绕、不去站点，追击点就是司机身体（够不够得着按它自己挂的位置量）
+  const RF = ride ? archReach(e) : null;
+  if (ride && RF && RF.fixed) { t.x = ride.body.x; t.z = ride.body.z; return t; }
+  if (ride) {
+    const pl = seatAim(e, ride), p = pl ? vehPose(pl.key) : null;
+    if (pl && p) {
+      seatRoute(e, p, pl, chaseOut);
+      e._m.rideAim = { x: chaseOut.x, z: chaseOut.z, plan: pl };
+      carToWorld(p, pl.lx, pl.lz, planTmp);
+      if (Math.hypot(planTmp.x - e.x, planTmp.z - e.z) > 0.25) e._m.seatKey = null;   // 离开站点（车开走了）：不再按车侧面转身
+    } else chasePoint(e, ride, chaseOut);
+    t.x = chaseOut.x; t.z = chaseOut.z;
+  } else if (vehDetour(e, ref.x, ref.z, chaseOut)) { t.x = chaseOut.x; t.z = chaseOut.z; }
   else { t.x = ref.x; t.z = ref.z; }
   return t;
+}
+
+// ---------- 被叉车挡住（FE1R ACT-veh） ----------
+// 叉车的外接矩形（车本地：x ±0.6，车头货叉尖 −2.1 到车尾 1.3），按怪的碰撞半径往外让。怪和目标之间的连线穿过某台车的这个矩形：
+//   ① 绕：追击点先换成车的一个角（矩形再往外让 0.25 m 的四个角里，第一段走得过去、总路程最短的那个），到了角上连线不穿车了再直奔目标
+//      （以前顶着车身蹭：moveCircle 贴着车滑，绕车的探测射线打不到矮的货叉，常常卡在车的另一边 10 s 也绕不过来）；
+//   ② 抓：近战起手、扣血那一刻，从怪到目标的连线穿过车的外包盒（不含目标自己坐的那台车）就算隔着车，够不着（肢团隔着车伸肢体抓人）
+const VEH_RECT = { x: 0.6, zF: -2.1, zR: 1.3 };
+const vdTmp = { x: 0, z: 0 };
+function vehCars() {
+  const V = BR.vehicles;
+  if (!V || !has(V, 'list')) return null;
+  if (VC.t === time && VC.list) return VC.list;
+  VC.t = time;
+  try { VC.list = V.list(); } catch (err) { VC.list = []; }
+  return VC.list;
+}
+const VC = { t: -1, list: null };
+// 线段 (ax, az) → (bx, bz)（车本地）和矩形 [x0, x1] × [z0, z1] 相交（Liang–Barsky）
+function segRect(ax, az, bx, bz, x0, x1, z0, z1) {
+  let t0 = 0, t1 = 1;
+  const dx = bx - ax, dz = bz - az;
+  const clip = (p, q) => { if (Math.abs(p) < 1e-12) return q >= 0; const r = q / p; if (p < 0) { if (r > t1) return false; if (r > t0) t0 = r; } else { if (r < t0) return false; if (r < t1) t1 = r; } return true; };
+  return clip(-dx, ax - x0) && clip(dx, x1 - ax) && clip(-dz, az - z0) && clip(dz, z1 - az) && t0 <= t1;
+}
+// 从 e 到 (tx, tz) 穿过的第一台车（不算 skipKey）| null
+function vehBetween(e, tx, tz, pad, skipKey) {
+  const cars = vehCars();
+  if (!cars || !cars.length) return null;
+  const R = VEH_RECT;
+  let best = null, bd = Infinity;
+  for (const v of cars) {
+    if (skipKey != null && String(v.key) === String(skipKey)) continue;
+    if (!Number.isFinite(v.x)) continue;
+    const d = Math.hypot(v.x - e.x, v.z - e.z);
+    if (d > Math.hypot(tx - e.x, tz - e.z) + 3) continue;
+    worldToCar(v, e.x, e.z, planTmp); const ax = planTmp.x, az = planTmp.z;
+    worldToCar(v, tx, tz, vdTmp); const bx = vdTmp.x, bz = vdTmp.z;
+    if (segRect(ax, az, bx, bz, -R.x - pad, R.x + pad, R.zF - pad, R.zR + pad) && d < bd) { bd = d; best = { v, ax, az, bx, bz }; }
+  }
+  return best;
+}
+function vehDetour(e, tx, tz, out) {
+  const r = num(e.r, 0.4), hit = vehBetween(e, tx, tz, r);
+  if (!hit) return false;
+  // 绕车的最短路：起点、目标、外接矩形往外让 0.25 m 的四个角，两点连线不穿车（矩形往外让 r − 0.02：怪贴着车身站着也连得出去）就连一条边，
+  // Dijkstra 取第一个路点
+  const R = VEH_RECT, W = R.x + r + 0.25, zF = R.zF - r - 0.25, zR = R.zR + r + 0.25, inner = r - 0.02;
+  // 起点、目标贴着车身（在让过的矩形里面或边上）：先挪到矩形外 2 cm 再连边，不然连哪儿都算穿车
+  const outR = (x, z) => {
+    const x0 = -R.x - inner, x1 = R.x + inner, z0 = R.zF - inner, z1 = R.zR + inner;
+    if (x <= x0 || x >= x1 || z <= z0 || z >= z1) return [x, z];
+    const f = [x - x0, x1 - x, z - z0, z1 - z]; let j = 0; for (let q = 1; q < 4; q++) if (f[q] < f[j]) j = q;
+    return j === 0 ? [x0 - 0.02, z] : j === 1 ? [x1 + 0.02, z] : j === 2 ? [x, z0 - 0.02] : [x, z1 + 0.02];
+  };
+  const N = [outR(hit.ax, hit.az), outR(hit.bx, hit.bz), [-W, zF], [W, zF], [-W, zR], [W, zR]];
+  const ok = (a, b) => !segRect(N[a][0], N[a][1], N[b][0], N[b][1], -R.x - inner, R.x + inner, R.zF - inner, R.zR + inner);
+  const dist = [0, Infinity, Infinity, Infinity, Infinity, Infinity], prev = [-1, -1, -1, -1, -1, -1], done = [false, false, false, false, false, false];
+  for (let it = 0; it < 6; it++) {
+    let u = -1;
+    for (let i = 0; i < 6; i++) if (!done[i] && (u < 0 || dist[i] < dist[u])) u = i;
+    if (u < 0 || !Number.isFinite(dist[u])) break;
+    done[u] = true;
+    if (u === 1) break;
+    for (let v = 0; v < 6; v++) {
+      if (done[v] || v === u || !ok(u, v)) continue;
+      const d = dist[u] + Math.hypot(N[u][0] - N[v][0], N[u][1] - N[v][1]);
+      if (d < dist[v]) { dist[v] = d; prev[v] = u; }
+    }
+  }
+  if (!Number.isFinite(dist[1])) return false;
+  let w = 1;
+  while (prev[w] > 0) w = prev[w];
+  if (w === 1) return false;   // 直接走得过去
+  carToWorld(hit.v, N[w][0], N[w][1], out);
+  return true;
+}
+
+// ---------- 打坐在车上的人（FE1R K6） ----------
+// 孩子挑的：「它没打着人，怎么掉血了」——悲尸扣血那一帧手离司机还有 12 cm、打在靠背上；钝人的手插进司机 3–5 cm；窃皮者、肢团隔着
+// 0.7–1.1 m 就「打中」了；从车前、左前过来的悲尸停在驾驶舱前角差 6–12 cm 够不着，永远不出手；收手时胳膊扫进发动机盖、腿踩进底盘。
+// 现在：
+//   落点：司机近侧肩膀外侧 t1、近侧肋下 t2（车本地，从 coop.seatBody 坐姿人形量一次：t1 = 上臂最上面那一截附近一块里（所有骨骼）最靠外的点，
+//     t2 = t1 往下 10–35 cm、往后 2–30 cm 那一块里最靠外的点，都再往外让出 SEAT_OUT —— 手（指尖 / 爪尖）贴着人最凸出来的地方，
+//     _archetypes.js 还管着整只手不越过落点所在的那个竖直面）；整张脸扑过去的（笑魇）落点 tf：t1 上下 −32…+15 cm、前后 ±35 cm 里
+//     坐着的人最靠外那一点（脸是一大块，最前面的牙对准人最凸出来的地方）。没有 coop 时用 (±0.30, 1.66, 0.10) / (±0.27, 1.45, 0.25)。
+//   站哪里：驾驶舱左右两侧（离怪近的那一侧，那里被墙挡着就换另一侧），身体在车身外面 —— 离车中线
+//     max(底盘半宽 0.595 + 碰撞半径 + 4 cm, 底盘半宽 + 脚往前伸的 + 2 cm, 发动机盖半宽 0.535 + 腿往前伸的 + 2 cm)，
+//     前后对齐到出手那只手的肩膀正对 t1（grab：两肩中间对着 t1、t2 中间），脸朝车里（和车侧面垂直）。
+//     怪在车的另一边、车前、车后时先走到车角外面再沿车侧过去（不顶着车身蹭）。到点的容差 3 cm（以前 0.15 m，停在差一点够不着的地方）。
+//   够不够得着：站在那里，出手那只肩膀到落点 ≤ 胳膊全长（上臂 + 肘到指尖）× 0.97 —— BR.arch.seatReach 给得出的才打得到坐在车上的人：
+//     有 armR / foreR、strike 是 swipe / grab 的人形怪（胳膊），笑魇（整张脸，def.seatStrike 'face'），返修 FE1R · repair-r1 起
+//     没有胳膊的也打得到（def.seatStrike 'leap'：猎犬、啼物、悲尸肉块、Nguithr'xurh 整只扑上去，嘴 / 身体最前面那一点贴到人；'chain'：肢团、牧蛇
+//     伸一条肢体 / 抬起前半截蛇身，梢贴到人；_archetypes.js seatLeap / seatChain）—— 叉车不是安全屋。它们的「肩膀」是碰人的那一点在基础姿势下的位置，
+//     攻击距离也从那一点量（strikeDist）。
+//   出手：起手那一刻还要同时满足原来的攻击距离（量到司机身体 + 人的半径，FE1P H11）；扣血那一刻（胳膊抡到最前）再量一次：
+//     肩膀到落点 ≤ 胳膊全长 + 1 cm（车开走了、手够不着就算没打中），再加原来的攻击距离 + STRIKE_SLACK。抡的这一下里不往前扑（已经站在
+//     够得着的地方，往前扑只会把身子挤进车里），等冷却时也一直正对车侧面（不转过去对着座椅）。冷却、伤害、感染不变。胳膊怎么走见 _archetypes.js strikeSeat
+const SEAT_GAP = 0.04, RIDE_ARRIVE = 0.03, SEAT_REACH_K = 0.97, SEAT_OUT = 0.008;
+const CH_X = 0.595, HOOD_X = 0.535;
+const MARKS = { v: null };
+function vehPose(key) {
+  const V = BR.vehicles;
+  try { const v = V && has(V, 'byKey') ? V.byKey(key) : null; return v && v.pose ? v.pose : null; } catch (err) { return null; }
+}
+function carToWorld(p, lx, lz, out) { const c = Math.cos(p.yaw), s = Math.sin(p.yaw); out.x = p.x + c * lx + s * lz; out.z = p.z - s * lx + c * lz; return out; }
+function worldToCar(p, x, z, out) { const c = Math.cos(p.yaw), s = Math.sin(p.yaw), dx = x - p.x, dz = z - p.z; out.x = c * dx - s * dz; out.z = s * dx + c * dz; return out; }
+// 司机身上的落点（车本地，右侧 side = +1；左侧镜像 x）
+function driverMarks() {
+  if (MARKS.v) return MARKS.v;
+  let t1 = [0.30, 1.66, 0.10], t2 = [0.27, 1.45, 0.25], tf = null;
+  try {
+    const sb = BR.coop && has(BR.coop, 'seatBody') ? BR.coop.seatBody({ parts: true }) : null;
+    if (sb && sb.bone && sb.boneNames) {
+      const V = sb.verts, ai = sb.boneNames.indexOf('armR'), n = sb.bone.length;
+      // 一块区域里（所有骨骼）最靠外（+x）的那一点：落点放在它正外面 —— 手（脸）贴着最凸出来的地方，手指散开也越不过这个竖直面
+      // bones：只看这几根骨骼上的顶点（null = 所有骨骼）
+      const outMost = (y0, y1, z0, z1, bones) => { let bx = -Infinity, a = null; for (let i = 0; i < n; i++) { if (bones && !bones.has(sb.bone[i])) continue; const x = V[i * 3], y = V[i * 3 + 1], z = V[i * 3 + 2]; if (y >= y0 && y <= y1 && z >= z0 && z <= z1 && x > bx) { bx = x; a = [x, y, z]; } } return a; };
+      // 肋下（t2）只看躯干（脊柱、胯骨骼）上的顶点（返修 FE1R · repair-r4：坐车的人换成 hazmat.glb 的躯干以后比以前的方块胯窄 3 cm，
+      // 那一块里最靠外的顶点落到了垂在身侧的上臂反光带上 —— 钝人第二只手去抓「肋下」，手背插进上臂 2.3 cm）
+      const torso = new Set(['spine', 'hips'].map(nm => sb.boneNames.indexOf(nm)).filter(i => i >= 0));
+      let top = -Infinity, sz = 0, sn = 0;
+      for (let i = 0; i < n; i++) if (sb.bone[i] === ai) top = Math.max(top, V[i * 3 + 1]);
+      for (let i = 0; i < n; i++) if (sb.bone[i] === ai && V[i * 3 + 1] >= top - 0.1) { sz += V[i * 3 + 2]; sn++; }
+      if (sn) {
+        const z0 = sz / sn;
+        const a = outMost(top - 0.15, top + 0.05, z0 - 0.12, z0 + 0.12);
+        // 肩膀外侧落点 t1（返修 FE1R · repair-r4）：按坐着的人身最外一层（BR.arch.driverSurfAt：坐姿人形三角形光栅化，1 cm 一格）在上臂上半截那一条
+        // （肩膀顶往下 10–16 cm、前后 ±12 cm）里找最靠外的那一格。以前按顶点找（上面 a）：胳膊是圆台，只有两头一圈顶点，落点就跟着上臂外侧最高的那圈
+        // 顶点走 —— 以前碰巧是反光带（肩膀顶往下 13 cm），坐车的人照 glb 换了反光带高度、加了外侧压胶条以后变成压胶条的头（往下 8 cm），
+        // 落点高了 5 cm：低画质的窃皮者够不着（够不着就不出手），肢团的梢离人 2 cm 多。没有那张表时退回按顶点找
+        const SA = BR.arch && has(BR.arch, 'driverSurfAt') ? BR.arch.driverSurfAt : null;
+        // 表上一个窗口（y0–y1、z0–z1，按表的格中心：y = 1.0 + (i + 0.5)·0.01，z = −0.8 + (j + 0.5)·0.01）里最靠外的那一格 [x, y, z] | null
+        const surfMax = (y0, y1, za, zb) => {
+          if (!SA) return null;
+          let m = null;
+          for (let i = Math.ceil((y0 - 1.0) / 0.01 - 0.5); 1.0 + (i + 0.5) * 0.01 <= y1; i++) for (let j = Math.ceil((za + 0.8) / 0.01 - 0.5); -0.8 + (j + 0.5) * 0.01 <= zb; j++) {
+            const y = 1.0 + (i + 0.5) * 0.01, z = -0.8 + (j + 0.5) * 0.01, x = SA(1, y, z);
+            if (x > 0 && (!m || x > m[0])) m = [x, y, z];
+          }
+          return m;
+        };
+        const sf = surfMax(top - 0.16, top - 0.1, z0 - 0.12, z0 + 0.12), r = sf || a;
+        if (r) {
+          t1 = [r[0] + SEAT_OUT, r[1], r[2]];
+          const c = outMost(r[1] - 0.35, r[1] - 0.1, r[2] + 0.02, r[2] + 0.3, torso.size ? torso : null);
+          if (c) t2 = [c[0] + SEAT_OUT, c[1], c[2]];
+          const f = outMost(r[1] - 0.32, r[1] + 0.15, r[2] - 0.35, r[2] + 0.35);
+          if (f) tf = [f[0] + SEAT_OUT, f[1], f[2]];
+        }
+      }
+    }
+  } catch (err) { once('marks', () => console.error('[entities] 量坐着的人出错', err)); }
+  MARKS.v = { t1, t2, tf: tf || t1 };
+  return MARKS.v;
+}
+function archReach(e) {
+  const A = BR.arch;
+  if (!A || !has(A, 'seatReach')) return null;
+  try { return A.seatReach(e); } catch (err) { return null; }
+}
+// 这只怪站在 side 一侧打这台车上的人：站点（车本地 lx, lz）、出手那只肩膀到落点多远、够不够得着
+const planTmp = { x: 0, z: 0 };
+function seatPlan(e, side, R) {
+  const M = driverMarks();
+  const M1 = R.kind === 'face' ? M.tf : M.t1;
+  const t1 = [side * M1[0], M1[1], M1[2]], t2 = [side * M.t2[0], M.t2[1], M.t2[2]];
+  const X = Math.max(CH_X + num(e.r, 0.4) + SEAT_GAP, CH_X + R.low + 0.02, HOOD_X + R.mid + 0.02);
+  // 模型 (mx, my, mz) 摆到车本地：x = side·(X + mz)，y = my，z = Zc − side·mx（脸朝车里 −side·x）
+  const sh = R.shR, shL = R.shL;
+  // 两只手抓的（grab）：两肩中间对着 t1、t2 中间；那样够不着时（肋下比肩膀靠后 15 cm，后面那只肩膀离 t1 远）改成两肩中间对着 t1
+  // （返修 FE1R · repair-r4：低画质的窃皮者胳膊短，以前差 3 mm 够得着，坐车的人换成 glb 躯干以后肋下往后挪了 6 cm，差 2 mm 够不着就一直不出手）
+  const zcs = R.kind === 'grab' ? [(t1[2] + t2[2]) / 2, t1[2]] : [t1[2] + side * sh[0]];
+  let best = null;
+  for (const Zc of zcs) {
+    const S = [side * (X + sh[2]), sh[1], Zc - side * sh[0]];
+    const d1 = Math.hypot(t1[0] - S[0], t1[1] - S[1], t1[2] - S[2]);
+    let d2 = 0;
+    if (R.kind === 'grab') { const S2 = [side * (X + shL[2]), shL[1], Zc - side * shL[0]]; d2 = Math.min(Math.hypot(t2[0] - S2[0], t2[1] - S2[1], t2[2] - S2[2]), Math.hypot(t1[0] - S2[0], t1[1] - S2[1], t1[2] - S2[2])); }
+    const d = Math.max(d1, d2);
+    if (!best || (best.d > R.reach * SEAT_REACH_K && d < best.d)) best = { Zc, d };
+  }
+  return { side, lx: side * X, lz: best.Zc, d: best.d, ok: best.d <= R.reach * SEAT_REACH_K, t1, t2 };
+}
+// 站点能不能站（不在墙里）
+function standFree(e, p, lx, lz) {
+  carToWorld(p, lx, lz, planTmp);
+  if (!has(BR.phys, 'overlapCircle')) return true;
+  try { return !BR.phys.overlapCircle(planTmp.x, planTmp.z, num(e.r, 0.4) * 0.9, groundAt(planTmp.x, planTmp.z, e.y) + 0.02, num(e.h, 1.8)); }
+  catch (err) { return true; }
+}
+// 坐车目标：这只怪的站点 { side, lx, lz, ok, key }，没有胳膊 / 两侧都站不了返回 null
+function seatAim(e, ride) {
+  const R = archReach(e), key = ride && ride.cab && ride.key;
+  const p = key != null ? vehPose(key) : null;
+  if (!R || !p) return null;
+  worldToCar(p, e.x, e.z, planTmp);
+  const m = e._m, lx = planTmp.x;
+  const side = m.seatSide && Math.abs(lx) < 0.3 ? m.seatSide : lx >= 0 ? 1 : -1;
+  let pl = seatPlan(e, side, R);
+  if (!standFree(e, p, pl.lx, pl.lz)) { const o = seatPlan(e, -side, R); if (standFree(e, p, o.lx, o.lz)) pl = o; else return null; }
+  m.seatSide = pl.side;
+  pl.key = key; pl.R = R;
+  return pl;
+}
+// 怪在车的另一边 / 车前 / 车后：先去车角外面（站点那一侧、离怪近的那一头），再沿车侧过去
+function seatRoute(e, p, pl, out) {
+  worldToCar(p, e.x, e.z, planTmp);
+  const lx = planTmp.x, lz = planTmp.z, g = vehGeo(), r = num(e.r, 0.4);
+  const front = Math.min(g && Number.isFinite(+g.front) ? +g.front : -2.1, -2.1), rear = g && g.half && Number.isFinite(+g.half.z) ? +g.half.z : 1.3;
+  const W = CH_X + r + 0.2, zF = front - r - 0.2, zR = rear + r + 0.2;
+  let tx = pl.lx, tz = pl.lz;
+  if (lx * pl.side < CH_X + r - 0.05) {
+    // 不在站点那一侧的车身外面：先去那一侧的车角（离怪近的那一头）；怪在车身另一侧时先沿自己这一侧走到车角
+    const cz = lz < pl.lz ? zF : zR;
+    const inLen = lz > front - r && lz < rear + r;
+    if (inLen && Math.abs(lx) > CH_X + r - 0.05) { tx = Math.sign(lx) * W; tz = cz; }
+    else { tx = pl.side * W; tz = cz; }
+    if (Math.hypot(lx - tx, lz - tz) < 0.25) { tx = pl.side * W; tz = cz; }
+  }
+  carToWorld(p, tx, tz, out);
+  return out;
+}
+const SEAT_T = { t1: { x: 0, y: 0, z: 0 }, t2: { x: 0, y: 0, z: 0 }, tf: { x: 0, y: 0, z: 0 } };
+// 动画用（api.seatTarget）：这只怪此刻在打哪台车上坐着的人 → 落点的世界坐标；不是就 null。
+// 房主：起手时记下的那台车（e._m.seatKey）；客机：离它 2.5 m 以内、有人坐着的车（本机坐的、联机对方坐的）
+function seatTarget(e) {
+  if (!e) return null;
+  const m = e._m;
+  // 扣血那一帧实体照常想事，可能已经把 state 改掉了：起手以后这一下还没抡完（0.78 个冷却周期）照样算在打
+  const cd = Math.max(0.2, num(e.def.attack && e.def.attack.cooldown, 1));
+  const live = e.state === 'attack' || (m && Number.isFinite(m.attackAt) && time - m.attackAt >= 0 && time - m.attackAt < 0.78 * cd);
+  if (!live || !archReach(e)) return null;
+  let key = m && m.seatKey != null && time - num(m.seatKeyAt, -1e9) < 4 ? m.seatKey : null;
+  if (key == null) {
+    const cand = [];
+    const P = BR.player;
+    if (P && P.mounted && P.mounted.key != null) cand.push(String(P.mounted.key));
+    try { const pp = BR.coop && BR.coop.peerPose; if (pp && pp.mode === 'drive' && pp.key != null) cand.push(String(pp.key).replace(/^k:/, '')); } catch (err) { /* 没有 */ }
+    let best = 2.5;
+    for (const k of cand) { const p = vehPose(k); if (!p) continue; const d = Math.hypot(p.x - e.x, p.z - e.z); if (d < best + 1.3) { best = d; key = k; } }
+  }
+  const p = key != null ? vehPose(key) : null;
+  if (!p) return null;
+  worldToCar(p, e.x, e.z, planTmp);
+  const side = planTmp.x >= 0 ? 1 : -1, M = driverMarks(), y0 = num(p.y, 0);
+  carToWorld(p, side * M.t1[0], M.t1[2], SEAT_T.t1); SEAT_T.t1.y = y0 + M.t1[1];
+  carToWorld(p, side * M.t2[0], M.t2[2], SEAT_T.t2); SEAT_T.t2.y = y0 + M.t2[1];
+  carToWorld(p, side * M.tf[0], M.tf[2], SEAT_T.tf); SEAT_T.tf.y = y0 + M.tf[1];
+  SEAT_T.side = side; SEAT_T.key = key;
+  return SEAT_T;
+}
+// 坐车目标此刻够不够得着（起手、扣血都用）：站在这里，出手那只肩膀到落点 ≤ 胳膊全长 × k
+function seatReachNow(e, ride, k) {
+  const R = archReach(e), key = ride && ride.key;
+  const p = key != null ? vehPose(key) : null;
+  if (!R || !p) return { ok: false, d: Infinity };
+  const M = driverMarks();
+  worldToCar(p, e.x, e.z, planTmp);
+  const ex = planTmp.x, ez = planTmp.z, side = ex >= 0 ? 1 : -1;
+  // 怪此刻的朝向换到车本地：脸朝 (−sin yaw, −cos yaw)
+  const fx = -Math.sin(e.yaw), fz = -Math.cos(e.yaw), c = Math.cos(p.yaw), s = Math.sin(p.yaw);
+  const flx = c * fx - s * fz, flz = s * fx + c * fz;           // 脸朝向（车本地）
+  const rlx = -flz, rlz = flx;                                   // 右手方向（车本地）
+  const at = sh => [ex + sh[0] * rlx - sh[2] * flx, sh[1], ez + sh[0] * rlz - sh[2] * flz];
+  const M1 = R.kind === 'face' ? M.tf : M.t1;
+  const t1 = [side * M1[0], M1[1], M1[2]], t2 = [side * M.t2[0], M.t2[1], M.t2[2]];
+  const dd = (S, t) => Math.hypot(t[0] - S[0], t[1] - S[1], t[2] - S[2]);
+  const SR = at(R.shR);
+  let d = dd(SR, t1);
+  if (R.kind === 'grab') { const SL = at(R.shL); d = Math.max(Math.min(dd(SR, t1), dd(SR, t2)), Math.min(dd(SL, t2), dd(SL, t1))); }
+  return { ok: d <= R.reach * k, d, reach: R.reach };
 }
 
 // ---------- 感知 ----------
@@ -400,7 +704,20 @@ function los(e, x, z, y) {
 // 对准目标胸口的视线：坐车的玩家对准座椅胸口点，其余照旧（目标位置的胸高）
 function losTarget(e, kind, ref) {
   const ride = kind === 'player' ? rideOf(ref) : null;
-  if (ride) return los(e, ride.chest.x, ride.chest.z, ride.chest.y);
+  if (ride) {
+    if (los(e, ride.chest.x, ride.chest.z, ride.chest.y)) return true;
+    // 挂在天花板上的陷阱（Nguithr'xurh，返修 FE1R · repair-r1）：眼睛不在脚下那个碰撞圆柱上；它扑下来走的路是先在天花板那么高横着挪到
+    // 驾驶舱侧面外 0.75 m、再竖直落到胸口那么高、再横着进去（_archetypes.js seatLeap）—— 这三段都看得通才算看得见
+    const R = archReach(e), vp = R && R.fixed && R.shR && ride.key != null ? vehPose(ride.key) : null;
+    if (vp && has(BR.phys, 'los')) {
+      worldToCar(vp, e.x, e.z, planTmp);
+      const sd = planTmp.x >= 0 ? 1 : -1;
+      const cl = worldToCar(vp, ride.chest.x, ride.chest.z, { x: 0, z: 0 });
+      const P = carToWorld(vp, sd * 0.75, cl.z, { x: 0, z: 0 }), top = num(e.y, 0) + num(R.shR[1], 2.5) - 0.05;
+      return BR.phys.los(e.x, top, e.z, P.x, top, P.z) && BR.phys.los(P.x, top, P.z, P.x, ride.chest.y, P.z) && BR.phys.los(P.x, ride.chest.y, P.z, ride.chest.x, ride.chest.y, ride.chest.z);
+    }
+    return false;
+  }
   return los(e, ref.x, ref.z, chestY(kind, ref));
 }
 
@@ -569,11 +886,12 @@ function moveToward(e, x, z, speed) {
   const dist = Math.hypot(dx, dz);
   const want = num(speed, walkOf(e));
   e._m.chaseV = want; e._m.chaseVAt = time;   // 起手以后往前扑用这个速度（见文件头「近战出手时机」）
-  if (dist <= ARRIVE) return true;
+  const ra = e._m.rideAim, arrive = ra && ra.x === x && ra.z === z ? RIDE_ARRIVE : ARRIVE;   // 坐车目标的站点按 3 cm 算到（FE1R K6）
+  if (dist <= arrive) return true;
   // 最后一步不冲过头
   const sp = Math.min(want, dist / Math.max(curDt, 1e-3));
   steer(e, dx / dist, dz / dist, sp);
-  return Math.hypot(x - e.x, z - e.z) <= ARRIVE;
+  return Math.hypot(x - e.x, z - e.z) <= arrive;
 }
 
 // 随机游走：隔几秒换方向，偶尔停一下；撞墙就按墙面反射再加点随机，保证转开而不是贴墙蹭
@@ -612,7 +930,16 @@ function flee(e, x, z, speed) {
   return Math.hypot(e.x - x, e.z - z);
 }
 
-function faceToward(e, x, z) { turnTo(e, Math.atan2(-(x - e.x), -(z - e.z)), Math.max(curDt, 1 / 60)); }
+// 打坐在车上的人（FE1R K6）：站在驾驶舱侧面的站点上（起过手）时，「转向目标」一律是正对车侧面 —— 以前打完一下等冷却时转过去对着
+// 座椅中心（转 8°），收手的胳膊跟着转进车身里
+function faceToward(e, x, z) {
+  const m = e._m, t = e.target;
+  if (m && m.seatKey != null && m.seatSide && t && t.kind === 'player' && rideOf(t.ref)) {
+    const p = vehPose(m.seatKey);
+    if (p) { turnTo(e, Math.atan2(m.seatSide * Math.cos(p.yaw), -m.seatSide * Math.sin(p.yaw)), Math.max(curDt, 1 / 60)); return; }
+  }
+  turnTo(e, Math.atan2(-(x - e.x), -(z - e.z)), Math.max(curDt, 1 / 60));
+}
 
 // ---------- 战斗 ----------
 // 起手（见文件头「近战出手时机」）：够得着、看得见、冷却好了 → 定冷却、正对目标、记起手时刻，排一次「打到」，返回 true。
@@ -627,11 +954,34 @@ function attack(e, target, onLand) {
   // 坐在车上的玩家：距离量到司机身体（座椅上的人，见「坐在车上的玩家」），视线对准座椅胸口点
   if (strikeDist(e, kind, ref) > reachOf(e, kind, ref)) return false;
   if (!losTarget(e, kind, ref)) return false;   // 隔着薄墙挠不到
+  const ride = kind === 'player' ? rideOf(ref) : null;
+  if (!ride && vehBetween(e, ref.x, ref.z, 0, null)) return false;   // 隔着叉车够不着（FE1R ACT-veh）
+  // 坐在车上的人（FE1R K6）：只有胳膊够得着的怪、站在驾驶舱侧面的站点上（3 cm 内）才出手，脸朝车里（和车侧面垂直）
+  let seatYaw = null;
+  const R0 = ride ? archReach(e) : null;
+  if (ride && R0 && R0.fixed) {
+    // 一动不动的陷阱（Nguithr'xurh，返修 FE1R · repair-r1）：不去站点，人坐的车开到它下面、够得着就从天花板上落下来扑（_archetypes.js seatLeap）
+    const rn = seatReachNow(e, ride, SEAT_REACH_K);
+    if (!rn.ok) return false;
+    e._m.seatKey = ride.key; e._m.seatKeyAt = time;
+  } else if (ride) {
+    const pl = seatAim(e, ride), p = pl ? vehPose(pl.key) : null;
+    if (!pl || !p || !pl.ok) return false;
+    carToWorld(p, pl.lx, pl.lz, planTmp);
+    if (Math.hypot(planTmp.x - e.x, planTmp.z - e.z) > RIDE_ARRIVE + 0.03) return false;
+    const c = Math.cos(p.yaw), sn = Math.sin(p.yaw), fx = -pl.side * c, fz = pl.side * sn;   // 车本地 (−side, 0) → 世界
+    seatYaw = Math.atan2(-fx, -fz);
+    const yw = e.yaw;
+    e.yaw = seatYaw;
+    const rn = seatReachNow(e, ride, SEAT_REACH_K);
+    e.yaw = yw;
+    if (!rn.ok) return false;
+    e._m.seatKey = pl.key; e._m.seatKeyAt = time;
+  }
 
   e.cooldown = Math.max(0.05, num(atk.cooldown, 1));
-  const ride = kind === 'player' ? rideOf(ref) : null;
   const ax = ride ? ride.body.x : ref.x, az = ride ? ride.body.z : ref.z;
-  e.yaw = Math.atan2(-(ax - e.x), -(az - e.z));   // 出手瞬间正对目标
+  e.yaw = seatYaw != null ? seatYaw : Math.atan2(-(ax - e.x), -(az - e.z));   // 出手瞬间正对目标（坐车的人：正对车侧面）
   e._m.attackAt = time;
   const m = e._m;
   const v = Number.isFinite(m.chaseV) && time - m.chaseVAt <= CHASE_V_SEC ? m.chaseV : runOf(e);
@@ -649,6 +999,12 @@ function lunge(e, sw, dt) {
   if (!canAttack(e, kind, ref)) return;
   curDt = dt;
   const ride = kind === 'player' ? rideOf(ref) : null;
+  // 坐车的人（FE1R K6）：已经站在够得着的地方，不往前扑（往前扑只会把身子挤进车里），脸一直正对车侧面（车开着也跟着转）
+  if (ride && e._m.seatKey != null) {
+    const p = vehPose(e._m.seatKey);
+    if (p && e._m.seatSide) { const c = Math.cos(p.yaw), sn = Math.sin(p.yaw); e.yaw = Math.atan2(e._m.seatSide * c, -e._m.seatSide * sn); }
+    return;
+  }
   const body = ride ? ride.body : ref;
   const dist = strikeDist(e, kind, ref);
   const stop = Math.max(0.05, reachOf(e, kind, ref) - LUNGE_IN);
@@ -670,16 +1026,21 @@ function landSwing(e) {
   const kind = sw.kind, ref = sw.ref;
   let ok = false, why = 'hit';
   const dist = canAttack(e, kind, ref) ? strikeDist(e, kind, ref) : Infinity;
+  const ride = kind === 'player' && Number.isFinite(dist) ? rideOf(ref) : null;
+  // 坐车的人（FE1R K6）：手真碰到人才算 —— 此刻肩膀到落点 ≤ 胳膊全长 + 1 cm（车开走了够不着就没打中）
+  const rn = ride ? seatReachNow(e, ride, 1) : null;
   if (!Number.isFinite(dist)) why = 'cannot';
   else if (dist > reachOf(e, kind, ref) + STRIKE_SLACK) why = 'far';
+  else if (rn && !(rn.d <= rn.reach + 0.01)) why = 'far';
   else if (!losTarget(e, kind, ref)) why = 'wall';
+  else if (!ride && vehBetween(e, ref.x, ref.z, 0, null)) why = 'wall';   // 隔着叉车（FE1R ACT-veh）
   else if (kind === 'player') {
     if (has(BR.player, 'damage')) ok = BR.player.damage({ hp: num(atk.hp, 0), sanity: num(atk.sanity, 0), source: e }) !== false;
   } else {
     ok = damageEntity(ref, atk.entityHp != null ? atk.entityHp : num(atk.hp, 0), e);
   }
   if (why === 'hit' && !ok) why = 'nodmg';
-  m.lastSwing = { start: m.attackAt, at: time, kind, hit: ok, why, dist: Number.isFinite(dist) ? Math.round(dist * 1000) / 1000 : null };
+  m.lastSwing = { start: m.attackAt, at: time, kind, hit: ok, why, dist: Number.isFinite(dist) ? Math.round(dist * 1000) / 1000 : null, seat: rn ? { d: Math.round(rn.d * 1000) / 1000, reach: Math.round(rn.reach * 1000) / 1000 } : null };
   if (ok && sw.onLand && alive(e)) {
     try { sw.onLand(e, sw.t, api); }
     catch (err) { once('onLand:' + e.type, () => console.error('[entities] ' + e.type + ' 打中以后的回调出错', err)); }
@@ -1726,6 +2087,9 @@ const api = {
   // 第 6 节之外的附加帮助
   faceToward,
   attackStart, swinging,          // 近战起手时刻 | null；正在抡（还没打到）。见文件头「近战出手时机」
+  seatTarget,                     // (e) → { t1, t2, tf（世界坐标）, side, key } | null：此刻在打哪台车上坐着的人（FE1R K6，动画摆胳膊用）
+  // 测试 / 调试用（repair-r4）：坐着的人身上的落点（车本地）、这只怪站在 side 一侧时的站点和够不够得着
+  _seatDbg(e, side) { const R = archReach(e); return { marks: driverMarks(), R: R && { kind: R.kind, reach: R.reach, low: R.low, mid: R.mid, shR: R.shR, shL: R.shL }, plan: R ? seatPlan(e, side || 1, R) : null }; },
   STRIKE_HIT_K, STRIKE_SLACK,
   canAttack(e, target) { const t = resolveTarget(target); return !!t && canAttack(e, t.kind, t.ref); },
   damage: damageEntity,
@@ -1738,8 +2102,20 @@ const api = {
 // 回主页时实体必须清干净：不依赖 main / world 记得调 clear
 BR.bus.on('game:home', clear);
 
+// 实体此刻的真实外形（FE1R ACT-veh）：[{ x, z, r, minY, maxY }] 竖直圆柱（世界坐标），按网格实际顶点分 0–0.6 / 0.6–1.2 / 1.2 以上三段；
+// 没有 BR.arch 外形的实体退回碰撞圆柱。给叉车的碰撞、雷达、降货叉用（_archetypes.js shapeOf）
+function shapeOf(e) {
+  if (typeof e === 'string') e = byId.get(e);
+  if (!alive(e)) return null;
+  let sh = null;
+  try { sh = BR.arch && has(BR.arch, 'shapeOf') ? BR.arch.shapeOf(e) : null; } catch (err) { once('shape', () => console.error('[entities] 量实体外形出错', err)); sh = null; }
+  if (sh && sh.length) return sh;
+  return [{ x: e.x, z: e.z, r: num(e.r, 0.4), minY: e.y, maxY: e.y + num(e.h, 1.8) }];
+}
+
 BR.entities = {
   spawn,
+  shapeOf,                       // (e | id) → [{ x, z, r, minY, maxY }]：实体此刻按网格量的外形（竖直圆柱，世界坐标），FE1R ACT-veh
   spawnForChunk,
   removeChunk,
   update,

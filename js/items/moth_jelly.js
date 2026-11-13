@@ -70,8 +70,9 @@ BR.itemTypes.register({
   effect: { hunger: 60, sanity: 40, timed: [ENERGY, PHEROMONE] },
   build() {
     const T = window.THREE;
-    const SEG = 12;
-    const sticker = new T.CylinderGeometry(0.0405, 0.0405, 0.036, SEG, 1, true, -0.8, 1.6).translate(0, 0.04, 0);
+    // 段数（FE1R K8）：罐身、盖子、玻璃罐 32 段（⑳d 特写），贴纸那一小段弧照旧 12 段（1.6 弧度上 12 段比整圈 47 段还密）
+    const SEG = 32;
+    const sticker = new T.CylinderGeometry(0.0405, 0.0405, 0.036, 12, 1, true, -0.8, 1.6).translate(0, 0.04, 0);
     return K.assemble({
       name: 'moth_jelly', scale: 1.4,
       solid: [K.paint(K.cyl(0.037, 0.037, 0.066, SEG, 0.003), 0x6b2fa0)],

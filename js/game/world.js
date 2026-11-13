@@ -1445,33 +1445,21 @@ function pushLights() {
   if (!has(BR.gfx, 'setLightSources')) return;
   const list = [];
   chunks.forEach(c => { for (let i = 0; i < c.lights.length; i++) list.push(c.lights[i]); });
-  const nChunk = list.length;
-  extraLights.forEach(arr => { for (let i = 0; i < arr.length; i++) list.push(arr[i]); });
-  // 工坊 lightMul/flicker/blackout：未激活时原样返回同一个数组引用，不新建对象
+  // 工坊 lightMul/flicker/blackout 只管层级自己的灯（区块灯）；叉车大灯这类额外光源原样进灯池（FE1R L-workshop：
+  // 和 L1 断电时大灯照常亮一致，工坊「全部熄灯」「闪烁」「亮度倍率」都不管大灯）。未激活时 lightTransform 原样返回同一个数组引用
   let out = has(BR.workshop, 'lightTransform') ? BR.workshop.lightTransform(list) : list;
-  // 工坊激活时 lightTransform 返回的是拷贝：额外光源的位置每帧由调用方改，拷贝就不跟着动了。
-  // 换成以原光源为原型的对象：x / y / z 从原型上实时读，只有工坊改过的字段（强度、闪烁）挂在自己身上
-  if (out !== list && Array.isArray(out) && out.length === list.length && list.length > nChunk) {
-    for (let i = nChunk; i < list.length; i++) if (out[i] !== list[i]) out[i] = liveLight(list[i], out[i]);
-  }
+  if (out !== list && !Array.isArray(out)) out = list;
+  extraLights.forEach(arr => { for (let i = 0; i < arr.length; i++) out.push(arr[i]); });
   BR.gfx.setLightSources(out);
   S.lightsPushed = true;
-}
-function liveLight(src, t) {
-  if (!src || typeof src !== 'object' || !t || typeof t !== 'object') return t;
-  const o = Object.create(src);
-  for (const k of Object.keys(t)) {
-    if (k === 'x' || k === 'y' || k === 'z') continue;
-    if (t[k] !== src[k]) o[k] = t[k];
-  }
-  return o;
 }
 
 // ---------- 额外光源（FE1：开着的叉车前大灯） ----------
 // setExtraLights(owner, list | null)：owner 名下的光源整组替换（null / 空数组 = 撤掉），并进 pushLights 交给 gfx 的灯池
 // （和区块灯一样按离相机的距离挑，最多 6 盏真光）。光源对象 { x, y, z, color, intensity, range, decay?, flicker? }（世界坐标）
-// 由调用方持有、每帧直接改 x / y / z，gfx 每帧跟随，不用再调；颜色、强度、range 变了要再调一次（工坊激活时强度是推灯那一刻算的）。
-// 工坊的 lightTransform 照样套（工坊地图全黑时大灯也不亮）。lightAt 也算上它们（FE1Q J8：和画面一致，见 extraLit）。换层、回主页时整个清空
+// 由调用方持有、每帧直接改 x / y / z（强度 gfx 也每帧直接读），不用再调；颜色、range、decay 变了要再调一次（灯池挑灯时才读）。
+// 工坊的 lightTransform 不套（FE1R L-workshop：工坊的全部熄灯 / 闪烁 / 亮度倍率只管层级自己的灯，大灯照常亮，和 L1 断电时一样）。
+// lightAt 也算上它们，用的就是交给灯池的同一个对象（FE1Q J8：和画面一致，见 extraLit）。换层、回主页时整个清空
 const extraLights = new Map();   // owner → [光源, …]
 function setExtraLights(owner, list) {
   const key = owner == null ? '' : String(owner);

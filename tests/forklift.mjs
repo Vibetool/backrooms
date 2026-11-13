@@ -11,7 +11,7 @@
 //   mount      上车提示（侧面「空格 上车」、货叉前 / 车尾「绕到侧面上车」、2 m「再走近一点」）、长按「叉车太重，拖不动」车不动、
 //              短按 0.6 s 内进 drive、眼点误差 <2 cm、插值途中相机不进车身 OBB、起动 0.8 s 内按 W 不动、常驻提示行逐字、整页不出现 E
 //   drive      W 2 s 到 4.5±0.2、松开 2 s 内停、倒车 2.5±0.1 且 fk_reverse 在播、满舵绕圈车尾外角半径和理论值差 ≤10%、
-//              按 A 车头往左、满舵限速 ≤1.4、货叉 0.6 m 限 ≤1.05 / 1.6 m 限 ≤0.65、细节档（高画质 high/mid/lite，低停放档 → lite；低画质 drvLow）
+//              按 A 车头往左、满舵限速 ≤1.4、货叉 0.6 m 限 ≤1.05 / 1.6 m 限 ≤0.65、细节档（高画质 high/mid/lite，停放档 low → drvLow（K3）；低画质 drvLow）
 //   crash      柱子 / 货架 / 小屋墙 / 门框各撞 5 次（重叠 <1 cm、fk_bang）、小屋门开不进去、车轮挡开不过去、雷达 1.4 m 刹 / 1.6 m 能走、
 //              推开地上瓶子且瓶子不进 OBB、贴墙：车尾外甩提示 / 打方向倒车 3 s 离墙 ≥0.3 m / 直开沿墙 ≥2 m；
 //              C10 右叉推着地上的蛾子果冻全速撞小屋墙：「哐」不是「咚」、镜头抖，果冻夹在叉尖和墙之间、贴着墙（≤2 cm，车一路推到墙跟前才停），
@@ -71,8 +71,9 @@
 //   pause      单机暂停 2 s 车和货叉不动；输入被关掉（联机暂停 / 结算 / 切后台走的同一条 null 输入路径）3 m/s 0.6 s 内停住、
 //              货叉不动、雷达照常；单机切后台（visibilitychange）时整局暂停、车不动
 //   nightmare  噪音（怠速 ≈0.25、行驶 ≥0.6、倒车 ≥0.8）、车侧 6 m 的敌对 3 s 内发现坐着的人、车尾外 1 m 放的敌对 6 s 内绕过来打到人（FE1P H11：攻击距离量到司机身体，车尾够不着，绕到车尾侧角）、货叉尖外 0.3 m 打不到且 10 s 内绕到车侧、
-//              开过未密封水坑不掉理智
-//   dark       L1 断电：车前 4 m 地面亮度 ≥ 断电环境 3 倍（灯池里有大灯）、车尾 2 m ≤1.5 倍、顶墙时光源在墙前 0.3 m 且墙另一侧 2 m ≤1.2 倍；
+//              开过未密封水坑不掉理智；FE1R：N3 用会近战的钝人 + 没有胳膊的猎犬（repair-r1：叉车不是安全屋，没有胳膊的也扑得到坐车的人）、N6 头顶挂一只 Nguithr'xurh 车照常全速开过去（ACT-veh）
+//   dark       L1 断电：车前 4 m 地面比断电环境亮 ≥8 级、≥2.5 倍（灯池里有大灯；FE1R K2 以前是 ≥3 倍）、车尾 2 m ≤1.5 倍、顶墙时光源在墙朝车这一侧且叉尖前 0.5 m 地面亮 ≥8 级（FE1R K2）、墙另一侧 2 m ≤1.2 倍；
+//              F6（FE1R）断电的「手臂」：坐在开着大灯的车上、躲进小屋不抓，关着大灯坐在车上、站在外面照样抓，在小屋里待 30 s 0 次；
 //              下车大灯撤掉、灯罩是暗色不开洞；仪表台大灯开关（家长定的规则，在下一次断电里试）：K9 点火默认开、司机在 lightAt 里被照亮；
 //              K8 断电途中上车提示叉车那句（K8b 断电开始时就坐在开着大灯的车上也是那句）；K7 准心对准开关「空格 关大灯」，按了撤灯、lightAt 回到底值、人还在车上，
 //              再按打开；K10 关着下车、换层回来还关着，点火也不亮；K11 手机「下车」键对着开关时写「关大灯 / 开大灯」，移开恢复；
@@ -126,7 +127,7 @@ const VERBOSE = argv.includes('--verbose');
 // 单独跑一遍 --group timing --strict-timing（≤8 ms 和 _step ≤0.6 ms），必须过
 const STRICT_TIMING = argv.includes('--strict-timing');
 const SEED = 12345;
-const SPEC_DRIVE_DESK = 'W/S 前进后退 · A/D 打方向 · R 升货叉 · C 降货叉 · 空格 下车 · F 吃喝';
+const SPEC_DRIVE_DESK = 'W/S 前进后退 · A/D 打方向 · R 升货叉 · C 降货叉 · F 使用 · 空格 下车';   // FE1R UI-8：最后一段「F 吃喝」改成「F 使用」（hud.js）
 const NO_E = s => !/(^|[^A-Za-z])E([^A-Za-z]|$)/.test(String(s || ''));
 // 保底种子：tests/forklift_l1.mjs 的 HIGH_TRI（「进柱间时 triCount ≥7300」，出生柱间一定是保底车）。读不到就用 85
 function fallbackSeeds() {
@@ -1490,7 +1491,8 @@ async function gData(browser) {
       await step(page, 1 / 30);
       const m = await ev(page, a2 => {
         const { k } = a2;
-        const P = BR.player, r = (BR.config.player && BR.config.player.radius) || 0.3;
+        // FE1R A7：人对载具按 vehRadius（0.377 = hazmat.glb 甩手最远 + 1 cm）挡，量「人最外沿（手套）到车网格」的空隙
+        const P = BR.player, r = (BR.config.player && (BR.config.player.vehRadius || BR.config.player.radius)) || 0.3;
         const loc = __fk.L(k, P.x, P.z);
         // 挡住人的是不是这台车：人这个圆（外扩 4 cm）碰得到车的 OBB
         const byCar = __fk.obbs(k).some(o => BR.phys.circleVsObb(P.x, P.z, r + 0.04, o, P.feetY, 1.7));
@@ -1839,14 +1841,14 @@ async function gDrive(browser) {
     const t1 = await ev(page, k => ({ tier: BR.vehicles.debugInfo().tiers[k], parked: (__fk.fkData(k) || {}).detail }), k);
     check('V9 高画质：停放档 ' + t1.parked + ' 的车开起来 tier ∈ {high, mid, lite}（同档）', ['high', 'mid', 'lite'].includes(t1.tier) && (['high', 'mid', 'lite'].includes(t1.parked) ? t1.tier === t1.parked : true), t1);
     await dismount(page);
-    // 停放档 low / lowb / min 的车（种子 12345 在 (2,-2) 块有两台 low）开起来是 lite。先回出生点，让出生点周围 5×5 块都载入
+    // K3：停放档只有 high / mid / lite / low 四档；停放档 low 的车开起来是 drvLow（和停着的 low 逐像素一样）。先回出生点，让出生点周围 5×5 块都载入
     await ev(page, () => { __fk.stand(16, 30, 0); __br.step(1.5); return 0; });
-    const lowKey = await ev(page, () => { const v = BR.vehicles.list().find(r => { const f = __fk.fkData(r.key); return f && ['low', 'lowb', 'min'].includes(f.detail); }); return v ? v.key : null; });
-    if (!lowKey) info('V10 已载入的块里没有停放档 low/lowb/min 的车，跳过');
+    const lowKey = await ev(page, () => { const v = BR.vehicles.list().find(r => { const f = __fk.fkData(r.key); return f && f.detail === 'low'; }); return v ? v.key : null; });
+    if (!lowKey) info('V10 已载入的块里没有停放档 low 的车，跳过');
     else {
       const pm3 = await placeAndMount(page, lowKey, { x: 8, z: 32.6, yaw: -Math.PI / 2 });
       const t2 = await ev(page, k => ({ tier: BR.vehicles.debugInfo().tiers[k], parked: (__fk.fkData(k) || {}).detail }), lowKey);
-      check('V10 高画质：停放档 ' + t2.parked + ' 的车（' + lowKey + '）上车后是 lite', pm3.mounted && t2.tier === 'lite', { t2, pm3: pm3.mounted });
+      check('V10 高画质：停放档 ' + t2.parked + ' 的车（' + lowKey + '）上车后是 drvLow（K3：low ↔ drvLow 同一个模型）', pm3.mounted && t2.tier === 'drvLow', { t2, pm3: pm3.mounted });
       await dismount(page);
     }
     // 低画质：drvLow
@@ -4169,7 +4171,7 @@ async function gExits(browser) {
         for (const o of __fk.obbs(a.k)) { const d = BR.phys.circleVsObb(e.x, e.z, R, o); if (d && d.depth > 0.01 && (!worst || d.depth > worst.depth)) worst = { name: o.name, depth: d.depth }; }
         return { worst, notes: __fk.notes.slice(), lv: String(BR.game.levelId), p: __fk.pose(a.k) };
       }, { k, e: lane.e });
-      check('E1 朝出口（去 ' + lane.e.to + '）开：车的 OBB 都不进出口圈 +0.4，提示「前面是出口」', pm.mounted && !r1.worst && r1.notes.includes('前面是出口'), { r1, e: lane.e });
+      check('E1 朝出口（去 ' + lane.e.to + '）开：车的 OBB 都不进出口圈 +0.4，提示「前面是出口，下车走过去」（FE1R UI-11）', pm.mounted && !r1.worst && r1.notes.includes('前面是出口，下车走过去'), { r1, e: lane.e });
       await step(page, 3.0);
       const r2 = await ev(page, () => ({ lv: String(BR.game.levelId), tr: BR.world.transitioning, seated: BR.vehicles.seated }));
       check('E2 停在出口旁 3 s：不换层（坐在车上不会被出口带走）', r2.lv === '1' && !r2.tr && !!r2.seated, r2);
@@ -4236,7 +4238,7 @@ async function gExits(browser) {
     check('E9 两边都堵住：从车尾下', !s4.r.seat.seated && s4.r.ev && s4.r.ev.side === 'rear' && s4.r.lz > 1.3, s4.r);
     await clearIds(s4.ids);
     let s5 = await side([[-1.0, 0.24], [1.0, 0.24], [0, 1.75]], 0.6, 'all');
-    check('E10 三面都堵住：提示「两边都被挡住，开出来再下车」，留在车上', !!s5.r.seat.seated && s5.r.seat.mode === 'drive' && s5.r.notes.includes('两边都被挡住，开出来再下车'), s5.r);
+    check('E10 三面都堵住：提示「两边和后面都下不去，开出来再下车」（FE1R UI-12），留在车上', !!s5.r.seat.seated && s5.r.seat.mode === 'drive' && s5.r.notes.includes('两边和后面都下不去，开出来再下车'), s5.r);
     // E11 三面都堵住时扣血死亡：人落在车旁空地上，不在任何 OBB、出口圈里
     const dz = await ev(page, () => { __fk.clear(); BR.player.damage({ hp: 9999 }); __br.step(0.6); return 0; });
     const r11 = await ev(page, a => {
@@ -4403,6 +4405,9 @@ async function gLife(browser) {
       } else { check('F5b 走远回来（区块里停着的车）', false, { k2, o2 }); check('F6b 离开这一层再回来（区块里停着的车）', false, { k2, o2 }); }
       await ev(page, () => { __fk.stand(16, 30, 0); __br.step(1.0); return 0; });
     }
+    // 返修 FE1R · M-return：开走的车离开这一层再回来、原区块还没载入时，照记录（按画质分开记的停放档 / 磨损片数 / 运行时车）画同一档，不当着面换档
+    await mReturnChecks(page);
+    await ev(page, () => { __fk.stand(16, 30, 0); __br.step(1.0); return 0; });
     // 死在车上：回到 walk，人在落点上
     await mountCar(page, k, 'left');
     await ev(page, () => { __fk.clear(); BR.player.damage({ hp: 9999 }); __br.step(0.8); return 0; });
@@ -4446,6 +4451,75 @@ async function gLife(browser) {
   }
 }
 
+
+// 返修 FE1R · M-return（主会话裁定）：levelState.vehicles 的记录按画质分开记停放档、磨损片数、运行时车（park[画质] = { t, w, rt }）；
+// 回到这一层原区块还没载入时照记录画，记录里没有本机画质那一份（旧存档、联机另一端画质不同）就离线生成原区块算出来，不先按 mid 画、等原区块载入再换。
+// 种子 12345 高画质：1@4,3#v0（高画质停放 high、5 片磨损；低画质它是运行时车）
+async function mReturnChecks(page) {
+  const K = '1@4,3#v0', HOME = { x: 143.77, z: 103.77 }, FAR = { x: -28, z: -122 };
+  // 返修 FE1R · repair-r1：载具层模板签名最后多一位 vis（K5 灯的状态：这一份模板只放用得上的那份灯），sig0 是开着车拍的（vis 3），回来以后熄着火（vis 0）——
+  // M1–M4 比的是「档 | 杆数 | 车号 | 磨损片数 | 画质」这前五位（sb），灯那一位单独记在 vis 里
+  const sigOf = () => ev(page, k => { const v = BR.vehicles.byKey(k); return v && v.ent ? { sig: v.ent.sig.split('|').slice(0, 5).join('|'), vis: v.ent.sig.split('|')[5], tier: v.ent.info.tier, wearN: v.ent.info.wearN, data: !!v.data } : (v ? { sig: null, data: !!v.data } : null); }, K);
+  const sb = s => (s ? s.split('|').slice(0, 5).join('|') : s);
+  const goNear = async (p, d) => { await ev(page, a => { __fk.stand(a.p.x + a.d, a.p.z + a.d, 0); for (let i = 0; i < 40; i++) __br.step(1 / 20); return 0; }, { p, d: d || 3 }); };
+  await goNear(HOME);
+  const f0 = await ev(page, k => { const f = __fk.fkData(k); return f && { detail: f.detail, wearN: f.wearN, runtime: !!f.runtime, x: f.x, z: f.z, rot: f.rot }; }, K);
+  let m = f0 ? await mountCar(page, K, 'left') : { ok: false };
+  if (f0 && !m.ok) m = await mountCar(page, K, 'right');
+  if (m.ok) { await hold(page, 'KeyS', 1.0); await step(page, 0.5); }
+  const sig0 = await sigOf();
+  if (m.ok) await dismount(page);
+  // 当作开到 (−28, −122) 才下车：记录挪过去（就是 writeLs 写的那一条，只改位置），车也摆过去
+  const rec0 = await ev(page, a => { const v = BR.levelState.getv('1', 'veh', a.k); if (!v) return null; const r = Object.assign({}, v, { x: a.F.x, z: a.F.z }); BR.levelState.set('1', 'veh', a.k, r); BR.vehicles.setPose(a.k, { x: a.F.x, z: a.F.z, yaw: r.yaw, steer: 0, lift: r.lift, on: 0 }); __br.step(0.1); return r; }, { k: K, F: FAR });
+  check('M0 种子 12345 高画质 ' + K + '（停放 ' + (f0 && f0.detail) + '）上车开过、下车：levelState 记录里记了高画质这一份停放档 / 磨损片数 / 运行时车（park.high）',
+    !!f0 && f0.detail === 'high' && m.ok && !!rec0 && !!rec0.park && rec0.park.high && rec0.park.high.t === 'high' && rec0.park.high.w === f0.wearN && rec0.park.high.rt === 0 && !!sig0 && sig0.tier === 'high', { f0, mount: m.ok, rec: rec0, sig0 });
+  await goTo(page, '0');
+  await goTo(page, '1');
+  const back = await ev(page, a => ({ loaded: BR.world.chunks().some(c => c.key === '4,3'), has: !!BR.vehicles.byKey(a.k) }), { k: K });
+  await goNear(FAR);
+  const sig1 = await sigOf();
+  const loaded1 = await ev(page, () => BR.world.chunks().some(c => c.key === '4,3'));
+  check('M1 去 Level 0 再回来、走到车旁（原区块 (4,3) 没载入）：载具网格签名（档 | 杆数 | 车号 | 磨损片数 | 画质）和离开前一样', !!sig0 && !!sig1 && sig1.sig === sig0.sig && !loaded1 && !sig1.data, { sig0, sig1, loaded1, back });
+  await goNear(HOME, 6);
+  await goNear(FAR);
+  const sig2 = await sigOf();
+  check('M2 再去原区块 (4,3) 走一趟回来：签名不变（原区块载入时不换档）', !!sig2 && sig2.sig === sig0.sig, { sig0, sig2 });
+  // 旧存档（记录里没有 park）：离线生成原区块算出这一档
+  await ev(page, a => { const v = BR.levelState.getv('1', 'veh', a.k); if (v) { const r = Object.assign({}, v); delete r.park; BR.levelState.set('1', 'veh', a.k, r); } return 0; }, { k: K });
+  await goTo(page, '0');
+  await goTo(page, '1');
+  await goNear(FAR);
+  const sig3 = await sigOf(), loaded3 = await ev(page, () => BR.world.chunks().some(c => c.key === '4,3'));
+  check('M3 旧记录（没有 park）离开再回来、原区块没载入：离线生成原区块算出同一档（不先按 mid 画）', !!sig3 && sig3.sig === sig0.sig && !loaded3, { sig0, sig3, loaded3 });
+  // 联机另一端开过来（单机模拟 vehicles_net：remote setPose）：本机没载入过原区块，高画质 / 低画质各算各的，和本机以后载入原区块时一样
+  const net = {};
+  for (const q of ['high', 'low']) {
+    await goHome(page);
+    await startL1(page, { seed: 12345, quality: q });
+    net[q] = await ev(page, a => {
+      const out = {};
+      BR.vehicles.setPose(a.k, { x: a.F.x, z: a.F.z, yaw: 0, steer: 0, lift: 0, on: 1, spd: 0, n: 27 }, { remote: true });
+      __fk.stand(a.F.x + 3, a.F.z + 3, 0); for (let i = 0; i < 40; i++) __br.step(1 / 20);
+      BR.vehicles.setPose(a.k, { x: a.F.x, z: a.F.z, yaw: 0, steer: 0, lift: 0, on: 0, spd: 0 }, { remote: true });
+      for (let i = 0; i < 10; i++) __br.step(1 / 20);
+      let v = BR.vehicles.byKey(a.k);
+      out.before = v && v.ent ? v.ent.sig : null; out.loaded = BR.world.chunks().some(c => c.key === '4,3');
+      __fk.stand(a.H.x + 6, a.H.z + 6, 0); for (let i = 0; i < 60; i++) __br.step(1 / 20);
+      const f = __fk.fkData(a.k); out.chunkDetail = f ? (f.runtime ? 'rt' : f.detail) : '?';
+      __fk.stand(a.F.x + 3, a.F.z + 3, 0); for (let i = 0; i < 40; i++) __br.step(1 / 20);
+      v = BR.vehicles.byKey(a.k);
+      out.after = v && v.ent ? v.ent.sig : null;
+      return out;
+    }, { k: K, F: FAR, H: HOME });
+  }
+  // 杆数按 high 档自己的根数（返修 FE1R · repair-r2：K8 补回第 2 根操纵杆，high / mid / lite 都是 2 根；以前写死 1）
+  const nLev = await ev(page, () => BR.L1forklift.lod.high.levers);
+  const wantH = 'high|' + nLev + '|27|' + (f0 ? f0.wearN : '?') + '|high';
+  check('M4 联机另一端把车开过来（本机没载入过原区块，单机模拟 remote setPose）：高画质画 high（不是 mid）、低画质画 drvLow，和本机以后载入原区块时一样，原区块载入时不换档',
+    net.high && sb(net.high.before) === wantH && sb(net.high.after) === wantH && !net.high.loaded && net.low && net.low.before && net.low.before.startsWith('drvLow|') && net.low.after === net.low.before, { want: wantH, net });
+  await goHome(page);
+  await startL1(page, { seed: SEED });
+}
 // =====================================================================
 // pause
 // =====================================================================
@@ -4547,19 +4621,26 @@ async function gNightmare(browser) {
     check('N2 测试敌对实体放在车侧 6 m、视线畅通：按它自己的感知周期 3 s 内发现坐着的人', !!side && seenAt != null && seenAt <= 3.0, { side, seenAt });
     if (side && side.id) await ev(page, id => { __fk.dropEnt(id); __br.step(0.1); return 0; }, side.id);
     await keepAlive();
-    // N3 车尾外 1.0 m 放的敌对：6 s 内打到坐着的人（FE1P H11 起攻击距离量到司机身体，车尾够不着司机，它会绕到车尾侧角出手）
-    const rear = await ev(page, k => { const w = __fk.W(k, 0, 1.295 + 1.0 + 0.4); __fk.dmg.length = 0; return __fk.ent('_dev_hostile', w.x, w.z, 'nrear'); }, k);
-    let hitRear = null;
-    for (let i = 1; i <= 180 && !hitRear; i++) {
-      const r = await ev(page, a => { __br.step(1 / 30); const d = __fk.dmg.filter(x => x.hp > 0 && x.src && String(x.src).indexOf(a.id) >= 0); const e = BR.entities.get(a.id); const l = e ? __fk.L(a.k, e.x, e.z) : null; if (BR.player.hp < 60) BR.player.hp = 100; return d.length ? { t: a.i / 30, l } : null; }, { id: rear, k, i });
-      if (r) hitRear = r;
+    // N3 车尾外 1.0 m 放的敌对：6 s 内打到坐着的人（FE1P H11 起攻击距离量到司机身体，车尾够不着司机，它会绕到车尾侧角出手）。
+    // FE1R K6 起怪打坐车的人要真碰到司机（BR.arch.seatReach）。返修 FE1R · repair-r1（验收员 play / tests：叉车不是安全屋）：没有胳膊的也打得到 ——
+    // 有胳膊的钝人（duller）、没有胳膊整只扑上去的猎犬（hound）各放一只，都要 6 s 内打到（N5 量理智：两只都不带理智伤害）
+    for (const [ty, nm] of [['duller', '钝人'], ['hound', '猎犬']]) {
+      const rear = await ev(page, a => { const w = __fk.W(a.k, 0, 1.295 + 1.0 + 0.4); __fk.dmg.length = 0; return __fk.ent(a.ty, w.x, w.z, 'nrear' + a.ty); }, { k, ty });
+      let hitRear = null;
+      for (let i = 1; i <= 180 && !hitRear; i++) {
+        const r = await ev(page, a => { __br.step(1 / 30); const d = __fk.dmg.filter(x => x.hp > 0 && x.src && String(x.src).indexOf(a.id) >= 0); const e = BR.entities.get(a.id); const l = e ? __fk.L(a.k, e.x, e.z) : null; if (BR.player.hp < 60) BR.player.hp = 100; return d.length ? { t: a.i / 30, l } : null; }, { id: rear, k, i });
+        if (r) hitRear = r;
+      }
+      check('N3 会近战的敌对实体（' + nm + (ty === 'hound' ? '，没有胳膊、整只扑上去' : '，胳膊') + '）放在车尾外 1.0 m：6 s 内绕过来打到坐在车上的人（叉车不是安全屋）', !!rear && !!hitRear, { hitRear, dmg: await ev(page, () => __fk.dmg.slice(0, 3)) });
+      await ev(page, id => { __fk.dropEnt(id); __br.step(0.2); BR.player.hp = 100; return 0; }, rear);
     }
-    check('N3 敌对实体放在车尾外 1.0 m：6 s 内绕过来打到坐在车上的人（叉车不是安全屋）', !!rear && !!hitRear, { hitRear, dmg: await ev(page, () => __fk.dmg.slice(0, 3)) });
-    await ev(page, id => { __fk.dropEnt(id); __br.step(0.2); BR.player.hp = 100; return 0; }, rear);
     // N4 货叉尖外 0.3 m：打不到；10 s 内绕到车侧
-    const front = await ev(page, k => { const w = __fk.W(k, 0, -2.1 - 0.3 - 0.4); __fk.dmg.length = 0; return __fk.ent('_dev_hostile', w.x, w.z, 'nfront'); }, k);
+    // 返修 FE1R · repair-r1：先让它知道人在哪 —— 当作车开了 1 s（行驶噪音 0.6，forklift.js 开车时每步也是这样 makeNoise）。
+    // 从叉尖前面往驾驶座胸口的视线全被门架 / 护顶挡着（车前 3×7 个点实测 0 个看得通，改前改后一样），怠速噪音 0.25 × 听觉 10 m = 2.5 m 也听不到 3.2 m 外的它；
+    // 以前这一项过不过全看它游荡往哪边走（N3 多放了一只猎犬以后实体随机数换了一串，它一直往前游荡、10 s 都没发现人）。这一项量的是「在车前打不到、绕到车侧」
+    const front = await ev(page, k => { const w = __fk.W(k, 0, -2.1 - 0.3 - 0.4); __fk.dmg.length = 0; const id = __fk.ent('_dev_hostile', w.x, w.z, 'nfront'); BR.entities.makeNoise(0.6, 1.0); return id; }, k);
     let sideAt = null;
-    const frontHits = [];
+    const frontHits = [], track = [];
     for (let i = 1; i <= 300; i++) {
       const r = await ev(page, a => {
         const n0 = __fk.dmg.length;
@@ -4568,15 +4649,38 @@ async function gNightmare(browser) {
         const l = e ? __fk.L(a.k, e.x, e.z) : null;
         const hit = __fk.dmg.length > n0 && __fk.dmg.slice(n0).some(x => x.hp > 0);
         if (BR.player.hp < 60) BR.player.hp = 100;
-        return { l, hit };
+        return { l, hit, st: e ? e.state : null, seat: BR.vehicles.seated, p: __fk.pose(a.k) };
       }, { id: front, k });
+      if (i % 30 === 0) track.push({ t: i / 30, l: r.l && { x: +r.l.x.toFixed(2), z: +r.l.z.toFixed(2) }, st: r.st, seat: r.seat, car: r.p && { x: +r.p.x.toFixed(2), z: +r.p.z.toFixed(2), yaw: +r.p.yaw.toFixed(2) } });
       // 「在车前」= 还在叉尖前面，或者在车宽以内、驾驶舱前面（门架 / 货叉那一截）；绕到车侧 = 出了车宽、过了叉尖
       const ahead = r.l && (r.l.z < -2.1 || (Math.abs(r.l.x) < 0.75 && r.l.z < -0.5));
       if (r.hit && ahead) frontHits.push({ t: i / 30, l: r.l });
       if (sideAt == null && r.l && Math.abs(r.l.x) >= 0.8 && r.l.z > -2.1 && r.l.z < 1.6) sideAt = i / 30;
     }
-    check('N4 敌对实体放在货叉尖外 0.3 m：在车前时打不到人，10 s 内绕到车侧', !!front && frontHits.length === 0 && sideAt != null && sideAt <= 10, { sideAt, frontHits: frontHits.slice(0, 3) });
+    check('N4 敌对实体放在货叉尖外 0.3 m：在车前时打不到人，10 s 内绕到车侧', !!front && frontHits.length === 0 && sideAt != null && sideAt <= 10, { sideAt, frontHits: frontHits.slice(0, 3), track: sideAt != null && sideAt <= 10 ? undefined : track });
     await ev(page, id => { __fk.dropEnt(id); __br.step(0.2); BR.player.hp = 100; return 0; }, front);
+    // N6（FE1R ACT-veh）：通道正中头顶挂一只 Nguithr'xurh（网格在天花板下 2.6 m 上下，叉车护顶 2.1 m）：车全速开过去，雷达不刹、车身不被它挡。
+    // 叉车的碰撞、雷达按实体网格此刻的真实外形（BR.entities.shapeOf），不再按地上那根碰撞圆柱
+    const ng = await ev(page, k => {
+      const Y = __fk.YARD; __fk.place(k, Y.x, Y.z, Y.yaw, 0); __br.step(0.3);
+      const w = __fk.W(k, 0, -2.1 - 8); __fk.notes.length = 0; __fk.sounds.length = 0;
+      const id = __fk.ent('nguithrxurh', w.x, w.z, 'nng'); __br.step(0.5);
+      const e = BR.entities.get(id), sh = e ? BR.entities.shapeOf(e) : null;
+      return { id, x: w.x, z: w.z, minY: sh && sh.length ? Math.min(...sh.map(c => c.minY)) : null, p0: __fk.pose(k) };
+    }, k);
+    let ngV = 0, ngPast = false;
+    await page.keyboard.down('KeyW');
+    for (let i = 0; i < 10; i++) {
+      const r = await ev(page, a => { __br.step(0.5); BR.player.hp = 100; const p = __fk.pose(a.k), l = __fk.L(a.k, a.x, a.z); return { v: p.spd, lz: l.z }; }, { k, x: ng.x, z: ng.z });
+      ngV = Math.max(ngV, r.v);
+      if (r.lz > 1.3) { ngPast = true; break; }
+    }
+    await page.keyboard.up('KeyW');
+    const ngN = await ev(page, () => ({ notes: __fk.notes.slice(0, 6), radar: __fk.sounds.includes('fk_radar') }));
+    await step(page, 1.5);
+    check('N6 通道正中头顶挂一只 Nguithr\'xurh（网格最低 ' + (ng.minY == null ? '?' : ng.minY.toFixed(2)) + ' m）：车以 ' + ngV.toFixed(2) + ' m/s 从它下面开过去，雷达不刹车、车身不被它挡',
+      ng.id && ng.minY != null && ng.minY > 2.3 && ngPast && ngV >= 4.3 && !ngN.radar && !ngN.notes.includes('雷达自动刹车'), { ng, ngV, ngPast, ngN });
+    await ev(page, id => { __fk.dropEnt(id); __br.step(0.2); BR.player.hp = 100; return 0; }, ng.id);
     await dismount(page);
     // N5 开过未密封水坑：坐在车上，座椅压在水坑上 40 s，理智不因接触水坑下降（对照：人站在同一个水坑上）
     const pud = await ev(page, k => {
@@ -4698,7 +4802,9 @@ async function gDark(browser) {
     await shot(page, 'k1-on', true);
     for (let i = 0; i < 2; i++) if (base2[i] != null && (base[i] == null || base2[i] > base[i])) base[i] = base2[i];   // 断电环境取两次里亮的那次（保守）
     const fr = base[0] > 0 ? lit.lum[0] / base[0] : Infinity, rr = base[1] > 0 ? lit.lum[1] / base[1] : Infinity;
-    check('K1 断电时开着的车：前大灯借了灯池（gfx 里点着），车头（叉根）前 4 m 地面亮度 ≥ 断电环境 3 倍（' + (base[0] || 0).toFixed(1) + ' → ' + (lit.lum[0] || 0).toFixed(1) + '）', pm.ok && lit.has && lit.inPool && base[0] != null && lit.lum[0] != null && fr >= 3, { base, lit });
+    // FE1R K2 起「车前地面亮」按开关灯差 ≥8 级算（判定区叉尖前 0.5–3 m），光源按判定区挑位置、按光源下地面封顶强度，不再为 6–8 m 外铺一大片光：
+    // 叉根前 4 m（叉尖前约 3 m，判定区最远那一排）以前要 ≥3 倍，现在 2.9–3.0 倍上下，改成「亮 ≥8 级、并且 ≥2.5 倍」
+    check('K1 断电时开着的车：前大灯借了灯池（gfx 里点着），车头（叉根）前 4 m 地面比断电环境亮 ≥8 级、≥2.5 倍（' + (base[0] || 0).toFixed(1) + ' → ' + (lit.lum[0] || 0).toFixed(1) + '）', pm.ok && lit.has && lit.inPool && base[0] != null && lit.lum[0] != null && fr >= 2.5 && lit.lum[0] - base[0] >= 8, { base, lit });
     check('K2 车尾后 2 m 的亮度 ≤ 断电环境 1.5 倍（' + (base[1] || 0).toFixed(1) + ' → ' + (lit.lum[1] || 0).toFixed(1) + '）', base[1] != null && lit.lum[1] != null && rr <= 1.5, { base, lum: lit.lum, rr });
     // 车头顶墙：出生块小屋西墙（x 20.8，门洞 z 15.42–16.58 以外那段），叉尖离墙 1 m
     await dismount(page);
@@ -4707,19 +4813,25 @@ async function gDark(browser) {
     // 拆成几段 page.evaluate（每段最多推 30 帧、量一次）：机器一忙，原来一整段（60 帧 + 3 次量 + 90 帧）会超过 EV_TIMEOUT（返修 r6）
     for (let i = 0; i < 2; i++) await ev(page, () => __fk.frames(30));
     const KW = { eye: { x: 25.6, y: 2.0, z: 18.0 }, at: { x: 23.0, y: 0, z: 18.0 }, pts: [{ x: 23.0, y: 0.01, z: 18.0, r: 4 }] };
+    // 叉尖（x 19.8）前 0.5 m 的地面：从车右后上方看（FE1R K2：车前是空地时开灯一定比关灯亮 ≥8 级）
+    const KF = { eye: { x: 18.4, y: 2.6, z: 20.2 }, at: { x: 20.3, y: 0, z: 18.0 }, pts: [{ x: 20.3, y: 0.01, z: 18.0, r: 3 }] };
     const w = await ev(page, a => {
       const owner = 'fk:' + a.k, list = __fk.extra[owner], L = list && list[0];
       window.__fkK3 = { owner, list };
-      return { L: L && { x: L.x, y: L.y, z: L.z, range: L.range }, wallGap: L ? 20.8 - L.x : null, lit0: BR.gfx.debugInfo().lit.length, on: __fk.measure(a.w.eye, a.w.at, a.w.pts) };
-    }, { k, w: KW });
+      return { L: L && { x: L.x, y: L.y, z: L.z, range: L.range }, wallGap: L ? 20.8 - L.x : null, lit0: BR.gfx.debugInfo().lit.length, on: __fk.measure(a.w.eye, a.w.at, a.w.pts), onF: __fk.measure(a.f.eye, a.f.at, a.f.pts) };
+    }, { k, w: KW, f: KF });
     await ev(page, () => { BR.world.setExtraLights(window.__fkK3.owner, null); return __fk.frames(30); });
     await ev(page, () => __fk.frames(15));
     w.off = await ev(page, a => __fk.measure(a.eye, a.at, a.pts), KW);
+    w.offF = await ev(page, a => __fk.measure(a.eye, a.at, a.pts), KF);
     await ev(page, () => { const q = window.__fkK3; if (q.list) BR.world.setExtraLights(q.owner, q.list); return __fk.frames(30); });
     await ev(page, () => __fk.frames(15));
     w.on2 = await ev(page, a => __fk.measure(a.eye, a.at, a.pts), KW);
     await ev(page, () => { const L = window.__fkK3.list && window.__fkK3.list[0]; window.__fkWallLight = L ? { x: L.x, y: L.y, z: L.z } : null; return 0; });
-    check('K3 车头顶着墙（叉尖离墙 1 m）：大灯光源在墙前 0.3 m', pm2.mounted && w.wallGap != null && Math.abs(w.wallGap - 0.3) <= 0.05, w);
+    // FE1R K2（主会话裁定）：光源不再固定放在墙前 0.3 m —— 叉尖离墙 1 m 时判定区是叉尖前 0.5–0.8 m，光源退到能照亮这一段的地方；
+    // 要求光源在墙朝车这一侧（墙中线 20.8、近面 20.7，没越过墙），叉尖前 0.5 m 的地面开灯比关灯亮 ≥8 级
+    const dF = w.onF && w.offF && w.onF[0] != null && w.offF[0] != null ? w.onF[0] - w.offF[0] : null;
+    check('K3 车头对着墙（叉尖离墙 1 m）：大灯光源在墙朝车这一侧（离墙中线 ≥0.2 m），叉尖前 0.5 m 地面开灯比关灯亮 ≥8 级（' + (dF == null ? '?' : dF.toFixed(1)) + '）', pm2.mounted && w.wallGap != null && w.wallGap >= 0.2 && dF != null && dF >= 8, w);
     const wr = w.off[0] > 0 ? Math.max(w.on[0], w.on2[0]) / w.off[0] : Infinity;
     check('K4 墙另一侧（小屋里）2 m 处的亮度 ≤ 断电环境 1.2 倍（' + (w.off[0] || 0).toFixed(1) + ' → ' + Math.max(w.on[0] || 0, w.on2[0] || 0).toFixed(1) + '）', w.off[0] != null && w.on[0] != null && wr <= 1.2, { w, wr });
     // 下车：大灯光源撤掉；灯罩是暗色灯罩，不是开洞
@@ -4728,7 +4840,8 @@ async function gDark(browser) {
       const glow = BR.gfx.scene.children.find(o => o.isMesh && o.name === 'vehicles kit:glow');
       const vis = __fk.measure(eye, lz, [lz])[0];
       let hid = null;
-      if (glow) { glow.visible = false; hid = __fk.measure(eye, lz, [lz])[0]; glow.visible = true; }
+      // 「开洞」：K5 以后熄着的镜面是 kit:prop 里的 lampOff 那份 —— 让所有车按「大灯亮」画（lampOff 叠成一点），再把 kit:glow 藏掉，镜面两份就都没了
+      if (glow) { BR.vehicles._lampForce(1); glow.visible = false; hid = __fk.measure(eye, lz, [lz])[0]; glow.visible = true; BR.vehicles._lampForce(null); }
       return { vis, hid, glow: !!glow };
     }, { k });
     const lOn = await lens();
@@ -4745,6 +4858,56 @@ async function gDark(browser) {
     await shot(page, 'k5-off', true);
     check('K5 下车后大灯光源撤掉（灯池里没有它）', !off.extra && !off.light && !off.lit, off);
     check('K6 熄火后灯罩是暗色灯罩：比点着时暗，而且和把灯罩藏掉（开洞）时不一样', lOn.glow && lOff.vis != null && lOn.vis != null && lOff.vis < lOn.vis - 5 && lOff.hid != null && Math.abs(lOff.vis - lOff.hid) > 3, { lOn, lOff });
+    // F6（FE1R）：断电时的「手臂」照提示说的来 —— 坐在自己这台大灯开着的车上、躲进小屋不抓；关着大灯坐在车上、站在外面照样抓。
+    // 抓不抓按 L1 的测试口 def._armsSafe() 判（抓的概率每次 25%，真等着数次数太慢）；再在小屋里实打实待满这次断电剩下的时间，hazard:arms 0 次
+    const pm6 = await mountCar(page, k, 'left');
+    await ev(page, () => __fk.frames(30));
+    const f6 = { pm: pm6.ok, lit: await ev(page, () => ({ safe: BR.levels.get('1')._armsSafe(), lit: BR.vehicles.headlightLit(), mounted: !!BR.player.mounted })) };
+    await ev(page, () => { BR.vehicles.toggleLight(); return __fk.frames(5); });
+    f6.dark = await ev(page, () => ({ safe: BR.levels.get('1')._armsSafe(), lit: BR.vehicles.headlightLit(), mounted: !!BR.player.mounted }));
+    await ev(page, () => { BR.vehicles.toggleLight(); return __fk.frames(5); });
+    await dismount(page);
+    f6.out = await ev(page, () => { __fk.stand(17.0, 21.0, 0); __br.step(0.1); return { safe: BR.levels.get('1')._armsSafe(), x: BR.player.x, z: BR.player.z }; });
+    f6.hut = await ev(page, () => { __fk.stand(23.6, 17.2, 0); __br.step(0.1); return { safe: BR.levels.get('1')._armsSafe(), x: BR.player.x, z: BR.player.z }; });
+    // 返修 FE1R · repair-r1（验收员 tests：测试模式里 attackPlayers 是 false，「手臂」根本不会抓，「小屋里待 30 s 被抓 0 次」量不出东西）：
+    // 下面三段实打实推 —— 临时打开 attackPlayers（相当于噩梦），断电按测试口 _holdBlackout 延长到推完；每次「手臂」掷骰都会吼一声（growl），
+    // 数吼了几次（掷了几次骰）、被抓了几次（hazard:arms）、弹了几条「黑暗里伸出一只手抓了你一下」。每段推完血补满
+    const armsRun = (sec, untilHit) => ev(page, a => {
+      const L1 = BR.levels.get('1'), g0 = BR.game.attackPlayers, d0 = __fk.dmg.length, t0 = __fk.toasts.length, s0 = __fk.sounds.length;
+      BR.game.attackPlayers = true;
+      let held = true;
+      try {
+        for (let j = 0; j < a.sec * 10; j++) {
+          if (j % 50 === 0) held = L1._holdBlackout(8) && held;
+          __br.step(0.1); BR.player.hp = 100;
+          if (a.untilHit && __fk.dmg.slice(d0).some(d => d.src === 'hazard:arms')) break;
+        }
+      } finally { BR.game.attackPlayers = g0; BR.player.hp = 100; }
+      return { rolls: __fk.sounds.slice(s0).filter(s => /growl/.test(String(s && s.name || s))).length, arms: __fk.dmg.slice(d0).filter(d => d.src === 'hazard:arms').length,
+        toast: __fk.toasts.slice(t0).filter(t => /黑暗里伸出一只手抓了你一下/.test(String(t))).length, held, safe: L1._armsSafe() };
+    }, { sec, untilHit });
+    // 上面 K1–K6 和这几项可能已经用完了这次断电（all.mjs 跑过一次：三段都「没在断电里」，掷骰 0 次）：不在断电里就先等到下一次断电再推
+    const ensureBo = async () => { const on = await ev(page, () => BR.levels.get('1')._holdBlackout(8)); if (on) return { already: true }; return nextBlackout(page); };
+    f6.bo = [await ensureBo()];
+    f6.stay = await armsRun(30, false);   // 小屋里 30 s
+    // 拆成几段推：机器忙时一整段 page.evaluate 会超过 60 s
+    const pm6b = await mountCar(page, k, 'left');
+    await ev(page, () => __fk.frames(10));
+    f6.bo.push(await ensureBo());
+    f6.litStay = Object.assign({ pm: pm6b.ok, lit: await ev(page, () => BR.vehicles.headlightLit()) }, await armsRun(30, false));   // 开着大灯坐车 30 s
+    await ev(page, () => { BR.vehicles.toggleLight(); return __fk.frames(5); });
+    f6.bo.push(await ensureBo());
+    f6.darkStay = await armsRun(60, true);                                                                                   // 关着大灯坐车，最多 60 s，抓到一次就停
+    f6.darkStay.lit = await ev(page, () => BR.vehicles.headlightLit());
+    await ev(page, () => { BR.vehicles.toggleLight(); return __fk.frames(5); });
+    await dismount(page);
+    check('F6 断电的「手臂」：坐在大灯开着的车上不抓（' + f6.lit.safe + '）、关了大灯坐在车上照样抓（' + !f6.dark.safe + '）、站在小屋外抓（' + !f6.out.safe + '）、躲进小屋不抓（' + f6.hut.safe + '）；' +
+      '实打实推（attackPlayers 打开、断电延长）：小屋里 30 s 掷骰 ' + f6.stay.rolls + ' 次、被抓 ' + f6.stay.arms + ' 次；开着大灯坐车 30 s 掷骰 ' + f6.litStay.rolls + ' 次、被抓 ' + f6.litStay.arms + ' 次；' +
+      '关着大灯坐车掷骰 ' + f6.darkStay.rolls + ' 次、被抓 ' + f6.darkStay.arms + ' 次、弹了「黑暗里伸出一只手抓了你一下」' + f6.darkStay.toast + ' 次',
+      f6.lit.safe === true && f6.lit.lit && f6.dark.safe === false && !f6.dark.lit && f6.dark.mounted && f6.out.safe === false && f6.hut.safe === true &&
+      f6.stay.held && f6.stay.rolls >= 3 && f6.stay.arms === 0 && f6.stay.toast === 0 &&
+      f6.litStay.pm && f6.litStay.lit && f6.litStay.held && f6.litStay.rolls >= 3 && f6.litStay.arms === 0 && f6.litStay.toast === 0 &&
+      !f6.darkStay.lit && f6.darkStay.held && f6.darkStay.arms >= 1 && f6.darkStay.toast >= 1, f6);
     // 仪表台大灯开关：在下一次断电里试（上面 K1–K6 已经用掉了这次断电的大半，断电结束后整层灯亮了 lightAt 就比不出来了）。
     // 车摆回试车场，人站在车旁；断电一开始马上量座椅处的底值、上车
     await ev(page, k => { const Y = __fk.YARD; __fk.place(k, Y.x, Y.z, Y.yaw, 0); __br.step(0.1); __fk.stand(Y.x - 3, Y.z + 2.4, 0); return 0; }, k);
@@ -4908,8 +5071,10 @@ async function gPerf(browser) {
       await startL1(page, { seed: SEED, quality: q });
       const k = await ev(page, () => __fk.spawnKey());
       const pm = await placeAndMount(page, k, await ev(page, () => __fk.YARD));
-      const d1 = await ev(page, k => { const d = BR.vehicles.debugInfo(); return { per: d.perVehicle[k], calls: d.calls, tier: d.tiers[k] }; }, k);
-      check('G1 ' + q + ' 画质：可动叉车 ' + d1.tier + ' 档 ' + d1.per + ' 面 ≤2000', pm.mounted && d1.per > 0 && d1.per <= 2000, d1);
+      const d1 = await ev(page, k => { const d = BR.vehicles.debugInfo(); return { per: d.perVehicle[k], buf: d.perVehicleBuf ? d.perVehicleBuf[k] : null, calls: d.calls, tier: d.tiers[k] }; }, k);
+      // 返修 FE1R · repair-r1（验收员 spec：硬规则「可动模型每台 ≤2000 面」按缓冲区算）：灯的亮 / 灭两份不再同时放进缓冲区（载具层按灯的状态建对应那一份模板），
+      // 缓冲区里的三角形 = 画出来的三角形，都 ≤2000
+      check('G1 ' + q + ' 画质：可动叉车 ' + d1.tier + ' 档缓冲区 ' + d1.buf + ' 面 ≤2000（画出来 ' + d1.per + '，一样多：没有叠成一点的占位）', pm.mounted && d1.per > 0 && d1.buf <= 2000 && d1.buf === d1.per, d1);
       // 其余 5 台开过的车：已载入的车都摆到出生点旁边的主通道上，不够 6 台就补一台回放记录（levelState 里来的车）
       const others = await ev(page, k => {
         const keys = BR.vehicles.list().map(v => v.key).filter(x => x !== k);
@@ -4920,7 +5085,7 @@ async function gPerf(browser) {
         return out;
       }, k);
       const d6 = await ev(page, () => { const d = BR.vehicles.debugInfo(); return { calls: d.calls, promoted: d.promoted.length, meshes: d.meshes, per: d.perVehicle }; });
-      const lim = q === 'high' ? 3 : 2;
+      const lim = q === 'high' ? 4 : 3;   // kit:prop、kit:glow、（高画质）kit:decal、链条材质 L1:fkChain（返修 FE1R · repair-r1：链板花纹在贴图里）
       check('G2 ' + q + ' 画质：载具网格 draw call 1 台 ' + d1.calls + '、6 台 ' + d6.calls + '（≤' + lim + '，一样多）', d1.calls <= lim && d6.calls <= lim && d6.calls === d1.calls && d6.promoted >= 6, { d1, d6, others });
       // 出生点：开着车、旁边 5 台开过的车，整帧 calls ≤120（朝东看整条主通道，再朝西看）
       const calls = [];
@@ -4940,9 +5105,13 @@ async function gPerf(browser) {
         check('G4 BR.vehicles._step 1000 步平均 ' + t.toFixed(3) + ' ms ≤0.6 ms', t <= 0.6, { avgMs: t });
       }
     }
-    // 停放档 high / mid / lite：停着和升格（熄火）同一机位的平均像素差 <2
-    const want = { high: null, mid: null, lite: null };
-    for (const seed of [SEED, 8, 3, 6, 1, 2, 4, 5, 7]) {
+    // 停放档 high / lite / low：停着和升格（熄火）同一机位的平均像素差 <2。返修 FE1R · K3：停放档只有 high / mid / lite / low，
+    // mid 和 high 一样贵（1998 面），挑档时放得下 mid 就放得下 high，所以停着的 mid 实际不会出现（101 种子普查 0 台）；lite / low 少，
+    // 种子 12 的 1@1,1#v0 是 lite、种子 6 的 1@-1,1#v0 是 low（FE1R-model 普查，和 tests/forklift_l1.mjs PAIR_CASES 同一批）。
+    // 返修 FE1R · repair-r1 补回铜阀门、中心盖以后重新普查，种子 12 那台 lite 换成了 low（tier-changes-FE1R-to-r1.txt），lite 改用种子 27 的 1@-2,-2#v0（PAIR_CASES 同一台）
+    // 返修 FE1R · repair-r2 补回第 2 根操纵杆、助力球等以后再普查，种子 27 那台也换成了 low（tier-changes-r1-to-r2.json），lite 改用种子 157 的 1@2,-1#v0（PAIR_CASES 同一台）
+    const want = { high: null, lite: null, low: null };
+    for (const seed of [SEED, 157, 27, 12, 6, 8, 3, 1, 2, 4, 5, 7]) {
       if (Object.values(want).every(Boolean)) break;
       await startL1(page, { seed, quality: 'high' });
       const found = await ev(page, () => BR.vehicles.list().filter(v => !v.driven && !v.runtime).map(v => ({ key: v.key, detail: (__fk.fkData(v.key) || {}).detail, x: v.x, z: v.z, yaw: v.yaw })));
@@ -4997,7 +5166,7 @@ async function gPerf(browser) {
         }
       }
     }
-    for (const t of ['high', 'mid', 'lite']) {
+    for (const t of ['high', 'lite', 'low']) {
       const r = want[t];
       check('G5 停放档 ' + t + ' 的车：停着和升格（熄火）两张同机位截图平均像素差 <2（车占画面 ' + (r && r.frac != null ? (100 * r.frac).toFixed(0) : '?') + '%）', !!r && !r.noView && r.meshed && r.diff < 2 && r.frac > 0.05, r || '没找到这一档的车');
     }
@@ -5366,7 +5535,7 @@ async function gSide(browser) {
       __side.drop();
       return out;
     });
-    check('S10 车尾朝着出口圈倒过去：停在圈外（OBB 压进出口圈 +0.4 <1 cm），提示「后面是出口」、没说「前面是出口」', !!rev.exit && rev.exit.notes.includes('后面是出口') && !rev.exit.notes.includes('前面是出口') && rev.exit.deep < 0.01, rev.exit);
+    check('S10 车尾朝着出口圈倒过去：停在圈外（OBB 压进出口圈 +0.4 <1 cm），提示「后面是出口，下车走过去」、没说「前面是出口，下车走过去」', !!rev.exit && rev.exit.notes.includes('后面是出口，下车走过去') && !rev.exit.notes.includes('前面是出口，下车走过去') && rev.exit.deep < 0.01, rev.exit);
     check('S11 车尾朝着能拖的家具倒过去：提示「后面有东西挡着，下车把它拖开」；车头朝着它开过去提示「前面有东西挡着，下车把它拖开」',
       !!rev.prop && rev.prop.notes.includes('后面有东西挡着，下车把它拖开') && !rev.prop.notes.includes('前面有东西挡着，下车把它拖开') && (!rev.propFwd || rev.propFwd.notes.includes('前面有东西挡着，下车把它拖开')), rev);
 
@@ -5563,7 +5732,7 @@ async function gSide(browser) {
       });
       if (!P) continue;
       const [c0, cP, cL] = P.runs;
-      check('S7 Level 2 走廊口（' + P.ck + '）沿中线开进去：停在出口圈前（「前面是出口」），不碰管子和灯', c0 && c0.pen && c0.pen.length === 0 && c0.phys.length === 0 && c0.notes.includes('前面是出口'), c0);
+      check('S7 Level 2 走廊口（' + P.ck + '）沿中线开进去：停在出口圈前（「前面是出口，下车走过去」），不碰管子和灯', c0 && c0.pen && c0.pen.length === 0 && c0.phys.length === 0 && c0.notes.includes('前面是出口，下车走过去'), c0);
       check('S8 往管排那边偏 0.4 m 开进去：被管子挡住，OBB 压进管排 <1 cm', cP && cP.pen && cP.pen.length === 0 && cP.phys.length === 0 && cP.moved > 0.3, cP);
       // 笼罩灯在走廊口里 0.3 m、离地 2.05：车头先碰到出口圈（+0.4），护顶到不了灯底下；这里只看不穿进去
       check('S9 往笼罩灯那边偏 0.4 m 开进去：OBB 不压进灯和墙（<1 cm）', cL && cL.pen && cL.pen.length === 0 && cL.phys.length === 0 && cL.moved > 0.3, cL);

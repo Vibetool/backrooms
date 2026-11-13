@@ -13,7 +13,8 @@ const BR = window.BR;
 const K = BR.itemKit;
 if (!K) { console.error('[items] soft_drink 需要先加载 js/items/_kit.js'); return; }
 
-const SEG = 10;
+// 段数（FE1R K8）：瓶身、汽水、标签 20 段，瓶盖 16 段（以前 10 段；0.6 m 平视弦高 0.45 px）
+const SEG = 20, CAP_SEG = 16;
 const SHELL = [[0, 0.004], [0.02, 0], [0.031, 0.008], [0.035, 0.026], [0.031, 0.05], [0.035, 0.072],
   [0.035, 0.125], [0.029, 0.152], [0.016, 0.184], [0.0115, 0.192], [0.0115, 0.204]];
 
@@ -84,8 +85,8 @@ BR.itemTypes.register({
       name: 'soft_drink', scale: 1.2,
       solid: [
         K.paint(K.cyl(0.029, 0.029, 0.122, SEG, 0.008), 0x4a2812),
-        K.paint(K.cyl(0.0125, 0.0125, 0.015, SEG, 0.204), 0x1e1e1e),
-        K.paint(K.cyl(0.0135, 0.0135, 0.003, SEG, 0.199, true), 0x1e1e1e),
+        K.paint(K.cyl(0.0125, 0.0125, 0.015, CAP_SEG, 0.204), 0x1e1e1e),
+        K.paint(K.cyl(0.0135, 0.0135, 0.003, CAP_SEG, 0.199, true), 0x1e1e1e),
       ],
       labels: [[K.cyl(0.0356, 0.0356, 0.044, SEG, 0.078, true), K.labelMat('soft_drink', 512, 96, drawLabel)]],
       glass: [[K.lathe(SHELL, SEG), 0xe6ecef, 0.3]],

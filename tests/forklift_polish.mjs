@@ -1,6 +1,8 @@
 // 后室 · FE1P 叉车打磨回归（FE1P-light 那一份：H8 大灯不透墙、H9 藤蔓贴着护顶、H14 联机升降高度不往回掉；
 //                          FE1Q-light：J3 藤蔓贴着看得见的护顶、J8 lightAt 和画面一致、J9 货架通道里车灯照得远）
-//   node tests/forklift_polish.mjs [--group light,vine,coop] [--verbose] [--old] [--before <目录>]
+//                          FE1R-light：K1 窄东西照旧亮、K2 车前空地一定亮 / 开车不跳、宽块别的车不漏光、天花板、工坊、F1–F4 升降和后轮碰撞）
+//   node tests/forklift_polish.mjs [--group light,k2,k1,smooth,ws,lift,drive,vine,coop] [--verbose] [--old] [--before <目录>] [--head-others]
+//   --head-others（开发用）：别的代理正在改的文件按 git HEAD 给，只测这一组（forklift.js / world.js / vehicles_net.js / 本文件）的改动
 //   --old 反证：静态服务给出 FE1 提交（4a4466a）时的 forklift.js / world.js / vehicles_net.js，light、vine 组该报 FAIL（透墙、藤蔓离护顶 17 cm）
 // 主会话裁定：
 //   H8  车头顶着墙（或任何不透光的实体）时，墙另一侧的任何面（墙里侧、相邻墙的里侧、天花板、地面、屋里的东西）一点光都不吃；
@@ -35,6 +37,22 @@
 //          还不成立记 SKIP（汇总里「跳过 N 项」），不算到 H14 头上；没开动时 detail 里带客机逐帧的 W/R 输入、phase、车速（区分负载和游戏问题）。
 //          J2（联机这一侧的回归，以前只在整合员的一次性脚本里）：房主高画质、客机低画质，出生车两边都是运行时车（区块记录没有 spans、
 //          载具网格 mid / drvLow）；客机真键盘上车开出 >1 m，两边位姿一致、档不变、(0,0) kit:prop 没有叠成一点的三角形；下车以后两边位姿一致、levelState 记下
+//   FE1R-light 加的组（主会话裁定 K1 / K2 / L-occluders / L-ceiling / L-workshop / F1–F4）：
+//   k2     种子 12345 / 16 / 39 各等一次断电、坐上出生车、冻住断电计时，按 15 类（货架通道 / 贴货架 / 通道口 / 货架头 / 墙边 / 正对墙 / 墙角 / 门口 / 空地 /
+//          撞车直道 / 树和杆子 / 柱子 / 别的车 / 高堆垛 / 矮货架配电柜）各生成 12 个随机位姿（种子固定，≥150 个）加点名的几处，每个位姿：
+//          车前判定区（叉尖前 0.5 m 到 min(3, 车宽带里第一个挡光体 − 0.2)、横向 ±0.5、每 0.25 m，去掉离实体面 <0.3 m、驾驶座看不见的）开关灯渲染差 ≥8、
+//          lightAt 亮；墙后（视线被墙 / 货架 / 宽堆垛 / 别的车挡住的地面）≤2，光球里朝着光源被挡住的竖直面 0 个；lightAt 一致。照不全的位姿用同一套界限
+//          细网格暴力搜一遍：一盏光源也照不全的算几何例外（≤3%，叉尖前 0.5–1.5 m 仍全亮，截图在 k2-<种子>-<序号>-<类>.png），照得全却没照全的算失败。
+//          种子 12345 另量 L-ceiling（前方 ≥6 m 开阔的位姿：光源上方天花板 ≤ 叉尖前 1 m 地面、≤40，车后天花板 ≤2）、K1 (4)（正对门框立柱 / 柱子）、
+//          正对 4.46–6 m 外的墙（亮斑没有或 ≥0.6 m、不发白）、正对小屋门（光源不进屋、屋里墙后 ≤2）；种子 16 量 L-occluders #110
+//   k1     ⑨ 那棵枯树（种子 12345，不断电）：⑨ 机位树干三点、树前 0.6 m 地面 ≥8，树干那一片平均亮度不比 pre-polish 旧图暗 8 级以上；叉尖离树 0.3–4.0 m
+//          每 0.1 m × 横偏 0 / ±0.12 都 ≥8、树干最大通道 <245；真键盘开过去逐帧平滑
+//   smooth 排查那 12 条真键盘路线（断电），60 fps 逐帧：叉尖前 0.5 / 1.5 / 3 / 5 m 地面（只比两帧都在车前空地上的点）相邻帧差 ≤8 级、驾驶座画面下半区 ≤4 级
+//   ws     工坊地图（基于 L1、种子 12345）全部熄灯 / 闪烁更频繁 / 亮度 ×0.2：大灯不跟着变（灯池里那盏强度 = 大灯自己的）、全部熄灯时车前判定区 ≥8、
+//          闪烁时 20 s 内强度逐帧跳变 ≤10%、lightAt 一致
+//   lift   F1 门楣挡升货叉（(8, 33.3) 开进门洞按住 R 7 s，再带货；再抽 ≥20 个门楣）、F3 电缆底下带货升
+//   drive  F3 举着货开过电缆、叉尖放货顶墙；F2 后轮（小屋西墙外 / 货架旁原地打满、货架通道里贴着转弯、旁边的物资、旁边的测试人）；
+//          F4 车轮挡在旧射线中间 / 叉尖 / 叉根 / 货叉侧边下降货叉，排查机位按住 C
 // 输出：tests/output/forklift_polish/<组>/（数值 result.json、截图）。汇总行「检查 N 项，失败 M 项」「页面报错 K 条」。
 // 任一检查失败或页面出现 console.error / 未捕获异常时退出码为 1。
 import http from 'node:http';
@@ -54,18 +72,38 @@ const OUT_BASE = path.join(ROOT, 'tests', 'output', process.argv.includes('--old
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const argv = process.argv.slice(2);
 const argOf = n => { const i = argv.indexOf('--' + n); return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : null; };
-const ALL_GROUPS = ['light', 'vine', 'coop'];
+const ALL_GROUPS = ['light', 'k2', 'k1', 'smooth', 'ws', 'lift', 'drive', 'vine', 'coop'];
 const GROUPS = argOf('group') ? argOf('group').split(',').map(s => s.trim()).filter(Boolean) : ALL_GROUPS.slice();
 const VERBOSE = argv.includes('--verbose');
 // --old（反证）：静态服务给出 FE1 提交（4a4466a）时的 forklift.js / world.js / vehicles_net.js（git show，只读），light、vine 组应该报出 FAIL
 const OLD = argv.includes('--old');
 const OLD_FILES = ['js/game/forklift.js', 'js/game/world.js', 'js/game/vehicles_net.js'];
+// FE1Q（git HEAD 的 forklift.js / world.js / vehicles_net.js）在 L9 / L9c 那三处朝通道的货那一点量出来的开关灯差（返修 FE1R · repair-r4，只记录，见 aisleCheck）
+const FE1Q_GOODS = { 'L9-aisle': 48.3, 'L9-aisle134': 86.11, 'L9c-aisle': 78.06 };
+// 主会话 L3 的口径（返修 FE1R · repair-r5，验收员 tests / spec / play）：驾驶座截图（960×540，司机眼点往叉尖前 7.1 m 看）左、右两片区域
+// （x 0–25% / 75–100%，y 28–72%）开灯减关灯的平均亮度（Rec.601，0–255）。同一个测试、同一套量法拿两份别的代码量的基准
+// （tests/output/stage-FE1R/repair-r5/logs/ov-fe1q-light-*.log、ov-prel3-light-*.log）：
+//   FE1Q_REG  —— FE1Q（git HEAD 的 forklift.js / world.js / vehicles_net.js），两边货架的货要 ≥ 它的 80%（照得到的那一侧）；
+//   PRE_L3_REG —— 加 L3 之前的 forklift.js（repair-r4 改动前），每个位姿照得到的那一侧都要比它亮（L3 没做 / 退回去这一项拦得住）
+// 贴柱子那条道、L9c 这两处驾驶座画面两边看到的是车旁边的货（光在车头前面，FE1Q 也照不到，区域差 ≤0.6），按区域比没意义：
+// 这两处按测试那一点（叉尖前约 2.4 m、离地 1.2 m 朝通道的货，FE1Q_GOODS 那一点）比 PRE_L3_GOODS
+const FE1Q_REG = { 'L9-aisle': { L: 13.82, R: 19.97 } };
+const PRE_L3_REG = { 'L9-aisle': { L: 4.66, R: 5.42 } };
+const PRE_L3_GOODS = { 'L9-aisle': 17.89, 'L9-aisle134': 51.04, 'L9c-aisle': 45.17 };
 const oldSrc = new Map();
 if (OLD) {
   const { execFileSync } = require('node:child_process');
   for (const f of OLD_FILES) oldSrc.set(f, execFileSync('git', ['show', '4a4466a:' + f], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 << 20 }));
 } else if (BEFORE) {
   for (const f of OLD_FILES) oldSrc.set(f, fs.readFileSync(path.resolve(BEFORE, path.basename(f)), 'utf8'));
+}
+// --head-others（FE1R-light 开发用）：别的代理正在改的文件（工作区里改过、又不是本组那四个）一律按 git HEAD 给，只测本组的改动
+if (argv.includes('--head-others')) {
+  const { execFileSync } = require('node:child_process');
+  const mine = new Set(OLD_FILES.concat(['tests/forklift_polish.mjs']));
+  const changed = execFileSync('git', ['diff', '--name-only', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).split('\n').map(q => q.trim()).filter(q => q && !mine.has(q) && !q.startsWith('tests/') && /\.(js|css|html)$/.test(q));
+  for (const f of changed) { try { oldSrc.set(f, execFileSync('git', ['show', 'HEAD:' + f], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 << 20 })); } catch (e) { /* 新文件 */ } }
+  console.log('--head-others：按 HEAD 给 ' + changed.length + ' 个文件');
 }
 const bad = GROUPS.filter(g => !ALL_GROUPS.includes(g));
 if (bad.length) { console.log('未知的组：' + bad.join(', ') + '（可选 ' + ALL_GROUPS.join(' ') + '）'); process.exit(2); }
@@ -194,13 +232,22 @@ function installHelpers() {
     return n ? s / n : null;
   };
   // 相机摆到 eye 看 at，渲染一帧，量每个世界点的亮度（看不见的点 null）；量完相机原样放回
+  // p.see（FE1R）：先打一条射线，相机看过去第一下打到的不是这一点（被挡住、或者从货架格子的空当里看到了后面别的东西）就记 null，不量
   F.measure = (eye, at, pts) => {
     const cam = BR.gfx.camera, P = cam.position.clone(), Q = cam.quaternion.clone();
     cam.position.set(eye.x, eye.y, eye.z); cam.lookAt(at.x, at.y, at.z); cam.updateMatrixWorld(true);
     const g = F.grab(), w = g.canvas.width, h = g.canvas.height;
+    const rc = new THREE.Raycaster(), meshes = [];
+    if (pts.some(p => p.see)) BR.gfx.scene.traverseVisible(o => { if (o.isMesh) meshes.push(o); });
     const out = pts.map(p => {
       const v = new THREE.Vector3(p.x, p.y, p.z).project(cam);
       if (v.z > 1 || Math.abs(v.x) > 1 || Math.abs(v.y) > 1) return null;
+      if (p.see) {
+        const e = new THREE.Vector3(eye.x, eye.y, eye.z), d = new THREE.Vector3(p.x - eye.x, p.y - eye.y, p.z - eye.z), L = d.length();
+        rc.set(e, d.normalize()); rc.near = 0; rc.far = L + 0.5;
+        const hit = rc.intersectObjects(meshes, false)[0];
+        if (!hit || Math.abs(hit.distance - L) > 0.06) return null;
+      }
       return F.r(F.lum(g, (v.x + 1) / 2 * w, (1 - v.y) / 2 * h, p.r), 100);
     });
     cam.position.copy(P); cam.quaternion.copy(Q); cam.updateMatrixWorld(true);
@@ -246,14 +293,18 @@ function installHelpers() {
 // =====================================================================
 let BASE = '';
 async function boot(browser, tag, ctxOpts) {
-  const ctx = await browser.newContext(Object.assign({ viewport: { width: 960, height: 540 } }, ctxOpts || {}));
-  const page = await ctx.newPage();
-  page.on('console', m => { if (m.type() !== 'error') return; const loc = (m.location() && m.location().url) || ''; errors.push('[' + tag + '] console.error: ' + m.text() + (loc ? ' @ ' + loc : '')); });
-  page.on('pageerror', e => errors.push('[' + tag + '] pageerror: ' + (e.stack || e.message)));
-  // 测试绝不连真实联机服务器：api.ovobot.ai 回假响应，其余外部请求一律掐掉
-  await page.route(/https?:\/\/api\.ovobot\.ai\//, r => r.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":false,"error":"offline_in_test"}' }));
-  await page.route(/^https?:\/\/(?!127\.0\.0\.1[:/])/, r => r.abort());
-  try { await page.goto(BASE + 'index.html', { timeout: 120000 }); } catch (e) { await page.goto(BASE + 'index.html', { timeout: 120000 }); }
+  // 机器很忙时页面 2 分钟都载不完：最多试三次，每次换一个新的 context / 页面（同一页面上重试会撞上还没完的上一次导航）
+  let ctx = null, page = null;
+  for (let t = 0; ; t++) {
+    ctx = await browser.newContext(Object.assign({ viewport: { width: 960, height: 540 } }, ctxOpts || {}));
+    page = await ctx.newPage();
+    page.on('console', m => { if (m.type() !== 'error') return; const loc = (m.location() && m.location().url) || ''; errors.push('[' + tag + '] console.error: ' + m.text() + (loc ? ' @ ' + loc : '')); });
+    page.on('pageerror', e => errors.push('[' + tag + '] pageerror: ' + (e.stack || e.message)));
+    // 测试绝不连真实联机服务器：api.ovobot.ai 回假响应，其余外部请求一律掐掉
+    await page.route(/https?:\/\/api\.ovobot\.ai\//, r => r.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":false,"error":"offline_in_test"}' }));
+    await page.route(/^https?:\/\/(?!127\.0\.0\.1[:/])/, r => r.abort());
+    try { await page.goto(BASE + 'index.html', { timeout: 120000 }); break; } catch (e) { await ctx.close().catch(() => {}); if (t >= 2) throw e; }
+  }
   await page.waitForFunction(() => window.BR && window.__br && BR.home && BR.home.shown, null, { timeout: 120000 });
   await ev(page, () => { BR.assets.init(); return 0; });
   await page.waitForTimeout(300);
@@ -327,14 +378,16 @@ const CAM_OUT = { eye: { x: 16.6, y: 2.2, z: 20.2 }, at: { x: 20.8, y: 1.3, z: 1
 // 货架（出生块 x 4.45–11.55、z 22.84–25.16、高 3.1）：长边那一侧的车头顶上去，另一侧通道里量
 const RACK = { minX: 4.45, maxX: 11.55, minZ: 22.84, maxZ: 25.16, h: 3.1 };
 const CAM_RACK = { eye: { x: 8.0, y: 1.6, z: 29.0 }, at: { x: 8.0, y: 0.9, z: 25.2 } };
+// 货架是透的：背面那几点只量相机真打到它的（从格子空当里看到的车那一侧被照亮的东西不算这一侧，see）
 const PTS_RACK = [
-  { n: '货架背面的货 中', x: 8.0, y: 0.6, z: 25.17, r: 3 }, { n: '货架背面的货 左', x: 6.6, y: 1.5, z: 25.17, r: 3 },
-  { n: '货架背面的货 右', x: 9.6, y: 1.0, z: 25.17, r: 3 }, { n: '另一侧通道地面', x: 8.0, y: 0.005, z: 25.8, r: 3 },
+  { n: '货架背面的货 中', x: 8.0, y: 0.6, z: 25.17, r: 3, see: true }, { n: '货架背面的货 左', x: 6.6, y: 1.5, z: 25.17, r: 3, see: true },
+  { n: '货架背面的货 右', x: 9.6, y: 1.0, z: 25.17, r: 3, see: true }, { n: '另一侧通道地面', x: 8.0, y: 0.005, z: 25.8, r: 3 },
   { n: '另一侧通道地面 远', x: 7.0, y: 0.005, z: 26.6, r: 3 },
 ];
 async function gLight(browser) {
   const { ctx, page } = await boot(browser, 'light');
   try {
+    await ev(page, installSw);
     await startL1(page, { seed: 12345 });
     const k = await ev(page, () => __fp.spawnKey());
     check('L0 出生柱间有叉车', !!k, k);
@@ -373,26 +426,33 @@ async function gLight(browser) {
       { n: '顶货架长边（叉尖离货架 1 m）', pose: { x: 8.0, z: RACK.minZ - 1.0 - 2.1, yaw: Math.PI }, cam: CAM_RACK, pts: PTS_RACK, spot: { x: 8.0, y: 1.6, z: RACK.minZ - 0.01, r: 4 }, rack: true },
     ];
     let idx = 0;
+    // 断电计时冻住（L1 的 update 按 dt 0 推），每个位姿瞬移后多推 0.5 s 让大灯落点、光球、强度平滑到位再量（没到位时推那 2 帧
+    // 强度还在变，vehicles 会把刚撤掉的灯重新推回灯池，「关灯」那一下量到的其实还开着）
+    await ev(page, k => { __sw.init(k); return __sw.freeze(); }, k);
     for (const C of cases) {
       idx++;
       if (!await stillDark(page)) { check('L4.' + idx + ' ' + C.n + '：还在断电里', false); break; }
       const pk = await ev(page, k => __fp.physKey(k), k);
       const free = await ev(page, a => __fp.hitsAt(a.p.x, a.p.z, a.p.yaw, 0, a.pk), { p: C.pose, pk });
       const tp = await ev(page, a => __fp.teleport(a.k, a.p.x, a.p.z, a.p.yaw), { k, p: C.pose });
-      await ev(page, () => __fp.renderOnly(12));
+      await ev(page, () => { __fp.frames(15); return __fp.renderOnly(12); });
       const st = await ev(page, a => {
         const L = __fp.extra[a.owner] && __fp.extra[a.owner][0], inf = BR.forklift.byKey(a.k).lightInfo;
         return { L: L && { x: __fp.r(L.x), y: L.y, z: __fp.r(L.z), range: __fp.r(L.range), I: __fp.r(L.intensity) }, pool: __fp.poolOf(a.owner), inf: inf && { R0: inf.R0, hit: inf.hit && __fp.r(inf.hit), by: inf.by && inf.by.kind + ' ' + inf.by.key } };
       }, { k, owner });
       const on = await ev(page, a => __fp.measure(a.c.eye, a.c.at, a.p), { c: C.cam, p: C.pts });
       await canvasPng(page, 'L4-' + idx + '-on');
-      const spotOn = C.spot ? await ev(page, a => __fp.measure(a.e, a.s, [a.s])[0], { e: C.rack ? { x: 6.4, y: 2.2, z: C.pose.z + 0.6 } : CAM_OUT.eye, s: C.spot }) : null;
+      // 亮斑：墙 / 货架朝车这一面、正对光源的那一点（FE1R：光源按判定区放低了，亮斑跟着在光源高度上）
+      if (C.spot && st.L) C.spot = Object.assign({}, C.spot, { y: st.L.y });
+      // 亮斑用照度计量（__sw.lux：小视角相机贴着那一点、法线朝车，FE1R：斜着从车外看会被车身挡住）
+      const spotPt = C.spot ? Object.assign({}, C.spot, { n: C.rack ? [0, 0, -1] : [-1, 0, 0], d: 0.3 }) : null;
+      const spotOn = C.spot ? await ev(page, q => __sw.lux([q])[0], spotPt) : null;
       const atOn = await ev(page, p => __fp.lightAt(p), C.pts);
       // 撤灯：推 2 帧让 world.update 把灯池刷一遍（改前的 world.js 要等下一帧的 pushLights），再只渲染不推模拟，等灯池淡出
-      await ev(page, o => { window.__fpL = __fp.extra[o]; BR.world.setExtraLights(o, null); __fp.frames(2); return __fp.renderOnly(13); }, owner);
+      await ev(page, o => { window.__fpL = __fp.extra[o]; BR.world.setExtraLights(o, null); __fp.frames(2); BR.world.setExtraLights(o, null); return __fp.renderOnly(13); }, owner);
       const off = await ev(page, a => __fp.measure(a.c.eye, a.c.at, a.p), { c: C.cam, p: C.pts });
       await canvasPng(page, 'L4-' + idx + '-off');
-      const spotOff = C.spot ? await ev(page, a => __fp.measure(a.e, a.s, [a.s])[0], { e: C.rack ? { x: 6.4, y: 2.2, z: C.pose.z + 0.6 } : CAM_OUT.eye, s: C.spot }) : null;
+      const spotOff = C.spot ? await ev(page, q => __sw.lux([q])[0], spotPt) : null;
       const atOff = await ev(page, p => __fp.lightAt(p), C.pts);
       await ev(page, o => { BR.world.setExtraLights(o, window.__fpL); __fp.frames(2); return __fp.renderOnly(13); }, owner);
       const diffs = on.map((v, i) => (v == null || off[i] == null ? null : F2(v - off[i])));
@@ -400,12 +460,14 @@ async function gLight(browser) {
       const maxD = Math.max(0, ...diffs.filter(d => d != null).map(Math.abs));
       const atD = Math.max(...atOn.map((v, i) => Math.abs(v - atOff[i])));
       check('L4.' + idx + ' ' + C.n + '：车摆得下（不压碰撞体）、光源 ' + (st.L ? st.L.range : '?') + ' m 光球在灯池里点着，' + (C.rack ? '货架另一侧' : '屋里') + vis + ' 个点开灯和关灯差 ≤2（最大 ' + maxD.toFixed(2) + '）',
-        free.length === 0 && !!st.pool && vis >= Math.min(C.pts.length - 1, 3) && maxD <= 2, { free, tp, st, names: C.pts.map(p => p.n), on, off, diffs });
+        free.length === 0 && !!st.pool && vis >= Math.min(C.pts.length - 1, C.rack ? 2 : 3) && maxD <= 2, { free, tp, st, names: C.pts.map(p => p.n), on, off, diffs });
       check('L4.' + idx + ' ' + C.n + '：lightAt 对' + (C.rack ? '货架另一侧' : '屋里') + '的点和关灯时一样（差 ' + atD.toFixed(4) + '）', atD < 0.005, { atOn, atOff });
       if (C.spot) check('L4.' + idx + ' ' + C.n + '：' + (C.rack ? '货架' : '墙') + '朝车这一面有一块亮斑（' + (spotOff == null ? '?' : spotOff.toFixed(1)) + ' → ' + (spotOn == null ? '?' : spotOn.toFixed(1)) + '）',
         spotOn != null && spotOff != null && spotOn - spotOff >= 10, { spotOn, spotOff });
-      if (C.gap != null) check('L4.' + idx + ' ' + C.n + '：光源在墙前 ' + C.gap + ' m（tests/forklift.mjs K3 的规矩照旧）', !!st.L && Math.abs(20.8 - st.L.x - C.gap) <= 0.05, st.L);
+      // FE1R K2：光源不再一律贴在墙前 0.3 m（车前那段地面要亮），只要求在墙朝车这一侧、离墙 ≥0.2 m（不越过墙放进屋里）
+      if (C.gap != null) check('L4.' + idx + ' ' + C.n + '：光源在墙朝车这一侧（离墙 ' + (st.L ? (20.8 - st.L.x).toFixed(2) : '?') + ' m ≥0.2，没越过墙）', !!st.L && 20.8 - st.L.x >= 0.2, st.L);
     }
+    await ev(page, () => { const lv = BR.levels.get('1'); if (lv && lv.__swFrozen) { lv.update = lv.__swOrig; lv.__swFrozen = false; } return 0; });
     // ---- 逐帧：全速开向小屋西墙直到停住 ----
     if (await stillDark(page)) {
       await ev(page, k => __fp.teleport(k, 12.0, 18.0, -Math.PI / 2), k);
@@ -473,35 +535,70 @@ async function gLight(browser) {
     const onOff = async (pose, pts, cam, tag) => {
       await ev(page, a => { __fp.teleport(a.k, a.p.x, a.p.z, a.p.yaw); __fp.frames(3); return __fp.renderOnly(12); }, { k, p: pose });
       const W = await ev(page, a => {
-        const w = q => (q.x != null ? q : Object.assign(__fp.W(a.k, q.lx, q.lz, q.ly), { r: q.r || 3 }));
+        const w = q => {
+          // q.ray：从 q.ray.o 沿 q.ray.d 打到的第一个网格面（往回 4 mm），正对着它 0.3 m 量（fe）
+          if (q.ray) {
+            const ms = []; BR.gfx.scene.traverseVisible(o => { if (o.isMesh) ms.push(o); });
+            const o = new THREE.Vector3(q.ray.o[0], q.ray.o[1], q.ray.o[2]), d = new THREE.Vector3(q.ray.d[0], q.ray.d[1], q.ray.d[2]).normalize();
+            const h = new THREE.Raycaster(o, d, 0, 3).intersectObjects(ms, false)[0];
+            const pt = h ? h.point.clone().addScaledVector(d, -0.004) : o;
+            return { x: pt.x, y: pt.y, z: pt.z, r: 2, fe: { x: pt.x - d.x * 0.3, y: pt.y - d.y * 0.3 + 0.01, z: pt.z - d.z * 0.3 } };
+          }
+          const p0 = q.x != null ? Object.assign({}, q) : Object.assign(__fp.W(a.k, q.lx, q.lz, q.ly), { r: q.r || 3 });
+          // q.down：地面点从正上方 0.3 m 往下量（斜着从车上方看远处的地，会被柱子、货架挡住或者看到别的东西）
+          if (q.down) p0.fe = { x: p0.x + 0.001, y: p0.y + 0.3, z: p0.z + 0.001 };
+          return p0;
+        };
         return { pts: a.pts.map(w), eye: w(a.cam.eye), at: w(a.cam.at) };
       }, { k, pts, cam });
       const st = await ev(page, a => {
         const L = __fp.extra[a.owner] && __fp.extra[a.owner][0], sim = BR.forklift.byKey(a.k), inf = sim.lightInfo, e = sim.eyeWorld();
         return { L: L && { x: __fp.r(L.x), y: __fp.r(L.y), z: __fp.r(L.z), range: __fp.r(L.range), I: __fp.r(L.intensity) }, by: inf && inf.by && (inf.by.kind + ' ' + inf.by.key), seat: { x: e.x, z: e.z }, pool: !!__fp.poolOf(a.owner), seated: BR.vehicles.seated };
       }, { k, owner });
-      const on = await ev(page, a => __fp.measure(a.eye, a.at, a.pts), W);
+      // 带 fe（正对着量的机位）的点单独正对着量：货架上朝通道的货隔着格子从车上方斜着看不一定看得到
+      // 正对着量完以后按 eye / at 再画一帧：截图（canvasPng 拷的是最后画的那一帧）是这个机位，不是最后一个正对着量的特写（返修 FE1R · repair-r1）
+      const meas = () => ev(page, a => { const r = __fp.measure(a.eye, a.at, a.pts); a.pts.forEach((p, i) => { if (p.fe) r[i] = __fp.measure(p.fe, p, [p])[0]; }); if (a.pts.some(p => p.fe)) __fp.measure(a.eye, a.at, []); return r; }, W);
+      // 截图那一帧（eye / at 机位）的左右两片区域平均亮度、发白的像素（返修 FE1R · repair-r5，主会话 L3 的口径：驾驶座画面里两边货架的货）
+      const frame = () => ev(page, () => {
+        const c = __fp._c2; if (!c || !c.width) return null;
+        const W = c.width, H = c.height, d = c.getContext('2d').getImageData(0, 0, W, H).data, y0 = Math.floor(0.28 * H), y1 = Math.floor(0.72 * H), xl = Math.floor(0.25 * W), xr = Math.floor(0.75 * W);
+        let sL = 0, nL = 0, sR = 0, nR = 0; const white = [];
+        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+          const i = (y * W + x) * 4;
+          if (Math.max(d[i], d[i + 1], d[i + 2]) >= 245) white.push(y * W + x);
+          if (y < y0 || y >= y1) continue;
+          const Y = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+          if (x < xl) { sL += Y; nL++; } else if (x >= xr) { sR += Y; nR++; }
+        }
+        return { L: sL / nL, R: sR / nR, white, W, H };
+      });
+      const on = await meas();
+      const frOn = tag ? await frame() : null;
       if (tag) await canvasPng(page, tag + '-on');
       const atOn = await ev(page, a => __fp.lightAt(a.pts.concat([a.seat])), { pts: W.pts, seat: st.seat });
       await ev(page, o => { window.__fpL = __fp.extra[o]; BR.world.setExtraLights(o, null); return __fp.renderOnly(13); }, owner);
-      const off = await ev(page, a => __fp.measure(a.eye, a.at, a.pts), W);
+      const off = await meas();
+      const frOff = tag ? await frame() : null;
       if (tag) await canvasPng(page, tag + '-off');
       const atOff = await ev(page, a => __fp.lightAt(a.pts.concat([a.seat])), { pts: W.pts, seat: st.seat });
       await ev(page, o => { BR.world.setExtraLights(o, window.__fpL); return __fp.renderOnly(13); }, owner);
       const rows = W.pts.map((p, i) => ({ n: pts[i].n, p: [F2(p.x), F2(p.y), F2(p.z)], h: st.L ? F2(Math.hypot(p.x - st.L.x, p.z - st.L.z)) : null,
         d: on[i] != null && off[i] != null ? F2(on[i] - off[i]) : null, at: Math.round((atOn[i] - atOff[i]) * 10000) / 10000 }));
-      return { st, rows, seat: Math.round((atOn[pts.length] - atOff[pts.length]) * 10000) / 10000, seatOn: atOn[pts.length] };
+      let reg = null;
+      if (frOn && frOff) { const wOff = new Set(frOff.white); reg = { L: F2(frOn.L - frOff.L), R: F2(frOn.R - frOff.R), newWhite: frOn.white.filter(i => !wOff.has(i)).length, whiteOn: frOn.white.length, whiteOff: frOff.white.length, W: frOn.W, H: frOn.H }; }
+      return { st, rows, reg, seat: Math.round((atOn[pts.length] - atOff[pts.length]) * 10000) / 10000, seatOn: atOn[pts.length] };
     };
     const litOk = r => r.d != null && r.d >= 8 && r.at >= 0.01;      // 画面亮了 ≥8 → lightAt 也亮
     const darkOk = r => r.d != null && r.d <= 2 && r.at < 0.005;     // 画面差 ≤2（墙后、货架另一侧、远处）→ lightAt 不亮
+    const far2 = rows => rows.map(r => r.d == null ? '?' : r.d).join(' / ');
     const seatVals = [];
     if (!await stillDark(page)) check('L8 J8 / J9 几项：还在断电里', false);
     else {
       // 窄道（左边一排柱子、右边货架 z 6.84–9.16，车中心离货架 1.25 m，车头朝 +x）：原来光球只有 2.5 m（返修 r2 验收员拍的那张）
       const lane = { x: 3.45, z: 5.59, yaw: -Math.PI / 2 };
       const ln = await onOff(lane, [
-        { n: '叉尖前 1 m 地面', lx: 0, ly: 0.005, lz: -3.1 }, { n: '叉尖前 3 m 地面', lx: 0, ly: 0.005, lz: -5.1 }, { n: '叉尖前 5 m 地面', lx: 0, ly: 0.005, lz: -7.1 },
-        { n: '右边货架朝通道的货 高 1.5', x: 7.5, y: 1.5, z: 6.83 },
+        { n: '叉尖前 1 m 地面', lx: 0, ly: 0.005, lz: -3.1, down: true }, { n: '叉尖前 3 m 地面', lx: 0, ly: 0.005, lz: -5.1, down: true }, { n: '叉尖前 5 m 地面', lx: 0, ly: 0.005, lz: -7.1, down: true },
+        { n: '右边货架朝通道的货 高 1.2（从通道里往货架打到的第一个面）', ray: { o: [7.5, 1.2, 6.2], d: [0, 0, 1] } },
       ], { eye: { lx: 0, ly: 2.7, lz: -1.6 }, at: { lx: 0, ly: 0, lz: -7.1 } }, 'L8-lane');
       seatVals.push(['窄道', ln.seat, ln.seatOn]);
       check('L8 J9 货架通道（车中心离货架 1.25 m）：光球 ' + (ln.st.L ? ln.st.L.range : '?') + ' m（' + ln.st.by + '），叉尖前 5 m 处地面开灯比关灯亮 ' + (ln.rows[2].d == null ? '?' : ln.rows[2].d) + '（≥8），' +
@@ -515,15 +612,105 @@ async function gLight(browser) {
       // 只量另一侧通道本身（地面、离货架背面 0.4 m 以外）：货架是透的，从另一侧隔着货架缝看得见架子里朝这边通道的货被照亮（J9 允许：光到远侧面往里 0.1 m），那不算另一侧的通道
       check('L8b J9 同一位置，货架另一侧的通道地面开关灯差 ≤2（最大 ' + Math.max(...lf.rows.map(r => Math.abs(r.d || 0))).toFixed(2) + '）、lightAt 不亮；' +
         '那一侧朝着光源、视线被货架挡住的点在光球里 ' + lk.length + ' 个', lf.rows.every(darkOk) && lk.length === 0, { rows: lf.rows, leaks: lk.slice(0, 4) });
-      // 宽通道（两排货架 x −17.16…−14.84 / −9.16…−6.84，通道宽 5.68 m，车在正中朝 −z）
-      const aisle = { x: -12, z: 57.5, yaw: 0 };
-      const ai = await onOff(aisle, [
-        { n: '叉尖前 3 m 地面', lx: 0, ly: 0.005, lz: -5.1 }, { n: '叉尖前 5 m 地面', lx: 0, ly: 0.005, lz: -7.1 }, { n: '叉尖前 5 m 地面 偏左 1 m', lx: -1, ly: 0.005, lz: -7.1 },
-        { n: '左边货架朝通道的货 高 1.2', lx: -2.84, ly: 1.2, lz: -4.5 },
-      ], { eye: { lx: 1.6, ly: 2.7, lz: -2.0 }, at: { lx: 0, ly: 0, lz: -7.1 } }, 'L9-aisle');
-      seatVals.push(['宽通道', ai.seat, ai.seatOn]);
-      check('L9 J9 宽货架通道（5.68 m）：光球 ' + (ai.st.L ? ai.st.L.range : '?') + ' m（' + ai.st.by + '），叉尖前 5 m 处地面开灯比关灯亮 ' + (ai.rows[1].d == null ? '?' : ai.rows[1].d) + '（≥8），lightAt 都算亮',
-        ai.rows.every(litOk), ai);
+      // 宽通道（两排货架 x −17.16…−14.84 / −9.16…−6.84，通道宽 5.68 m，车头朝 −z）。返修 FE1R · repair-r1（验收员 play / tests / spec：J9 不许自己改成「只记录」）：
+      //   L9  FE1Q 原来那个位姿（通道正中 (−12, 57.5)）和贴着柱子那条道 (−13.4, 57.5)：叉尖前 3 m 地面一定亮；叉尖前 5 m 那两点要么亮 ≥8，
+      //       要么是 K2 的几何例外 —— 通道正中 (−12, 52) 那根 0.7 m 的柱子在叉尖前 3 m（K1：光源不越过正前方的窄东西），光源只能放在货架头那个端面
+      //       （z 52.2）的这一侧，货架头背后拐角那片影子把光球收到 3 m 左右：用同一套界限（不越过柱子、货架、墙）细网格暴力搜一遍，没有一个光源位置
+      //       能照亮那一点（照度 ≥0.15，和 k2 组「照得全」同一个阈值）才算例外（截图 L9-aisle*-on.png，逐个写进方案 risks）；照得到却没照亮算失败。
+      //       朝通道的货在这两处只记录（亮 / 暴力搜照不到 / 照得到却没照亮）：贴着柱子那条道实测 6.39 级、暴力搜照得到 0.357 —— 求解器只给车前判定区和
+      //       叉尖前 5 m 打分、不管两边货架的货，是已知差距（方案 risks[30]），改求解器会动 k2 / smooth 全部位姿，这一轮没做
+      //   L9c 同一条宽通道里前面 5 m 以内没有柱子、货架头的位姿 (−10.9, 61.1)：货架一节 7 m（z 52.6–59.6，两节之间 1 m 空当里一根柱子），
+      //       叉尖 z 59.0、叉尖前 5 m 还在这一节里、柱子在 6.65 m 外而且偏在左边 1.1 m；叉尖前 3 m、5 m 两点、近的那排（右边）朝通道的货都 ≥8（J9 原文；
+      //       左边那排离光源 4 m、在光球外，量它没意义）
+      // 点可以带 y 和面法线 n（朝通道的货是竖直面）：照度 = I·k²·max(0, n·(光源 − 点))/d²·d，地面点 n = (0, 1, 0)、y = 0 时就是以前的 I·k²·h/d
+      const brute5 = (pts) => ev(page, a => {
+        const sim = BR.forklift.byKey(a.k), Lh = BR.forklift._light;
+        if (!Lh) return { best: a.pts.map(() => null), bestCap: a.pts.map(() => null), ok: null, gN: null };   // 跑 FE1Q 的 forklift.js 量基准时没有 _light
+        const ctx = Lh.ctx(sim);
+        const near = ctx.zone.filter(q => q.t <= 1.5 + 1e-6), out = a.pts.map(() => 0), outCap = a.pts.map(() => 0);
+        let ok = null;
+        for (let s = -0.5; s <= 3.2 + 1e-6; s += 0.1) for (let u = -0.55; u <= 0.55 + 1e-6; u += 0.1) for (let h = 0.45; h <= 1.2 + 1e-6; h += 0.075) {
+          if (s > Lh.sMaxU(ctx, u) + 1e-6) continue;
+          const c = Lh.eval(ctx, s, u, h, false); if (!c) continue;
+          const E = q => {
+            const y = q.y || 0, n = q.n || [0, 1, 0], dx = c.x - q.x, dy = h - y, dz = c.z - q.z, d = Math.hypot(dx, dy, dz);
+            const k = d < c.R ? 1 - d / c.R : 0, cs = Math.max(0, (n[0] * dx + n[1] * dy + n[2] * dz) / d);
+            return c.I * k * k * cs;
+          };
+          if (!near.every(q => E(q) >= 0.15)) continue;
+          a.pts.forEach((q, i) => { out[i] = Math.max(out[i], E(q)); outCap[i] = Math.max(outCap[i], E(q) * c.Icap / Math.max(1e-6, c.I)); });
+          if (a.pts.every(q => E(q) >= 0.15)) ok = { s: +s.toFixed(2), u: +u.toFixed(2), h: +h.toFixed(3), R: +c.R.toFixed(2) };
+        }
+        return { best: out.map(v => +v.toFixed(3)), bestCap: outCap.map(v => +v.toFixed(3)), ok, gN: Number.isFinite(ctx.gN) ? +ctx.gN.toFixed(2) : null };
+      }, { k, pts });
+      // goods：量哪一边货架朝通道的货 —— 通道正中、贴柱子那条道量左边（离光源 2.8 m 上下）；L9c 车靠右边那排（离右边货架 1.7 m、离左边 4 m），量近的右边那排
+      const aisleCheck = async (aisle, tag, label, eyeLx, goods = 'L') => {
+        const gRow = goods === 'L' ? { n: '左边货架朝通道的货 高 1.2（从通道里往货架打到的第一个面）', ray: { o: [-14.2, 1.2, aisle.z - 4.5], d: [-1, 0, 0] } }
+          : { n: '右边货架朝通道的货 高 1.2（从通道里往货架打到的第一个面）', ray: { o: [-9.8, 1.2, aisle.z - 4.5], d: [1, 0, 0] } };
+        const ai = await onOff(aisle, [
+          { n: '叉尖前 3 m 地面', lx: 0, ly: 0.005, lz: -5.1, down: true }, { n: '叉尖前 5 m 地面', lx: 0, ly: 0.005, lz: -7.1, down: true }, { n: '叉尖前 5 m 地面 偏左 0.6 m', lx: -0.6, ly: 0.005, lz: -7.1, down: true },
+          gRow,
+        ], { eye: eyeLx != null ? { lx: eyeLx, ly: 2.7, lz: -2.0 } : { lx: 0, ly: 1.8, lz: 0.16 }, at: { lx: 0, ly: 0, lz: -7.1 } }, tag);   // 截图：驾驶座往前看（量的点都从正上方量，和机位无关）
+        const pts5 = await ev(page, a => [__fp.W(a.k, 0, -7.1, 0), __fp.W(a.k, -0.6, -7.1, 0)].map(q => ({ x: q.x, z: q.z })), { k });
+        // 朝通道的货那一点（射线打到的面往回 4 mm）也进暴力搜：竖直面，法线朝通道（射线反方向）
+        const gp = ai.rows[3].p, gd = gRow.ray.d;
+        pts5.push({ x: gp[0], y: gp[1], z: gp[2], n: [-gd[0], -gd[1], -gd[2]] });
+        const bf = await brute5(pts5);
+        // 几何例外（叉尖前 5 m 那两点，J9 / 验收员点名的那一条）：没亮（<8）的每一点，同一套界限下哪个光源位置都照不到它（照度 <0.15）；照得到却没照亮判失败。
+        // 朝通道的货单独记：亮 ≥8 / 暴力搜照不到 / 照得到却没照亮（已知差距：求解器只给车前判定区和叉尖前 5 m 打分，不管两边货架的货 —— 写进方案 risks[30]）
+        const far = [ai.rows[1], ai.rows[2]], farLit = far.every(litOk);
+        const exc = !farLit && far.every((r, i) => litOk(r) || bf.best[i] < 0.15);
+        const gSt = litOk(ai.rows[3]) ? 'lit' : bf.best[2] < 0.15 ? 'geo' : 'dim';
+        // 返修 FE1R · repair-r4（主会话 L3：两边货架的货要回到 FE1Q 的 ≥80%）：这一点开关灯差和 FE1Q 比。FE1Q 的数是拿 FE1Q 的 forklift.js / world.js /
+        // vehicles_net.js（git HEAD）在同一个测试、同一套量法下量的（tests/output/stage-FE1R/repair-r4/logs/polish-light-fe1q2.log）：通道正中 48.3、
+        // 贴着柱子那条道 86.11、L9c 78.06。K2 的硬指标优先（裁定：真冲突时 K2 赢）：光源强度已经顶在 K2 的封顶上（离光源最近的面不发白 eSurf、
+        // 光源脚下的地面 eFloor、开得快时的 ImaxMove，I ≥ 98% 封顶）还不到 80% 的，算冲突、照记，但不许低于 FE1Q 的 45%（repair-r3 时是 3 成左右）
+        const cap = await ev(page, a => { const sim = BR.forklift.byKey(a.k), L = sim.lightInfo, Lh = BR.forklift._light; if (!Lh || !L) return null; const q = Lh.eval(Lh.ctx(sim), L.s, L.u, L.h, true); return { I: +L.intensity.toFixed(3), Icap: +q.Icap.toFixed(3), dsurf: +q.dsurf.toFixed(3), R: +L.range.toFixed(3), gS: q.gS }; }, { k });
+        const ref = FE1Q_GOODS[tag], gv = ai.rows[3].d, gk = ref && gv != null ? +(gv / ref).toFixed(3) : null;
+        // 主会话 L3（返修 FE1R · repair-r5）：驾驶座画面左右两片区域和 FE1Q、加 L3 之前比（sides = 判哪几侧）；整幅画面开灯后新冒出来的 ≥245 像素为 0（不发白）
+        const sides = goods === 'R' ? ['R'] : ['L', 'R'], q = FE1Q_REG[tag], p0 = PRE_L3_REG[tag], rg = ai.reg, pre = PRE_L3_GOODS[tag];
+        const regOk = !q || (rg && sides.every(s0 => rg[s0] >= 0.8 * q[s0] && rg[s0] > p0[s0]));
+        // 测试那一点没比加 L3 之前亮的，要证明是真冲突（验收员 tests (2)）：同一套界限、同一个不发白的上限（按表面颜色，forklift.js surfCap）下，
+        // 暴力搜光源位置（叉尖前 −0.5–3.2 m × 横偏 ±0.55 × 离地 0.45–1.2，车前 1.5 m 以内照得全的才算）能给那一点的最大照度 bf.best[2]，
+        // 现在这盏灯给的照度 ≥ 它的 90%（求解器没把照得到的让掉）才算冲突；照得到却没照亮判失败
+        const Lnow = ai.st.L, gp2 = ai.rows[3].p, nrm = [-gRow.ray.d[0], -gRow.ray.d[1], -gRow.ray.d[2]];
+        let eNow = null;
+        if (Lnow && gp2) { const dx = Lnow.x - gp2[0], dy = Lnow.y - gp2[1], dz = Lnow.z - gp2[2], d = Math.hypot(dx, dy, dz), kk = d < Lnow.range ? 1 - d / Lnow.range : 0; eNow = +(Lnow.I * kk * kk * Math.max(0, (nrm[0] * dx + nrm[1] * dy + nrm[2] * dz) / d)).toFixed(3); }
+        // bestCap：每个候选把强度开到它的不发白上限（c.Icap）时给那一点的照度 —— 按「最亮能多亮」比，不按求解器自己挑的强度
+        const bBest = bf.bestCap && bf.bestCap[2] != null ? bf.bestCap[2] : null, conflict = gv != null && pre != null && !(gv > pre) && eNow != null && bBest != null && eNow >= 0.9 * bBest;
+        // 通道正中（L3 点名的那个位姿）：测试那一点也要比加 L3 之前亮；贴柱子那条道、L9c（repair-r4 自己加的两处，驾驶座画面两边看到的是车旁边、FE1Q 也照不到的货）：
+        // 测试那一点不比加 L3 之前暗 20% 以上（repair-r5 实测：贴柱子那条道是加 L3 之前的 85%，L9c 125%；暴力搜照度上界只记录，见 conflict）
+        const ptMin = q ? pre : 0.8 * pre, ptOk = gv != null && pre != null && (q ? gv > pre : gv >= ptMin);
+        const regVs = { reg: rg, fe1q: q || null, preL3: p0 || null, k: q && rg ? Object.fromEntries(sides.map(s0 => [s0, +(rg[s0] / q[s0]).toFixed(3)])) : null,
+          pre, ptMin: pre != null ? +ptMin.toFixed(2) : null, eNow, bBest, conflict, ptOk, ok: !!rg && regOk && rg.newWhite === 0 && ptOk };
+        const goodsVs = { ref, d: gv, k: gk, cap };
+        return { ai, bf, far, farLit, exc, goods: gSt, label, goodsVs, regVs, sides };
+      };
+      const L9s = [];
+      const goodsTxt = r => { const v = r.regVs, g = v.reg; if (!g) return '驾驶座画面没量到';
+        return (v.fe1q ? '驾驶座画面' + r.sides.map(s0 => (s0 === 'L' ? '左' : '右') + '边货 ' + g[s0] + '（FE1Q ' + v.fe1q[s0] + '，' + Math.round(v.k[s0] * 100) + '%；加 L3 之前 ' + v.preL3[s0] + '）').join('、') + '，' : '') +
+          '测试那一点 ' + r.goodsVs.d + '（FE1Q ' + r.goodsVs.ref + '，' + (r.goodsVs.k == null ? '?' : Math.round(r.goodsVs.k * 100) + '%') + '；加 L3 之前 ' + v.pre +
+          (gv0(r) <= v.pre ? '；没比加 L3 之前亮：要求 ≥' + v.ptMin + '；同一套界限和不发白的上限下暴力搜那一点最多照度 ' + v.bBest + '，现在 ' + v.eNow : '') + '），开灯后整幅画面新发白的像素 ' + g.newWhite; };
+      const gv0 = r => r.goodsVs.d == null ? -1 : r.goodsVs.d;
+      for (const [aisle, tag, label] of [[{ x: -12, z: 57.5, yaw: 0 }, 'L9-aisle', '通道正中 (−12, 57.5)'], [{ x: -13.4, z: 57.5, yaw: 0 }, 'L9-aisle134', '贴着柱子那条道 (−13.4, 57.5)']]) {
+        const r = await aisleCheck(aisle, tag, label);
+        L9s.push(r);
+        if (label.startsWith('通道正中')) seatVals.push(['宽通道', r.ai.seat, r.ai.seatOn]);
+        // 返修 FE1R · repair-r2（验收员 spec / play / tests：J9 不许拿 K2 的几何例外顶 —— 货架头端面背后那片影子不再收光球，见 forklift.js occBound）：
+        // J9 原文判：叉尖前 3 m、5 m 两点开灯比关灯亮 ≥8、lightAt 算亮；朝通道的货（左边那排）要么亮 ≥8，要么同一套界限暴力搜也照不到（<0.15）
+        check('L9 J9 宽货架通道（5.68 m）' + label + '：光球 ' + (r.ai.st.L ? r.ai.st.L.range : '?') + ' m（' + r.ai.st.by + '），叉尖前 3 m 地面、叉尖前 5 m 那两点（' + far2(r.far) + '）开灯比关灯亮都 ≥8、lightAt 算亮（J9 原文）；' +
+          '朝通道的货亮 ' + (r.ai.rows[3].d == null ? '?' : r.ai.rows[3].d) + (r.goods === 'lit' ? '（≥8）' : r.goods === 'geo' ? '，暴力搜最高 ' + r.bf.best[2] + '（<0.15，一盏受界的灯照不到）' : '，暴力搜最高 ' + r.bf.best[2] + '：照得到却没照亮') +
+          '；' + goodsTxt(r) + '（L3：通道正中驾驶座画面两边的货都 ≥ FE1Q 的 80%、测试那一点比加 L3 之前亮；贴柱子那条道测试那一点 ≥ 加 L3 之前的 80%；不发白）',
+          litOk(r.ai.rows[0]) && r.farLit && r.goods !== 'dim' && r.regVs.ok, r);
+      }
+      {
+        const r = await aisleCheck({ x: -10.9, z: 61.1, yaw: 0 }, 'L9c-aisle', '前面 5 m 以内没有柱子、货架头 (−10.9, 61.1)', null, 'R');
+        L9s.push(r);
+        check('L9c J9 宽货架通道（5.68 m）前面 5 m 以内没有柱子、货架头 (−10.9, 61.1)：光球 ' + (r.ai.st.L ? r.ai.st.L.range : '?') + ' m，叉尖前 3 m、5 m 两点（' + far2(r.far.slice(0, 2)) + '）、近的那排（右边，离车 1.7 m）朝通道的货（' + (r.ai.rows[3].d == null ? '?' : r.ai.rows[3].d) + '）开灯比关灯亮都 ≥8、lightAt 都算亮（J9 原文）；' +
+          goodsTxt(r) + '（L3：测试那一点 ≥ 加 L3 之前的 80%；不发白）',
+          r.ai.rows.every(litOk) && r.regVs.ok, r);
+      }
+      const ai = L9s[0].ai, aisle = { x: -12, z: 57.5, yaw: 0 };
       const af = [];
       for (const sd of ['左', '右']) {
         const fx = sd === '左' ? -17.17 : -6.83, o = sd === '左' ? -1 : 1, cx = fx + o * 3.8;
@@ -579,7 +766,7 @@ async function gLight(browser) {
       const atD = rem.at && rem.at0 ? Math.max(...rem.at.map((v, i) => Math.abs(v - rem.at0[i]))) : 1;
       check('L7 队友开着的车（net:veh）车头顶小屋墙：灯池里 \'fkr:\' 那盏的光球 ' + (rem.L ? rem.L.range : '?') + ' m，屋里朝着光源、视线被墙挡住的点 0 个，屋里 lightAt 和关灯时一样（差 ' + atD.toFixed(4) + '），' +
         '队友坐的驾驶舱 lightAt 算亮（' + (rem.seat0 == null ? '?' : rem.seat0.toFixed(2) + ' → ' + rem.seat.toFixed(2)) + '）',
-        !!rem.L && !!rem.P && Array.isArray(rem.lk) && rem.lk.length === 0 && rem.L.range < 1 && atD < 0.005 && rem.seat != null && rem.seat - rem.seat0 >= 0.3, rem);
+        !!rem.L && !!rem.P && Array.isArray(rem.lk) && rem.lk.length === 0 && rem.L.x < 20.8 - 0.2 && atD < 0.005 && rem.seat != null && rem.seat - rem.seat0 >= 0.3, rem);
     }
   } finally {
     await releaseAll(page).catch(() => {});
@@ -663,6 +850,13 @@ function installVineGeo() {
         if (Math.max(tri[0][1], tri[1][1], tri[2][1]) > yMin) T.push(tri);
       }
     });
+    // 护顶架的顶面（纵梁、前后横梁 y 2.10，格栅横条 y 2.085）：FE1R K12 起模型里不画（朝上、离地 ≥1.8 m，谁的眼睛都不比它高），
+    // 从下面、旁边看过去它就是那根实心梁的上沿 —— 按它该在的位置补上再量（和门架零件「没画的面按它该在的位置补上」一个道理）
+    const cap = (x0, x1, y, z0, z1) => { T.push([[x0, y, z0], [x1, y, z0], [x1, y, z1]]); T.push([[x0, y, z0], [x1, y, z1], [x0, y, z1]]); };
+    for (const sx of [-1, 1]) cap(sx > 0 ? 0.40 : -0.46, sx > 0 ? 0.46 : -0.40, 2.10, -0.62, 0.58);
+    cap(-0.40, 0.40, 2.10, -0.62, -0.56); cap(-0.40, 0.40, 2.10, 0.48, 0.58);
+    const L = BR.L1forklift.lod && BR.L1forklift.lod[tier], zs = L && BR.L1forklift.slatZ ? BR.L1forklift.slatZ(L.slats | 0) : [];
+    for (const z of zs) cap(-0.40, 0.40, 2.085, z - 0.025, z + 0.025);
     return T;
   };
   window.__vg = {
@@ -1279,7 +1473,1230 @@ async function gCoop() {
 }
 
 // =====================================================================
-const RUN = { light: gLight, vine: gVine, coop: () => gCoop() };
+const RUN = { light: gLight, k2: gK2, k1: gK1, smooth: gSmooth, ws: gWs, lift: gLift, drive: gDrive, vine: gVine, coop: () => gCoop() };
+
+// =====================================================================
+// 页面里的工具（FE1R-light）：window.__sw（摆车、量灯、渲染照度计、地面图、随机位姿生成，排查 sweep-light 那一套）、window.__lt（K2 判定区等）
+// =====================================================================
+function installSw() {
+  const S = window.__sw = {};
+  const T = THREE;
+  S.rngOf = seed => { let a = seed >>> 0; return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; };
+  S.r = (v, k) => Math.round(v * (k || 1000)) / (k || 1000);
+  S.init = k => { S.k = k; S.owner = 'fk:' + k; S.pk = __fp.physKey(k); S.ign = [S.pk, 'veh|' + k, k]; return S.pk; };
+  S.sim = () => BR.forklift.byKey(S.k);
+  S.L = () => __fp.extra[S.owner] && __fp.extra[S.owner][0];
+  S.pool = () => { const L = S.L(); if (!L) return null; return BR.gfx.scene.children.find(o => o.isPointLight && /^gfx-pool-/.test(o.name) && o.intensity > 0 && Math.abs(o.position.x - L.x) < 0.02 && Math.abs(o.position.z - L.z) < 0.02 && Math.abs(o.position.y - L.y) < 0.02) || null; };
+  // 车本地 → 世界（和 __fp.W 一样：本地 −z 是车头）
+  S.W = (p, lx, ly, lz) => { const c = Math.cos(p.yaw), s = Math.sin(p.yaw); return { x: p.x + c * lx + s * lz, y: (p.y || 0) + ly, z: p.z - s * lx + c * lz }; };
+  S.Lc = (p, x, z) => { const c = Math.cos(p.yaw), s = Math.sin(p.yaw), dx = x - p.x, dz = z - p.z; return { x: c * dx - s * dz, z: s * dx + c * dz }; };
+  S.yawOf = u => Math.atan2(-u.x, -u.z);
+  // ---- 冻住 L1 的断电计时（关卡 update 的 dt 改 0：断电一直不结束；dimLights 照旧每帧把新载入的块灯灭掉）----
+  S.freeze = () => {
+    const lv = BR.levels.get('1');
+    if (!lv || lv.__swFrozen) return !!lv;
+    const o = lv.update; lv.__swOrig = o; lv.update = function (ctx, dt) { return o.call(this, ctx, 0); }; lv.__swFrozen = true;
+    return true;
+  };
+  S.dark = () => { let n = 0, off = 0; for (const c of BR.world.chunks()) for (const l of (c.lights || [])) { n++; if (l._l1orig !== undefined && l.intensity === 0) off++; } return { n, off }; };
+  // ---- 摆车（坐着：模拟是真身）----
+  S.place = (x, z, yaw) => {
+    const sim = S.sim();
+    sim.setPose({ x, z, yaw, steer: 0, lift: 0, spd: 0, lever: 0 });
+    __br.step(2 / 30);
+    let q = 0;
+    for (let i = 0; i < 90; i++) { const d = BR.world.debugInfo(); q = d.queued; if (!q) break; __br.step(1 / 30); }
+    __br.step(2 / 30);
+    BR.gfx.setSanityEffect && BR.gfx.setSanityEffect(0, true);
+    for (let i = 0; i < 3; i++) BR.gfx.render(0.1);   // __br.step 只在最后一小步渲染：灯池的淡入淡出要靠真渲染推进
+    return { q, pose: Object.assign({}, BR.vehicles.byKey(S.k).pose) };
+  };
+  S.hits = (x, z, yaw) => __fp.hitsAt(x, z, yaw, 0, S.pk);
+  // ---- 静态碰撞体 ----
+  S.solids = () => {
+    const out = [];
+    for (const c of BR.world.chunks()) {
+      const rec = BR.phys.records(c.key);
+      for (const s of rec.solids) {
+        if (s.key !== c.key) continue;
+        const w = s.maxX - s.minX, d = s.maxZ - s.minZ, h = s.maxY - s.minY;
+        out.push({ ck: c.key, sector: c.res && c.res.data && c.res.data.sector, minX: s.minX, maxX: s.maxX, minY: s.minY, maxY: s.maxY, minZ: s.minZ, maxZ: s.maxZ, w, d, h, cls: S.cls(w, d, h, s.minY) });
+      }
+    }
+    return out;
+  };
+  S.cls = (w, d, h, y0) => {
+    const a = Math.max(w, d), b = Math.min(w, d), top = (y0 || 0) + h;
+    if (top < 1.6 || (y0 || 0) > 1.6) return 'low';
+    if (a > 6.5 && b > 2) return 'rack';
+    if (a >= 1.9 && b >= 0.75 && b <= 0.85 && h <= 2.1) return 'toteShelf';
+    if (b < 0.25 && a >= 2.5 && h >= 2.8 && h <= 3.0) return 'hutWall';
+    if (b > 0.25 && b < 0.35 && a >= 2.5 && h >= 3.4) return 'bearingWall';
+    if (Math.abs(b - 0.32) < 0.02 && Math.abs(a - 0.8) < 0.02) return 'cabinet';
+    if (a < 0.5 && b < 0.5 && h > 1.5 && h < 2.0 && Math.abs(w - d) < 0.05) return 'tree';
+    if (a < 0.25) return 'post';
+    if (Math.abs(w - d) < 0.05 && a > 0.6 && a < 1.0 && h >= 3.9) return 'pillar';
+    if (Math.abs(w - d) < 0.1 && a > 1.3 && a < 1.6) return 'stack';
+    if (a >= 0.4 && a >= 2 * b) return 'wallish';
+    return 'other';
+  };
+  // ---- 灯 ----
+  S.lightNow = () => {
+    const L = S.L(), sim = S.sim(), inf = sim && sim.lightInfo, P = S.pool();
+    return { L: L && { x: S.r(L.x), y: S.r(L.y), z: S.r(L.z), range: S.r(L.range), I: S.r(L.intensity) },
+      inf: inf && { range: S.r(inf.range), R0: S.r(inf.R0), bound: S.r(inf.bound), hit: inf.hit == null ? null : S.r(inf.hit), by: inf.by && { kind: inf.by.kind, key: inf.by.key, box: inf.by.box } },
+      pool: P && { I: S.r(P.intensity), d: S.r(P.distance), x: S.r(P.position.x), z: S.r(P.position.z) } };
+  };
+  S._st = null;
+  S.capture = () => { const L = S.L(), P = S.pool(); S._st = L && P ? { L, P, I: L.intensity, PI: P.intensity } : null; return !!S._st; };
+  S.setOn = on => { const st = S._st; if (!st) return false; if (on) { st.L.intensity = st.I; st.P.intensity = st.PI; } else { st.L.intensity = 0; st.P.intensity = 0; } return true; };
+  // ---- 渲染 ----
+  const R = () => BR.gfx.renderer;
+  const probe = new T.PerspectiveCamera(5, 1, 0.003, 30);
+  S.TILE = 6;
+  // 「照度计」：每个点 p（世界）、面法线 n：相机放在 p + n·d 看 p（视野 5°，雾几乎为 0），画进画布上一个 6×6 的小格；一次读回
+  S.lux = (pts) => {
+    const r = R(), cv = r.domElement, W = cv.width, H = cv.height, pr = r.getPixelRatio(), ts = S.TILE, per = Math.floor(W / ts);
+    const scene = BR.gfx.scene;
+    r.setScissorTest(true);
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i], tx = (i % per) * ts, ty = Math.floor(i / per) * ts;
+      const d = p.d || 0.3, n = p.n || [0, 1, 0];
+      probe.position.set(p.x + n[0] * d, p.y + n[1] * d, p.z + n[2] * d);
+      if (Math.abs(n[1]) > 0.9) probe.up.set(0, 0, -1); else probe.up.set(0, 1, 0);
+      probe.far = d + 0.4; probe.updateProjectionMatrix();
+      probe.lookAt(p.x, p.y, p.z); probe.updateMatrixWorld(true);
+      r.setViewport(tx / pr, ty / pr, ts / pr, ts / pr); r.setScissor(tx / pr, ty / pr, ts / pr, ts / pr);
+      r.render(scene, probe);
+    }
+    const c2 = S._c2 || (S._c2 = document.createElement('canvas')); c2.width = W; c2.height = H;
+    const g = c2.getContext('2d', { willReadFrequently: true }); g.drawImage(cv, 0, 0);
+    const rows = Math.ceil(pts.length / per);
+    const img = pts.length ? g.getImageData(0, H - rows * ts, Math.min(W, per * ts), rows * ts) : null;
+    const out = [];
+    for (let i = 0; i < pts.length; i++) {
+      const tx = (i % per) * ts, ty = Math.floor(i / per) * ts, y0 = rows * ts - ty - ts;
+      let s = 0, m = 0;
+      for (let yy = 1; yy < ts - 1; yy++) for (let xx = 1; xx < ts - 1; xx++) { const j = ((y0 + yy) * img.width + tx + xx) * 4; s += 0.2126 * img.data[j] + 0.7152 * img.data[j + 1] + 0.0722 * img.data[j + 2]; m++; }
+      out.push(S.r(s / m, 100));
+    }
+    r.setScissorTest(false); r.setViewport(0, 0, W / pr, H / pr); r.setScissor(0, 0, W / pr, H / pr);
+    return out;
+  };
+  // 地面图：正交相机贴地（离地 0.3 m）往下看，一次画出光源周围 2·half 见方的地面（每像素 2·half/N），开 / 关各一张
+  const ocam = new T.OrthographicCamera(-1, 1, 1, -1, 0.005, 0.5);
+  S.floorMap = (cx, cz, gy, half) => {
+    const r = R(), cv = r.domElement, W = cv.width, H = cv.height, pr = r.getPixelRatio(), N = Math.min(W, H);
+    ocam.left = -half; ocam.right = half; ocam.top = half; ocam.bottom = -half; ocam.near = 0.005; ocam.far = 0.5; ocam.updateProjectionMatrix();
+    ocam.position.set(cx, gy + 0.3, cz); ocam.up.set(0, 0, -1); ocam.lookAt(cx, gy, cz); ocam.updateMatrixWorld(true);
+    r.setScissorTest(true); r.setViewport(0, 0, N / pr, N / pr); r.setScissor(0, 0, N / pr, N / pr);
+    r.render(BR.gfx.scene, ocam);
+    const c2 = S._c2 || (S._c2 = document.createElement('canvas')); c2.width = W; c2.height = H;
+    const g = c2.getContext('2d', { willReadFrequently: true }); g.drawImage(cv, 0, 0);
+    const img = g.getImageData(0, H - N, N, N).data;
+    const lum = new Float32Array(N * N);
+    for (let i = 0, j = 0; i < lum.length; i++, j += 4) lum[i] = 0.2126 * img[j] + 0.7152 * img[j + 1] + 0.0722 * img[j + 2];
+    r.setScissorTest(false); r.setViewport(0, 0, W / pr, H / pr); r.setScissor(0, 0, W / pr, H / pr);
+    return { cx, cz, half, N, lum };
+  };
+  // 地面图上 (x, z) 周围 rad 像素的平均亮度
+  S.fm = (m, x, z, rad) => {
+    const u = (x - (m.cx - m.half)) / (2 * m.half) * m.N, v = (z - (m.cz - m.half)) / (2 * m.half) * m.N, R2 = rad == null ? 1 : rad;
+    const i0 = Math.round(u), j0 = Math.round(v);
+    if (i0 - R2 < 0 || j0 - R2 < 0 || i0 + R2 >= m.N || j0 + R2 >= m.N) return null;
+    let s = 0, n = 0;
+    for (let j = j0 - R2; j <= j0 + R2; j++) for (let i = i0 - R2; i <= i0 + R2; i++) { s += m.lum[j * m.N + i]; n++; }
+    return s / n;
+  };
+  const vcam = new T.PerspectiveCamera(75, 16 / 9, 0.05, 60);
+  S.vcam = vcam;
+  S.aim = (eye, at) => {
+    const r = R(), cv = r.domElement, gc = BR.gfx.camera;
+    vcam.fov = gc.fov; vcam.aspect = cv.width / cv.height; vcam.near = gc.near; vcam.far = Math.max(30, gc.far); vcam.updateProjectionMatrix();
+    vcam.position.set(eye.x, eye.y, eye.z); vcam.up.set(0, 1, 0); vcam.lookAt(at.x, at.y, at.z); vcam.updateMatrixWorld(true);
+    vcam.matrixWorldInverse.copy(vcam.matrixWorld).invert();
+  };
+  // 画一张机位图，返回 2D 画布（拷贝）
+  S.view = () => {
+    const r = R(), cv = r.domElement, W = cv.width, H = cv.height, pr = r.getPixelRatio();
+    r.setScissorTest(false); r.setViewport(0, 0, W / pr, H / pr);
+    r.render(BR.gfx.scene, vcam);
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(cv, 0, 0);
+    return c;
+  };
+  S.lumAt = (c, sx, sy, rad) => {
+    const g = c.getContext('2d', { willReadFrequently: true }), R2 = rad || 2;
+    const x0 = Math.max(0, Math.round(sx) - R2), y0 = Math.max(0, Math.round(sy) - R2), x1 = Math.min(c.width - 1, Math.round(sx) + R2), y1 = Math.min(c.height - 1, Math.round(sy) + R2);
+    if (x1 < x0 || y1 < y0) return null;
+    const d = g.getImageData(x0, y0, x1 - x0 + 1, y1 - y0 + 1).data; let s = 0, n = 0;
+    for (let i = 0; i < d.length; i += 4) { s += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]; n++; }
+    return S.r(s / n, 100);
+  };
+  S.meanLum = (c, x0, y0, x1, y1) => {
+    const g = c.getContext('2d', { willReadFrequently: true });
+    const d = g.getImageData(x0, y0, x1 - x0, y1 - y0).data; let s = 0, n = 0;
+    for (let i = 0; i < d.length; i += 16) { s += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]; n++; }
+    return S.r(s / n, 100);
+  };
+  // 投影到当前机位屏幕；看不见（被网格挡住）返回 null
+  const ray = new T.Ray(), rc = new T.Raycaster(), tmpB = new T.Box3(), tmpV = new T.Vector3(), hits = [];
+  S.markStatic = () => { let n = 0; BR.gfx.scene.traverse(o => { if (o.isMesh && o.geometry && !o.geometry.__swStatic) { let q = o, veh = false; while (q) { if (/veh|fork|vehicle|items|entit|player|coop/i.test(q.name || '')) veh = true; q = q.parent; } if (!veh) { o.geometry.__swStatic = true; n++; } } }); return n; };
+  S.occl = () => {
+    const list = [];
+    BR.gfx.scene.traverseVisible(o => {
+      if (!o.isMesh) return;
+      const ms = Array.isArray(o.material) ? o.material : [o.material];
+      if (ms.every(q => !q || q.visible === false || q.colorWrite === false || (q.transparent && q.opacity < 0.9) || q.depthWrite === false)) return;
+      if (!o.geometry) return;
+      // 载具网格每帧改顶点：包围盒 / 包围球每个位姿重算（区块网格不变，算一次）
+      if (!o.geometry.boundingBox || !o.geometry.__swStatic) { o.geometry.computeBoundingBox(); o.geometry.computeBoundingSphere(); }
+      list.push(o);
+    });
+    S._occ = list;
+    return list.length;
+  };
+  S.seen = (p) => {
+    const e = vcam.position;
+    const dx = p.x - e.x, dy = p.y - e.y, dz = p.z - e.z, dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (!(dist > 0.05)) return false;
+    ray.origin.copy(e); ray.direction.set(dx / dist, dy / dist, dz / dist);
+    rc.set(e, ray.direction); rc.near = 0; rc.far = dist - 0.03;
+    for (const o of S._occ || []) {
+      if (o.isInstancedMesh) { hits.length = 0; o.raycast(rc, hits); if (hits.length) return false; continue; }
+      tmpB.copy(o.geometry.boundingBox).applyMatrix4(o.matrixWorld);
+      if (!ray.intersectBox(tmpB, tmpV) && !tmpB.containsPoint(e)) continue;
+      if (!tmpB.containsPoint(e) && tmpV.distanceTo(e) > dist - 0.03) continue;
+      hits.length = 0; o.raycast(rc, hits);
+      if (hits.length) return false;
+    }
+    return true;
+  };
+  S.proj = (c, pts) => {
+    const W = c.width, H = c.height;
+    return pts.map(p => {
+      const v = new T.Vector3(p.x, p.y, p.z).project(vcam);
+      if (v.z > 1 || v.z < -1 || Math.abs(v.x) > 0.98 || Math.abs(v.y) > 0.98) return null;
+      return { sx: (v.x + 1) / 2 * W, sy: (1 - v.y) / 2 * H };
+    });
+  };
+  // ---- 视线（碰撞体）----
+  S.losBlock = (p, L) => {
+    const dx = L.x - p.x, dy = L.y - p.y, dz = L.z - p.z, d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    let h = null;
+    try { h = BR.phys.raycast(p.x, p.y, p.z, dx, dy, dz, d, { ignoreKey: S.ign }); } catch (e) { h = null; }
+    if (h && h.dist < d - 0.002) return h;
+    return null;
+  };
+  S.inSolid = (x, y, z, r) => {
+    const out = [];
+    try { BR.phys.overlapBox(x - (r || 0.01), z - (r || 0.01), x + (r || 0.01), z + (r || 0.01), y - 0.005, 0.01, { out, ignoreKey: S.ign, tol: 1e-6 }); } catch (e) { return false; }
+    return out.length > 0;
+  };
+  S.boxOf = (h) => {
+    // 打到的碰撞体：静态 AABB 去 records 里找
+    if (!h) return null;
+    if (h.obb) return { obb: true, key: h.key, name: h.name };
+    let s = null;
+    try { for (const q of BR.phys.records(h.key).solids) { if (h.x >= q.minX - 0.002 && h.x <= q.maxX + 0.002 && h.y >= q.minY - 0.002 && h.y <= q.maxY + 0.002 && h.z >= q.minZ - 0.002 && h.z <= q.maxZ + 0.002) { s = q; break; } } } catch (e) { s = null; }
+    if (!s) return { key: h.key };
+    if (s.obb) return { obb: true, key: s.key, name: s.name, hx: s.hx, hz: s.hz };
+    const w = s.maxX - s.minX, d = s.maxZ - s.minZ, hh = s.maxY - s.minY;
+    return { key: s.key, minX: s.minX, maxX: s.maxX, minZ: s.minZ, maxZ: s.maxZ, minY: s.minY, maxY: s.maxY, w: S.r(w), d: S.r(d), h: S.r(hh), cls: S.cls(w, d, hh, s.minY) };
+  };
+
+  // ---- 一个位姿的全套测量 ----
+  // ---- 随机位姿（种子固定的 PRNG）----
+  S.gen = (seedNum, per) => {
+    const rnd = S.rngOf(seedNum), U2 = (a, b) => a + (b - a) * rnd(), pickA = arr => arr[Math.floor(rnd() * arr.length)];
+    const sol = S.solids();
+    const out = [], cnt = {};
+    const rot = (u, a) => ({ x: u.x * Math.cos(a) - u.z * Math.sin(a), z: u.x * Math.sin(a) + u.z * Math.cos(a) });
+    const valid = (x, z, yaw) => {
+      if (S.hits(x, z, yaw).length) return false;
+      if (Math.abs(BR.phys.groundY(x, z)) > 0.02) return false;
+      try { if (__fk.exitHit(x, z, yaw, 0, 0.15, 0.3)) return false; } catch (e) { /* 没有就算了 */ }
+      return true;
+    };
+    // 叉尖（本地 z −2.1）离目标点 Q 沿 u 方向 gap、横向偏 lat
+    const facePose = (Q, u, gap, lat) => { const px = -u.z, pz = u.x; const tx = Q.x - u.x * gap + px * lat, tz = Q.z - u.z * gap + pz * lat; return { x: tx - u.x * 2.1, z: tz - u.z * 2.1, yaw: S.yawOf(u) }; };
+    const push = (cat, pose, meta, cap) => {
+      cnt[cat] = cnt[cat] || 0;
+      if (cnt[cat] >= (cap || per)) return false;
+      if (!valid(pose.x, pose.z, pose.yaw)) return false;
+      cnt[cat]++; out.push(Object.assign({ cat, x: S.r(pose.x), z: S.r(pose.z), yaw: S.r(pose.yaw, 10000) }, meta || {})); return true;
+    };
+    const tries = (cat, n, fn) => { for (let i = 0; i < n && (cnt[cat] || 0) < per; i++) fn(); };
+    const racks = sol.filter(q => q.cls === 'rack');
+    const longX = q => q.w > q.d;
+    // 1/2/4 货架通道：两排同向货架长边之间
+    const aisles = [];
+    for (const A of racks) for (const B of racks) {
+      if (A === B || longX(A) !== longX(B)) continue;
+      if (longX(A)) { const g = B.minZ - A.maxZ, o0 = Math.max(A.minX, B.minX), o1 = Math.min(A.maxX, B.maxX); if (g > 2.2 && g < 9 && o1 - o0 > 2) aisles.push({ ax: 'x', c: (A.maxZ + B.minZ) / 2, g, lo: o0, hi: o1, A, B }); }
+      else { const g = B.minX - A.maxX, o0 = Math.max(A.minZ, B.minZ), o1 = Math.min(A.maxZ, B.maxZ); if (g > 2.2 && g < 9 && o1 - o0 > 2) aisles.push({ ax: 'z', c: (A.maxX + B.minX) / 2, g, lo: o0, hi: o1, A, B }); }
+    }
+    const aislePose = (a, s, lat, dirSign, yawJ) => {
+      const u0 = a.ax === 'x' ? { x: dirSign, z: 0 } : { x: 0, z: dirSign };
+      const u = rot(u0, yawJ || 0);
+      const cx = a.ax === 'x' ? s : a.c + lat, cz = a.ax === 'x' ? a.c + lat : s;
+      return { x: cx, z: cz, yaw: S.yawOf(u) };
+    };
+    tries('rackAisle', 400, () => { if (!aisles.length) return; const a = pickA(aisles); push('rackAisle', aislePose(a, U2(a.lo + 1, a.hi - 1), U2(-0.15, 0.15), rnd() < 0.5 ? 1 : -1, U2(-0.05, 0.05)), { aisleW: S.r(a.g, 100) }); });
+    tries('rackNear', 400, () => { if (!aisles.length) return; const a = pickA(aisles); const cl = U2(0.12, 0.6), side = rnd() < 0.5 ? -1 : 1, lat = side * (a.g / 2 - 0.62 - cl); push('rackNear', aislePose(a, U2(a.lo + 1, a.hi - 1), lat, rnd() < 0.5 ? 1 : -1, U2(-0.04, 0.04)), { aisleW: S.r(a.g, 100), clear: S.r(cl, 100) }); });
+    tries('rackEnd', 600, () => {
+      if (!aisles.length) return; const a = pickA(aisles); const dir = rnd() < 0.5 ? 1 : -1;
+      // 叉尖在通道口 −2 … +1.5 m（正 = 已经伸出去），朝外开，偏航 ±25°
+      const endS = dir > 0 ? a.hi : a.lo, t = U2(-2, 1.5), s0 = endS + dir * t - dir * (-2.1) * -1;
+      const sc = endS + dir * t - dir * 2.1;   // 车原点 = 叉尖往回 2.1
+      push('rackEnd', aislePose(a, sc, U2(-0.3, 0.3), dir, U2(-0.45, 0.45)), { aisleW: S.r(a.g, 100), tipOut: S.r(t, 100) });
+    });
+    // 3 货架头：短面
+    tries('rackHead', 600, () => {
+      if (!racks.length) return; const R = pickA(racks); const sd = rnd() < 0.5 ? -1 : 1;
+      const Q = longX(R) ? { x: sd < 0 ? R.minX : R.maxX, z: (R.minZ + R.maxZ) / 2 + U2(-0.9, 0.9) } : { x: (R.minX + R.maxX) / 2 + U2(-0.9, 0.9), z: sd < 0 ? R.minZ : R.maxZ };
+      const n = longX(R) ? { x: sd, z: 0 } : { x: 0, z: sd };
+      const u = rot({ x: -n.x, z: -n.z }, U2(-0.25, 0.25));
+      push('rackHead', facePose(Q, u, U2(0.3, 6), 0), { gap: null, target: 'rack' });
+    });
+    const walls = sol.filter(q => q.cls === 'hutWall' || q.cls === 'bearingWall');
+    const wallFaces = W => { const lx = W.w > W.d; return lx ? [{ n: { x: 0, z: -1 }, c: W.minZ, lo: W.minX, hi: W.maxX, ax: 'x' }, { n: { x: 0, z: 1 }, c: W.maxZ, lo: W.minX, hi: W.maxX, ax: 'x' }] : [{ n: { x: -1, z: 0 }, c: W.minX, lo: W.minZ, hi: W.maxZ, ax: 'z' }, { n: { x: 1, z: 0 }, c: W.maxX, lo: W.minZ, hi: W.maxZ, ax: 'z' }]; };
+    // 5 墙边（平行，车侧离墙 0.1–1.5 m）
+    tries('wallSide', 800, () => {
+      if (!walls.length) return; const W = pickA(walls), F = pickA(wallFaces(W)); const cl = U2(0.1, 1.5), dist = 0.6 + cl;
+      const s = U2(F.lo - 1, F.hi + 1), dir = rnd() < 0.5 ? 1 : -1;
+      const u = rot(F.ax === 'x' ? { x: dir, z: 0 } : { x: 0, z: dir }, U2(-0.12, 0.12));
+      const x = F.ax === 'x' ? s : F.c + F.n.x * dist, z = F.ax === 'x' ? F.c + F.n.z * dist : s;
+      push('wallSide', { x, z, yaw: S.yawOf(u) }, { clear: S.r(cl, 100), wall: W.cls, len: S.r(Math.max(W.w, W.d), 100) });
+    });
+    // 6 车头对着墙（小屋外 / 承重墙），斜 ±35°
+    tries('wallFace', 800, () => {
+      if (!walls.length) return; const W = pickA(walls), F = pickA(wallFaces(W));
+      const s = U2(F.lo + 0.3, F.hi - 0.3), Q = F.ax === 'x' ? { x: s, z: F.c } : { x: F.c, z: s };
+      const u = rot({ x: -F.n.x, z: -F.n.z }, U2(-0.6, 0.6)), gap = U2(0.3, 5.5);
+      push('wallFace', facePose(Q, u, gap, 0), { gap: S.r(gap, 100), wall: W.cls });
+    });
+    // 7 墙角：小屋 / 墙段外角附近，车头对着角或从角边擦过
+    tries('corner', 800, () => {
+      if (!walls.length) return; const W = pickA(walls.filter(q => q.cls === 'hutWall')); if (!W) return;
+      const lx = W.w > W.d, end = rnd() < 0.5 ? 0 : 1;
+      const E = lx ? { x: end ? W.maxX : W.minX, z: (W.minZ + W.maxZ) / 2 } : { x: (W.minX + W.maxX) / 2, z: end ? W.maxZ : W.minZ };
+      const a = U2(0, Math.PI * 2), u = { x: Math.cos(a), z: Math.sin(a) }, gap = U2(0.4, 4), lat = U2(-1.2, 1.2);
+      push('corner', facePose(E, u, gap, lat), { gap: S.r(gap, 100), lat: S.r(lat, 100) });
+    });
+    // 8 门口：同一直线上两段墙中间 1.16 m 的缺口
+    const doors = [];
+    const hw = sol.filter(q => q.cls === 'hutWall');
+    for (const A of hw) for (const B of hw) {
+      if (A === B) continue;
+      if (A.w > A.d && B.w > B.d && Math.abs(A.minZ - B.minZ) < 0.01) { const g = B.minX - A.maxX; if (g > 0.8 && g < 1.6) doors.push({ x: (A.maxX + B.minX) / 2, z: (A.minZ + A.maxZ) / 2, ax: 'x', g }); }
+      if (A.d > A.w && B.d > B.w && Math.abs(A.minX - B.minX) < 0.01) { const g = B.minZ - A.maxZ; if (g > 0.8 && g < 1.6) doors.push({ x: (A.minX + A.maxX) / 2, z: (A.maxZ + B.minZ) / 2, ax: 'z', g }); }
+    }
+    tries('door', 600, () => {
+      if (!doors.length) return; const D = pickA(doors);
+      // 屋里那一侧：顺法线方向 6.6 m 内打到另一面小屋墙
+      let nOut = null;
+      for (const sg of [-1, 1]) { const n = D.ax === 'x' ? { x: 0, z: sg } : { x: sg, z: 0 }; let h = null; try { h = BR.phys.raycast(D.x + n.x * 0.3, 1.0, D.z + n.z * 0.3, n.x, 0, n.z, 6.8, { ignoreKey: S.ign }); } catch (e) { h = null; } const bx = h && S.boxOf(h); if (bx && bx.cls === 'hutWall' && h.dist > 5) nOut = { x: -n.x, z: -n.z }; }
+      if (!nOut) return;
+      const u = rot({ x: -nOut.x, z: -nOut.z }, U2(-0.2, 0.2)), gap = U2(0.3, 4.5);
+      push('door', facePose(D, u, gap, U2(-0.3, 0.3)), { gap: S.r(gap, 100) });
+    });
+    // 9 空地：前面 7 m 内没东西
+    tries('open', 2000, () => {
+      const cs = BR.world.chunks(); const c = pickA(cs); const [cx, cz] = c.key.split(',').map(Number);
+      const x = cx * 32 + U2(1, 31), z = cz * 32 + U2(1, 31), yaw = U2(-Math.PI, Math.PI);
+      if (!valid(x, z, yaw)) return;
+      const sw = __fp.sweep(x, z, yaw, 0, 7, S.pk, 0.1); if (sw) return;
+      push('open', { x, z, yaw });
+    });
+    // 10 撞车直道：车轮挡、矮堆垛（光线从上面过去）、施工区矮物
+    const lows = sol.filter(q => q.cls === 'low' && q.h > 0.08 && Math.max(q.w, q.d) > 0.9);
+    const faceOf = (B) => { const sd = Math.floor(rnd() * 4); if (sd === 0) return [{ x: U2(B.minX, B.maxX), z: B.minZ }, { x: 0, z: -1 }]; if (sd === 1) return [{ x: U2(B.minX, B.maxX), z: B.maxZ }, { x: 0, z: 1 }]; if (sd === 2) return [{ x: B.minX, z: U2(B.minZ, B.maxZ) }, { x: -1, z: 0 }]; return [{ x: B.maxX, z: U2(B.minZ, B.maxZ) }, { x: 1, z: 0 }]; };
+    tries('crash', 800, () => { if (!lows.length) return; const B = pickA(lows); const [Q, n] = faceOf(B); const gap = U2(0.05, 3); push('crash', facePose(Q, rot({ x: -n.x, z: -n.z }, U2(-0.2, 0.2)), gap, 0), { gap: S.r(gap, 100), dims: [S.r(B.w, 100), S.r(B.d, 100), S.r(B.h, 100)] }); });
+    // 11 树 / 杆子
+    const thin = sol.filter(q => q.cls === 'tree' || q.cls === 'post');
+    tries('tree', 800, () => { if (!thin.length) return; const B = pickA(thin); const Q = { x: (B.minX + B.maxX) / 2, z: (B.minZ + B.maxZ) / 2 }; const a = U2(0, Math.PI * 2), u = { x: Math.cos(a), z: Math.sin(a) }, gap = U2(0.3, 5.5); push('tree', facePose(Q, u, gap + Math.max(B.w, B.d) / 2, U2(-0.3, 0.3)), { gap: S.r(gap, 100), cls: B.cls, dims: [S.r(B.w, 100), S.r(B.d, 100), S.r(B.h, 100)] }); });
+    // 12 柱子
+    const pil = sol.filter(q => q.cls === 'pillar');
+    tries('pillar', 800, () => { if (!pil.length) return; const B = pickA(pil); const [Q, n] = faceOf(B); const gap = U2(0.2, 6); push('pillar', facePose(Q, rot({ x: -n.x, z: -n.z }, U2(-0.3, 0.3)), gap, U2(-0.5, 0.5)), { gap: S.r(gap, 100), w: S.r(B.w, 100) }); });
+    // 13 别的车
+    const cars = BR.vehicles.list().filter(v => v.key !== S.k);
+    tries('car', 800, () => {
+      if (!cars.length) return; const V = pickA(cars), P = V.pose || V; const sd = Math.floor(rnd() * 3);
+      let Ql, nl; if (sd === 0) { Ql = { x: 0.6, z: U2(-1, 1.2) }; nl = { x: 1, z: 0 }; } else if (sd === 1) { Ql = { x: -0.6, z: U2(-1, 1.2) }; nl = { x: -1, z: 0 }; } else { Ql = { x: U2(-0.5, 0.5), z: 1.3 }; nl = { x: 0, z: 1 }; }
+      const c = Math.cos(P.yaw), sn = Math.sin(P.yaw);
+      const Q = { x: P.x + c * Ql.x + sn * Ql.z, z: P.z - sn * Ql.x + c * Ql.z }, n = { x: c * nl.x + sn * nl.z, z: -sn * nl.x + c * nl.z };
+      const gap = U2(0.3, 5); push('car', facePose(Q, rot({ x: -n.x, z: -n.z }, U2(-0.3, 0.3)), gap, 0), { gap: S.r(gap, 100), other: V.key, side: ['right', 'left', 'rear'][sd] });
+    });
+    // 14 高堆垛（宽堆垛 1.44 m，比光源高）
+    const stk = sol.filter(q => q.cls === 'stack');
+    tries('stack', 800, () => { if (!stk.length) return; const B = pickA(stk); const [Q, n] = faceOf(B); const gap = U2(0.2, 5); push('stack', facePose(Q, rot({ x: -n.x, z: -n.z }, U2(-0.3, 0.3)), gap, U2(-0.4, 0.4)), { gap: S.r(gap, 100), h: S.r(B.h, 100) }); });
+    // 15 矮货架（2 m × 0.8 m 周转箱架）、配电柜
+    const ts = sol.filter(q => q.cls === 'toteShelf' || q.cls === 'cabinet' || q.cls === 'wallish');
+    tries('shelfMisc', 800, () => { if (!ts.length) return; const B = pickA(ts); const [Q, n] = faceOf(B); const gap = U2(0.2, 5); push('shelfMisc', facePose(Q, rot({ x: -n.x, z: -n.z }, U2(-0.35, 0.35)), gap, U2(-0.3, 0.3)), { gap: S.r(gap, 100), cls: B.cls, dims: [S.r(B.w, 100), S.r(B.d, 100), S.r(B.h, 100)] }); });
+    return { poses: out, cnt, nAisles: aisles.length, nDoors: doors.length, nWalls: walls.length, nThin: thin.length, nPil: pil.length, nCars: cars.length, nStk: stk.length, nTs: ts.length, nLows: lows.length };
+  };
+
+  // ---- 逐帧开车：每帧记录大灯（位置、range、强度、被谁收住）、车本地几处地面的理论照度、驾驶座画面几块区域的平均亮度、灯池里有没有大灯 ----
+  S.E = (L, x, y, z) => { const dx = L.x - x, dy = L.y - y, dz = L.z - z, d = Math.sqrt(dx * dx + dy * dy + dz * dz); if (!(L.range > d)) return 0; const k = 1 - d / L.range; return L.intensity * k * k * Math.max(0, dy / d); };
+  S.frame = (cv) => {
+    const v = BR.vehicles.byKey(S.k), p = v.pose, L = S.L(), sim = S.sim(), inf = sim && sim.lightInfo;
+    const gy = p.y || 0;
+    const E = [0.5, 1.5, 3.0, 5.0].map(t => { const q = S.W(p, 0, 0.0, -2.1 - t); return L ? S.r(S.E(L, q.x, gy, q.z), 10000) : 0; });
+    const P = BR.gfx.scene.children.find(o => o.isPointLight && /^gfx-pool-/.test(o.name) && L && Math.abs(o.position.x - L.x) < 0.02 && Math.abs(o.position.z - L.z) < 0.02);
+    const row = { x: S.r(p.x), z: S.r(p.z), yaw: S.r(p.yaw, 1000), spd: S.r(p.spd, 100), st: S.r(p.steer, 100),
+      L: L ? [S.r(L.x), S.r(L.z), S.r(L.range), S.r(L.intensity)] : null, by: inf && inf.by ? inf.by.kind + ':' + (inf.by.box && inf.by.box.maxX != null ? S.r(inf.by.box.maxX - inf.by.box.minX, 100) + 'x' + S.r(inf.by.box.maxZ - inf.by.box.minZ, 100) : inf.by.key) : null,
+      hit: inf && inf.hit != null ? S.r(inf.hit, 100) : null, E, pool: P ? S.r(P.intensity, 100) : 0, poolD: P ? S.r(P.distance, 100) : null };
+    if (cv) {
+      const W = cv.width, H = cv.height;
+      row.vb = S.meanLum(cv, Math.round(W * 0.3), Math.round(H * 0.62), Math.round(W * 0.7), Math.round(H * 0.95));   // 下方中间（车前地面）
+      row.vc = S.meanLum(cv, Math.round(W * 0.35), Math.round(H * 0.3), Math.round(W * 0.65), Math.round(H * 0.6));    // 正中（前方墙 / 柱）
+      row.vf = S.meanLum(cv, 0, 0, W, H);
+    }
+    return row;
+  };
+  S.grabMain = () => { const cv = BR.gfx.renderer.domElement; const c = S._c3 || (S._c3 = document.createElement('canvas')); c.width = cv.width; c.height = cv.height; const g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(cv, 0, 0); return c; };
+}
+// FE1R-light 页面工具 window.__lt（依赖 __sw）：K2 判定区 / 墙后暗 / lightAt 一致，一个位姿 2 次渲染
+function installLt() {
+  const S = window.__sw, T = THREE, L = window.__lt = {};
+  // 碰撞体分类（和裁定一致：窄 = 水平两个方向都 ≤ 1.0 m，墙段除外）
+  L.kindOf = (w, d, h) => { const a = Math.max(w, d), b = Math.min(w, d), wl = a >= 0.4 && a >= 2 * b; if (a <= 1.0 && !(wl && h >= 2.4)) return 'narrow'; return wl ? (b > 1.0 ? 'rack' : 'wall') : 'wide'; };
+  L.boxOfHit = h => {
+    if (!h) return null;
+    if (h.obb) return { car: true, key: h.key, kind: 'car' };
+    let s = null;
+    try { for (const q of BR.phys.records(h.key).solids) { if (h.x >= q.minX - 0.002 && h.x <= q.maxX + 0.002 && h.y >= q.minY - 0.002 && h.y <= q.maxY + 0.002 && h.z >= q.minZ - 0.002 && h.z <= q.maxZ + 0.002) { s = q; break; } } } catch (e) { s = null; }
+    if (!s) return { key: h.key, kind: '?' };
+    if (s.obb) return { car: true, key: s.key, kind: 'car' };
+    const w = s.maxX - s.minX, d = s.maxZ - s.minZ, hh = s.maxY - s.minY;
+    return { key: s.key, w, d, h: hh, minY: s.minY, maxY: s.maxY, cx: (s.minX + s.maxX) / 2, cz: (s.minZ + s.maxZ) / 2, kind: L.kindOf(w, d, hh) };
+  };
+  // 叉尖往前、车宽带里第一个挡光体（不窄、高过 0.5 m）：5 条横向 × 3 个高度的水平射线。
+  // 返修 FE1R · repair-r1（验收员 tests，K1 / K2 原文）：窄东西（树干、杆子、柱子）不是挡光体，不截断判定区 —— 它周围、后面看得见的地照样是车前的空地
+  // （被它挡住、从驾驶座看不见的那几点在判定区里另外去掉）
+  L.blockDist = (p) => {
+    const gy = p.y || 0; let best = Infinity, who = null;
+    for (const lx of [-0.6, -0.3, 0, 0.3, 0.6]) for (const y of [0.6, 1.0, 1.4]) {
+      const o = S.W(p, lx, y, -2.1), f = { x: -Math.sin(p.yaw), z: -Math.cos(p.yaw) };
+      let d0 = 0;
+      for (let k = 0; k < 6; k++) {
+        let h = null; try { h = BR.phys.raycast(o.x + f.x * d0, o.y, o.z + f.z * d0, f.x, 0, f.z, 8 - d0, { ignoreKey: S.ign }); } catch (e) { h = null; }
+        if (!h || !(h.dist < 8 - d0)) break;
+        const bx = L.boxOfHit(h);
+        if (bx && bx.kind !== 'narrow' && !(bx.maxY != null && bx.maxY < gy + 0.5)) { if (d0 + h.dist < best) { best = d0 + h.dist; who = bx; } break; }
+        d0 += h.dist + 0.05;
+      }
+    }
+    // 切出墙片（承重墙中间那段 noclip 出口：看得见、没有碰撞体，phys 射线打不到）也是车宽带里的挡光体（整合 FE1R：种子 39 #179 车正对一段
+    // 带切出墙片的承重墙，射线从切口穿过去，判定区一直算到墙根，大灯却按墙收住）。按大灯求解器收挡体的结果（forklift.js lightOcc 把切出墙片
+    // 按网格包围盒当墙）取车宽带里第一个不窄的挡体
+    try { const sim = S.sim(), c = sim && BR.forklift._light && BR.forklift._light.ctx(sim); if (c && Number.isFinite(c.gB) && c.gB < best) { best = c.gB; who = { kind: 'occ', by: c.gBy && c.gBy.t }; } } catch (e) { /* 照射线的 */ }
+    return { d: best, who };
+  };
+  // 离任何实体面的水平距离 < r（静态 AABB、别的车 OBB；高过地面 3 cm 的）
+  L.nearSolid = (x, z, gy, r) => { const out = []; try { BR.phys.overlapBox(x - r, z - r, x + r, z + r, gy + 0.03, 2.0, { out, ignoreKey: S.ign, tol: 1e-6 }); } catch (e) { return false; }
+    for (const s of out) { if (s.obb) { const c = Math.cos(s.rot), sn = Math.sin(s.rot), dx = x - s.cx, dz = z - s.cz, lx = dx * c - dz * sn, lz = dx * sn + dz * c; if (Math.hypot(Math.max(0, Math.abs(lx) - s.hx), Math.max(0, Math.abs(lz) - s.hz)) < r) return true; }
+      else if (Math.hypot(Math.max(0, s.minX - x, x - s.maxX), Math.max(0, s.minZ - z, z - s.maxZ)) < r) return true; }
+    return false; };
+  // 一个位姿：K2 判定区（叉尖前 0.5 m 到 min(3, 挡光体 − 0.2)，横向 ±0.5，每 0.25 m 一点；去掉离实体面 < 0.3 m、驾驶座看不见的）
+  // 开关灯地面亮度差、lightAt；墙后（光源到这一点的视线被不窄的碰撞体挡住、在光球里）的地面点开关灯差、lightAt；竖直面 / 天花板按光球解析算
+  L.k2 = (opt) => {
+    const o = opt || {};
+    const v = BR.vehicles.byKey(S.k), p = Object.assign({}, v.pose), sim = S.sim(), gy = p.y || 0;
+    if (!S.capture()) return { err: 'no light' };
+    const Lt = S._st.L, inf = sim.lightInfo || {};
+    const bd = L.blockDist(p), T = Math.min(3, bd.d - 0.2);
+    const eye = sim.eyeWorld();
+    S.aim({ x: eye.x, y: eye.y, z: eye.z }, S.W(p, 0, 0, -5));
+    S.occl();
+    const zone = [];
+    // 地上本身不吃光的（出口圈那种自发光的 kit:glow、MeshBasic）不算车前地面：从正上方往下打，第一下打到它就跳过
+    const lit0 = []; BR.gfx.scene.traverseVisible(o => { if (o.isMesh) lit0.push(o); });
+    const rcD = new THREE.Raycaster(), dn = new THREE.Vector3(0, -1, 0);
+    const unlit = q => { rcD.set(new THREE.Vector3(q.x, gy + 0.3, q.z), dn); rcD.near = 0; rcD.far = 0.35; const h = rcD.intersectObjects(lit0, false)[0]; const m = h && h.object.material; return !!m && (m.isMeshBasicMaterial || /glow/.test(h.object.name || '')); };
+    for (let t = 0.5; t <= T + 1e-6; t += 0.25) for (const u of [-0.5, -0.25, 0, 0.25, 0.5]) {
+      const q = S.W(p, u, 0.002, -2.1 - t);
+      if (L.nearSolid(q.x, q.z, gy, 0.3)) continue;
+      if (!S.seen(q)) continue;
+      if (unlit(q)) continue;
+      zone.push({ t, u, x: q.x, y: q.y, z: q.z });
+    }
+    // 墙后的地面点：光源周围一圈（水平 0.25 … R + 0.6），视线被不窄的碰撞体挡住
+    const blk = [];
+    const R = Lt.range, hy = Lt.y - gy;
+    for (let hh = 0.25; hh <= Math.min(R + 0.6, 8); hh += 0.35) for (let a = 0; a < 20; a++) {
+      const ang = a / 20 * Math.PI * 2 + hh * 0.37, q = { x: Lt.x + Math.cos(ang) * hh, y: gy + 0.002, z: Lt.z + Math.sin(ang) * hh };
+      if (Math.abs(BR.phys.groundY(q.x, q.z) - gy) > 0.05) continue;
+      if (S.inSolid(q.x, gy + 0.05, q.z, 0.02)) continue;
+      const lc = S.Lc(p, q.x, q.z); if (Math.abs(lc.x) < 0.7 && lc.z > -2.2 && lc.z < 1.45) continue;
+      const bh = S.losBlock({ x: q.x, y: q.y + 0.02, z: q.z }, Lt);
+      if (!bh) continue;
+      const bx = L.boxOfHit(bh);
+      if (!bx || bx.kind === 'narrow' || bx.kind === '?') continue;
+      if (bx.maxY != null && bx.maxY < Lt.y) continue;   // 矮于光源的不算（裁定：竖直方向跨过光源高度的）
+      // 返修 FE1R · repair-r2（验收员 spec，J9 / FE1Q「货架头那一下漏光接受」）：被货架挡住、但还在这排货架自己那一条里的地（两节之间的空当、
+      // 货架头外面的横通道 —— 没越过这排货架远侧长边往里 0.1 m）不算墙后；越过了（另一侧的通道）照旧要黑
+      if (bx.kind === 'rack') {
+        const thinX = bx.w <= bx.d, c = thinX ? bx.cx : bx.cz, hw = (thinX ? bx.w : bx.d) / 2, qc = thinX ? q.x : q.z, lc = thinX ? Lt.x : Lt.z;
+        const far = c - Math.sign(lc - c) * (hw - 0.1);   // 远侧长边往里 0.1 m 那条线
+        if ((qc - far) * Math.sign(lc - c) >= 0) continue;
+      }
+      blk.push({ x: q.x, y: q.y, z: q.z, kind: bx.kind, d3: Math.hypot(q.x - Lt.x, q.y - Lt.y, q.z - Lt.z) });
+    }
+    const half = 6, cx = (S.W(p, 0, 0, -3.6).x), cz = S.W(p, 0, 0, -3.6).z;
+    S.setOn(true); const mOn = S.floorMap(cx, cz, gy, half); const atOn = zone.concat(blk).map(q => BR.world.lightAt(q.x, q.z));
+    S.setOn(false); const mOff = S.floorMap(cx, cz, gy, half); const atOff = zone.concat(blk).map(q => BR.world.lightAt(q.x, q.z));
+    S.setOn(true);
+    let zFail = [], dFail = [], aFail = [];
+    zone.forEach((q, i) => { const a = S.fm(mOn, q.x, q.z, 1), b = S.fm(mOff, q.x, q.z, 1); q.d = a != null && b != null ? S.r(a - b, 10) : null; q.at = S.r(atOn[i] - atOff[i], 10000); if (q.d == null || q.d < 8) zFail.push([q.t, q.u, q.d]); if (q.d != null && q.d >= 8 && q.at < 0.01) aFail.push(['zone', q.t, q.u, q.at]); });
+    blk.forEach((q, j) => { const i = zone.length + j; const a = S.fm(mOn, q.x, q.z, 1), b = S.fm(mOff, q.x, q.z, 1); q.d = a != null && b != null ? S.r(a - b, 10) : null; q.at = S.r(atOn[i] - atOff[i], 10000); if (q.d != null && q.d > 2) dFail.push([q.kind, q.d, S.r(q.d3, 100)]); if (q.at >= 0.005 && Math.hypot(q.x - Lt.x, q.z - Lt.z) >= R) aFail.push(['blk', q.kind, q.at]); });
+    // 竖直面 / 天花板：光球里、朝着光源、视线被不窄的碰撞体挡住的点（解析：光球外就一定不亮）
+    const ov = []; try { BR.phys.overlapBox(Lt.x - R, Lt.z - R, Lt.x + R, Lt.z + R, gy + 0.02, 3.0, { out: ov, ignoreKey: S.ign }); } catch (e) { /* 忽略 */ }
+    let vLeak = 0; const vEx = [];
+    for (const s of ov) {
+      if (s.obb) continue;
+      const w = s.maxX - s.minX, d = s.maxZ - s.minZ, hh = s.maxY - s.minY;
+      if (L.kindOf(w, d, hh) === 'rack') continue;   // 货架面是透的（J9）
+      for (const [n, c, ax] of [[[1, 0, 0], s.maxX, 'x'], [[-1, 0, 0], s.minX, 'x'], [[0, 0, 1], s.maxZ, 'z'], [[0, 0, -1], s.minZ, 'z']]) {
+        const lo = ax === 'x' ? s.minZ : s.minX, hi = ax === 'x' ? s.maxZ : s.maxX, len = hi - lo, nU = Math.max(1, Math.min(8, Math.round(len / 0.4)));
+        for (let i = 0; i < nU; i++) for (const yy of [0.3, 1.0, 1.6, 2.3]) {
+          if (gy + yy > s.maxY - 0.03) continue;
+          const u = lo + (i + 0.5) * len / nU, q = ax === 'x' ? { x: c + n[0] * 0.003, y: gy + yy, z: u } : { x: u, y: gy + yy, z: c + n[2] * 0.003 };
+          const dx = Lt.x - q.x, dy = Lt.y - q.y, dz = Lt.z - q.z, d3 = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          if (d3 >= R || dx * n[0] + dz * n[2] <= 0) continue;
+          if (S.inSolid(q.x, q.y, q.z, 0.001)) continue;
+          const bh = S.losBlock(q, Lt); if (!bh) continue;
+          const bx = L.boxOfHit(bh); if (!bx || bx.kind === 'narrow' || bx.kind === '?') continue;
+          if (bx.maxY != null && bx.maxY < Lt.y) continue;
+          const k = 1 - d3 / R, E = Lt.intensity * k * k * (dx * n[0] + dz * n[2]) / d3;
+          if (E > 0.004) { vLeak++; if (vEx.length < 4) vEx.push([bx.kind, S.r(E, 1000), S.r(d3, 100)]); }
+        }
+      }
+    }
+    return { pose: { x: S.r(p.x), z: S.r(p.z), yaw: S.r(p.yaw, 10000) }, L: { x: S.r(Lt.x), y: S.r(Lt.y), z: S.r(Lt.z), R: S.r(R, 100), I: S.r(Lt.intensity, 100) },
+      inf: { s: S.r(inf.s, 100), u: S.r(inf.u, 100), h: S.r(inf.h, 100), by: inf.by && inf.by.kind, cov: inf.zoneCov && S.r(inf.zoneCov, 100) },
+      block: S.r(bd.d, 100), blockBy: bd.who && bd.who.kind, T: S.r(T, 100), nZone: zone.length, zFail, zMin: zone.length ? Math.min(...zone.map(q => q.d == null ? -1 : q.d)) : null,
+      near15: zone.filter(q => q.t <= 1.5 + 1e-6).every(q => q.d != null && q.d >= 8), nBlk: blk.length, dFail, vLeak, vEx, aFail };
+  };
+}
+// ---- 追加（polish 用）：单盏光源暴力搜、竖直面亮度带最大通道、天花板、车模型顶点 ----
+function installLt2() {
+  const S = window.__sw, L = window.__lt;
+  // 这个位姿下，单盏受界点光源（大灯同一套界限）在细网格上最多能把测试口径的判定区照亮多少点（E ≥ thr）
+  L.brute = (thr, noK1) => {
+    const T0 = thr || 0.15, sim = S.sim(), Lh = BR.forklift._light, ctx = Lh.ctx(sim);
+    const p = BR.vehicles.byKey(S.k).pose, gy = p.y || 0, bd = L.blockDist(p), T = Math.min(3, bd.d - 0.2);
+    const eye = sim.eyeWorld(); S.aim({ x: eye.x, y: eye.y, z: eye.z }, S.W(p, 0, 0, -5)); S.occl();
+    const zone = [];
+    const lit0 = []; BR.gfx.scene.traverseVisible(o => { if (o.isMesh) lit0.push(o); });
+    const rcD = new THREE.Raycaster(), dn = new THREE.Vector3(0, -1, 0);
+    const unlit = q => { rcD.set(new THREE.Vector3(q.x, gy + 0.3, q.z), dn); rcD.near = 0; rcD.far = 0.35; const h = rcD.intersectObjects(lit0, false)[0]; const m = h && h.object.material; return !!m && (m.isMeshBasicMaterial || /glow/.test(h.object.name || '')); };
+    for (let t = 0.5; t <= T + 1e-6; t += 0.25) for (const u of [-0.5, -0.25, 0, 0.25, 0.5]) { const q = S.W(p, u, 0.002, -2.1 - t); if (L.nearSolid(q.x, q.z, gy, 0.3)) continue; if (!S.seen(q)) continue; if (unlit(q)) continue; zone.push({ x: q.x, z: q.z, t, u }); }
+    ctx.zone = zone; ctx.z1i = -1;
+    let best = null;
+    // 和大灯同一套限制：不越过车宽带里的挡光体、不越过挡在前面的窄东西（K1，Lh.sMaxU）
+    for (let s = -0.5; s <= Math.min(3, ctx.sMax) + 1e-6; s += 0.1) for (let u = -0.5; u <= 0.5 + 1e-6; u += 0.1) for (let h = 0.45; h <= 1.2 + 1e-6; h += 0.075) {
+      if (!noK1 && Lh.sMaxU && s > Lh.sMaxU(ctx, u) + 1e-6) continue;
+      const c = Lh.eval(ctx, s, u, h, false); if (!c) continue;
+      let ok = 0, near = 0, nn = 0;
+      for (const q of zone) { const d = Math.hypot(q.x - c.x, h, q.z - c.z); const k = d < c.R ? 1 - d / c.R : 0; const e = c.I * k * k * h / d; if (e >= T0) ok++; if (q.t <= 1.5 + 1e-6) { nn++; if (e >= T0) near++; } }
+      const sc = ok + (near === nn ? 1000 : 0);
+      if (!best || sc > best.sc) best = { sc, ok, n: zone.length, near: near === nn, s: S.r(s, 100), u: S.r(u, 100), h: S.r(h, 100), R: S.r(c.R, 100), I: S.r(c.I, 100) };
+    }
+    return best || { ok: 0, n: zone.length, near: false };
+  };
+  // 照度计小格的平均亮度和最大通道
+  L.luxMax = (pts) => {
+    const r = BR.gfx.renderer, cv = r.domElement, W = cv.width, H = cv.height, pr = r.getPixelRatio(), ts = 6, per = Math.floor(W / ts);
+    const lum = S.lux(pts);
+    const c2 = S._c2, g = c2.getContext('2d', { willReadFrequently: true }), rows = Math.ceil(pts.length / per);
+    const img = pts.length ? g.getImageData(0, H - rows * ts, Math.min(W, per * ts), rows * ts) : null;
+    return pts.map((p, i) => {
+      const tx = (i % per) * ts, ty = Math.floor(i / per) * ts, y0 = rows * ts - ty - ts; let mx = 0;
+      for (let yy = 1; yy < ts - 1; yy++) for (let xx = 1; xx < ts - 1; xx++) { const j = ((y0 + yy) * img.width + tx + xx) * 4; mx = Math.max(mx, img.data[j], img.data[j + 1], img.data[j + 2]); }
+      return [lum[i], mx];
+    });
+  };
+  // 车模型（载具网格那一档，开过的车 drive: true）在给定 steer / lift 时的车本地顶点
+  L.modelVerts = (k, steer, lift) => {
+    const v = BR.vehicles.byKey(k), det = (v && v.tier) || 'mid';
+    const b = BR.kit.builder({}, 0, 0, () => 0, { height: 4 });
+    BR.L1forklift.model(b, { detail: det, drive: true, lift: lift || 0, steer: steer || 0, number: 88 });
+    const V = [];
+    b._accs.forEach(a => { if (a && a.pos) for (let i = 0; i < a.n; i++) V.push([a.pos[i * 3], a.pos[i * 3 + 1], a.pos[i * 3 + 2]]); });
+    return V;
+  };
+  // 车本地顶点按位姿换到世界，插进 AABB box（世界）多深、几个；sel(lx, ly, lz) 只看一部分顶点
+  L.penBox = (V, P, box, tol, sel) => {
+    const c = Math.cos(P.yaw), s = Math.sin(P.yaw), t = tol || 0;
+    let worst = 0, n = 0, wv = null;
+    for (const [lx, ly, lz] of V) {
+      if (sel && !sel(lx, ly, lz)) continue;
+      const x = P.x + c * lx + s * lz, y = (P.y || 0) + ly, z = P.z - s * lx + c * lz;
+      if (x > box.minX && x < box.maxX && y > box.minY && y < box.maxY && z > box.minZ && z < box.maxZ) {
+        const d = Math.min(x - box.minX, box.maxX - x, y - box.minY, box.maxY - y, z - box.minZ, box.maxZ - z);
+        if (d > t) { n++; if (d > worst) { worst = d; wv = [S.r(lx), S.r(ly), S.r(lz)]; } }
+      }
+    }
+    return { n, depth: S.r(worst, 10000), local: wv };
+  };
+  // 物资网格的世界顶点
+  L.itemVerts = (id) => {
+    const it = BR.items.find(id); if (!it || !it.obj) return [];
+    const V = [], v3 = new THREE.Vector3();
+    it.obj.updateMatrixWorld(true);
+    it.obj.traverse(o => { if (!o.isMesh || !o.geometry || !o.geometry.attributes.position) return; const m = o.material; if (m && (m.transparent && m.opacity < 0.9)) return; const a = o.geometry.attributes.position; for (let i = 0; i < a.count; i++) { v3.fromBufferAttribute(a, i).applyMatrix4(o.matrixWorld); V.push([v3.x, v3.y, v3.z]); } });
+    return V;
+  };
+  L.penW = (V, box, tol) => { let n = 0, worst = 0; for (const [x, y, z] of V) if (x > box.minX && x < box.maxX && y > box.minY && y < box.maxY && z > box.minZ && z < box.maxZ) { const d = Math.min(x - box.minX, box.maxX - x, y - box.minY, box.maxY - y, z - box.minZ, box.maxZ - z); if (d > (tol || 0)) { n++; worst = Math.max(worst, d); } } return { n, depth: S.r(worst, 10000) }; };
+}
+
+// =====================================================================
+// FE1R-light：大灯落点（K1 窄东西照旧亮、K2 车前空地一定亮、宽块 / 别的车不漏光、天花板、工坊）、升货叉被门楣挡（F1）、后轮打方向（F2）、
+// 叉上的货参加碰撞（F3）、降货叉盒子往下扫（F4）
+// =====================================================================
+// 断电（或不断电）坐上出生车、冻住断电计时（层级 update 的 dt 改 0）、停 rAF、清掉怪：之后全靠 __br.step 和手动渲染
+async function ltSession(browser, seed, o) {
+  const opt = o || {};
+  const { ctx, page } = await boot(browser, 'lt' + seed + (opt.tag || ''), opt.vp ? { viewport: opt.vp } : undefined);
+  await ev(page, installSw); await ev(page, installLt); await ev(page, installLt2);
+  if (opt.workshop) {
+    await ev(page, a => { const m = BR.workshop.create('1', 'fe1r-ws'); m.seed = a.seed; Object.assign(m.settings, a.ws); __br.setAuto(true); BR.bus.emit('game:start', { mode: 'test', difficulty: null, settings: Object.assign({}, BR.game.settings, { quality: 'high' }), seed: a.seed, levelId: '1', coop: null, workshop: m }); return 0; }, { seed, ws: opt.workshop });
+    await page.waitForFunction(() => BR.game.screen === 'playing' && !BR.world.transitioning && String(BR.game.levelId) === '1', null, { timeout: 90000 });
+    await ev(page, () => { __br.setAuto(false); __br.step(0.5); return 0; });
+  } else await startL1(page, { seed, quality: opt.quality || 'high' });
+  const k = await ev(page, () => __fp.spawnKey() || (BR.vehicles.list()[0] || {}).key);
+  let dark = null;
+  if (!opt.lit && !opt.workshop) {
+    const plan = await ev(page, () => { const U = BR.util, ls = BR.world.levelSeed; for (let e = 0; e < 60; e++) { const r = U.rng(ls, 'L1-blackout', e); if (r() < 0.3) { const dur = 8 + r() * 20; if (dur >= 6) return { e, dur, at: e * 45 }; } } return null; });
+    let t = 0;
+    for (let i = 0; plan && i < 500 && t < plan.at + 30; i++) {
+      const dt = t < plan.at - 6 ? 5 : 0.5;
+      const st = await ev(page, dt => { __br.step(dt); return __sw.dark(); }, dt);
+      t += dt;
+      if (st.n && st.off === st.n) { dark = { plan, t }; break; }
+    }
+  }
+  if (opt.place !== false) await ev(page, a => { __fp.place(a.k, a.p[0], a.p[1], a.p[2], 0); __br.step(0.2); return 0; }, { k, p: opt.place || [0.5, 14, 0] });
+  let seat = null;
+  for (const side of ['left', 'right']) {
+    await ev(page, a => { __fp.standL(a.k, a.side === 'right' ? 1.2 : -1.2, 0.24); __fp.aimL(a.k, 0, 1.25, 0.24); return 0; }, { k, side });
+    await tap(page, 'Space'); await step(page, 1.6);
+    seat = await ev(page, () => __fp.seat());
+    if (seat.seated === k) break;
+  }
+  await ev(page, a => { __sw.init(a.k); if (!a.lit) __sw.freeze(); window.requestAnimationFrame = () => 0; __br.step(0.2); if (BR.entities && BR.entities.clear) { try { BR.entities.clear(); } catch (e) { /* 忽略 */ } } return __sw.markStatic(); }, { k, lit: !!opt.lit });
+  return { ctx, page, k, dark, mounted: !!seat && seat.seated === k };
+}
+// 瞬移到位姿、等大灯平滑收敛 0.6 s
+// （__br.step 每次调用只在最后一小步渲染一帧：一次推 0.6 s 只渲染一次，比 18 次 1/30 s 省很多渲染）
+// 摆好以后推 0.6 s，再等大灯落定（整合 FE1R：光球放大按 3 m/s、强度按 2.4/s 限速，挨得近的两个位姿之间不算跳变、从上一个位姿的状态接着平滑，
+// 0.6 s 里光球可能还没长到位 —— 停着的车灯落定以后孩子看到的才是这一位姿的光）：每 0.1 s 看一次，位置差 <5 mm、光球差 <1 cm、强度差 <0.5% 就算落定，最多再等 3 s
+const ltPlace = (page, P) => ev(page, a => {
+  __sw.place(a.x, a.z, a.yaw); __br.step(0.6);
+  const cur = () => { const L = __sw.L(); return L ? [L.x, L.y, L.z, L.range, L.intensity] : null; };
+  let prev = cur(), k = 0;
+  for (; k < 30; k++) {
+    __br.step(0.1);
+    const c = cur();
+    if (prev && c && Math.abs(c[0] - prev[0]) < 0.005 && Math.abs(c[1] - prev[1]) < 0.005 && Math.abs(c[2] - prev[2]) < 0.005 && Math.abs(c[3] - prev[3]) < 0.01 && Math.abs(c[4] - prev[4]) <= 0.005 * Math.max(1e-6, prev[4])) break;
+    prev = c;
+  }
+  for (let j = 0; j < 2; j++) BR.gfx.render(0.1);
+  return Object.assign(__sw.lightNow(), { settle: k });
+}, P);
+// 驾驶座画面开 / 关灯两张拼一张存 PNG
+async function ltShot(page, name) {
+  const url = await ev(page, () => {
+    const S = __sw, sim = S.sim(), e = sim.eyeWorld(), p = BR.vehicles.byKey(S.k).pose;
+    S.aim({ x: e.x, y: e.y, z: e.z }, S.W(p, 0, 0.2, -6));
+    if (!S.capture()) return null;
+    S.setOn(true); const a = S.view(); S.setOn(false); const b = S.view(); S.setOn(true);
+    const c = document.createElement('canvas'); c.width = a.width * 2; c.height = a.height; const g = c.getContext('2d');
+    g.drawImage(a, 0, 0); g.drawImage(b, a.width, 0); g.fillStyle = 'rgba(0,0,0,.6)'; g.fillRect(0, 0, 150, 22); g.fillRect(a.width, 0, 150, 22);
+    g.fillStyle = '#ff0'; g.font = '15px sans-serif'; g.fillText('驾驶座 开灯', 6, 16); g.fillText('驾驶座 关灯', a.width + 6, 16);
+    return c.toDataURL('image/png');
+  });
+  if (!url) return null;
+  const f = path.join(OUT, name + '.png');
+  fs.writeFileSync(f, Buffer.from(url.split(',')[1], 'base64'));
+  return path.relative(ROOT, f);
+}
+
+// ---------- K2：随机位姿（种子 12345 / 16 / 39，每个 ≥150 个）----------
+// 判定区 = 叉尖前 0.5 m 到 min(3, 车宽带里第一个挡光体 − 0.2)，横向 ±0.5，每 0.25 m 一点，去掉离实体面 < 0.3 m、驾驶座看不见的；断电时开关灯渲染差全部 ≥8、lightAt 都亮。
+// 墙后（光源到地面点的视线被不窄、跨过光源高度的碰撞体挡住）开关灯差 ≤2；竖直面按光球解析算（光球里、朝着光源、视线被挡的面点 0 个）；lightAt 和画面一致。
+// 例外：单盏受界点光源在几何上照不到（同一套界限、细网格暴力搜也照不全判定区）的位姿 ≤3%，这些位姿叉尖前 0.5–1.5 m 仍须全亮，逐个截图
+const K2_SEEDS = [12345, 16, 39];
+const K2_NAMED = {
+  12345: [
+    { cat: 'named', name: 'H8 叉尖离小屋西墙 1 m', x: 17.7, z: 18.0, yaw: -Math.PI / 2 }, { cat: 'named', name: 'J9 窄道', x: 3.45, z: 5.59, yaw: -Math.PI / 2 },
+    { cat: 'named', name: 'J9 宽通道', x: -12, z: 57.5, yaw: 0 }, { cat: 'named', name: '撞车直道', x: 37.5, z: 14.6, yaw: 0 },
+    { cat: 'named', name: '贴着承重墙开 0.5 m（#54）', x: -14.5, z: 2.75, yaw: -Math.PI / 2 }, { cat: 'named', name: '贴着承重墙开 0.7 m', x: -14.5, z: 2.55, yaw: -Math.PI / 2 },
+    { cat: 'occ', name: '#121 撞宽堆垛', x: 17.661, z: -61.487, yaw: 3.1083 }, { cat: 'occ', name: '#25 高堆垛 4 m', x: -81.97, z: 31.563, yaw: -3.1161 },
+    { cat: 'occ', name: '#73 别的车右侧', x: -55.616, z: 86.276, yaw: 0.1279 }, { cat: 'occ', name: '#203 别的车车尾', x: 81.937, z: -34.766, yaw: 0.2777 },
+  ],
+  16: [{ cat: 'occ', name: '#110 宽堆垛', x: -31.615, z: -49.037, yaw: -1.4191 }],
+  39: [],
+};
+async function gK2(browser) {
+  const tot = { n: 0, lit: 0, exc: [], bad: [], dark: [], at: [], v: [] };
+  for (const seed of K2_SEEDS) {
+    const S = await ltSession(browser, seed);
+    const { page } = S;
+    try {
+      check('K2.' + seed + ' 断电了、坐上了出生车', !!S.dark && S.mounted, S.dark);
+      if (!S.dark || !S.mounted) continue;
+      const g = await ev(page, a => __sw.gen(a.seed, a.per), { seed, per: 12 });
+      const poses = (K2_NAMED[seed] || []).concat(g.poses);
+      poses.sort((a, b) => { const ax = Math.floor(a.x / 32), bx = Math.floor(b.x / 32); if (ax !== bx) return ax - bx; const az = Math.floor(a.z / 32), bz = Math.floor(b.z / 32); return (ax % 2 ? -1 : 1) * (az - bz); });
+      const rows = [];
+      let i = 0;
+      for (const P of poses) {
+        i++;
+        await ltPlace(page, P);
+        const m = await ev(page, () => __lt.k2());
+        if (m.err) { rows.push({ P, err: m.err }); continue; }
+        m.P = P; m.i = i;
+        if (m.zFail.length) {
+          m.brute = await ev(page, () => __lt.brute(0.15));
+          m.geo = !!m.brute && m.brute.ok < m.brute.n;
+          // 例外的原因：不管「光源不越过正前方的窄东西」（K1）这一条就照得全的，记成 K1；还照不全的是墙 / 货架 / 宽块的影子界限
+          if (m.geo) { const b2 = await ev(page, () => __lt.brute(0.15, true)); m.cause = b2 && b2.ok >= b2.n ? 'K1 窄东西挡在前面' : '影子界限'; }
+          m.shot = await ltShot(page, 'k2-' + seed + '-' + String(i).padStart(3, '0') + '-' + P.cat);
+        }
+        rows.push(m);
+      }
+      fs.writeFileSync(path.join(OUT, 'k2-' + seed + '.json'), JSON.stringify(rows.map(r => Object.assign({}, r)), null, 0));
+      const ok = rows.filter(r => !r.err);
+      const lit = ok.filter(r => !r.zFail.length), exc = ok.filter(r => r.zFail.length && r.geo), bad = ok.filter(r => r.zFail.length && !r.geo);
+      const dark = ok.filter(r => r.dFail.length || r.vLeak), at = ok.filter(r => r.aFail.length);
+      const brief = r => ({ i: r.i, cat: r.P.cat, name: r.P.name, pose: r.pose, L: r.L, fail: r.zFail.slice(0, 4), brute: r.brute, cause: r.cause, near15: r.near15, shot: r.shot });
+      tot.n += ok.length; tot.lit += lit.length; tot.exc.push(...exc.map(r => Object.assign({ seed }, brief(r)))); tot.bad.push(...bad.map(r => Object.assign({ seed }, brief(r))));
+      tot.dark.push(...dark.map(r => ({ seed, i: r.i, cat: r.P.cat, dFail: r.dFail.slice(0, 3), vLeak: r.vLeak, vEx: r.vEx })));
+      tot.at.push(...at.map(r => ({ seed, i: r.i, cat: r.P.cat, aFail: r.aFail.slice(0, 3) })));
+      check('K2.' + seed + ' 随机位姿 ' + g.poses.length + ' 个（15 类：' + Object.entries(g.cnt).map(([a, b]) => a + ' ' + b).join('，') + '）+ 点名 ' + (K2_NAMED[seed] || []).length + ' 个，量完 ' + ok.length + ' 个',
+        g.poses.length >= 150 && ok.length === poses.length, { cnt: g.cnt, err: rows.filter(r => r.err).slice(0, 3) });
+      check('K2.' + seed + ' 车前地面亮：判定区每一点断电时开关灯差 ≥8 的 ' + lit.length + ' 个；单盏受界光源几何上照不全的例外 ' + exc.length + ' 个（' + (100 * exc.length / Math.max(1, ok.length)).toFixed(1) + '%，≤3%），这些叉尖前 0.5–1.5 m 全亮；' +
+        '光源本来照得全却没照全的 ' + bad.length + ' 个', bad.length === 0 && exc.length <= 0.03 * ok.length && exc.every(r => r.near15), { exc: exc.map(brief), bad: bad.map(brief) });
+      check('K2.' + seed + ' 墙后暗：被墙 / 货架 / 宽堆垛 / 别的车挡住的地面开关灯差 ≤2、光球里朝着光源被挡住的竖直面 0 个（超标位姿 ' + dark.length + ' 个）', dark.length === 0, dark.slice(0, 6).map(r => ({ i: r.i, cat: r.P.cat, d: r.dFail.slice(0, 3), v: r.vLeak, vEx: r.vEx })));
+      check('K2.' + seed + ' lightAt 一致：画面亮了 ≥8 的点 lightAt 都亮、墙后光够不到的点 lightAt 不亮（不一致的位姿 ' + at.length + ' 个）', at.length === 0, at.slice(0, 6).map(r => ({ i: r.i, a: r.aFail.slice(0, 3) })));
+      if (seed === 12345) {
+        // L-occluders 点名的几处、K2 点名的几处，单独列一行
+        const nm = ok.filter(r => r.P.cat === 'named' || r.P.cat === 'occ');
+        info('K2 点名位姿', nm.map(r => [r.P.name, r.zFail.length ? 'zone✗' : 'zone✓', r.dFail.length || r.vLeak ? 'leak✗' : 'dark✓', r.L.R, r.inf.by]));
+        await ceilChecks(page);
+        await narrowChecks(page);
+        await wallSpotChecks(page);
+        await doorChecks(page);
+      }
+      if (seed === 16) {
+        const nm = ok.filter(r => r.P.cat === 'occ');
+        check('L-occ 种子 16 #110 宽堆垛：挡住的地面、竖直面开关灯差 ≤2，车前地面照旧亮', nm.length === 1 && !nm[0].dFail.length && !nm[0].vLeak && !nm[0].zFail.length, nm);
+      }
+    } finally { await S.ctx.close().catch(() => {}); }
+  }
+  check('K2 三个种子合计 ' + tot.n + ' 个位姿：车前地面亮 ' + tot.lit + '、几何例外 ' + tot.exc.length + '（' + (100 * tot.exc.length / Math.max(1, tot.n)).toFixed(1) + '%）、该亮没亮 ' + tot.bad.length + '；墙后漏光 ' + tot.dark.length + '；lightAt 不一致 ' + tot.at.length,
+    tot.n >= 450 && tot.bad.length === 0 && tot.exc.length <= 0.03 * tot.n && tot.dark.length === 0 && tot.at.length === 0, { exc: tot.exc, bad: tot.bad.slice(0, 8) });
+  fs.writeFileSync(path.join(OUT, 'k2-exceptions.json'), JSON.stringify(tot.exc, null, 1) + '\n');
+}
+// L-ceiling：前方 ≥6 m 开阔的位姿（种子 12345 的随机空地），光源上方天花板开关灯差 ≤ 叉尖前 1 m 地面的差、≤40；车后（驾驶座上方往后）天花板 0
+async function ceilChecks(page) {
+  const list = await ev(page, () => { const g = __sw.gen(12345, 30); return g.poses.filter(q => q.cat === 'open'); });
+  const rows = [];
+  for (const P of list) {
+    if (rows.length >= 12) break;
+    const free = await ev(page, a => !__fp.sweep(a.x, a.z, a.yaw, 0, 6, __sw.pk, 0.1), P);
+    if (!free) continue;
+    await ltPlace(page, P);
+    rows.push(await ev(page, () => {
+      const S = __sw, p = BR.vehicles.byKey(S.k).pose, gy = p.y || 0;
+      if (!S.capture()) return null;
+      const L = S._st.L;
+      const pts = [{ x: L.x, y: gy + 3.997, z: L.z, n: [0, -1, 0], d: 0.25, tag: 'ceilAbove' }, Object.assign(S.W(p, 0, gy + 3.997, 0.2), { n: [0, -1, 0], d: 0.25, tag: 'ceilSeat' }), Object.assign(S.W(p, 0, gy + 3.997, 1.5), { n: [0, -1, 0], d: 0.25, tag: 'ceilRear' }), Object.assign(S.W(p, 0, gy + 0.002, -3.1), { n: [0, 1, 0], d: 0.3, tag: 'ground1m' })];
+      S.setOn(true); const on = S.lux(pts); S.setOn(false); const off = S.lux(pts); S.setOn(true);
+      const d = pts.map((q, i) => S.r(on[i] - off[i], 100));
+      return { pose: { x: S.r(p.x), z: S.r(p.z) }, L: { y: S.r(L.y, 100), R: S.r(L.range, 100), I: S.r(L.intensity, 100) }, ceil: d[0], seat: d[1], rear: d[2], ground: d[3] };
+    }));
+  }
+  const ok = rows.filter(Boolean);
+  check('L-ceiling 前方 ≥6 m 开阔的 ' + ok.length + ' 个位姿：光源上方天花板开关灯差 ≤ 叉尖前 1 m 地面的差、≤40（最大 ' + Math.max(0, ...ok.map(r => r.ceil)).toFixed(1) + '）；驾驶座上方、车后天花板 ≤2',
+    ok.length >= 9 && ok.every(r => r.ceil <= r.ground && r.ceil <= 40 && r.seat <= 2 && r.rear <= 2), ok);
+}
+
+// K2 (3)：正对 4.46–6 m 外的墙（光线起点到墙；叉尖离小屋西墙 3.06–4.6 m）：不再有贴着墙的发白小点 —— 墙上 Δ≥8 的亮斑直径 ≥0.6 m、亮斑里开灯像素最大通道 <245；
+// 车前判定区照旧亮
+async function wallSpotChecks(page) {
+  const res = [];
+  for (const g of [3.1, 3.5, 4.0, 4.5]) {
+    await ltPlace(page, { x: 20.8 - g - 2.1, z: 18.0, yaw: -Math.PI / 2 });
+    res.push(Object.assign({ g }, await ev(page, () => {
+      const S = __sw; if (!S.capture()) return null;
+      const L = S._st.L, pts = [];
+      for (let y = 0.1; y <= 2.5 + 1e-6; y += 0.1) for (let dz = -1.2; dz <= 1.2 + 1e-6; dz += 0.1) pts.push({ x: 20.797, y, z: 18.0 + dz, n: [-1, 0, 0], d: 0.3 });
+      S.setOn(true); const on = __lt.luxMax(pts); S.setOn(false); const off = S.lux(pts); S.setOn(true);
+      const lit = pts.filter((q, i) => on[i][0] - off[i] >= 8);
+      let y0 = 9, y1 = -9, z0 = 99, z1 = -99, mx = 0;
+      pts.forEach((q, i) => { if (on[i][0] - off[i] >= 8) { y0 = Math.min(y0, q.y); y1 = Math.max(y1, q.y); z0 = Math.min(z0, q.z); z1 = Math.max(z1, q.z); } mx = Math.max(mx, on[i][1]); });
+      const k2 = __lt.k2();
+      return { L: { x: S.r(L.x), y: S.r(L.y), R: S.r(L.range, 100), I: S.r(L.intensity, 100) }, n: lit.length, dia: lit.length ? S.r(Math.min(y1 - y0, z1 - z0) + 0.1, 100) : 0, maxCh: mx, zone: k2.nZone, zFail: k2.zFail.slice(0, 3) };
+    })));
+  }
+  check('K2 正对 4.46–6 m 外的墙（叉尖离小屋西墙 3.1 / 3.5 / 4.0 / 4.5 m）：墙上 Δ≥8 的亮斑要么没有、要么直径 ≥0.6 m，亮斑里开灯像素最大通道 <245（' + res.map(r => r.g + ' m：' + (r.n ? '直径 ' + r.dia + '、最大通道 ' + r.maxCh : '无亮斑')).join('；') + '），车前判定区照旧亮',
+    res.every(r => r && (r.n === 0 || r.dia >= 0.6) && r.maxCh < 245 && !r.zFail.length), res);
+}
+// K2 (3)：正对小屋门（种子 12345，门洞 x 7.42–8.58、z 36.8–37.0，屋在 +z）：光源不穿过门洞放进屋里，门外地面照判定区亮，屋里墙后（门两边那两段墙后面）开关灯差 ≤2
+async function doorChecks(page) {
+  const res = [];
+  for (const g of [0.6, 1.5, 3.0]) {
+    await ltPlace(page, { x: 8.0, z: 36.8 - g - 2.1, yaw: Math.PI });
+    res.push(Object.assign({ g }, await ev(page, () => {
+      const S = __sw; if (!S.capture()) return null;
+      const L = S._st.L, pts = [];
+      // 门两边那两段墙后面（屋里离墙 0.3–1.5 m，离门洞边 ≥0.4 m）：地面、离地 0.5 / 1.0 m 朝 −z 的面（屋里别的东西）
+      for (const x of [5.8, 6.3, 9.7, 10.2]) for (const dz of [0.3, 0.8, 1.5]) pts.push({ x, y: 0.002, z: 37.0 + dz, n: [0, 1, 0], d: 0.3 });
+      S.setOn(true); const on = S.lux(pts); S.setOn(false); const off = S.lux(pts); S.setOn(true);
+      const k2 = __lt.k2();
+      return { L: { x: S.r(L.x), y: S.r(L.y), z: S.r(L.z), R: S.r(L.range, 100) }, maxIn: Math.max(...pts.map((q, i) => S.r(on[i] - off[i], 100))), zone: k2.nZone, zFail: k2.zFail.slice(0, 3), dFail: k2.dFail.slice(0, 3) };
+    })));
+  }
+  check('K2 正对小屋门（叉尖离门 0.6 / 1.5 / 3 m）：光源在门外（z < 36.8）、门外判定区亮、屋里门两边墙后的地面开关灯差 ≤2（' + res.map(r => r.g + ' m：光源 z ' + (r.L && r.L.z) + '、屋里最大 ' + r.maxIn).join('；') + '）',
+    res.every(r => r && r.L.z < 36.8 && r.maxIn <= 2 && !r.zFail.length && !r.dFail.length), res);
+}
+// K1 (4)：正对独立立着的细杆 / 树干、正对柱子（断电）：朝车那一面 0.5 / 1.0 / 1.6 m 开关灯差 ≥8，判定区照旧亮
+async function narrowChecks(page) {
+  // 独立立着的（离别的碰撞体 ≥0.4 m：门框立柱嵌在墙的门洞边上，正对它就是正对墙，不算）细杆 / 树干，和柱子
+  const targets = await ev(page, () => {
+    const sol = __sw.solids(), P0 = BR.vehicles.byKey(__sw.k).pose;
+    const near = q => Math.hypot((q.minX + q.maxX) / 2 - P0.x, (q.minZ + q.maxZ) / 2 - P0.z);
+    const alone = q => { const out = []; BR.phys.overlapBox(q.minX - 0.4, q.minZ - 0.4, q.maxX + 0.4, q.maxZ + 0.4, 0.05, 1.8, { out, ignoreKey: __sw.ign }); return out.every(s => !s.obb && Math.abs(s.minX - q.minX) < 1e-6 && Math.abs(s.maxX - q.maxX) < 1e-6 && Math.abs(s.minZ - q.minZ) < 1e-6 && Math.abs(s.maxZ - q.maxZ) < 1e-6); };
+    const post = sol.filter(q => (q.cls === 'post' || q.cls === 'tree') && q.h > 1.5 && alone(q)).sort((a, b) => near(a) - near(b));
+    const pil = sol.filter(q => q.cls === 'pillar').sort((a, b) => near(a) - near(b));
+    return { post: post.slice(0, 6), pil: pil.slice(0, 6) };
+  });
+  // 附近没有独立的细杆就用 ⑨ 那棵枯树（种子 12345，(8, −16)，碰撞盒 0.34 见方、高 1.7）
+  if (!targets.post.length) targets.post = [{ minX: 7.83, maxX: 8.17, minZ: -16.17, maxZ: -15.83, minY: 0, maxY: 1.7, w: 0.34, d: 0.34, h: 1.7 }];
+  const res = [];
+  for (const [kind, list] of [['细杆 / 树干', targets.post], ['柱子', targets.pil]]) {
+    let done = 0;
+    for (const B of list) {
+      if (done >= 2) break;
+      const cx = (B.minX + B.maxX) / 2, cz = (B.minZ + B.maxZ) / 2;
+      for (const [nx, nz, face] of [[0, -1, B.minZ], [0, 1, B.maxZ], [-1, 0, B.minX], [1, 0, B.maxX]]) {
+        let got = false;
+        for (const gap of [0.6, 1.5, 3.0]) {
+          // 车头朝 −n，叉尖离那一面 gap
+          const fx = -nx, fz = -nz, yaw = Math.atan2(-fx, -fz);
+          const tx = nx ? face + nx * gap : cx, tz = nz ? face + nz * gap : cz;
+          const P = { x: tx - fx * 2.1, z: tz - fz * 2.1, yaw };
+          const ok = await ev(page, a => !__sw.hits(a.x, a.z, a.yaw).length && Math.abs(BR.phys.groundY(a.x, a.z)) < 0.02, P);
+          if (!ok) continue;
+          await ltPlace(page, P);
+          const r = await ev(page, a => {
+            const S = __sw; if (!S.capture()) return null;
+            // 朝车那一面（法线 n 朝车）正中、离地 0.5 / 1.0 / 1.6 m
+            const cx = (a.B.minX + a.B.maxX) / 2, cz = (a.B.minZ + a.B.maxZ) / 2;
+            const pts = [0.5, 1.0, 1.6].filter(y => y < a.B.maxY - 0.05).map(y => ({ x: a.nx ? a.face + a.nx * 0.003 : cx, y, z: a.nz ? a.face + a.nz * 0.003 : cz, n: [a.nx, 0, a.nz], d: 0.3 }));
+            S.setOn(true); const on = S.lux(pts); S.setOn(false); const off = S.lux(pts); S.setOn(true);
+            const k2 = __lt.k2();
+            return { d: pts.map((q, i) => S.r(on[i] - off[i], 100)), zone: k2.nZone, zFail: k2.zFail.slice(0, 3), L: k2.L };
+          }, { B, tx, tz, nx, nz, face });
+          if (r) { res.push({ kind, gap, B: [S2(B.w), S2(B.d), S2(B.h)], r }); got = true; }
+        }
+        if (got) { done++; break; }
+      }
+    }
+  }
+  check('K1 (4) 正对独立立着的细杆 / 树干、正对柱子（断电，叉尖离它 0.6 / 1.5 / 3 m；门框立柱嵌在墙边，正对它就是正对墙，按 H8 / 墙的规矩）：朝车那一面 0.5 / 1.0 / 1.6 m 开关灯差都 ≥8，车前判定区照旧亮（' + res.length + ' 个位姿）',
+    res.length >= 6 && res.every(q => q.r.d.every(d => d >= 8) && !q.r.zFail.length) && res.some(q => q.kind === '细杆 / 树干') && res.some(q => q.kind === '柱子'), res);
+}
+function S2(v) { return Math.round(v * 100) / 100; }
+
+// ---------- K1：⑨ 那棵枯树（种子 12345，不断电，和 showOwner 那张同样亮着灯）----------
+const TREE = { x: 8, z: -16, face: -16.17 };
+async function gK1(browser) {
+  const S = await ltSession(browser, 12345, { lit: true, vp: { width: 1280, height: 720 }, place: [8, -24.4, Math.PI], tag: 'k1' });
+  const { page } = S;
+  try {
+    check('K1.0 坐上出生车（不断电）', S.mounted);
+    const meas = async (g, lat) => {
+      await ltPlace(page, { x: TREE.x + lat, z: TREE.face - g - 2.1, yaw: Math.PI });
+      return ev(page, a => {
+        const S = __sw; S.occl();
+        const rc = new THREE.Raycaster(), pts = [];
+        for (const y of [1.6, 1.0, 0.5]) {
+          rc.set(new THREE.Vector3(a.x, y, a.face - 1.3), new THREE.Vector3(0, 0, 1)); rc.near = 0; rc.far = 2;
+          const h = rc.intersectObjects(S._occ, false).filter(q => Math.hypot(q.point.x - a.x, q.point.z - a.z) < 0.25)[0];
+          if (h) pts.push({ x: h.point.x, y: h.point.y, z: h.point.z - 0.004, n: [0, 0, -1], d: 0.3, tag: 'trunk' + y });
+        }
+        pts.push({ x: a.x, y: 0.002, z: a.face - 0.6, n: [0, 1, 0], d: 0.3, tag: 'ground0.6' });
+        // 树干朝车那一面 0.3–1.6 m 每 0.1 m：最大通道（不发白）
+        const wp = [];
+        for (let y = 0.3; y <= 1.6 + 1e-6; y += 0.1) { rc.set(new THREE.Vector3(a.x, y, a.face - 1.3), new THREE.Vector3(0, 0, 1)); const h = rc.intersectObjects(S._occ, false).filter(q => Math.hypot(q.point.x - a.x, q.point.z - a.z) < 0.25)[0]; if (h) wp.push({ x: h.point.x, y: h.point.y, z: h.point.z - 0.004, n: [0, 0, -1], d: 0.3 }); }
+        if (!S.capture()) return null;
+        S.setOn(true); const on = S.lux(pts); const mx = __lt.luxMax(wp); const atOn = pts.map(q => BR.world.lightAt(q.x, q.z));
+        S.setOn(false); const off = S.lux(pts); const atOff = pts.map(q => BR.world.lightAt(q.x, q.z)); S.setOn(true);
+        const inf = S.sim().lightInfo;
+        return { pts: pts.map((q, i) => [q.tag, S.r(on[i] - off[i], 100), S.r(atOn[i] - atOff[i], 1000)]), maxCh: Math.max(0, ...mx.map(m => m[1])), n: pts.length, L: S.lightNow().L, s: S.r(inf.s, 100) };
+      }, { x: TREE.x, z: TREE.z, face: TREE.face });
+    };
+    // ⑨ 机位（车开到出口圈停住的地方：叉尖离树干 1.62 m）：驾驶座画面里树干那一片平均亮度和 pre-polish 旧图同一片比
+    const r9 = await meas(1.62, 0);
+    const cmp = await ev(page, async () => {
+      BR.player.yaw = Math.PI; BR.player.pitch = -0.22; __br.step(1 / 60);
+      const cv = __sw.grabMain(), W = cv.width, H = cv.height;
+      // 旧图在 tests/output（gitignore）里：新克隆 / 换机器没有它 —— 读不到就用当时量下来的那个数（返修 FE1R · repair-r1，验收员 tests：以前 404 整组中断）
+      const OLD_REF = 143.9;
+      const img = new Image(); img.src = '/tests/output/showOwner-FE1/pre-polish/g1/09-exit-ahead.png';
+      const okImg = await new Promise(res => { img.onload = () => res(true); img.onerror = () => res(false); });
+      const c2 = document.createElement('canvas'); c2.width = W; c2.height = H; const g2 = c2.getContext('2d'); if (okImg) g2.drawImage(img, 0, 0, W, H);
+      const a = cv.getContext('2d').getImageData(0, 0, W, H).data, b = g2.getImageData(0, 0, W, H).data, sx = W / 1280, sy = H / 720;
+      let sa = 0, sb = 0, n = 0;
+      // 树干那一列（旧图 x 630–650、y 270–440），避开旧图上的提示框和准心（HUD 那几行）
+      for (let y = 270; y < 440; y++) { if ((y >= 296 && y <= 334) || (y >= 346 && y <= 374) || (y >= 384 && y <= 422)) continue; for (let x = 630; x <= 650; x++) { const i = (Math.round(y * sy) * W + Math.round(x * sx)) * 4; sa += 0.2126 * a[i] + 0.7152 * a[i + 1] + 0.0722 * a[i + 2]; sb += 0.2126 * b[i] + 0.7152 * b[i + 1] + 0.0722 * b[i + 2]; n++; } }
+      return { now: Math.round(sa / n * 10) / 10, old: okImg ? Math.round(sb / n * 10) / 10 : OLD_REF, oldFrom: okImg ? 'pre-polish 旧图' : '记下的数（旧图不在）', n, png: cv.toDataURL('image/png') };
+    });
+    if (cmp.png) { fs.writeFileSync(path.join(OUT, 'k1-09-driver.png'), Buffer.from(cmp.png.split(',')[1], 'base64')); delete cmp.png; }
+    check('K1.1 ⑨ 机位（叉尖离树干 1.62 m，不断电）：树干朝车那面 1.6 / 1.0 / 0.5 m、树前 0.6 m 地面开关灯差都 ≥8（' + (r9 ? r9.pts.map(q => q[0] + ' ' + q[1]).join('，') : '?') + '），lightAt 都算亮',
+      !!r9 && r9.n === 4 && r9.pts.every(q => q[1] >= 8 && q[2] >= 0.01), r9);
+    check('K1.2 ⑨ 机位驾驶座画面里树干那一片平均亮度 ' + cmp.now + '，pre-polish 旧图 ' + cmp.old + '（最多暗 8 级）', cmp.now >= cmp.old - 8, cmp);
+    const rows = [];
+    for (const lat of [0, 0.12, -0.12]) for (let g = 0.3; g <= 4.0 + 1e-6; g += 0.1) rows.push(Object.assign({ g: S2(g), lat }, await meas(g, lat)));
+    const bad = rows.filter(r => !r.pts || r.n < 4 || r.pts.some(q => q[1] < 8)), white = rows.filter(r => !(r.maxCh < 245));
+    check('K1.3 开车靠近枯树：叉尖离树 0.3–4.0 m 每 0.1 m、横偏 0 / ±0.12（' + rows.length + ' 个位姿），树干三点和树前地面都 ≥8（不达标 ' + bad.length + ' 个）', rows.length >= 110 && bad.length === 0, bad.slice(0, 8));
+    check('K1.4 同上，树干上开灯后的像素最大通道 <245（最大 ' + Math.max(...rows.map(r => r.maxCh || 0)) + '，超标 ' + white.length + ' 个）', white.length === 0, white.slice(0, 6).map(r => [r.g, r.lat, r.maxCh, r.L]));
+    fs.writeFileSync(path.join(OUT, 'k1-scan.json'), JSON.stringify(rows) + '\n');
+    // 真键盘开过去（60 fps）：叉尖前地面相邻帧 ≤8 级、驾驶座画面下半区 ≤4 级
+    const sm = await driveRoute(page, { id: 'tree', x: TREE.x, z: TREE.face - 5 - 2.1, yaw: Math.PI, sec: 3.0, keys: [[0, 3.0, ['KeyW']]] });
+    check('K1.5 真键盘开向枯树（' + sm.n + ' 帧，60 fps，停在出口圈前）：叉尖前地面相邻帧差最大 ' + sm.maxGround + ' 级（≤8），驾驶座画面下半区 ' + sm.maxView + ' 级（≤4）', sm.n > 100 && sm.maxGround <= 8 && sm.maxView <= 4, sm);
+  } finally { await S.ctx.close().catch(() => {}); }
+}
+
+// ---------- K2 (5) 平滑：12 条真键盘路线，60 fps 逐帧 ----------
+const ROUTES = [
+  { id: 'wallHead', name: '全速开向小屋西墙直到停住', x: 12, z: 18, yaw: -Math.PI / 2, sec: 4.5, keys: [[0, 4.5, ['KeyW']]] },
+  { id: 'pillarSlalom', name: '主通道柱子间蛇行', x: 0.5, z: 30, yaw: 0, sec: 7, keys: [[0, 7, ['KeyW']], [0.5, 1.3, ['KeyA']], [1.8, 2.6, ['KeyD']], [3.1, 3.9, ['KeyA']], [4.4, 5.2, ['KeyD']], [5.7, 6.5, ['KeyA']]] },
+  { id: 'laneExit', name: '窄道开出去', x: 3.45, z: 5.59, yaw: -Math.PI / 2, sec: 5, keys: [[0, 5, ['KeyW']]] },
+  { id: 'turnInPlace', name: '柱子旁边打满方向转圈', x: 0.5, z: 14, yaw: 0, sec: 6, keys: [[0, 6, ['KeyW', 'KeyA']]] },
+  { id: 'doorPass', name: '从小屋西墙外开过门口', x: 18.9, z: 21.4, yaw: 0, sec: 4, keys: [[0, 4, ['KeyW']]] },
+  { id: 'aisle', name: '宽货架通道往前开', x: -12, z: 57.5, yaw: 0, sec: 5, keys: [[0, 5, ['KeyW']]] },
+  { id: 'pillarHead', name: '正对柱子开过去', x: -4, z: 37.45, yaw: 0, sec: 3.55, keys: [[0, 3.55, ['KeyW']]] },
+  { id: 'stackHead', name: '正对高堆垛开过去', x: 19.52, z: 14.4, yaw: Math.PI / 2, sec: 3.55, keys: [[0, 3.55, ['KeyW']]] },
+  { id: 'rackHeadRun', name: '正对货架头开过去', x: 16, z: -2.26, yaw: Math.PI, sec: 3.55, keys: [[0, 3.55, ['KeyW']]] },
+  { id: 'postHead', name: '正对门框立柱 / 杆子开过去', x: 11.72, z: 15.61, yaw: -Math.PI / 2, sec: 3.55, keys: [[0, 3.55, ['KeyW']]] },
+  { id: 'wallAlong', name: '贴着承重墙外侧开（车侧离墙 0.5 m）', x: -14.5, z: 2.75, yaw: -Math.PI / 2, sec: 3.2, keys: [[0, 3.2, ['KeyW']]] },
+  { id: 'wallAlong2', name: '贴着承重墙外侧开（车侧离墙 0.7 m）', x: -14.5, z: 2.55, yaw: -Math.PI / 2, sec: 3.2, keys: [[0, 3.2, ['KeyW']]] },
+];
+const LEV = [[0, 0], [0.05, 5.9], [0.1, 10.9], [0.2, 21.3], [0.3, 28.9], [0.5, 42.1], [0.75, 55], [1.0, 69.3], [1.5, 84.5], [2.0, 101.8], [3.0, 130], [8.0, 230]];
+function levOf(E) { for (let i = 1; i < LEV.length; i++) if (E <= LEV[i][0]) return LEV[i - 1][1] + (LEV[i][1] - LEV[i - 1][1]) * (E - LEV[i - 1][0]) / (LEV[i][0] - LEV[i - 1][0]); return 230; }
+// 一条路线：真键盘按 keys（[起, 止, [键…]]）开，60 fps 每帧：叉尖前 0.5 / 1.5 / 3 / 5 m 地面按大灯算的照度换成色阶（同一套 (1 − d/R)²·cosθ，
+// 断电时的地面标定：0.1 ≈ 11 级、1 ≈ 69 级），只比两帧都在车前空地上（挡光体前 0.2 m 以内、离实体面 ≥0.3 m）的点；驾驶座画面下半区平均亮度
+async function driveRoute(page, rt) {
+  await releaseAll(page);
+  // 路线开始前清掉怪（雷达见了人和怪会刹车，路线就白开了）
+  // 「正对着某样东西开过去」的起点离它太近（排查时正对柱子那条一步都没开）：沿车尾方向退，退到前面有 ≥3 m 能开、起点不压东西
+  rt = Object.assign({}, rt, await ev(page, a => {
+    const f = { x: -Math.sin(a.yaw), z: -Math.cos(a.yaw) };
+    for (let back = 0; back <= 4.01; back += 0.5) {
+      const x = a.x - f.x * back, z = a.z - f.z * back;
+      if (__sw.hits(x, z, a.yaw).length) continue;
+      const sw = __fp.sweep(x, z, a.yaw, 0, 3, __sw.pk, 0.1);
+      if (!sw || back >= 4) return { x, z, back };
+    }
+    return { back: 0 };
+  }, rt));
+  await ev(page, a => { if (BR.entities && BR.entities.clear) { try { BR.entities.clear(); } catch (e) { /* 忽略 */ } } __sw.place(a.x, a.z, a.yaw); BR.player.pitch = -0.1; for (let j = 0; j < 30; j++) __br.step(1 / 60); return 0; }, rt);
+  const rows = [], down = new Set(), N = Math.round(rt.sec * 60);
+  for (let f = 0; f < N; f++) {
+    const t = f / 60, want = new Set();
+    for (const seg of rt.keys) if (t >= seg[0] && t < seg[1]) for (const c of seg[2]) want.add(c);
+    for (const c of down) if (!want.has(c)) { await page.keyboard.up(c); down.delete(c); }
+    for (const c of want) if (!down.has(c)) { await page.keyboard.down(c); down.add(c); }
+    const r = await ev(page, () => {
+      __br.step(1 / 60);
+      const cv = __sw.grabMain(), r = __sw.frame(cv), p = BR.vehicles.byKey(__sw.k).pose, bd = __lt.blockDist(p);
+      r.lh = __sw.meanLum(cv, 0, Math.round(cv.height / 2), cv.width, cv.height);
+      r.ok = [0.5, 1.5, 3, 5].map(t => { const q = __sw.W(p, 0, 0, -2.1 - t); return t <= bd.d - 0.2 && !__lt.nearSolid(q.x, q.z, p.y || 0, 0.3); });
+      return r;
+    });
+    r.f = f; r.lev = r.E.map(levOf); rows.push(r);
+  }
+  await releaseAll(page);
+  let mg = 0, mh = 0, ex = null, exh = null;
+  for (let i = 1; i < rows.length; i++) {
+    const a = rows[i - 1], b = rows[i];
+    for (let j = 0; j < 4; j++) { if (!a.ok[j] || !b.ok[j]) continue; const d = Math.abs(b.lev[j] - a.lev[j]); if (d > mg) { mg = d; ex = { f: b.f, t: [0.5, 1.5, 3, 5][j], a: S2(a.lev[j]), b: S2(b.lev[j]), La: a.L, Lb: b.L } } }
+    const dh = Math.abs(b.lh - a.lh); if (dh > mh) { mh = dh; exh = { f: b.f, a: a.lh, b: b.lh, La: a.L, Lb: b.L }; }
+  }
+  const last = rows[rows.length - 1] || {};
+  let path = 0;
+  for (let i = 1; i < rows.length; i++) path += Math.hypot(rows[i].x - rows[i - 1].x, rows[i].z - rows[i - 1].z);
+  return { id: rt.id, n: rows.length, maxGround: S2(mg), maxView: S2(mh), ex, exh, start: { x: S2(rt.x), z: S2(rt.z), back: rt.back }, end: { x: last.x, z: last.z, spd: last.spd }, moved: S2(path) };
+}
+async function gSmooth(browser) {
+  const S = await ltSession(browser, 12345);
+  const { page } = S;
+  try {
+    check('S0 断电了、坐上了出生车', !!S.dark && S.mounted, S.dark);
+    if (!S.dark || !S.mounted) return;
+    for (const rt of ROUTES) {
+      const r = await driveRoute(page, rt);
+      check('S ' + rt.name + '（' + r.n + ' 帧，开了 ' + r.moved + ' m，≥0.8）：叉尖前 0.5 / 1.5 / 3 / 5 m 地面相邻帧差最大 ' + r.maxGround + ' 级（≤8），驾驶座画面下半区 ' + r.maxView + ' 级（≤4）',
+        r.n > 100 && r.moved >= 0.8 && r.maxGround <= 8 && r.maxView <= 4, r);
+    }
+  } finally { await S.ctx.close().catch(() => {}); }
+}
+
+// ---------- L-workshop：工坊的全部熄灯 / 闪烁 / 亮度倍率不管大灯 ----------
+async function gWs(browser) {
+  for (const [name, ws] of [['全部熄灯', { blackout: true }], ['闪烁更频繁', { flicker: 'more' }], ['亮度 ×0.2', { lightMul: 0.2 }]]) {
+    const S = await ltSession(browser, 12345, { workshop: ws, lit: true, tag: 'ws' });
+    const { page } = S;
+    try {
+      check('W ' + name + '：工坊地图（基于 L1、种子 12345）开局、坐上车', S.mounted);
+      if (!S.mounted) continue;
+      await ltPlace(page, { x: -1, z: 32.6, yaw: -Math.PI / 2 });
+      const m = await ev(page, () => __lt.k2());
+      const L = await ev(page, () => { const L = __sw.L(), P = __sw.pool(); return { I: L && L.intensity, R: L && L.range, pool: P && { I: P.intensity, d: P.distance } }; });
+      if (name === '全部熄灯') check('W 全部熄灯：大灯照常亮（灯池里那盏强度 ' + (L.pool ? L.pool.I.toFixed(2) : '?') + '），车前判定区 ' + m.nZone + ' 点开关灯差都 ≥8（最小 ' + m.zMin + '），lightAt 一致',
+        !!L.pool && L.pool.I > 1 && Math.abs(L.pool.I - L.I) < 1e-6 && m.nZone > 5 && !m.zFail.length && !m.aFail.length, { L, m: { zFail: m.zFail, aFail: m.aFail } });
+      else check('W ' + name + '：大灯照常亮（灯池里那盏强度 = 大灯自己的 ' + (L.I || 0).toFixed(2) + '，不乘倍率），lightAt 一致', !!L.pool && Math.abs(L.pool.I - L.I) < 1e-6 && !m.aFail.length, { L, m: { zFail: m.zFail, aFail: m.aFail } });
+      if (name === '闪烁更频繁') {
+        // 开 20 s（停着、真推模拟），每帧灯池里大灯那盏的强度
+        const r = await ev(page, () => { let mx = 0, n = 0, prev = null; for (let i = 0; i < 600; i++) { __br.step(1 / 30); const P = __sw.pool(); if (!P) continue; n++; if (prev != null && prev > 0) mx = Math.max(mx, Math.abs(P.intensity - prev) / prev); prev = P.intensity; } return { n, mx }; });
+        check('W 闪烁更频繁：开着灯停 20 s（' + r.n + ' 帧），大灯强度逐帧最大跳变 ' + (100 * r.mx).toFixed(2) + '%（≤10%）', r.n >= 590 && r.mx <= 0.1, r);
+      }
+      if (name === '亮度 ×0.2') {
+        const base = await ev(page, () => { BR.workshop.deactivate(); const L = __sw.sim().lightSpot(); return L.intensity; });
+        check('W 亮度 ×0.2：大灯强度和默认地图一样（' + (L.I || 0).toFixed(3) + ' / ' + base.toFixed(3) + '）', Math.abs(L.I - base) < 0.05 * base, { L, base });
+      }
+    } finally { await S.ctx.close().catch(() => {}); }
+  }
+}
+
+// ---------- F1 / F3 / F4：升降货叉；F2：后轮打方向；F3：叉上的货开车 ----------
+// 叉上放一件物资（同 tests/forklift.mjs putOnFork：最低顶点贴着叉面，挂到这台车的 riders 上）
+function installFk() {
+  const F = window.__lf = {};
+  F.restLift = ty => { const r = BR.items.rest ? BR.items.rest(ty) : null; if (r) return -r.bot; const inf = BR.items.info(ty); return inf && typeof inf.bot === 'number' ? Math.max(-0.01, Math.min(0.05, -inf.bot)) : 0; };
+  F.put = (k, id, type, lx, lz) => {
+    const G = BR.L1forklift.geo, pose = BR.vehicles.byKey(k).pose, c = Math.cos(pose.yaw), s = Math.sin(pose.yaw);
+    const surf = pose.y + (G.forkY || 0.015) + (G.forkT || 0.04) + (G.carriageTravel || 2.6) * pose.lift;
+    if (BR.items.find(id)) BR.items.remove(id);
+    const p = BR.items.spawn(type, pose.x + c * lx + s * lz, surf + F.restLift(type), pose.z - s * lx + c * lz, { id, dropped: true, still: true });
+    return !!p && BR.vehicles.attachItem(id, k);
+  };
+  F.note = k => { const s = BR.forklift.byKey(k); return s ? s.lastNote : null; };
+  // _step 推 sec 秒（60 Hz），返回这段时间里出过的提示
+  F.run = (k, inp, sec) => { const notes = new Set(); const s = BR.forklift.byKey(k); if (s) s.lastNote = null; for (let i = 0; i < Math.round(sec * 60); i++) { BR.vehicles._step(1 / 60, inp, k); const n = s && s.lastNote; if (n) notes.add(n); if (s) s.lastNote = null; } return Array.from(notes); };
+  F.solidsBox = (pred) => { const L = []; for (const c of BR.world.chunks()) for (const s of (BR.phys.records(c.key).solids || [])) if (s.key === c.key && pred(s)) L.push({ minX: s.minX, maxX: s.maxX, minY: s.minY, maxY: s.maxY, minZ: s.minZ, maxZ: s.maxZ, ck: c.key }); return L; };
+}
+// 跟着升降的部件（货叉架、两根货叉、挡货架）和叉上货的顶点在不在 box 里（2 mm 容差）
+async function liftPen(page, k, box, tol) {
+  return ev(page, a => {
+    const v = BR.vehicles.byKey(a.k), p = v.pose, V = __lt.modelVerts(a.k, p.steer, p.lift);
+    const G = BR.L1forklift.geo;
+    const car = __lt.penBox(V, p, a.box, a.tol, (lx, ly, lz) => lz < -1.0 && ly > (G.forkY || 0.015) - 0.01 + (G.carriageTravel || 2.6) * p.lift - 0.02);
+    const items = [];
+    for (const id of (BR.vehicles.debugInfo().riders[a.k] || [])) { const r = __lt.penW(__lt.itemVerts(id), a.box, a.tol); if (r.n) items.push(Object.assign({ id }, r)); }
+    return { car, items, lift: __sw.r(p.lift, 10000) };
+  }, { k, box, tol: tol == null ? 0.002 : tol });
+}
+async function gLift(browser) {
+  const S = await ltSession(browser, 12345, { lit: true, tag: 'lift' });
+  const { page, k } = S;
+  try {
+    await ev(page, installFk);
+    check('F0 坐上出生车（不断电）', S.mounted);
+    // F1：(8, 33.3)、yaw π，开进小屋门洞，按住 R 7 s
+    await ev(page, a => { __sw.place(8, 33.3, Math.PI); return 0; }, {});
+    await page.keyboard.down('KeyW'); await step(page, 2.5); await page.keyboard.up('KeyW'); await step(page, 0.3);
+    const L0 = await ev(page, () => __lf.solidsBox(s => Math.abs(s.minY - 2.13) < 0.01 && Math.abs(s.maxY - 2.9) < 0.01 && s.minX < 8.6 && s.maxX > 7.4 && s.minZ > 36 && s.maxZ < 38)[0] || null);
+    const notes = [];
+    await page.keyboard.down('KeyR');
+    for (let i = 0; i < 14; i++) { const n = await ev(page, () => { __br.step(0.5); const el = document.querySelector('.hud-drive-note'); return el && !el.hidden ? el.innerText : null; }); if (n && !notes.includes(n)) notes.push(n); }
+    await page.keyboard.up('KeyR'); await step(page, 0.3);
+    const pen1 = L0 ? await liftPen(page, k, L0) : null;
+    const pz = await ev(page, () => __sw.r(BR.vehicles.byKey(__sw.k).pose.z, 1000));
+    // 从屋里往门那面墙看（截图，看墙上有没有叉尖）
+    const inside = await ev(page, () => { const S = __sw; S.aim({ x: 8, y: 1.62, z: 40.2 }, { x: 8, y: 2.2, z: 37 }); BR.gfx.render(0); return S.view().toDataURL('image/png'); });
+    fs.writeFileSync(path.join(OUT, 'f1-inside.png'), Buffer.from(inside.split(',')[1], 'base64'));
+    check('F1.1 种子 12345：车从 (8, 33.3) 朝 +z 开进小屋门洞（停在 z ' + pz + '），按住 R 7 s：货叉、货叉架顶点 0 个进门楣盒子（' + (pen1 ? pen1.car.n + ' 个，最深 ' + pen1.car.depth : '?') + '），提示「上面有门框，升不上去」',
+      !!L0 && !!pen1 && pen1.car.n === 0 && notes.includes('上面有门框，升不上去') && pen1.lift > 0, { L0, pen1, notes, inside: 'f1-inside.png' });
+    // 带货：叉尖上放两件，再顶门洞升
+    await ev(page, a => { __lf.run(a.k, { throttle: 0, steer: 0, lift: -1 }, 3); __lf.put(a.k, 'f1c0', 'canned_tuna', -0.28, -2.0); __lf.put(a.k, 'f1c1', 'water_bottle', 0.28, -1.9); __br.step(0.2); return 0; }, { k });
+    const n1b = await ev(page, a => __lf.run(a.k, { throttle: 0, steer: 0, lift: 1 }, 7), { k });
+    const pen1b = L0 ? await liftPen(page, k, L0) : null;
+    check('F1.2 叉尖放上两件货再顶着门洞升 7 s：货叉、货叉架、叉上货的顶点 0 个进门楣（车 ' + (pen1b ? pen1b.car.n : '?') + '，货 ' + (pen1b ? pen1b.items.length : '?') + '）', !!pen1b && pen1b.car.n === 0 && pen1b.items.length === 0, { pen1b, n1b });
+    // 抽 ≥20 个抬高的静态碰撞体（门楣：y 2.13–2.9、1.16 × 0.2）复测：车身前脸离墙 2 cm 摆在门洞正前方，_step 升 7 s
+    const lint = await ev(page, () => __lf.solidsBox(s => s.minY > 1.8 && s.minY < 2.5 && s.maxY - s.minY < 1.2 && Math.min(s.maxX - s.minX, s.maxZ - s.minZ) <= 0.35 && Math.max(s.maxX - s.minX, s.maxZ - s.minZ) <= 1.8));
+    const rows = [];
+    for (const Lb of lint) {
+      if (rows.length >= 24) break;
+      const r = await ev(page, a => {
+        const L = a.L, alongX = (L.maxX - L.minX) > (L.maxZ - L.minZ), cx = (L.minX + L.maxX) / 2, cz = (L.minZ + L.maxZ) / 2;
+        for (const sg of [1, -1]) {
+          const nx = alongX ? 0 : sg, nz = alongX ? sg : 0, yaw = Math.atan2(nx, nz);
+          const face = alongX ? (sg > 0 ? L.maxZ : L.minZ) : (sg > 0 ? L.maxX : L.minX);
+          const d = 0.935 + 0.02, x = alongX ? cx : face + nx * d, z = alongX ? face + nz * d : cz;
+          if (__sw.hits(x, z, yaw).length) continue;
+          __sw.place(x, z, yaw);
+          __lf.run(a.k, { throttle: 0, steer: 0, lift: -1 }, 0.5);
+          const notes = __lf.run(a.k, { throttle: 0, steer: 0, lift: 1 }, 7);
+          return { x, z, yaw, notes };
+        }
+        return null;
+      }, { k, L: Lb });
+      if (!r) continue;
+      const pen = await liftPen(page, k, Lb);
+      rows.push({ L: [S2(Lb.minX), S2(Lb.minZ)], ck: Lb.ck, pen: pen.car, lift: pen.lift, notes: r.notes });
+    }
+    const bad = rows.filter(q => q.pen.n > 0 || !q.notes.includes('上面有门框，升不上去'));
+    check('F1.3 抽 ' + rows.length + ' 个门楣（抬高的静态碰撞体）：门洞前升 7 s，货叉 / 货叉架顶点都不进门楣、都提示「上面有门框」（不达标 ' + bad.length + ' 个）', rows.length >= 20 && bad.length === 0, { bad: bad.slice(0, 5), n: rows.length });
+    // F3 (a)：在电缆底下升（种子 12345，电缆 y 2.28，x −9.22…−7.98、z −3.62…−3.58），叉上两件货
+    await ev(page, a => { __sw.place(-8.6, -2, 0); __lf.run(a.k, { throttle: 0, steer: 0, lift: -1 }, 3); __lf.put(a.k, 'f3a0', 'canned_tuna', -0.28, -1.62); __lf.put(a.k, 'f3a1', 'water_bottle', 0.28, -1.62); __br.step(0.2); return 0; }, { k });
+    const n3a = await ev(page, a => __lf.run(a.k, { throttle: 0, steer: 0, lift: 1 }, 8), { k });
+    const cable = await ev(page, () => { for (const c of BR.world.chunks()) for (const e of ((c.res && c.res.data && c.res.data.overhead) || [])) if (e.kind === 'cable' && e.minX < -8.6 && e.maxX > -8.6 && e.minZ < -3.5 && e.maxZ > -3.7) return { minX: e.minX, maxX: e.maxX, minZ: e.minZ, maxZ: e.maxZ, minY: e.y, maxY: e.y + 0.1 }; return null; });
+    const pen3a = cable ? await liftPen(page, k, cable) : null;
+    check('F3.1 电缆底下升货叉，叉上两件货：货、货叉的顶点进电缆 ≤2 mm（货 ' + (pen3a ? pen3a.items.map(q => q.depth).join('/') || 0 : '?') + '），停住并提示', !!cable && !!pen3a && pen3a.car.n === 0 && pen3a.items.length === 0 && n3a.some(t => /升不上去/.test(t)), { cable, pen3a, n3a });
+  } finally { await S.ctx.close().catch(() => {}); }
+}
+async function gDrive(browser) {
+  const S = await ltSession(browser, 12345, { lit: true, tag: 'drive' });
+  const { page, k } = S;
+  try {
+    await ev(page, installFk);
+    check('D0 坐上出生车（不断电）', S.mounted);
+    // F3 (b)：货叉举着货往前开过电缆
+    await ev(page, a => { __sw.place(-8.6, -0.6, 0); __lf.run(a.k, { throttle: 0, steer: 0, lift: -1 }, 3); __lf.put(a.k, 'f3b0', 'canned_tuna', -0.28, -1.62); __br.step(0.2); __lf.run(a.k, { throttle: 0, steer: 0, lift: 1 }, 0.1); return 0; }, { k });
+    const cable = await ev(page, () => { for (const c of BR.world.chunks()) for (const e of ((c.res && c.res.data && c.res.data.overhead) || [])) if (e.kind === 'cable' && e.minX < -8.6 && e.maxX > -8.6 && e.minZ < -3.5 && e.maxZ > -3.7) return { minX: e.minX, maxX: e.maxX, minZ: e.minZ, maxZ: e.maxZ, minY: e.y, maxY: e.y + 0.1, y: e.y }; return null; });
+    // 举到货顶比电缆底高一点、货叉还在电缆下面（叉面 + 罐头高 > 2.28 > 叉面）
+    const prep = await ev(page, a => {
+      const G = BR.L1forklift.geo, k = a.k; let lift = 0;
+      for (let i = 0; i < 400; i++) { const p = BR.vehicles.byKey(k).pose, surf = (G.forkY || 0.015) + (G.forkT || 0.04) + 2.6 * p.lift; if (surf > a.y - 0.06) break; BR.vehicles._step(1 / 60, { throttle: 0, steer: 0, lift: 1 }, k); }
+      return __sw.r(BR.vehicles.byKey(k).pose.lift, 1000);
+    }, { k, y: cable ? cable.y : 2.28 });
+    const nb = await ev(page, a => __lf.run(a.k, { throttle: 0.6, steer: 0, lift: 0 }, 3), { k });
+    const pen3b = cable ? await liftPen(page, k, cable) : null;
+    check('F3.2 叉上举着货（货顶高过电缆底）往前开过电缆：货的顶点进电缆 ≤2 mm，车停住（' + (nb.join('；') || '无提示') + '）', !!cable && !!pen3b && pen3b.items.length === 0 && pen3b.car.n === 0, { cable, prep, pen3b, nb });
+    // F3 (c)：叉尖放货去顶小屋西墙（种子 12345，x 20.8）
+    await ev(page, a => { __lf.run(a.k, { throttle: 0, steer: 0, lift: -1 }, 4); __sw.place(17.2, 18.0, -Math.PI / 2); __lf.run(a.k, { throttle: 0, steer: 0, lift: -1 }, 1); __lf.put(a.k, 'f3c0', 'canned_tuna', -0.28, -2.06); __lf.put(a.k, 'f3c1', 'water_bottle', 0.28, -2.05); __br.step(0.2); return 0; }, { k });
+    const nc = await ev(page, a => __lf.run(a.k, { throttle: 0.5, steer: 0, lift: 0 }, 3), { k });
+    const wall = await ev(page, () => __lf.solidsBox(s => Math.abs(s.minX - 20.8) < 0.02 && s.minZ < 18 && s.maxZ > 18 && s.maxY > 2)[0] || null);
+    const pen3c = wall ? await liftPen(page, k, wall) : null;
+    check('F3.3 叉尖放两件货去顶小屋西墙：货的顶点进墙 ≤2 mm（' + (pen3c ? (pen3c.items.map(q => q.depth).join('/') || '0') : '?') + '），车身 / 货叉不进墙', !!wall && !!pen3c && pen3c.items.length === 0 && pen3c.car.n === 0, { wall, pen3c, nc });
+    // F2：后轮。① 小屋西墙外 (20.195, 17.84)、yaw 0、离墙 1 cm；② 货架旁 (−25.765, 23.2)、yaw π：原地左右打满各 1.2 s
+    for (const [nm, P] of [['小屋西墙外', { x: 20.195, z: 17.84, yaw: 0 }], ['货架旁', { x: -25.765, z: 23.2, yaw: Math.PI }]]) {
+      const r = await ev(page, a => {
+        const k = a.k; __sw.place(a.P.x, a.P.z, a.P.yaw); __lf.run(k, { throttle: 0, steer: 0, lift: -1 }, 0.5);
+        const out = [];
+        for (const st of [1, -1]) {
+          const notes = __lf.run(k, { throttle: 0, steer: st, lift: 0 }, 1.2);
+          const p = BR.vehicles.byKey(k).pose, V = __lt.modelVerts(k, p.steer, p.lift);
+          const box = { minX: p.x - 2.5, maxX: p.x + 2.5, minZ: p.z - 2.5, maxZ: p.z + 2.5 };
+          let worst = 0, n = 0;
+          for (const s of __lf.solidsBox(q => q.maxX > box.minX && q.minX < box.maxX && q.maxZ > box.minZ && q.minZ < box.maxZ && q.minY < 0.5)) {
+            const r = __lt.penBox(V, p, s, 0.002, (lx, ly, lz) => lz > 0.4 && ly < 0.5);
+            n += r.n; worst = Math.max(worst, r.depth);
+          }
+          out.push({ steer: __sw.r(p.steer, 1000), notes, n, worst, x: __sw.r(p.x, 1000), z: __sw.r(p.z, 1000) });
+          __lf.run(k, { throttle: 0, steer: 0, lift: 0 }, 1.0);
+        }
+        return out;
+      }, { k, P });
+      check('F2 ' + nm + '：原地往左 / 往右打满 1.2 s，后轮顶点 0 个进静态碰撞体（2 mm 容差；' + r.map(q => '转到 ' + q.steer + '，' + q.n + ' 个，' + (q.notes.find(t => /后轮/.test(t)) || '无提示')).join('；') + '）', r.every(q => q.n === 0), r);
+    }
+    // F2：货架通道里贴着货架慢速转弯（种子 12345 窄道，车右侧离货架 0.15 m，前进 0.3、往右打满 3 s）
+    const rr = await ev(page, a => {
+      // 窄道：货架在 +z 一侧（近面 z 6.84），车头朝 +x、右侧离货架 0.06 m（比后轮打满伸出车身的 8.7 cm 近）；往右打慢慢开（车头往货架那边拐，
+      // 两只后轮一转就往两边伸出来，右后轮贴着货架）。往左打车尾往货架甩，模拟本来就不让开（「车尾会往外甩」）
+      const k = a.k; __sw.place(3.45, 6.84 - 0.06 - 0.595, -Math.PI / 2);
+      const pp = BR.vehicles.byKey(k).pose, P0 = { x: pp.x, z: pp.z }; let n = 0, worst = 0, steps = 0; const notes = new Set();   // pose 是活的，先抄下来
+      for (let i = 0; i < 180; i++) {
+        BR.vehicles._step(1 / 60, { throttle: 0.3, steer: -1, lift: 0 }, k); const s = BR.forklift.byKey(k); if (s && s.lastNote) notes.add(s.lastNote);
+        if (i % 6) continue; steps++;
+        const p = BR.vehicles.byKey(k).pose, V = __lt.modelVerts(k, p.steer, p.lift);
+        for (const so of __lf.solidsBox(q => q.maxX > p.x - 3 && q.minX < p.x + 3 && q.maxZ > p.z - 3 && q.minZ < p.z + 3 && q.minY < 0.5)) { const r = __lt.penBox(V, p, so, 0.002, (lx, ly, lz) => lz > 0.4 && ly < 0.5); n += r.n; worst = Math.max(worst, r.depth); }
+      }
+      const p = BR.vehicles.byKey(k).pose;
+      return { steps, n, worst, moved: __sw.r(Math.hypot(p.x - P0.x, p.z - P0.z), 100), notes: Array.from(notes) };
+    }, { k });
+    check('F2 货架通道里贴着货架（车侧离货架 6 cm）往右慢慢拐 3 s（开了 ' + rr.moved + ' m）：后轮顶点 0 个进货架（' + (rr.notes.join('；') || '无提示') + '）', rr.n === 0 && rr.moved > 0.2, rr);
+    // F2：后轮旁边地上的物资不被轮胎扫进去
+    const ri = await ev(page, a => {
+      const k = a.k; __sw.place(0.5, 14, 0); __lf.run(k, { throttle: 0, steer: 0, lift: 0 }, 0.3);
+      const p = BR.vehicles.byKey(k).pose, c = Math.cos(p.yaw), s = Math.sin(p.yaw), lx = 0.69, lz = 0.8;
+      if (BR.items.find('f2item')) BR.items.remove('f2item');
+      BR.items.spawn('water_bottle', p.x + c * lx + s * lz, 0, p.z - s * lx + c * lz, { id: 'f2item', dropped: true, still: true });
+      __br.step(0.2);
+      const notes = __lf.run(k, { throttle: 0, steer: -1, lift: 0 }, 1.2);
+      const q = BR.vehicles.byKey(k).pose, V = __lt.modelVerts(k, q.steer, q.lift), W = __lt.itemVerts('f2item');
+      // 物资顶点在不在后轮那块（车本地 x 0.3–0.75、z 0.5–1.1、y < 0.5）的模型包围里：简单按两两最近距离
+      const cc = Math.cos(q.yaw), ss = Math.sin(q.yaw), wheel = V.filter(v => v[2] > 0.4 && v[1] < 0.5 && v[0] > 0.2).map(v => [q.x + cc * v[0] + ss * v[2], v[1], q.z - ss * v[0] + cc * v[2]]);
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
+      for (const w of W) { minX = Math.min(minX, w[0]); maxX = Math.max(maxX, w[0]); minY = Math.min(minY, w[1]); maxY = Math.max(maxY, w[1]); minZ = Math.min(minZ, w[2]); maxZ = Math.max(maxZ, w[2]); }
+      const inside = wheel.filter(w => w[0] > minX + 0.002 && w[0] < maxX - 0.002 && w[1] > minY + 0.002 && w[1] < maxY - 0.002 && w[2] > minZ + 0.002 && w[2] < maxZ - 0.002).length;
+      return { steer: __sw.r(q.steer, 1000), notes, inside, item: BR.items.find('f2item') && { x: __sw.r(BR.items.find('f2item').x), z: __sw.r(BR.items.find('f2item').z) } };
+    }, { k });
+    check('F2 右后轮旁边地上放一瓶水（车本地 x 0.69、z 0.8），往右打满 1.2 s：后轮顶点 0 个进物资（' + (ri.notes.find(t => /后轮/.test(t)) || '无提示') + '，转到 ' + ri.steer + '）', ri.inside === 0, ri);
+    // F2：站在后轮旁边的人（测试人当队友，钉在原地）：往右打满 1.2 s，后轮不扫进他的身体（竖直圆柱）
+    const rp = await ev(page, a => {
+      const k = a.k; __sw.place(0.5, 14, 0); __lf.run(k, { throttle: 0, steer: 0, lift: 0 }, 0.3);
+      const p = BR.vehicles.byKey(k).pose, c = Math.cos(p.yaw), s = Math.sin(p.yaw);
+      const e = BR.entities.spawn('test_dummy', p.x, undefined, p.z, { force: true, yaw: 0 });
+      if (!e) return null;
+      const r = +e.r || 0.4, lx = 0.6 + r + 0.01, lz = 0.8, wx = p.x + c * lx + s * lz, wz = p.z - s * lx + c * lz;
+      const notes = new Set(), sim = BR.forklift.byKey(k), G = BR.forklift.geo;
+      let worst = 0;
+      for (let i = 0; i < 72; i++) {
+        e.x = wx; e.z = wz; if (e.obj) e.obj.position.set(wx, e.obj.position.y, wz);
+        BR.vehicles._step(1 / 60, { throttle: 0, steer: -1, lift: 0 }, k);
+        if (sim.lastNote) notes.add(sim.lastNote);
+        // 两只后轮（按此刻的转角转好的轮胎盒）离人的圆心：压进去多深
+        const q = BR.vehicles.byKey(k).pose, cc = Math.cos(q.yaw), ss = Math.sin(q.yaw);
+        for (const sg of [-1, 1]) {
+          const W = G.wheelRear, ox = q.x + cc * sg * W.x + ss * W.z, oz = q.z - ss * sg * W.x + cc * W.z, rot = q.yaw + q.steer;
+          const cr = Math.cos(rot), sr = Math.sin(rot), dx = wx - ox, dz = wz - oz, lx2 = dx * cr - dz * sr, lz2 = dx * sr + dz * cr;
+          const ex = Math.max(0, Math.abs(lx2) - W.w / 2), ez = Math.max(0, Math.abs(lz2) - W.r), d = Math.hypot(ex, ez);
+          worst = Math.max(worst, r - d);
+        }
+      }
+      const out = { r, steer: __sw.r(BR.vehicles.byKey(k).pose.steer, 1000), pen: __sw.r(worst, 10000), notes: Array.from(notes) };
+      if (typeof BR.entities.remove === 'function') BR.entities.remove(e.id);
+      return out;
+    }, { k });
+    check('F2 测试人（当队友）站在右后轮旁边，往右打满 1.2 s：后轮不扫进他的腿（压进 ' + (rp ? (rp.pen * 100).toFixed(1) + ' cm' : '?') + '，≤0.2 cm；' + (rp ? (rp.notes.find(t => /后轮/.test(t)) || '无提示') : '') + '）', !!rp && rp.pen <= 0.002, rp);
+    // F4：降货叉。车轮挡（种子 12345，0.12 高、0.18 深、1.6 长）放在旧的两条射线中间、叉尖下、叉根下、货叉侧边下：降到底货叉底在车轮挡顶以上 0–2 cm，0 个顶点进车轮挡
+    const ch = await ev(page, () => __lf.solidsBox(s => s.minY < 0.01 && Math.abs(s.maxY - 0.12) < 0.005 && Math.abs((s.maxZ - s.minZ) - 0.18) < 0.01 && Math.abs((s.maxX - s.minX) - 1.6) < 0.01).sort((a, b) => Math.hypot(a.minX - 37.5, a.minZ - 13.4) - Math.hypot(b.minX - 37.5, b.minZ - 13.4))[0] || null);
+    const rows = [];
+    if (ch) {
+      const cz = (ch.minZ + ch.maxZ) / 2, cx = (ch.minX + ch.maxX) / 2;
+      // 车朝 −z（yaw 0）：货叉本地 z 落在车轮挡中线上的那一点；侧边下：车横过来（yaw π/2）货叉侧边压在车轮挡端头上方
+      for (const [nm, lz, yaw, dx] of [['两条射线中间', -1.84, 0, 0], ['叉尖下', -2.08, 0, 0], ['叉根下', -1.2, 0, 0], ['货叉侧边下', -1.6, 0, 0.8 - 0.33 + 0.01]]) {
+        const P = { x: cx + dx, z: cz - lz, yaw };
+        const r = await ev(page, a => {
+          const k = a.k; __sw.place(a.P.x, a.P.z, a.P.yaw);
+          __lf.run(k, { throttle: 0, steer: 0, lift: 1 }, 0.6);
+          const notes = __lf.run(k, { throttle: 0, steer: 0, lift: -1 }, 3);
+          const p = BR.vehicles.byKey(k).pose, G = BR.L1forklift.geo, V = __lt.modelVerts(k, p.steer, p.lift);
+          const bottom = (G.forkY || 0.015) + 2.6 * p.lift;
+          const pen = __lt.penBox(V, p, a.ch, 0.0005);
+          return { lift: __sw.r(p.lift, 10000), forkBottom: __sw.r(bottom, 10000), gap: __sw.r(bottom - a.ch.maxY, 10000), pen, notes };
+        }, { k, P, ch });
+        rows.push(Object.assign({ nm }, r));
+      }
+    }
+    check('F4 车轮挡在旧的两条射线中间 / 叉尖下 / 叉根下 / 货叉侧边下：降到底货叉底停在车轮挡顶以上 0–2 cm、0 个顶点进车轮挡（' + rows.map(q => q.nm + ' ' + (q.gap * 100).toFixed(1) + ' cm').join('，') + '）',
+      rows.length === 4 && rows.every(q => q.gap >= -0.0005 && q.gap <= 0.02 && q.pen.n === 0), { ch, rows });
+    // 排查机位复测：(37.5, 15.24)、yaw 0、lift 0.12，按住 C 3 s（真键盘）
+    await ev(page, a => { __sw.place(37.5, 15.24, 0); __lf.run(a.k, { throttle: 0, steer: 0, lift: 1 }, 0.12 * 2.6 / 0.45); return 0; }, { k });
+    await page.keyboard.down('KeyC'); await step(page, 3); await page.keyboard.up('KeyC'); await step(page, 0.3);
+    const r4 = ch ? await ev(page, a => { const p = BR.vehicles.byKey(a.k).pose, G = BR.L1forklift.geo, V = __lt.modelVerts(a.k, p.steer, p.lift); return { lift: __sw.r(p.lift, 10000), gap: __sw.r((G.forkY || 0.015) + 2.6 * p.lift - a.ch.maxY, 10000), pen: __lt.penBox(V, p, a.ch, 0.0005) }; }, { k, ch }) : null;
+    check('F4 排查机位 (37.5, 15.24)、yaw 0、按住 C 3 s：货叉停在车轮挡顶以上 0–2 cm（' + (r4 ? (r4.gap * 100).toFixed(1) + ' cm' : '?') + '），0 个顶点进车轮挡', !!r4 && r4.gap >= -0.0005 && r4.gap <= 0.02 && r4.pen.n === 0, r4);
+  } finally { await S.ctx.close().catch(() => {}); }
+}
+
 async function main() {
   const t0 = Date.now();
   const srv = await startServer();

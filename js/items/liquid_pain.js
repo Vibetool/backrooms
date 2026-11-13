@@ -63,8 +63,8 @@ BR.itemTypes.register({
     // 杏仁水没注册时的兜底：同尺寸的红色瓶
     return K.assemble({
       name: 'liquid_pain', scale: 1.2,
-      solid: [K.paint(K.cyl(0.03, 0.03, 0.148, 12, 0.004), LIQUID), K.paint(K.cyl(0.0148, 0.0148, 0.018, 10, 0.212), 0x8f7cc8)],
-      glass: [[K.cyl(0.034, 0.034, 0.21, 12, 0), 0xdfe9f2, 0.28]],
+      solid: [K.paint(K.cyl(0.03, 0.03, 0.148, 20, 0.004), LIQUID), K.paint(K.cyl(0.0148, 0.0148, 0.018, 16, 0.212), 0x8f7cc8)],   // FE1R K8：以前 12 / 10 段
+      glass: [[K.cyl(0.034, 0.034, 0.21, 20, 0), 0xdfe9f2, 0.28]],
     });
   },
   use(player) {

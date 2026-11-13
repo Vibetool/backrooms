@@ -12,7 +12,7 @@ const BR = window.BR;
 const K = BR.itemKit;
 if (!K) { console.error('[items] painkillers 需要先加载 js/items/_kit.js'); return; }
 
-const SEG = 12;
+const SEG = 20;   // FE1R K8：以前 12 段，0.6 m 弦高 1.2 px
 
 function drawLabel(g, w, h) {
   for (let k = 0; k < 2; k++) {

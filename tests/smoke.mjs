@@ -176,6 +176,8 @@ function hazmatParity() {
   const rows = [];
   const look = (mesh, who, detail) => {
     const rig = mesh.userData.rig, d = rig.meta.dims, H = d.H, geo = mesh.geometry, pos = geo.attributes.position, idx = geo.index, col = geo.attributes.color, si = geo.attributes.skinIndex;
+    // 面罩椭球中心：程序化面罩挪到兜帽前面 (0, 1.6, −0.135)；坐车的（glb 那版，repair-r4 起兜帽、面罩都是 glb 原样）在 glb 的位置 (0, 1.615, −0.078)
+    const gi0 = A.hzGlbInfo ? A.hzGlbInfo() : null, MC = /hazmat_seat_v9g$/.test(String(rig.key || '')) ? [0, 1.615 + (gi0 ? gi0.headDy || 0 : 0), -0.078] : [0, 1.6, -0.135];
     const slotOf = new Array(pos.count).fill(null), matOf = new Array(pos.count).fill(null);
     for (const gr of geo.groups) for (let i = gr.start; i < gr.start + gr.count; i++) { const v = idx ? idx.getX(i) : i; slotOf[v] = rig.slots[gr.materialIndex]; matOf[v] = mesh.material[gr.materialIndex]; }
     const name = i => rig.list[si.getX(i)].name;
@@ -209,7 +211,7 @@ function hazmatParity() {
       for (let i = 0; i < pos.count; i++) {
         if (slotOf[i] !== 'gear' || name(i) !== 'head') continue;
         v.fromBufferAttribute(pos, i);
-        const dd = Math.hypot(v.x, v.y - (1.6 - 0.118), v.z + 0.135);
+        const dd = Math.hypot(v.x, v.y - (MC[1] - 0.118), v.z - MC[2]);
         if (dd < best) { best = dd; mask = fin(i); }
       }
     }
@@ -219,7 +221,7 @@ function hazmatParity() {
     {
       const R = [0.098, 0.118, 0.075], th = 1.2, ph = -0.3, dv = [Math.sin(th) * Math.cos(ph), Math.sin(ph), -Math.cos(th) * Math.cos(ph)];
       const nn = [dv[0] / R[0], dv[1] / R[1], dv[2] / R[2]], nl = Math.hypot(nn[0], nn[1], nn[2]);
-      const tip = [R[0] * dv[0] + nn[0] / nl * 0.05, 1.6 + R[1] * dv[1] + nn[1] / nl * 0.05, -0.135 + R[2] * dv[2] + nn[2] / nl * 0.05];
+      const tip = [R[0] * dv[0] + nn[0] / nl * 0.05, MC[1] + R[1] * dv[1] + nn[1] / nl * 0.05, MC[2] + R[2] * dv[2] + nn[2] / nl * 0.05];
       let best = Infinity;
       for (let i = 0; i < pos.count; i++) {
         if (slotOf[i] !== 'gear' || name(i) !== 'head') continue;
@@ -228,6 +230,19 @@ function hazmatParity() {
         if (dd < best) { best = dd; if (dd < 1e-4) filter = fin(i); }
       }
       filterAt = +best.toFixed(6);
+      // 坐车的面罩 repair-r3 起直接用 glb 的面罩件（滤罐是 glb 那只又短又粗、带加强筋的罐子，外端是金属端盖，没有程序化那个端面圆心顶点）：
+      // 改量罐身侧面 —— 轴上往外 3.7 cm 那一点再往上 4.4 cm（glb 罐身半径 4.3 cm、加强筋 4.6 cm），离它 ≤1 cm 最近的那个顶点
+      if (!filter) {
+        const nx = nn[0] / nl, ny = nn[1] / nl, nz = nn[2] / nl, ux0 = -ny * nx, uy0 = 1 - ny * ny, uz0 = -ny * nz, ul = Math.hypot(ux0, uy0, uz0);
+        const side = [R[0] * dv[0] + nx * 0.037 + ux0 / ul * 0.044, MC[1] + R[1] * dv[1] + ny * 0.037 + uy0 / ul * 0.044, MC[2] + R[2] * dv[2] + nz * 0.037 + uz0 / ul * 0.044];
+        let b2 = 0.01;
+        for (let i = 0; i < pos.count; i++) {
+          if (slotOf[i] !== 'gear' || name(i) !== 'head') continue;
+          v.fromBufferAttribute(pos, i);
+          const dd = Math.hypot(Math.abs(v.x) - side[0], v.y - side[1], v.z - side[2]);
+          if (dd < b2) { b2 = dd; filter = fin(i); filterAt = 'side ' + dd.toFixed(4); }
+        }
+      }
     }
     // 形状（repair-r1）：按最终颜色认件（离 glb 的 Mask / Filter / Boots 色 sRGB ≤2 色阶），量包围盒
     const shape = { mask: null, filter: null, boot: null };
@@ -238,7 +253,7 @@ function hazmatParity() {
         if (slotOf[i] !== 'gear') continue;
         v.fromBufferAttribute(pos, i);
         const b = name(i), c = fin(i), p = [v.x, v.y, v.z];
-        if (b === 'head' && dS(c, 'Mask') <= 2 && Math.abs(Math.hypot(v.x / 0.098, (v.y - 1.6) / 0.118, (v.z + 0.135) / 0.075) - 1) < 0.04) add(M, p);
+        if (b === 'head' && dS(c, 'Mask') <= 2 && Math.abs(Math.hypot(v.x / 0.098, (v.y - MC[1]) / 0.118, (v.z - MC[2]) / 0.075) - 1) < 0.04) add(M, p);
         if (b === 'head' && v.x > 0.03 && dS(c, 'Filter') <= 2) add(Fi, p);
         if (b === 'shinR' && dS(c, 'Boots') <= 2) add(Bo, p);
       }
@@ -249,24 +264,236 @@ function hazmatParity() {
     rows.push({ who, detail, tris: Math.round((idx ? idx.count : pos.count) / 3), suitOutGlove, suitOutBoot, gloveN, bootN, glove: r3(glove), boot: r3(boot), mask: r3(mask), filter: r3(filter), filterAt, shape,
       gloveD: glove ? dS(glove, 'Gloves') : 99, bootD: boot ? dS(boot, 'Boots') : 99, maskD: mask ? dS(mask, 'Mask') : 99, filterD: filter ? dS(filter, 'Filter') : 99 });
   };
+  // ---------- 坐车人形和 hazmat.glb 比（FE1R repair-r4 主会话 L2：以前只拿 HAZ_SRGB 自己的颜色比自己，退回程序化面罩、靴口白条都测不出来）----------
+  // (a) glb 已载入时坐车人形必须用 glb 那一版：几何缓存键 hazmat_seat_v9g，BR.arch.hzGlbInfo() 给得出从 glb 挑的顶点；
+  // (b) 形状（头骨骼上的件，基础姿势 = 站姿，模型坐标）：一侧滤罐（Filter 色、x > 0.03）的轴（拟合：使各顶点到轴的距离方差最小的方向）和 glb 夹角 ≤10°；
+  //     目镜（Visor 色）三角形正面投影（x, y，各自按脸罩椭球那一圈的包围盒中心对齐，1 mm 一格）和 glb 的 IoU ≥0.9；
+  // (c) 颜色和位置：上臂 / 前臂 / 小腿反光带（四肢骨骼上的浅色顶点）和 glb 的 Metal 色差 ≤6、中心高度差 ≤2 cm；
+  //     靴口胶带（小腿骨骼、0.33–0.41 m、离小腿中线 ≥7.5 cm 的顶点）和 glb 的 Tape 色差 ≤6、中心高度差 ≤2 cm；兜帽（头骨骼上 head 槽位的顶点）宽和 glb 兜帽差 ≤1 cm；
+  //     四肢外侧的黑压胶条（胳膊、腿骨骼上 Tape 色的顶点）有
+  const seatVsGlb = (mesh) => {
+    const out = { key: String(mesh.userData.rig.key || ''), info: A.hzGlbInfo ? A.hzGlbInfo() : null };
+    if (!g) return out;
+    // glb：按材质收顶点（模型坐标）和三角形
+    const GV = {}, GT = {};
+    const inv = new T.Matrix4().copy(g.matrixWorld).invert(), q = new T.Vector3();
+    g.traverse(o => {
+      if (!o.isMesh) return;
+      const m0 = Array.isArray(o.material) ? o.material[0] : o.material, nm = String(m0 && m0.name || '').replace(/\.\d+$/, '');
+      const P2 = o.geometry.attributes.position, I2 = o.geometry.index, n = I2 ? I2.count : P2.count, M = new T.Matrix4().multiplyMatrices(inv, o.matrixWorld);
+      const vs = GV[nm] = GV[nm] || [], ts = GT[nm] = GT[nm] || [], seen = new Set();
+      for (let i = 0; i < n; i += 3) {
+        const t = [];
+        for (let j = 0; j < 3; j++) {
+          q.fromBufferAttribute(P2, I2 ? I2.getX(i + j) : i + j).applyMatrix4(M); t.push([q.x, q.y, q.z]);
+          const k = Math.round(q.x * 1e4) + ',' + Math.round(q.y * 1e4) + ',' + Math.round(q.z * 1e4);   // 顶点去重（和坐车人形的顶点一样一个位置算一次）
+          if (!seen.has(k)) { seen.add(k); vs.push([q.x, q.y, q.z]); }
+        }
+        ts.push(t);
+      }
+    });
+    // 坐车人形：每个顶点的槽位、骨骼、最终颜色
+    const rig = mesh.userData.rig, d = rig.meta.dims, geo = mesh.geometry, pos = geo.attributes.position, idx = geo.index, col = geo.attributes.color, si = geo.attributes.skinIndex;
+    const slotOf = new Array(pos.count).fill(null), matOf = new Array(pos.count).fill(null);
+    for (const gr of geo.groups) for (let i = gr.start; i < gr.start + gr.count; i++) { const v = idx ? idx.getX(i) : i; slotOf[v] = rig.slots[gr.materialIndex]; matOf[v] = mesh.material[gr.materialIndex]; }
+    const fin = i => { const c = matOf[i].color; const t = col ? [col.getX(i), col.getY(i), col.getZ(i)] : [1, 1, 1]; return [c.r * t[0], c.g * t[1], c.b * t[2]]; };
+    const bone = i => rig.list[si.getX(i)].name, P = i => [pos.getX(i), pos.getY(i), pos.getZ(i)];
+    const SV = []; for (let i = 0; i < pos.count; i++) SV.push({ i, p: P(i), slot: slotOf[i], bone: bone(i), c: slotOf[i] === 'gear' ? fin(i) : null });
+    const gearOf = (bn, test) => SV.filter(v => v.slot === 'gear' && (!bn || bn.test(v.bone)) && test(v));
+    // (b) 滤罐轴：滤罐是又短又粗的圆罐（直径 9 cm、长 4–6 cm），顶点沿轴向散得最开的那个方向最窄 —— 取投影方差最小的方向（半球上 4000 个方向里挑）
+    const axisFit = pts => {
+      if (pts.length < 8) return null;
+      const c = [0, 1, 2].map(a => pts.reduce((s2, p) => s2 + p[a], 0) / pts.length);
+      let best = null, bv = Infinity;
+      for (let i = 0; i < 4000; i++) {
+        const zz = 1 - (i + 0.5) / 4000, rr = Math.sqrt(1 - zz * zz), ph = i * 2.399963229728653, dv = [rr * Math.cos(ph), rr * Math.sin(ph), zz];   // 半球上均匀撒点（斐波那契）
+        let s2 = 0;
+        for (const p of pts) { const t = (p[0] - c[0]) * dv[0] + (p[1] - c[1]) * dv[1] + (p[2] - c[2]) * dv[2]; s2 += t * t; }
+        if (s2 < bv) { bv = s2; best = dv; }
+      }
+      return best;
+    };
+    const gFil = (GV.Filter || []).filter(p => p[0] > 0.03 && p[1] > 1.45);
+    const uniq = pts => { const m2 = new Map(); for (const p of pts) m2.set(p.map(x => Math.round(x * 1e4)).join(','), p); return Array.from(m2.values()); };
+    const sFil = uniq(gearOf(/^head$/, v => v.p[0] > 0.03 && dS(v.c, 'Filter') <= 2).map(v => v.p));
+    const ag = axisFit(gFil), as = axisFit(sFil);
+    out.filterAxisDeg = ag && as ? +(Math.acos(Math.min(1, Math.abs(ag[0] * as[0] + ag[1] * as[1] + ag[2] * as[2]))) * 180 / Math.PI).toFixed(2) : null;
+    out.filterN = [gFil.length, sFil.length];
+    // (b) 目镜正面投影 IoU（各自按脸罩椭球那一圈的包围盒中心对齐）
+    const faceCtr = (pts, mc) => { const b2 = [Infinity, Infinity, -Infinity, -Infinity]; for (const p of pts) if (Math.abs(Math.hypot(p[0] / 0.098, (p[1] - mc[1]) / 0.118, (p[2] - mc[2]) / 0.075) - 1) < 0.04) { b2[0] = Math.min(b2[0], p[0]); b2[1] = Math.min(b2[1], p[1]); b2[2] = Math.max(b2[2], p[0]); b2[3] = Math.max(b2[3], p[1]); } return b2[0] === Infinity ? null : [(b2[0] + b2[2]) / 2, (b2[1] + b2[3]) / 2]; };
+    const sMC = /hazmat_seat_v9g$/.test(out.key) ? [0, 1.615 + (out.info ? out.info.headDy || 0 : 0), -0.078] : [0, 1.6, -0.135];
+    const gC = faceCtr(GV.Mask || [], [0, 1.615, -0.078]), sC = faceCtr(gearOf(/^head$/, v => dS(v.c, 'Mask') <= 2).map(v => v.p), sMC);
+    const sVisT = [];
+    if (idx) for (let t = 0; t < idx.count; t += 3) { const a = [idx.getX(t), idx.getX(t + 1), idx.getX(t + 2)]; if (a.every(k => SV[k].slot === 'gear' && SV[k].bone === 'head' && dS(SV[k].c, 'Visor') <= 2)) sVisT.push(a.map(k => SV[k].p)); }
+    const raster = (tris, c0) => {
+      const S2 = new Set();
+      for (const t of tris) {
+        const p = t.map(v => [Math.round((v[0] - c0[0]) * 1000), Math.round((v[1] - c0[1]) * 1000)]);
+        const x0 = Math.min(p[0][0], p[1][0], p[2][0]), x1 = Math.max(p[0][0], p[1][0], p[2][0]), y0 = Math.min(p[0][1], p[1][1], p[2][1]), y1 = Math.max(p[0][1], p[1][1], p[2][1]);
+        const ar = (p[1][0] - p[0][0]) * (p[2][1] - p[0][1]) - (p[2][0] - p[0][0]) * (p[1][1] - p[0][1]);
+        if (Math.abs(ar) < 1e-9) continue;
+        for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
+          const w0 = ((p[1][0] - x) * (p[2][1] - y) - (p[2][0] - x) * (p[1][1] - y)) / ar, w1 = ((p[2][0] - x) * (p[0][1] - y) - (p[0][0] - x) * (p[2][1] - y)) / ar;
+          if (w0 >= -1e-6 && w1 >= -1e-6 && 1 - w0 - w1 >= -1e-6) S2.add(x + ',' + y);
+        }
+      }
+      return S2;
+    };
+    if (gC && sC && sVisT.length) {
+      const A2 = raster(GT.Visor || [], gC), B2 = raster(sVisT, sC); let inter = 0; for (const k of A2) if (B2.has(k)) inter++;
+      out.visorIoU = +(inter / (A2.size + B2.size - inter)).toFixed(3);
+    } else out.visorIoU = null;
+    // (c) 反光带：颜色、中心高度（模型坐标，基础姿势）
+    const bandG = (x0, y0, y1) => { const b2 = [Infinity, -Infinity]; for (const p of GV.Metal || []) if (p[0] > x0 && p[1] > y0 && p[1] < y1) { b2[0] = Math.min(b2[0], p[1]); b2[1] = Math.max(b2[1], p[1]); } return b2[0] === Infinity ? null : (b2[0] + b2[1]) / 2; };
+    const lum = c => Math.max(toS(c[0]), toS(c[1]), toS(c[2]));
+    const bandS = (bn, y0, y1) => { const vs = gearOf(bn, v => v.p[1] > y0 && v.p[1] < y1 && lum(v.c) > 120); if (!vs.length) return null; let lo = Infinity, hi2 = -Infinity, dmax = 0; for (const v of vs) { lo = Math.min(lo, v.p[1]); hi2 = Math.max(hi2, v.p[1]); dmax = Math.max(dmax, dS(v.c, 'Metal')); } return { y: (lo + hi2) / 2, d: dmax, n: vs.length }; };
+    out.bands = {};
+    for (const [k, bn, x0, y0, y1] of [['arm', /^armR$/, 0.15, 1.15, 1.4], ['fore', /^foreR$/, 0.2, 0.95, 1.12], ['shin', /^shinR$/, 0.03, 0.4, 0.56]]) {
+      const gy = bandG(x0, y0, y1), sb2 = bandS(bn, y0, y1);
+      out.bands[k] = { glbY: gy == null ? null : +gy.toFixed(4), seatY: sb2 ? +sb2.y.toFixed(4) : null, dy: gy != null && sb2 ? +Math.abs(gy - sb2.y).toFixed(4) : null, colorD: sb2 ? sb2.d : 99, n: sb2 ? sb2.n : 0 };
+    }
+    // (c) 靴口胶带
+    {
+      const gb = [Infinity, -Infinity]; for (const p of GV.Tape || []) if (p[0] > 0 && p[1] > 0.33 && p[1] < 0.41) { gb[0] = Math.min(gb[0], p[1]); gb[1] = Math.max(gb[1], p[1]); }
+      const vs = gearOf(/^shinR$/, v => v.p[1] > 0.33 && v.p[1] < 0.41 && Math.hypot(v.p[0] - d.hipW, v.p[2]) >= 0.075);
+      let lo = Infinity, hi2 = -Infinity, dmax = 0; for (const v of vs) { lo = Math.min(lo, v.p[1]); hi2 = Math.max(hi2, v.p[1]); dmax = Math.max(dmax, dS(v.c, 'Tape')); }
+      out.cuff = { glbY: +((gb[0] + gb[1]) / 2).toFixed(4), seatY: vs.length ? +((lo + hi2) / 2).toFixed(4) : null, colorD: vs.length ? dmax : 99, n: vs.length };
+      out.cuff.dy = out.cuff.seatY == null ? null : +Math.abs(out.cuff.glbY - out.cuff.seatY).toFixed(4);
+    }
+    // (c) 兜帽宽
+    {
+      // 兜帽 = 1.55 m 以上的制服色（glb 躯干顶到 1.517，肩膀、胳膊更低）
+      const gw = [Infinity, -Infinity]; for (const p of GV.Suit || []) if (p[1] > 1.55) { gw[0] = Math.min(gw[0], p[0]); gw[1] = Math.max(gw[1], p[0]); }
+      const sw2 = [Infinity, -Infinity]; for (const v of SV) if ((v.slot === 'head' || v.slot === 'body') && v.bone === 'head' && v.p[1] > 1.55) { sw2[0] = Math.min(sw2[0], v.p[0]); sw2[1] = Math.max(sw2[1], v.p[0]); }
+      out.hood = { glbW: +(gw[1] - gw[0]).toFixed(4), seatW: +(sw2[1] - sw2[0]).toFixed(4) }; out.hood.dw = +Math.abs(out.hood.glbW - out.hood.seatW).toFixed(4);
+    }
+    // 四肢外侧的黑压胶条
+    out.seams = { arm: gearOf(/^(arm|fore)R$/, v => dS(v.c, 'Tape') <= 3 && v.p[0] > d.shoulderW + 0.03).length, leg: gearOf(/^(leg|shin)R$/, v => dS(v.c, 'Tape') <= 3 && v.p[0] > d.hipW + 0.05 && v.p[1] > 0.42).length };
+    // 躯干不拆两截（返修 FE1R · repair-r5，验收员 play：repair-r4 在脊柱转轴处拆成上下两截、叠 11 cm，坐着前倾后后腰露出一个平顶台阶）：
+    // 跟着胯 / 脊柱的顶点里，同一个位置（0.1 mm）上的顶点蒙皮权重都一样（拆两截时同一处有一份挂胯、一份挂脊柱）；腰带上沿到胸口之间有按高度渐变的权重
+    {
+      const sw = geo.attributes.skinWeight, bi = n => rig.list.findIndex(b => b.name === n), hI = bi('hips'), sI = bi('spine'), byPos = new Map();
+      let blended = 0, dup = 0, n = 0;
+      const wOf = i => { let w = 0; for (let j = 0; j < 4; j++) { const b = j === 0 ? si.getX(i) : j === 1 ? si.getY(i) : j === 2 ? si.getZ(i) : si.getW(i), ww = j === 0 ? sw.getX(i) : j === 1 ? sw.getY(i) : j === 2 ? sw.getZ(i) : sw.getW(i); if (b === sI) w += ww; } return w; };
+      for (let i = 0; i < pos.count; i++) {
+        const b0 = si.getX(i); if (b0 !== hI && b0 !== sI) continue;
+        if (slotOf[i] !== 'body' && slotOf[i] !== 'gear') continue;
+        n++;
+        const w = wOf(i); if (w > 0.02 && w < 0.98) blended++;
+        const k = Math.round(pos.getX(i) * 1e4) + ',' + Math.round(pos.getY(i) * 1e4) + ',' + Math.round(pos.getZ(i) * 1e4);
+        const prev = byPos.get(k);
+        if (prev == null) byPos.set(k, w); else if (Math.abs(prev - w) > 1e-3) dup++;
+      }
+      out.torsoSeam = { n, blended, splitDup: dup };
+    }
+    return out;
+  };
   const linSkin = k => lin(BR.skin.color(k)).getHex();
-  for (const detail of ['high', 'low']) {
-    look(A.parts.hazmat(null, { color: linSkin('blue'), detail }), 'seat', detail);
-    look(A.parts.hazmat(null, { detail }), 'mimic', detail);
-  }
-  // 换皮肤只换制服：高低两档各比一次（低档 FE1Q J7 起也带顶点色，gear 槽位同一份 vc 材质、同一份几何的颜色）
+  const seatGlb = seatVsGlb(A.parts.hazmat(null, { color: linSkin('blue'), seat: true }));
+  // 坐车人形（FE1R K7）不分画质，一律是 seat 版（高画质那一套细节、更圆的段数）；伪装照旧分高低两档
+  look(A.parts.hazmat(null, { color: linSkin('blue'), seat: true }), 'seat', 'seat');
+  for (const detail of ['high', 'low']) look(A.parts.hazmat(null, { detail }), 'mimic', detail);
+  // 换皮肤只换制服：坐车版、低档各比一次（低档 FE1Q J7 起也带顶点色，gear 槽位同一份 vc 材质、同一份几何的颜色）
   const skinSwap = {};
-  for (const detail of ['high', 'low']) {
-    const p = A.parts.hazmat(null, { color: linSkin('pink'), detail }), b = A.parts.hazmat(null, { color: linSkin('blue'), detail });
+  for (const detail of ['seat', 'low']) {
+    const o = c => (detail === 'seat' ? { color: c, seat: true } : { color: c, detail });
+    const p = A.parts.hazmat(null, o(linSkin('pink'))), b = A.parts.hazmat(null, o(linSkin('blue')));
     const gi = p.userData.rig.slots.indexOf('gear'), bi = p.userData.rig.slots.indexOf('body');
     skinSwap[detail] = { gearSame: p.material[gi] === b.material[gi] && p.geometry === b.geometry, suitDiff: p.material[bi].color.getHex() !== b.material[bi].color.getHex(),
       pink: p.material[bi].color.getHexString(), blue: b.material[bi].color.getHexString(), gearVc: !!p.material[gi].vertexColors, suitVc: !!p.material[bi].vertexColors };
   }
-  skinSwap.gearSame = skinSwap.high.gearSame && skinSwap.low.gearSame;
-  skinSwap.suitDiff = skinSwap.high.suitDiff && skinSwap.low.suitDiff;
+  skinSwap.gearSame = skinSwap.seat.gearSame && skinSwap.low.gearSame;
+  skinSwap.suitDiff = skinSwap.seat.suitDiff && skinSwap.low.suitDiff;
+  // 坐车人形的细节件（FE1R K7，用户原话「面具和靴子不能换」：低画质坐车以前换成简版，面罩没有呼气阀、滤罐没有端盖、身上没有反光条、拉链、
+  // 腰带、小包）：seat 版不分画质（coop.seatBody 高 / 低两档面数一样），按顶点色认出银色反光条、金属件（滤罐端盖、腰带扣、拉链头），
+  // 头骨骼上面罩色的件（脸罩、呼气阀、头带）比低档伪装多；面数不少于高档伪装
+  const seatParts = (() => {
+    const tintCount = (mesh, want) => {
+      const rig = mesh.userData.rig, geo = mesh.geometry, col = geo.attributes.color, si = geo.attributes.skinIndex, idx = geo.index, gi = rig.slots.indexOf('gear');
+      const slotOf = new Array(geo.attributes.position.count).fill(-1);
+      for (const gr of geo.groups) for (let i = gr.start; i < gr.start + gr.count; i++) slotOf[idx ? idx.getX(i) : i] = gr.materialIndex;
+      const out = {}; for (const k in want) out[k] = 0;
+      if (!col) return out;
+      const mc = mesh.material[gi].color;
+      for (let i = 0; i < geo.attributes.position.count; i++) {
+        if (slotOf[i] !== gi) continue;
+        const c = [mc.r * col.getX(i), mc.g * col.getY(i), mc.b * col.getZ(i)];
+        for (const k in want) {
+          const near = sr => Math.max.apply(null, c.map((x, j) => Math.abs(toS(x) - sr[j]))) <= 6;
+          const ok = want[k].glb ? dS(c, want[k].glb) <= 3 : want[k].any ? want[k].any.some(near) : near(want[k].srgb);
+          const bn = rig.list[si.getX(i)].name;
+          if (ok && (!want[k].bone || bn === want[k].bone) && (!want[k].boneRe || want[k].boneRe.test(bn))) out[k]++;
+        }
+      }
+      return out;
+    };
+    // 反光条、金属件按程序化防化服自己的颜色认（_archetypes.js HAZ_SRGB：反光条 #d8dce2、金属 #9aa0a6，sRGB 色阶差 ≤6）；面罩色件按 glb 的 Mask。
+    // repair-r3 起坐车的面罩直接用 glb 的面罩件，上面的金属件（滤罐端盖、接嘴、目镜螺钉）是 glb 的 Metal 色 #b9bec4，也算金属件
+    // repair-r4（主会话 L1）起坐车人形四肢上的反光带是 glb 的 Metal 色（伪装照旧银白）：refl = 四肢骨骼上银白或 glb Metal 色的顶点
+    const want = { tape: { srgb: [0xd8, 0xdc, 0xe2] }, metal: { srgb: [0x9a, 0xa0, 0xa6] }, metalG: { srgb: [0xb9, 0xbe, 0xc4] }, maskHead: { glb: 'Mask', bone: 'head' },
+      refl: { any: [[0xd8, 0xdc, 0xe2], [0xb9, 0xbe, 0xc4]], boneRe: /^(arm|fore|shin)[LR]$/ } };
+    const seat = A.parts.hazmat(null, { color: linSkin('blue'), seat: true }), hi = A.parts.hazmat(null, { detail: 'high' }), lo = A.parts.hazmat(null, { detail: 'low' });
+    const sb = BR.coop && typeof BR.coop.seatBody === 'function' ? [BR.coop.seatBody({ detail: 'high' }), BR.coop.seatBody({ detail: 'low' })] : [null, null];
+    const cnt = m2 => { const c = tintCount(m2, want); c.metal += c.metalG; delete c.metalG; return c; };
+    return { seat: cnt(seat), high: cnt(hi), low: cnt(lo), tris: { seat: A.trisOf(seat), high: A.trisOf(hi), low: A.trisOf(lo) },
+      seatBody: sb.map(x => x && x.tris), glbHas: ['Tape', 'Metal', 'Mask'].every(n => !!glbS[n]) };
+  })();
   const m = A.parts.hazmat(null, { detail: 'high' }), mc = m.material[m.userData.rig.slots.indexOf('body')].color, want = lin(BR.skin.color());
   const mimicSuit = { got: mc.getHexString(), want: want.getHexString(), d: Math.max(Math.abs(mc.r - want.r), Math.abs(mc.g - want.g), Math.abs(mc.b - want.b)) * 255 };
-  return { glb: glbS, glbS, glbShape, rows, skinSwap, mimicSuit };
+  return { glb: glbS, glbS, glbShape, rows, skinSwap, mimicSuit, seatParts, seatGlb };
+}
+// 坐在叉车驾驶座上的人（coop.seatBody，联机队友坐车同一套摆法，FE1R ACT-seat）：
+//   ① 头顶：转头 ±1.5、抬头低头 ±0.6 的整个范围，所有顶点离护顶各件 ≥1 cm —— 横条底面 2.07（|x| ≤ 0.40、z −0.56…0.48）、
+//      两侧纵梁和前后横梁底面 2.04（|x| > 0.39 或 z 在横条外）；压进坐垫顶面（1.16）≤1 cm；
+//   ② 手握方向盘：后轮转角 0、±0.15、±0.3、±0.5、±0.8、±1.13，手套（前臂骨骼、握拳骨骼上的 gear 顶点）离轮缘中心线 1.5–2.6 cm（贴着轮缘管）、轮缘被手套包着
+//      （轮缘最近那一点上下、内外两侧都有手套顶点），三根辐条（3、6、9 点钟）和中心盖插进手套 ≤0.5 cm
+function seatPose() {
+  const C = BR.coop, G = BR.L1forklift && BR.L1forklift.geo;
+  if (!C || typeof C.seatBody !== 'function' || !G) return { ok: false, why: 'no coop / geo' };
+  const SW = G.steerWheel, out = { roof: [], cushion: 0, hands: {} };
+  for (const hy of [-1.5, -0.75, 0, 0.75, 1.5]) for (const pi of [-0.6, 0, 0.6]) {
+    const V = C.seatBody({ headYaw: hy, pitch: pi }).verts;
+    let worst = -Infinity, at = null;
+    for (let i = 0; i < V.length; i += 3) {
+      const x = V[i], y = V[i + 1], z = V[i + 2];
+      if (Math.abs(x) > 0.47 || z < -0.63 || z > 0.59) continue;
+      const under = Math.abs(x) <= 0.39 && z >= -0.56 && z <= 0.48 ? 2.07 : 2.04;
+      if (y - under > worst) { worst = y - under; at = [x, y, z].map(v => +v.toFixed(3)); }
+    }
+    out.roof.push({ hy, pi, gap: +(-worst).toFixed(4), at });
+  }
+  const sb0 = C.seatBody({ parts: true });
+  for (let i = 0; i < sb0.verts.length; i += 3) { const x = sb0.verts[i], y = sb0.verts[i + 1], z = sb0.verts[i + 2]; if (Math.abs(x) <= 0.25 && z >= 0.02 && z <= 0.46 && y < 1.16 && y > 1.06) out.cushion = Math.max(out.cushion, +(1.16 - y).toFixed(4)); }
+  const ca = Math.cos(SW.tilt), sa = Math.sin(SW.tilt), ax = [0, ca, sa], e2 = [0, sa, -ca], rr = SW.r || 0.16, C0 = [SW.x, SW.y, SW.z];
+  const segD = (p, a, b) => { const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], ap = [p[0] - a[0], p[1] - a[1], p[2] - a[2]]; const L = ab[0] ** 2 + ab[1] ** 2 + ab[2] ** 2; let t = (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]) / L; t = Math.max(0, Math.min(1, t)); return Math.hypot(ap[0] - t * ab[0], ap[1] - t * ab[1], ap[2] - t * ab[2]); };
+  for (const steer of [0, 0.15, -0.15, 0.3, -0.3, 0.5, -0.5, 0.8, -0.8, 1.13, -1.13]) {
+    const sb = C.seatBody({ parts: true, steer }), V = sb.verts, gi = sb.slotNames.indexOf('gear');
+    const turn = -steer * (G.steerRatio || 6);
+    const dir = a => { const c = Math.cos(a + turn), s = Math.sin(a + turn); return [c, e2[1] * s, e2[2] * s]; };
+    const at = (a, r, up) => { const q = dir(a); return [C0[0] + q[0] * r + ax[0] * up, C0[1] + q[1] * r + ax[1] * up, C0[2] + q[2] * r + ax[2] * up]; };
+    const spokes = [0, Math.PI, -Math.PI / 2].map(a => [at(a, 0.035, -0.012), at(a, rr - 0.01, 0)]);
+    const row = {};
+    for (const L of ['L', 'R']) {
+      // 手套 = 前臂骨骼和握拳骨骼（grip，repair-r5：手指、拇指挂在它上面）上的 gear 顶点
+      const fi = sb.boneNames.indexOf('fore' + L), gi2 = sb.boneNames.indexOf('grip' + L), gl = [];
+      for (let i = 0; i < V.length / 3; i++) if (sb.slot[i] === gi && (sb.bone[i] === fi || (gi2 >= 0 && sb.bone[i] === gi2))) gl.push([V[i * 3], V[i * 3 + 1], V[i * 3 + 2]]);
+      let best = Infinity, bestA = 0;
+      for (let k = 0; k < 360; k++) { const p = at(k * Math.PI / 180, rr, 0); for (const q of gl) { const d = Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]); if (d < best) { best = d; bestA = k; } } }
+      let spk = 0, hub = 0;
+      for (const q of gl) {
+        for (const [a, b] of spokes) spk = Math.max(spk, 0.009 - segD(q, a, b));
+        const rel = [q[0] - C0[0], q[1] - C0[1], q[2] - C0[2]], h = rel[0] * ax[0] + rel[1] * ax[1] + rel[2] * ax[2];
+        const rad = Math.hypot(rel[0] - h * ax[0], rel[1] - h * ax[1], rel[2] - h * ax[2]);
+        if (h > -0.035 && h < 0.004 && rad < 0.04) hub = Math.max(hub, Math.min(0.04 - rad, h + 0.035, 0.004 - h));
+      }
+      const p = at(bestA * Math.PI / 180, rr, 0), radial = dir(bestA * Math.PI / 180), tang = [ax[1] * radial[2] - ax[2] * radial[1], ax[2] * radial[0] - ax[0] * radial[2], ax[0] * radial[1] - ax[1] * radial[0]];
+      const wrapped = [ax, radial].every(n => { let pos = false, neg = false; for (const q of gl) { const r2 = [q[0] - p[0], q[1] - p[1], q[2] - p[2]]; if (Math.abs(r2[0] * tang[0] + r2[1] * tang[1] + r2[2] * tang[2]) > 0.03) continue; const sd = r2[0] * n[0] + r2[1] * n[1] + r2[2] * n[2]; if (sd > 0.004) pos = true; if (sd < -0.004) neg = true; } return pos && neg; });
+      row[L] = { rim: +best.toFixed(4), wrapped, spoke: +Math.max(0, spk).toFixed(4), hub: +hub.toFixed(4) };
+    }
+    out.hands[steer] = row;
+  }
+  out.ok = true;
+  return out;
 }
 function expectedHex(key) {
   const c = new THREE.Color().setHex(BR.skin.color(key));
@@ -336,12 +563,36 @@ async function desktop(browser, base) {
     // 低画质（FE1Q J7）：gear 槽位材质是手套色，面罩框、滤罐、手套、靴子各按 glb 的颜色上 tint（visualhooks 低档白名单放开了这一项），按裁定色阶差 ≤6
     check('防化服（' + r.who + ' · ' + r.detail + '）：制服色的手掌、手指不包住手套，脚掌不从靴子里伸出来（制服色顶点在手套 / 靴子高度以下的都藏在里面）',
       r.suitOutGlove === 0 && r.suitOutBoot === 0 && r.gloveN > 0 && r.bootN > 0, r);
-    const tol = r.detail === 'high' ? 1 : 6;
+    const tol = r.detail === 'low' ? 6 : 1;
     check('防化服（' + r.who + ' · ' + r.detail + '）：手套、靴子、面罩、滤罐的颜色和 glb 一样（sRGB 色阶差 ≤' + tol + '）',
       r.gloveD <= tol && r.bootD <= tol && r.maskD <= tol && r.filterD <= tol,
       { glove: r.glove, boot: r.boot, mask: r.mask, filter: r.filter, filterAt: r.filterAt, glb: hz.glbS, gloveD: r.gloveD, bootD: r.bootD, maskD: r.maskD, filterD: r.filterD });
   }
-  check('换皮肤只换制服（高低两档）：粉色、蓝色两个坐车人形的手套 / 靴子 / 面罩 / 滤罐材质和几何一模一样，制服色不同', hz.skinSwap && hz.skinSwap.gearSame && hz.skinSwap.suitDiff, hz.skinSwap);
+  check('换皮肤只换制服（坐车版、低档）：粉色、蓝色两个人形的手套 / 靴子 / 面罩 / 滤罐材质和几何一模一样，制服色不同', hz.skinSwap && hz.skinSwap.gearSame && hz.skinSwap.suitDiff, hz.skinSwap);
+  {
+    const sp = hz.seatParts || {}, s = sp.seat || {}, h = sp.high || {}, l = sp.low || {};
+    check('坐车的防化服不分画质（FE1R K7，面具和靴子不能换）：coop.seatBody 高 / 低画质面数一样；反光条、金属件（滤罐端盖、腰带扣、拉链头）、头上面罩色的件（呼气阀、头带）都有，不比高档伪装少、比低档伪装多；面数不少于高档伪装',
+      !!sp.glbHas && sp.seatBody && sp.seatBody[0] > 0 && sp.seatBody[0] === sp.seatBody[1] && s.refl > 0 && s.metal > 0 && s.refl >= h.refl && s.metal >= h.metal && s.maskHead >= h.maskHead &&
+      s.refl > l.refl && s.metal > l.metal && s.maskHead > l.maskHead && sp.tris.seat >= sp.tris.high, sp);
+  }
+  // 返修 FE1R · repair-r4（主会话 L2）：坐车人形拿 hazmat.glb 当基准比，不再拿 HAZ_SRGB 自己比自己
+  {
+    const q = hz.seatGlb || {}, B = q.bands || {};
+    check('坐车人形（L2 a）：glb 已载入时用 glb 那一版（几何缓存键 hazmat_seat_v9g，BR.arch.hzGlbInfo() 从 glb 挑了头、躯干、靴子的顶点）——退回程序化面罩判失败',
+      /hazmat_seat_v9g$/.test(q.key || '') && !!q.info && q.info.head > 0 && q.info.torso > 0 && q.info.boot > 0, { key: q.key, info: q.info });
+    // IoU 收到 ≥0.97（裁定原文 ≥0.9）：负对照（hzGlbParts 返回 null，退回照 glb 拼的程序化面罩）量出来是 0.948，0.9 拦不住它
+    check('坐车人形（L2 b）：滤罐的轴和 glb 夹角 ≤10°，目镜正面投影（按脸罩对齐）和 glb 的 IoU ≥0.97',
+      q.filterAxisDeg != null && q.filterAxisDeg <= 10 && q.visorIoU != null && q.visorIoU >= 0.97, { filterAxisDeg: q.filterAxisDeg, filterN: q.filterN, visorIoU: q.visorIoU });
+    const bb = ['arm', 'fore', 'shin'].filter(k => !(B[k] && B[k].n > 0 && B[k].colorD <= 6 && B[k].dy != null && B[k].dy <= 0.02));
+    check('坐车人形（L2 c）：上臂、前臂、小腿反光带和 glb 的 Metal 色差 ≤6、中心高度差 ≤2 cm；靴口胶带和 glb 的 Tape 色差 ≤6、高度差 ≤2 cm；兜帽宽和 glb 差 ≤1 cm；四肢外侧有黑压胶条',
+      bb.length === 0 && q.cuff && q.cuff.n > 0 && q.cuff.colorD <= 6 && q.cuff.dy <= 0.02 && q.hood && q.hood.dw <= 0.01 && q.seams && q.seams.arm > 0 && q.seams.leg > 0,
+      { bad: bb, bands: B, cuff: q.cuff, hood: q.hood, seams: q.seams });
+  }
+  {
+    const q = hz.seatGlb || {}, ts = q.torsoSeam;
+    check('坐车人形躯干（repair-r5）：不在会弯的腰上拆成两截 —— 胯 / 脊柱骨骼上同一个位置的顶点蒙皮权重一样（拆两截时同一处挂两根骨骼），腰带上沿到胸口之间按高度渐变',
+      !!ts && ts.n > 0 && ts.splitDup === 0 && ts.blended > 50, ts);
+  }
   // 返修 FE1Q · repair-r1（验收员 play：队友一坐上车，面罩就从圆脸罩 + 两个圆滤罐变成方块、靴子从圆头高筒靴变成方块）
   {
     const G2 = hz.glbShape || {}, bad = [];
@@ -351,6 +602,19 @@ async function desktop(browser, base) {
       !!G2.mask && !!G2.filter && !!G2.boot && bad.length === 0, bad.length ? bad.slice(0, 6) : { glb: G2, got: (hz.rows || []).map(r => [r.who, r.detail, r.shape]) });
   }
   check('窃皮者伪装（不指定制服色）：制服色 = 当前皮肤按 skin.apply 一样转线性（和测试人 glb 的制服一个颜色）', hz.mimicSuit && hz.mimicSuit.d <= 1, hz.mimicSuit);
+  // ---------- 坐在叉车驾驶座上的人（FE1R ACT-seat） ----------
+  {
+    const sp = await ev(page, seatPose);
+    const roofBad = (sp.roof || []).filter(r => !(r.gap >= 0.01));
+    check('坐在驾驶座上的人（FE1R ACT-seat）：转头 ±1.5、抬头低头 ±0.6，头顶离护顶横条（底 2.07）、纵梁和前后横梁（底 2.04）都 ≥1 cm；压进坐垫 ≤1 cm',
+      !!sp.ok && sp.roof.length === 15 && roofBad.length === 0 && sp.cushion <= 0.01, { roofBad, minGap: sp.roof && Math.min(...sp.roof.map(r => r.gap)), cushion: sp.cushion });
+    const hb = [];
+    // 返修 FE1R · repair-r5（手套换成握拳、四指绕着轮缘，不再是插进轮缘里的方块）：「包着轮缘」= 轮缘截面四个方向都有手套（wrapped），
+    // 手套离轮缘中心线最近的那一点在 1.5–2.6 cm（轮缘管半径 1.6 cm：插进去 ≤1 mm、离开 ≤1 cm）
+    for (const st in (sp.hands || {})) for (const L of ['L', 'R']) { const h = sp.hands[st][L]; if (!(h && h.rim >= 0.015 && h.rim <= 0.026 && h.wrapped && h.spoke <= 0.005 && h.hub <= 0.005)) hb.push([st, L, h]); }
+    check('坐在驾驶座上的人（FE1R ACT-seat）：双手跟着方向盘转（每 90° 倒一次手），后轮转角 0、±0.15、±0.3、±0.5、±0.8、±1.13 时手套都握着轮缘（四面包住，贴着轮缘管：离中心线 1.5–2.6 cm），辐条、中心盖插进手套 ≤0.5 cm',
+      !!sp.ok && Object.keys(sp.hands).length === 11 && hb.length === 0, hb.length ? hb : sp.hands[0]);
+  }
 
   const home0 = await ev(page, () => ({ screen: BR.game.screen, shown: BR.home.shown, skin: BR.skin.current, inputOn: BR.input.enabled }));
   check('主页：启动后停在主页、输入关闭', home0.screen === 'home' && home0.shown && !home0.inputOn, home0);

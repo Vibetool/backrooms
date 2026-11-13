@@ -11,7 +11,7 @@ const BR = window.BR;
 const K = BR.itemKit;
 if (!K) { console.error('[items] cooked_gammon 需要先加载 js/items/_kit.js'); return; }
 
-const SEG = 16;
+const SEG = 24;   // FE1R K8：盘子半径 11 cm，以前 16 段，0.6 m 弦高 1.6 px（24 段 0.85 px）
 
 BR.itemTypes.register({
   type: 'cooked_gammon', en: 'Cooked Gammon (plate)', zh: '盘装熟熏肉', version: 'fandom',
@@ -35,8 +35,11 @@ BR.itemTypes.register({
   effect: {},
   build() {
     const T = window.THREE;
-    const plateTop = K.paint(K.lathe([[0, 0.004], [0.055, 0.004], [0.08, 0.012], [0.09, 0.016], [0.088, 0.018]], SEG), 0xf7f7f4);
-    const plateBottom = K.paint(K.lathe([[0.088, 0.018], [0.06, 0], [0.001, 0]], SEG), 0xdcdcd8);
+    // 车削的面朝向跟着点的先后走（法线 = 切线顺时针转 90°）：盘面从盘沿往中心排，朝上；盘底从中心往外排，朝下。
+    // FE1R 排查：以前两段都排反了，从上往下看盘面是背面被剔掉，看到的是盘底的里面，盘底那一圈平面又和地面重合，
+    // 中间露出一块块楔形的地面（盘子像缺了几片）
+    const plateTop = K.paint(K.lathe([[0.088, 0.018], [0.09, 0.016], [0.08, 0.012], [0.055, 0.004], [0, 0.004]], SEG), 0xf7f7f4);
+    const plateBottom = K.paint(K.lathe([[0.001, 0], [0.06, 0], [0.088, 0.018]], SEG), 0xdcdcd8);
     // 熏肉排：一块不太规则的椭圆厚片，顶面粉色、侧面是脂肪边
     const shape = new T.Shape();
     const pts = [[0.05, 0], [0.042, 0.022], [0.018, 0.032], [-0.012, 0.03], [-0.04, 0.022], [-0.052, 0.002], [-0.044, -0.02], [-0.016, -0.03], [0.016, -0.029], [0.04, -0.02]];

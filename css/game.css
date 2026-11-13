@@ -439,6 +439,23 @@
   border-radius: 3px;
 }
 
+/* 坐车低头看、准心没对着东西时（只剩「下车」那一句）：挪到准心右边，不盖住准心正下方（返修 FE1R · repair-r3，hud.js updatePrompt） */
+.hud-prompt.hud-prompt-side {
+  top: 50%;
+  margin-top: 0;
+  left: calc(50% + 26px);
+  transform: translateY(-50%);
+  max-width: calc(50vw - 38px);
+}
+
+/* 触屏坐车低头看、准心没对着东西时（只剩「点「下车」」那一句）：挪到准心上方，底边离准心中心 28px（和平常在准心下方对称；准心外圈 18px）——
+   准心下方是要看的安全带扣头和短带，触屏右边那一列是升 / 降 / 丢弃键，准心上方没有触屏键（返修 FE1R · repair-r4，hud.js updatePrompt） */
+.hud-prompt.hud-prompt-up,
+.hud-touch .hud-prompt.hud-prompt-up {
+  margin-top: -28px;
+  transform: translate(-50%, -100%);
+}
+
 /* 列里的每一行都不能比框宽：否则不换行的文字会撑出框外而不是出省略号 */
 .hud-prompt-main,
 .hud-prompt-sub,
@@ -821,6 +838,18 @@
 }
 
 .hud-drive-dot { color: var(--hud-dim); }
+/* 跟着准心换说法的那一段（FE1R UI-6：「下车」↔「关大灯 / 开大灯」）：::after 写着最宽那一版、看不见，叠在同一格里占位，
+   换说法时这一段宽度不变，别的段一个像素都不挪。::after 的字不在 textContent 里。
+   返修 FE1R · repair-r1：字（连同后面的「 ·」）靠左，多出来的宽度只在「·」后面（以前居中，「下车」前后各空一块） */
+.hud-drive-alt { display: inline-grid; justify-items: start; text-align: left; }
+.hud-drive-alt-in { grid-area: 1 / 1; white-space: nowrap; }
+.hud-drive-alt::after {
+  content: attr(data-wide);
+  grid-area: 1 / 1;
+  height: 0;
+  visibility: hidden;
+  white-space: nowrap;
+}
 /* 折行以后挂在一行末尾的「 ·」（hud.js trimDots 量出来加的类）：藏起来但还占着宽度，免得让出的几个像素把下一段拉上来、来回跳 */
 .hud-drive-dot.hud-drive-dot-end { visibility: hidden; }
 
@@ -899,6 +928,10 @@ html.hud-stick-cap .touch-root .touch-zone-r {
   border-left: 3px solid var(--hud-accent);
   border-radius: 2px;
 }
+
+/* 窄竖屏一行放不下时（hud.js placeNote，FE1R UI-2）：小一号字，按空当宽度折行（最多两行），词不拆开 */
+.hud-drive-note.hud-drive-note-sm { padding: 3px 8px; font-size: 13px; line-height: 1.3; }
+.hud-drive-note .hud-nobr { white-space: nowrap; }
 
 .hud-drive-note.hud-drive-note-bump { animation: hud-drive-note-bump 0.3s ease-out; }
 
@@ -1022,6 +1055,13 @@ html.hud-stick-cap .touch-root .touch-zone-r {
   align-items: center;
   transition: none;
 }
+/* 往上长的那一列不居中（FE1R UI-1：矮横屏左上信息块和右边「升」「降」键之间那一块）：hud.js 写列左边 --hud-toast-x */
+.hud-toasts.hud-toasts-up.hud-toasts-at {
+  left: var(--hud-toast-x, 0px);
+  transform: none;
+}
+/* 矮横屏往上长放不下时小一号字（FE1R UI-1：568×320 坐车断电那条长提示不超过 4 行） */
+.hud-toasts.hud-toasts-sm .hud-toast { padding: 4px 10px; font-size: 13px; line-height: 1.3; }
 
 /* ========== 暂停菜单 ========== */
 .hud-pause {

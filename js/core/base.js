@@ -78,7 +78,9 @@ BR.bus = {
 BR.config = {
   version: '0.1.0',
   roomApi: 'https://api.ovobot.ai/room.php',   // 复用火箭发射的 2 人联机信令
-  player: { eyeHeight: 1.62, radius: 0.3, height: 1.8, walk: 3.0, sprint: 5.2, maxHp: 100 },
+  // vehRadius：人对载具（叉车 OBB）的碰撞半径（FE1R A7）= hazmat.glb 站立 / 走路动画里离竖轴最远的点 + 1 cm，贴着车走手套不插进配重；
+  // 和墙、静态碰撞体照旧按 radius
+  player: { eyeHeight: 1.62, radius: 0.3, vehRadius: 0.377, height: 1.8, walk: 3.0, sprint: 5.2, maxHp: 100 },
   stats: {
     hungerDrainPerSec: 100 / (14 * 60),        // 正常走动 14 分钟饿空
     sprintHungerMul: 1.8,

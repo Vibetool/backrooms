@@ -14,7 +14,7 @@ const BR = window.BR;
 const K = BR.itemKit;
 if (!K) { console.error('[items] antiseptics 需要先加载 js/items/_kit.js'); return; }
 
-const SEG = 12;
+const SEG = 20;   // FE1R K8：以前 12 段，0.6 m 弦高 1.2 px
 const BODY = [[0, 0.002], [0.026, 0], [0.032, 0.008], [0.032, 0.1], [0.026, 0.118], [0.012, 0.126], [0.012, 0.13]];
 
 function drawLabel(g, w, h) {
@@ -65,7 +65,7 @@ BR.itemTypes.register({
       solid: [
         K.paint(K.lathe(BODY, SEG), 0xa6dcdc),
         K.paint(K.cyl(0.015, 0.015, 0.012, SEG, 0.13), 0xf4f4f4),
-        K.paint(K.cyl(0.0045, 0.0045, 0.02, 8, 0.142, true), 0xf4f4f4),
+        K.paint(K.cyl(0.0045, 0.0045, 0.02, 12, 0.142, true), 0xf4f4f4),
         K.paint(new T.BoxGeometry(0.034, 0.012, 0.02).translate(0.006, 0.168, 0), 0xf4f4f4),
         K.paint(new T.BoxGeometry(0.02, 0.006, 0.007).translate(0.032, 0.166, 0), 0xf4f4f4),
       ],

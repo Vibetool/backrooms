@@ -1,4 +1,4 @@
-// 后室 · L1 叉车数据与可动模型测试（FE1-L1）：node tests/forklift_l1.mjs [--tag <名> | --against <名>] [--quick] [--only snap,model,drive,obb,data,ws] [--root <目录>]
+// 后室 · L1 叉车数据与可动模型测试（FE1-L1）：node tests/forklift_l1.mjs [--tag <名> | --against <名>] [--quick] [--only snap,model,drive,obb,data,ws,polish,k12] [--root <目录>]
 //
 // 起本地静态服务（随机端口）+ 系统 Chrome（SwiftShader），page.route 拦截 api.ovobot.ai 回假响应、其余外站一律掐掉。
 // 不进游戏：直接拿 BR.levels.get('1').buildChunk 按种子生成区块（levelSeed = U.hashInts(seed, '1')，和 world.js 一样），
@@ -6,7 +6,7 @@
 //
 //   --tag <名>      改动前拍快照到 tests/output/golden-tags/<名>/forklift_l1.json：50 个种子 × 高低画质 × L1 出生 3×3 块的
 //                   几何（每个 mesh 的顶点/法线/UV/颜色/索引逐字节哈希）、碰撞体、刷新点、出口、b.data.forklifts、res.kit 的 key 列表；
-//                   另加 forkliftModel part='all' 在 6 档 × 2 画质 × 5 个车号下的顶点哈希。
+//                   另加 forkliftModel part='all' 在 4 个停放档 × 2 画质 × 5 个车号下的顶点哈希。
 //                   改动前的 L1.js 没有 BR.L1forklift：本测试起的静态服务在 L1.js 的 IIFE 末尾挂一行 BR.__fkProbe（只读出私有函数，不改函数体）
 //   --against <名>  改动后拿快照比对（见下面 snap / model 两段）
 //   --quick         只跑 10 个种子（QUICK）
@@ -16,8 +16,8 @@
 //            key '1@0,0#v<i>'、没有 spans、区块几何里没有它；保底车的碎屑不落进占地外扩 0.2 m；HIGH_TRI 里的种子也有保底车；
 //            出生块以外停着的车有 spans；(0,0) 以外的块逐项和快照一致；种子 12345 的 9 块全部一致（J2 以前拍的快照不比出生块）；
 //            高低画质的叉车 key、固定设备 key、自动道具 key 一致；快照有 geoNoFk 时，所有块（含出生块）去掉停着的车那几段以后逐字节一致；
-//            返修 FE1Q · repair-r3：停着的车没有 min 档，按 lowb 都放不下的块从最后一台起改成运行时车（MINFIX 三块，出生 3×3 以外的 EXTRA_BLOCKS 另外建进来）
-//     model  part='all' 的顶点哈希和快照逐位一致（6 档 × 2 画质 × 5 个车号）
+//            返修 FE1R · K3：停放档只剩 high / mid / lite / low，按 low 都放不下的块从最后一台起改成运行时车（K3FIX，出生 3×3 以外的 EXTRA_BLOCKS 另外建进来）
+//     model  part='all' 的顶点哈希和快照逐位一致（4 档 × 2 画质 × 5 个车号）
 //     drive  可动模型：每台 ≤2000 面；货叉水平段朝下的三角形；后轮 0 到 ±maxSteer 每 5° 离车身 ≥1 cm；安全带 ≥2 条、截面 ≥2 cm；
 //            drvLow 不调 _bevelBox、端面斜角 0、没有 kit:decal；前大灯镜面和警示灯罩只在 kit:glow 里；拆出来的部件拼起来 = 'all'
 //     obb    obbs(lift) 的 14 个盒子：和各部件实际顶点的包围盒对照、和驾驶舱空当不相交、眼点胸口点不在盒子里、24 个方向上离模型表面 ≤7 cm
@@ -25,6 +25,8 @@
 //            sideObs（FE1 返修 r2）：字段合法、每根柱子有柱脚、高低画质逐项一样（出生 3×3 加扫到的有地牛 / 纸箱 / 路锥 / 走廊口的块）、营地不写；
 //            地牛两个条目的 solid 正好对上 res.solids 里它脚下那块老碰撞体（返修 r3）
 //     ws     工坊低画质：两台叉车的块加 3 个出口 ≤8000
+//     polish H1–H5、J、K3–K12、M-gaps、M-fork 的模型检查，K3 / K5 停着 vs 开过逐像素（有电、断电各一遍，返修 FE1R · repair-r1）
+//     k12    K12 背面探针（返修 FE1R · repair-r1）：停放 4 档 + 可动 4 档（升降、满舵）× 2400 多个机位软光栅，0 漏光
 // 任一检查失败或页面出现 console.error / 未捕获异常时退出码为 1；--against 指定的快照不存在时退出码为 3。
 import http from 'node:http';
 import fs from 'node:fs';
@@ -59,12 +61,28 @@ const SEEDS_ALL = (() => {
 const SEEDS_QUICK = [12345, 85, 115, 31, 1, 2, 3, 4, 5, 6];
 const SEEDS = QUICK ? SEEDS_QUICK : SEEDS_ALL;
 const MODEL_NUMBERS = [1, 7, 23, 88, 98];
-// 返修 FE1Q · repair-r3（验收员 play：min 档停着时方向盘六边形、车轮六边形、没有大灯灯盒和起升油缸）：所有台按 lowb 都放不下时，从最后一台起改成运行时车。
-// repair-r2 普查（101 个种子 × 5×5 块）里只有这三块用过 min：[种子, 画质, cx, cz, 改完以后这块的车（null = 运行时车）]。
-// 出生 3×3 以外的两块另外建进 snap（EXTRA_BLOCKS），快照里有它们以后也逐项比
-const MINFIX = [[80, 'high', -2, 1, ['lite', null]], [87, 'low', 0, -2, ['low', null]], [70, 'low', -1, -1, ['low', null]]];
-const EXTRA_BLOCKS = [[80, -2, 1], [87, 0, -2]];
-const TIERS = ['high', 'mid', 'lite', 'low', 'lowb', 'min'];
+// 返修 FE1R · K3（主会话裁定）：停放档只剩 high / mid / lite / low，所有台按 low 都放不下时，从最后一台起改成运行时车。
+// FE1Q 普查（stage-FE1Q/repair-r3/logs/tiers-after.json，101 个种子 × 5×5 块）里用过 lowb 的块，按 FE1R 普查（stage-FE1R/FE1R-model/logs/census-*.json）
+// 现在这块的车：[种子, 画质, cx, cz, 车（null = 运行时车）]。出生 3×3 以外的块另外建进 snap（EXTRA_BLOCKS），快照里有它们以后也逐项比
+// 返修 FE1R · repair-r1：铜阀门、中心盖、铭牌、散热缝、第 3 道百叶补回来以后（停放 high / mid 2000、lite 1968、low 1927 面）重新普查
+// （stage-FE1R/repair-r1/logs/census-r1.json、tier-changes-FE1R-to-r1.txt），又有 6 块换了档：后 6 条
+// 返修 FE1R · repair-r2：补回第 2 根操纵杆、助力球、左边车号、前轮轮毂盖（贴图），座椅各档倒圆（停放 high / mid 2001、lite 1995、low 1963 面，
+// 按普查的口径含贴花）以后再普查（stage-FE1R/repair-r2/logs/census-r2.json、tier-changes-r1-to-r2.json）：高画质 4 块、低画质 6 块换了档 ——
+// 87 高 (0,−2) lite → low、77 低 (−2,−2) low,运行时 → 运行时,运行时；新加后 9 条
+const K3FIX = [[87, 'high', 0, -2, ['low', null]], [12345, 'high', 2, -2, [null, null]], [6, 'low', 1, -1, [null]], [21, 'low', 0, 2, [null]],
+  [77, 'low', -2, -2, [null, null]], [78, 'low', -1, 2, [null]], [80, 'low', -2, 1, ['low', null]], [81, 'low', -1, 2, [null]], [89, 'low', -2, 1, [null]], [12345, 'low', 2, -2, [null, null]],
+  [12, 'high', 1, 1, ['low']], [26, 'high', -1, -2, [null]], [56, 'high', -1, 2, [null]], [70, 'high', -2, 0, ['high', null]], [81, 'high', 2, 0, [null]], [12345, 'low', 1, 0, [null]],
+  [6, 'high', -1, 1, [null]], [27, 'high', -2, -2, ['low']], [73, 'high', 0, 1, ['lite']], [13, 'low', 0, 2, [null]], [44, 'low', -2, -2, [null]], [69, 'low', -1, 1, [null]],
+  [73, 'low', 0, 1, [null]], [74, 'low', -2, -1, [null]]];
+const EXTRA_BLOCKS = [[80, -2, 1], [87, 0, -2], [12345, 2, -2], [21, 0, 2], [77, -2, -2], [78, -1, 2], [81, -1, 2], [89, -2, 1], [26, -1, -2], [56, -1, 2], [70, -2, 0], [81, 2, 0],
+  [27, -2, -2], [73, 0, 1], [13, 0, 2], [44, -2, -2], [69, -1, 1], [74, -2, -1]];
+const TIERS = ['high', 'mid', 'lite', 'low'];
+// K3 逐像素比的几台车（按 FE1R 普查挑的：[种子, 画质, 车 key, 停放档, 开过以后的档]）
+// 返修 FE1R · repair-r1：普查重做以后 12 (1,1) 变成 low、12345 低画质 (1,0) 变成运行时车 —— lite 换成 27 (−2,−2)、低画质 low 换成 2 (−1,0)
+// 返修 FE1R · repair-r2：普查重做以后 27 (−2,−2) 变成 low、6 (−1,1) 变成运行时车 —— 高画质 low 换成 27 (−2,−2)；101 个种子里唯一的 lite 是 73 (0,1)，
+// 可种子 73 这一层第 0 个 45 s 段就断电（L1.js update：epoch 0 抽中、持续 26.8 s，进层那一刻就灭灯），「有电」那组停着的车其实是在断电里拍的、
+// 开过的车是来电以后拍的，整台暗一截是灯的事、不是车的事（pagePairs 第一次 lights() 在 t = 0.5 s 就是全灭）；lite 换成种子 102–401 里找到的 157 (2,−1)
+const PAIR_CASES = [[12345, 'high', '1@-2,2#v0', 'high', 'high'], [157, 'high', '1@2,-1#v0', 'lite', 'lite'], [27, 'high', '1@-2,-2#v0', 'low', 'drvLow'], [2, 'low', '1@-1,0#v0', 'low', 'drvLow']];
 
 // ---------- 静态服务 ----------
 const MIME = {
@@ -195,6 +213,7 @@ function pageSnapChunks({ seeds, quality, extra }) {
           for (const f of fls) {
             if (name === 'kit:prop' && f.spans.prop) r.push(f.spans.prop);
             if (name === 'kit:decal') { for (const w of f.spans.wear || []) r.push(w); if (f.spans.oil) r.push(f.spans.oil); }
+            if (name === 'L1:fkChain' && f.spans.chain) r.push(f.spans.chain);   // 返修 FE1R · repair-r1：链条挪进自己的材质（L1.js FK_CHAIN_MAT），区块里多一个全是链条的网格
           }
           return r;
         };
@@ -231,7 +250,8 @@ function pageSnapChunks({ seeds, quality, extra }) {
               T.hash(h2, out2.subarray(0, ni));
             }
             T.hash(h2, new Float64Array(m.matrixWorld.elements));
-            geoNoFk.push([m.name || m.type, k, ni, mixed, T.hex(h2)]);
+            // 整个网格都是停着的车的（链条材质那个网格）：去掉以后什么都不剩，不记（以前的快照里没有这个网格，链条在 kit:prop 的车身段里）
+            if (!(k === 0 && cut.length && n > 0)) geoNoFk.push([m.name || m.type, k, ni, mixed, T.hex(h2)]);
           }
           T.hash(all, new Uint32Array([h[0], h[1]]));
         });
@@ -322,6 +342,7 @@ async function main() {
         if (want('data')) await secData(page);
         if (want('ws')) await secWs(page);
         if (want('polish')) await secPolish(page);
+        if (want('k12')) await secK12(page);
       }
     }
   } catch (err) {
@@ -423,7 +444,7 @@ async function secSnap(page, before) {
   const rtOut = [], minPark = [], overCap = [];
   for (const k of Object.keys(cur)) {
     const c = cur[k], q0 = k.split('|')[1];
-    for (const f of c.fkr || []) if (f.runtime === false && f.detail === 'min') minPark.push(k);
+    for (const f of c.fkr || []) if (f.runtime === false && !['high', 'mid', 'lite', 'low'].includes(f.detail)) minPark.push([k, f.detail]);
     let tri = 0;
     for (const g of c.geo) tri += (g[2] || g[1]) / 3;
     if (tri > (q0 === 'low' ? 8000 : 10000)) overCap.push([k, tri]);
@@ -453,13 +474,13 @@ async function secSnap(page, before) {
   check('snap：出生块以外停着的车（' + (bad.natOk || 0) + ' 台）runtime:false、有 detail / tris、spans.prop / wear / oil 落在累加器顶点数以内、wearN = 磨损片数（低画质 0、没有 oil）；' +
     '改成运行时车的（repair-r3，' + rtOut.length + ' 块）只排在这块最后、runtime:true、detail null、没有 spans / wearN、tris 0', bad.natural.length === 0 && (bad.natOk || 0) > 0, bad.natural.slice(0, 2));
   {
-    const fix = MINFIX.map(([sd, q, cx, cz, want]) => {
+    const fix = K3FIX.map(([sd, q, cx, cz, want]) => {
       const c = cur[sd + '|' + q + '|' + cx + ',' + cz];
       const got = c ? (c.fkr || []).map(f => f.runtime ? null : f.detail) : 'missing';
       return { k: sd + '|' + q + '|' + cx + ',' + cz, want, got, ok: JSON.stringify(got) === JSON.stringify(want) };
     });
-    check('snap：repair-r3 停着的车不再是 min 档（' + Object.keys(cur).length + ' 块，高低画质）：按 lowb 都放不下时从最后一台起改成运行时车（载具网格画 mid / drvLow，停着和开过同一个网格）；' +
-      'repair-r2 普查里用过 min 的三块（种子 80 高画质 (-2,1)、87 低画质 (0,-2)、70 低画质 (-1,-1)）现在是 [停着的车, 运行时车]；整块 ≤10000 / 8000',
+    check('snap：K3 停着的车只有 high / mid / lite / low 四档（' + Object.keys(cur).length + ' 块，高低画质）：按 low 都放不下时从最后一台起改成运行时车（载具网格画 mid / drvLow，停着和开过同一个网格）；' +
+      'FE1Q 普查里用过 lowb 的 ' + K3FIX.length + ' 块现在是普查算出来的那几档；整块 ≤10000 / 8000',
       minPark.length === 0 && fix.every(f => f.ok) && overCap.length === 0, { minPark: minPark.slice(0, 3), fix, overCap: overCap.slice(0, 3), rtOut });
   }
   const hiTri = HIGH_TRI.filter(sd => SEEDS.includes(sd)).map(sd => {
@@ -548,10 +569,15 @@ async function secSnap(page, before) {
 async function secModel(page, before) {
   const cur = {};
   for (const q of ['high', 'low']) Object.assign(cur, await ev(page, pageModelHashes, { quality: q, numbers: MODEL_NUMBERS, tiers: TIERS }));
+  // 返修 FE1R · repair-r4（主会话 L6）：叉车图集材质 L1:fkChain（警示条、百叶、车号、链板……贴片离面 1 mm）要有 polygonOffset（repair-r3 K12 S18：30–45 m 外不再 z-fighting），
+  // 以后重写这个材质时漏了会在这里报出来。上面建模型时已经建过这份材质（fkChainMat 第一次用时才建）
+  const po = await ev(page, () => { const m = BR.assets.material('kit|L1:fkChain'); return m ? { on: !!m.polygonOffset, factor: m.polygonOffsetFactor, units: m.polygonOffsetUnits } : null; });   // kit.mat 存在 assets 里的键是 'kit|' + 名字
+  check('model：叉车图集材质 L1:fkChain 开着 polygonOffset、factor ≤ −1（贴片 30–45 m 外不撕裂）', !!po && po.on && po.factor <= -1, po);
   if (!before || !before.models) { check("model：part='all' 顶点哈希（没有快照，只记录）", true, Object.keys(cur).length); return; }
   const diff = [];
-  for (const k of Object.keys(before.models)) if (JSON.stringify(before.models[k]) !== JSON.stringify(cur[k])) diff.push({ k, before: before.models[k], now: cur[k] });
-  check("model：forkliftModel part='all' 在 6 档 × 2 画质 × 5 个车号下的顶点哈希和快照逐位一致（" + Object.keys(before.models).length + " 份）", diff.length === 0 && Object.keys(before.models).length === TIERS.length * 2 * MODEL_NUMBERS.length, diff.slice(0, 3));
+  // 返修 FE1R：快照里多出来的档（FE1Q 以前的 lowb / min）不比；当前每一份都要在快照里有、逐位一致
+  for (const k of Object.keys(cur)) if (JSON.stringify(before.models[k]) !== JSON.stringify(cur[k])) diff.push({ k, before: before.models[k] || null, now: cur[k] });
+  check("model：forkliftModel part='all' 在 " + TIERS.length + " 档 × 2 画质 × 5 个车号下的顶点哈希和快照逐位一致（" + Object.keys(cur).length + " 份）", diff.length === 0 && Object.keys(cur).length === TIERS.length * 2 * MODEL_NUMBERS.length, diff.slice(0, 3).map(d => d.k));
 }
 // ---------- 页面内：几何小工具（三角形、点到三角形距离）----------
 function pageGeoTools() {
@@ -650,16 +676,20 @@ function pageGeoTools() {
 function pageDrive({ angles }) {
   const T = window.__fl1, F = BR.L1forklift, G = F.geo, out = {};
   const CASES = [['high', 'high'], ['mid', 'high'], ['lite', 'high'], ['drvLow', 'low']];
-  // ① 每台 ≤2000 面（模型 + 最多的磨损）
+  // ① 每台 ≤2000 面（模型 + 最多的磨损 + 载具层画的大灯开关）。返修 FE1R · K5：前大灯镜面、警示灯罩、开关指示灯各有 kit:prop（熄着）和 kit:glow（亮着）两份；
+  // 返修 FE1R · repair-r1：载具层按灯的状态只建其中一份的模板（缓冲区里不再有叠成一点的那份）—— 两份一样多，按 kit:prop 那份算 = 缓冲区面数；
+  // 链条占位的零面积三角形也不算（载具层的 perVehicleBuf 同样不算链条的空余预留）
   out.tris = {};
+  const swN = BR.vehicles && typeof BR.vehicles._switchGeo === 'function' ? (BR.vehicles._switchGeo(1) || []).length : 0;
+  const live = b => { let n = 0, dup = 0; b._accs.forEach((a, k) => { if (!a || !a.idx || typeof k !== 'string') return; for (let i = 0; i < a.idx.length; i += 3) { const v0 = a.idx[i], v1 = a.idx[i + 1], v2 = a.idx[i + 2]; const P = j => [a.pos[j * 3], a.pos[j * 3 + 1], a.pos[j * 3 + 2]]; const A = P(v0), B = P(v1), C2 = P(v2); const u = [B[0] - A[0], B[1] - A[1], B[2] - A[2]], w = [C2[0] - A[0], C2[1] - A[1], C2[2] - A[2]]; if (Math.hypot(u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]) < 1e-12) continue; if (k === 'kit:glow') { dup++; continue; } n++; } }); return { n, dup }; };
   for (const [detail, q] of CASES) {
-    for (const levers of [0, 1, 2, 3]) {
+    for (const levers of [0, F.lod[detail].levers]) {   // 载具层给可动模型的根数 = 停放档的根数（leversFor，各档都是 1），至少 1
       const m = T.buildModel({ part: 'all', detail, number: 88, drive: true, levers }, q);
       const q0 = BR.game.settings.quality; T.setQ(q);
       const wn = F.wear(m.b, { detail, wearN: 99 });
       T.setQ(q0);
-      let tri = 0; m.b._accs.forEach(a => { if (a && a.idx) tri += a.idx.length / 3; });
-      out.tris[detail + '/' + levers] = { tri, wear: wn };
+      const c = live(m.b);
+      out.tris[detail + '/' + levers] = { tri: c.n + swN, glowDup: c.dup, wear: wn, levers };
     }
   }
   // ② 货叉水平段底面：每根至少 2 个法线 y < −0.9 的三角形（升到顶也一样）；停着的车（drive 不开）没有
@@ -676,7 +706,7 @@ function pageDrive({ angles }) {
   };
   out.forkDown = {};
   for (const [detail, q] of CASES) for (const lift of [0, 1]) out.forkDown[detail + '/lift' + lift] = forkDown(T.buildModel({ part: 'all', detail, number: 88, drive: true, levers: 2, lift }, q));
-  out.forkDownParked = forkDown(T.buildModel({ part: 'all', detail: 'mid', number: 88 }, 'high'));
+  for (const [detail, q] of [['high', 'high'], ['mid', 'high'], ['lite', 'high'], ['low', 'low']]) out.forkDown['parked:' + detail] = forkDown(T.buildModel({ part: 'all', detail, number: 88 }, q));
   // ③ 后轮：0 到 ±maxSteer 每 5°（再加 ±maxSteer），轮胎顶点到车身三角形、车身顶点到轮胎三角形的最小距离
   out.wheel = {};
   for (const [detail, q] of CASES) {
@@ -702,11 +732,15 @@ function pageDrive({ angles }) {
     worst.crossings = crossings;
     out.wheel[detail] = worst;
   }
-  // 对照：停着的车的模型（drive 不开）后轮打 0.6 rad 就和车身穿插（说明可动模型的让开确实必要）
+  // 返修 FE1R · K4：停着的车和可动模型同一个车架（底盘在后轮里侧收窄、配重下半截前脸在 cwFront）—— 停着的车的 body（drive 不开）三角形和可动模型的一模一样
   {
-    const body = T.buildModel({ part: 'body', detail: 'mid', number: 88 }, 'high').tris;
-    const wt = T.buildModel({ part: 'wheelRearR', detail: 'mid', number: 88, steer: 0.6 }, 'high').tris;
-    out.wheelParked = T.crossings(wt, body);
+    const sigL = list => list.map(t => t.slice(0, 9).map(x => Math.round(x * 1e6)).join(',') + '|' + t[9]).sort().join(';');
+    out.wheelParked = {};
+    for (const [detail, q] of [['high', 'high'], ['mid', 'high'], ['lite', 'high'], ['low', 'low']]) {
+      const pk = T.buildModel({ part: 'body', detail, number: 88, levers: F.lod[detail].levers }, q).tris.filter(t => t[10] === 'chassis' || t[10] === 'counterweight');
+      const dv = T.buildModel({ part: 'body', detail: detail === 'low' ? 'drvLow' : detail, number: 88, drive: true, levers: F.lod[detail].levers }, q).tris.filter(t => t[10] === 'chassis' || t[10] === 'counterweight');
+      out.wheelParked[detail] = { same: sigL(pk) === sigL(dv), n: pk.length };
+    }
   }
   // ④ 安全带：橙色带子按连通分量数条数，截面（垂直于带子长度方向的最大尺寸）≥2 cm
   out.belts = {};
@@ -741,7 +775,8 @@ function pageDrive({ angles }) {
     const m = T.buildModel({ part: 'all', detail: 'drvLow', number: 88, drive: true, levers: 1 }, 'low');
     const q0 = BR.game.settings.quality; T.setQ('low'); F.wear(m.b, { detail: 'drvLow', wearN: 9 }); T.setQ(q0);
     const L = F.lod.drvLow;
-    out.drvLow = { bevel: m.bevel, decalAcc: !!m.b._accs.get('kit:decal'), bev: L.bev, ch: L.ch, cwC: L.cwC, backC: L.backC, decals: L.decals, trim: !!L.trim, belt: L.belt, handle: L.handle, ears: L.ears };
+    out.drvLow = { bevel: m.bevel, decalAcc: !!m.b._accs.get('kit:decal'), bev: L.bev, ch: L.ch, cwC: L.cwC, backC: L.backC, decals: L.decals, trim: !!L.trim, handle: L.handle,
+      lowSame: JSON.stringify(Object.assign({}, F.lod.low)) === JSON.stringify(Object.assign({}, F.lod.drvLow)) };
     const mh = T.buildModel({ part: 'all', detail: 'lite', number: 88, drive: true, levers: 1 }, 'high');
     out.liteBevel = mh.bevel;
   }
@@ -750,28 +785,27 @@ function pageDrive({ angles }) {
     const lens = T.storedColor([0.95, 0.94, 0.86]), amber = T.storedColor([1.05, 0.58, 0.1]);
     const has = (m, col) => { const a = m.accs.get('kit:prop'); let n = 0; for (let v = 0; v < a.n; v++) if (Math.abs(a.col[v * 3] - col[0]) < 1e-6 && Math.abs(a.col[v * 3 + 1] - col[1]) < 1e-6 && Math.abs(a.col[v * 3 + 2] - col[2]) < 1e-6) n++; return n; };
     out.glow = {};
+    const sigL = list => list.map(t => t.slice(0, 9).map(x => Math.round(x * 1e6)).join(',')).sort().join(';');
     for (const [detail, q] of CASES) {
       const m = T.buildModel({ part: 'all', detail, number: 88, drive: true, levers: 2 }, q);
       const g = m.accs.get('kit:glow');
-      const gl = m.tris.filter(t => t[9] === 'kit:glow');
-      let gap = Infinity;
-      for (const t of gl) {
-        const n = T.normal(t);
-        for (const u of m.tris) {
-          if (u[9] === 'kit:glow') continue;
-          const nu = T.normal(u);
-          if (Math.abs(n[0] * nu[0] + n[1] * nu[1] + n[2] * nu[2]) < 0.999) continue;
-          const d = Math.abs((u[0] - t[0]) * n[0] + (u[1] - t[1]) * n[1] + (u[2] - t[2]) * n[2]);
-          // 只看投影重叠的
-          const bt = T.bbox([t]), bu = T.bbox([u]);
-          const ov = [0, 1, 2].every(a2 => Math.abs(n[a2]) > 0.9 || (bt[a2 + 3] > bu[a2] + 1e-4 && bu[a2 + 3] > bt[a2] + 1e-4));
-          if (ov) gap = Math.min(gap, d);
-        }
-      }
-      out.glow[detail] = { glowVerts: g ? g.n : 0, glowTris: gl.length, propLens: has(m, lens), propAmber: has(m, amber), minParallelGap: gap };
+      const part = p => T.buildModel({ part: p, detail, number: 88, drive: true, levers: 2 }, q).tris;
+      const lOff = part('lampOff'), lOn = part('lampOn'), bOff = part('beaconOff'), bOn = part('beaconOn'), body = part('body');
+      // K5：熄着那份（kit:prop）和亮着那份（kit:glow）几何一样；'body' 里没有镜面色 / 灯罩色（不重复）
+      out.glow[detail] = { glowVerts: g ? g.n : 0, lampOff: lOff.length, lampOffMat: Array.from(new Set(lOff.map(t => t[9]))), lampOnMat: Array.from(new Set(lOn.map(t => t[9]))),
+        beaconOffMat: Array.from(new Set(bOff.map(t => t[9]))), beaconOnMat: Array.from(new Set(bOn.map(t => t[9]))),
+        lampSame: sigL(lOff) === sigL(lOn) && lOff.length > 0, beaconSame: sigL(bOff) === sigL(bOn) && bOff.length > 0, bodyTris: body.length };
+      const mb = T.buildModel({ part: 'body', detail, number: 88, drive: true, levers: 2 }, q);
+      out.glow[detail].bodyLens = has(mb, lens); out.glow[detail].bodyAmber = has(mb, amber);
     }
-    const mp = T.buildModel({ part: 'all', detail: 'mid', number: 88 }, 'high');
-    out.glowParked = { glow: !!mp.accs.get('kit:glow'), propLens: has(mp, lens), propAmber: has(mp, amber) };
+    // 停着的车：镜面、灯罩只在 kit:prop 里，和可动模型熄着的那份逐个三角形一样（K5）
+    out.glowParked = {};
+    for (const [detail, q, dd] of [['high', 'high', 'high'], ['mid', 'high', 'mid'], ['lite', 'high', 'lite'], ['low', 'low', 'drvLow']]) {
+      const mp = T.buildModel({ part: 'all', detail, number: 88 }, q);
+      const off = T.buildModel({ part: 'lampOff', detail: dd, number: 88, drive: true }, q).tris.concat(T.buildModel({ part: 'beaconOff', detail: dd, number: 88, drive: true }, q).tris);
+      const pk = new Set(mp.tris.map(t => t.slice(0, 9).map(x => Math.round(x * 1e6)).join(',') + '|' + t[9]));
+      out.glowParked[detail] = { glow: !!mp.accs.get('kit:glow'), propLens: has(mp, lens), propAmber: has(mp, amber), offInParked: off.filter(t => pk.has(t.slice(0, 9).map(x => Math.round(x * 1e6)).join(',') + '|' + t[9])).length, off: off.length };
+    }
   }
   // ⑦ 拆开的部件拼起来 = 'all'（顶点多重集合一样），drive 开关两种都查
   out.parts = {};
@@ -779,7 +813,7 @@ function pageDrive({ angles }) {
     const sig = list => list.map(t => t.slice(0, 9).map(x => Math.round(x * 1e6)).join(',') + '|' + t[9]).sort().join(';');
     const all = T.buildModel({ part: 'all', detail, number: 23, drive, levers: 2, lift: 0.4, steer: 0.3 }, q).tris;
     let parts = [];
-    for (const part of ['body', 'liftLever', 'wheelsFront', 'wheelRearL', 'wheelRearR', 'steeringWheel', 'mastOuter', 'mastInner', 'carriage', 'chains']) parts = parts.concat(T.buildModel({ part, detail, number: 23, drive, levers: 2, lift: 0.4, steer: 0.3 }, q).tris);
+    for (const part of ['body', 'lampOff', 'lampOn', 'beaconOff', 'beaconOn', 'liftLever', 'wheelsFront', 'wheelRearL', 'wheelRearR', 'steeringWheel', 'mastOuter', 'mastInner', 'carriage', 'chains']) parts = parts.concat(T.buildModel({ part, detail, number: 23, drive, levers: 2, lift: 0.4, steer: 0.3 }, q).tris);
     const lev = T.buildModel({ part: 'liftLever', detail, number: 23, drive, levers: 2 }, q).tris.length;
     const wr = T.buildModel({ part: 'wheelsRear', detail, number: 23, drive, steer: 0.3 }, q).tris.length;
     const wl = T.buildModel({ part: 'wheelRearL', detail, number: 23, drive, steer: 0.3 }, q).tris.length;
@@ -799,10 +833,12 @@ function pageDrive({ angles }) {
     out.wear = { high9: W({ detail: 'high', wearN: 9 }), high99: W({ detail: 'high', wearN: 99 }), mid9: W({ detail: 'mid', wearN: 9 }), lite2: W({ detail: 'lite', wearN: 2 }),
       oil: W({ part: 'oil' }), carriageLift1: W({ detail: 'high', wearN: 9, part: 'carriage', lift: 1 }), drvLow: W({ detail: 'drvLow', wearN: 9 }) };
     T.setQ('low'); out.wear.lowQ = W({ detail: 'high', wearN: 9 }); T.setQ(q0);
+    out.wear.decalsWant = { high: F.lod.high.decals, mid: F.lod.mid.decals, lite: F.lod.lite.decals };
   }
   // ⑩ driveTier
   out.tier = {};
-  for (const q of ['high', 'low']) for (const p of ['high', 'mid', 'lite', 'low', 'lowb', 'min', null]) out.tier[q + '/' + p] = F.driveTier(q, p);
+  for (const q of ['high', 'low']) for (const p of ['high', 'mid', 'lite', 'low', null]) out.tier[q + '/' + p] = F.driveTier(q, p);
+  out.parkTiers = { ladder: JSON.parse(JSON.stringify(F.ladder)), lod: Object.keys(F.lod).sort() };
   out.frozen = Object.isFrozen(F) && Object.isFrozen(G) && Object.isFrozen(G.cab) && Object.isFrozen(F.lod) && Object.isFrozen(F.lod.drvLow) && Object.isFrozen(F.ladder);
   return out;
 }
@@ -815,29 +851,32 @@ async function secDrive(page) {
   const D = await ev(page, pageDrive, { angles });
   fs.writeFileSync(path.join(OUT, 'drive.json'), JSON.stringify(D, null, 1));
   const triBad = Object.entries(D.tris).filter(([, v]) => !(v.tri <= 2000));
-  check('drive：可动模型（high/mid/lite 高画质、drvLow 低画质，杆数 0–3，加上最多的磨损贴花）每台 ≤2000 面', triBad.length === 0, Object.fromEntries(Object.entries(D.tris).filter(([k]) => k.endsWith('/2')).map(([k, v]) => [k, v.tri])));
+  check('drive：可动模型（high/mid/lite 高画质、drvLow 低画质，杆数按停放档（repair-r2 起各档 2 根），加上最多的磨损贴花和载具层画的大灯开关）每台 ≤2000 面（K5 灯的两份只算画出来的那一份）', triBad.length === 0, Object.fromEntries(Object.entries(D.tris).filter(([k]) => !k.endsWith('/0')).map(([k, v]) => [k, v.tri + '（glow ' + v.glowDup + ' 不重复计）'])));
   const fd = Object.entries(D.forkDown).filter(([, v]) => !(v.forkL >= 2 && v.forkR >= 2 && v.areaL >= 0.08 && v.areaR >= 0.08));
-  check('drive：每根货叉水平段至少 2 个法线 y < −0.9 的三角形，朝下的面积盖满水平段（≥0.08 m²；4 档 × 落地 / 升到顶）', fd.length === 0, D.forkDown);
-  check('drive：对照 —— 停着的车（drive 不开，part=all 不变）货叉水平段没有底面（朝下的只有叉尖倒角，面积 <0.01 m²）', D.forkDownParked.areaL < 0.01 && D.forkDownParked.areaR < 0.01, D.forkDownParked);
+  check('drive：每根货叉水平段至少 2 个法线 y < −0.9 的三角形，朝下的面积盖满水平段（≥0.08 m²；可动 4 档 × 落地 / 升到顶，停放 4 档也一样 —— K3：停着、开过同一份几何）', fd.length === 0 && Object.keys(D.forkDown).length === 12, D.forkDown);
   const wb = Object.entries(D.wheel).filter(([, v]) => !(v.d >= 0.01 && v.crossings.length === 0));
   check('drive：后轮 0 到 ±maxSteer（1.13）每 5° 采样，轮胎顶点到车身三角形、车身顶点到轮胎三角形都 ≥1 cm，两组三角形没有穿插', wb.length === 0,
     Object.fromEntries(Object.entries(D.wheel).map(([k, v]) => [k, { d: +v.d.toFixed(4), deg: v.deg, part: v.part, seg: v.seg, crossings: v.crossings.slice(0, 3) }])));
-  check('drive：对照 —— 停着的车的模型（drive 不开）后轮打 0.6 rad 和车身穿插', D.wheelParked > 0, D.wheelParked);
+  check('drive：K4 停着的车和可动模型同一个车架 —— 停放 high / mid / lite / low 的底盘、配重三角形和同档（low → drvLow）可动模型逐个一样', Object.values(D.wheelParked).every(v => v.same && v.n > 0), D.wheelParked);
   const bb = Object.entries(D.belts).filter(([, v]) => !(v.length >= 2 && v.every(x => x.section >= 0.02)));
   check('drive：安全带 ≥2 条、每条截面 ≥2 cm（4 档）', bb.length === 0, D.belts);
-  check('drive：drvLow = lite 去掉倒角和贴花：建模时 _bevelBox 调用 0 次、端面斜角 ch / cwC / backC 都是 0、没有 kit:decal 累加器、不砍面（trim 关）、有扶手 / 安全带 / 耳座',
-    D.drvLow.bevel === 0 && !D.drvLow.decalAcc && D.drvLow.bev === false && D.drvLow.ch === 0 && D.drvLow.cwC === 0 && D.drvLow.backC === 0 && D.drvLow.decals === 0 && !D.drvLow.trim && D.drvLow.belt >= 1 && D.drvLow.handle >= 1 && D.drvLow.ears && D.liteBevel > 0, Object.assign({ liteBevel: D.liteBevel }, D.drvLow));
-  const gb = Object.entries(D.glow).filter(([, v]) => !(v.glowTris > 0 && v.propLens === 0 && v.propAmber === 0 && v.minParallelGap >= 0.002));
-  check('drive：前大灯镜面、警示灯罩只在 kit:glow 里（kit:prop 里没有它们的颜色），和别的面平行重叠时相距 ≥2 mm（不共面）；停着的车照旧在 kit:prop', gb.length === 0 && !D.glowParked.glow && D.glowParked.propLens > 0 && D.glowParked.propAmber > 0, { drive: D.glow, parked: D.glowParked });
+  check('drive：drvLow = lite 去掉倒角和贴花：建模时 _bevelBox 只调 1 次（坐垫顶棱，repair-r2 起各档都倒圆）、端面斜角 ch / cwC / backC 都是 0、没有 kit:decal 累加器、不砍面（trim 关）、有扶手；K3：停放 low 档和 drvLow 参数一模一样',
+    D.drvLow.bevel === 1 && !D.drvLow.decalAcc && D.drvLow.bev === false && D.drvLow.ch === 0 && D.drvLow.cwC === 0 && D.drvLow.backC === 0 && D.drvLow.decals === 0 && !D.drvLow.trim && D.drvLow.handle >= 1 && D.drvLow.lowSame && D.liteBevel > 0, Object.assign({ liteBevel: D.liteBevel }, D.drvLow));
+  const gb = Object.entries(D.glow).filter(([, v]) => !(v.lampSame && v.beaconSame && v.lampOffMat.join() === 'kit:prop' && v.lampOnMat.join() === 'kit:glow' && v.beaconOffMat.join() === 'kit:prop' && v.beaconOnMat.join() === 'kit:glow' && v.bodyLens === 0 && v.bodyAmber === 0));
+  const gp = Object.entries(D.glowParked).filter(([, v]) => !(!v.glow && v.propLens > 0 && v.propAmber > 0 && v.offInParked === v.off && v.off > 0));
+  check('drive：K5 前大灯镜面、警示灯罩在可动模型里各两份 —— lampOff / beaconOff 在 kit:prop、lampOn / beaconOn 在 kit:glow，几何一样（载具层按灯的状态叠掉一份）；body 里不重复；停着的车只有 kit:prop 那份、和可动模型熄着的那份逐个三角形一样',
+    gb.length === 0 && gp.length === 0, { drive: D.glow, parked: D.glowParked });
   const pb = Object.entries(D.parts).filter(([, v]) => !(v.same && v.lever > 0 && v.rearL > 0 && v.rearL * 2 === v.rearBoth));
   check("drive：part 'body' + 'liftLever' + 'wheelsFront' + 'wheelRearL' + 'wheelRearR' + … 拼起来和 'all' 的三角形一模一样（drive 开关都查）；wheelsRear = L + R", pb.length === 0, D.parts);
   check('drive：levers 0/1/2/3 → 升降杆 1 根（drive 至少 1 根），其余操纵杆 0/0/1/2 根', D.levers[0].liftLever === 1 && D.levers[0].leverTris === 0 && D.levers[1].leverTris === 0 && D.levers[2].leverTris > 0 && D.levers[3].leverTris > D.levers[2].leverTris, D.levers);
   const W = D.wear;
   check('drive：wear 按 wearN 和这一档 decals−1 截断、跳过地上油渍；part oil 只画油；货叉刮痕跟着升；低画质 / drvLow 一片不画',
-    W.high9.n === 9 && W.high99.n === 9 && W.mid9.n === 5 && W.lite2.n === 2 && W.oil.n === 1 && W.oil.ymax < 0.05 && W.carriageLift1.n === 2 && W.carriageLift1.ymax > 2.6 && W.drvLow.n === 0 && W.lowQ.n === 0, W);
-  const tierWant = { 'high/high': 'high', 'high/mid': 'mid', 'high/lite': 'lite', 'high/low': 'lite', 'high/lowb': 'lite', 'high/min': 'lite', 'high/null': 'mid' };
+    W.high9.n === W.decalsWant.high - 1 && W.high99.n === W.decalsWant.high - 1 && W.mid9.n === W.decalsWant.mid - 1 && W.lite2.n === 2 && W.oil.n === 1 && W.oil.ymax < 0.05 && W.carriageLift1.n === 2 && W.carriageLift1.ymax > 2.6 && W.drvLow.n === 0 && W.lowQ.n === 0, W);
+  const tierWant = { 'high/high': 'high', 'high/mid': 'mid', 'high/lite': 'lite', 'high/low': 'drvLow', 'high/null': 'mid' };
   const tierBad = Object.entries(D.tier).filter(([k, v]) => k.startsWith('low/') ? v !== 'drvLow' : v !== tierWant[k]);
-  check('drive：driveTier —— 低画质一律 drvLow；高画质 = 停放档（high/mid/lite），比 lite 粗用 lite，没建过原区块（null）用 mid', tierBad.length === 0, D.tier);
+  check('drive：driveTier（K3）—— high / mid / lite 停着的开过以后同一档、low → drvLow（两种画质）；低画质一律 drvLow；高画质没有停放档（null：出生块的车、运行时车）用 mid', tierBad.length === 0, D.tier);
+  check('drive：K3 停放档只剩 high / mid / lite / low（ladder 高画质 high → mid → lite → low、低画质只有 low；lod 里没有 lowb / min）',
+    JSON.stringify(D.parkTiers.ladder) === JSON.stringify({ high: ['high', 'mid', 'lite', 'low'], low: ['low'] }) && JSON.stringify(D.parkTiers.lod) === JSON.stringify(['drvLow', 'high', 'lite', 'low', 'mid']), D.parkTiers);
   check('drive：BR.L1forklift、geo（含 cab）、lod、ladder 都是冻结的', D.frozen === true, D.frozen);
 }
 // 14 个部件碰撞盒：覆盖（被盒子管的部件顶点都在盒子里）、贴合（每个盒子 6 个面离它管的顶点 ≤7 cm）、驾驶舱留空、眼点胸口点、24 个方向
@@ -1209,6 +1248,11 @@ function pageWs({ cases }) {
     BR.workshop.activate(m2, { editing: false });
     const r2 = T.build(12345, 0, 0);
     out.spawnWs12345 = (r2.data.forklifts || []).map(f => ({ key: f.key, runtime: f.runtime, detail: f.detail, spans: !!f.spans }));
+    // 返修 FE1R · K3：放不下 low 档的车改成运行时车（不管是不是出生块）—— 记下这块去掉叉车的面数和 low 档一台车的面数，好分清是哪条规则
+    { let tri = 0; r2.group.traverse(m => { const g = m.isMesh && m.geometry; if (g && g.attributes.position) tri += (g.index ? g.index.count : g.attributes.position.count) / 3; });
+      const ft = (r2.data.forklifts || []).reduce((a, f) => a + (f.tris || 0), 0), t = T.builder(); BR.L1forklift.model(t, { detail: 'low', number: 88 });
+      let lowT = 0; t._accs.forEach((a, k) => { if (a && a.idx && typeof k === 'string') lowT += a.idx.length / 3; });
+      out.spawnWs12345Budget = { base: tri - ft, lowT, cap: BR.game.settings.quality === 'low' ? 7950 : 9950, q: BR.game.settings.quality }; }
     T.dispose(r2);
     BR.workshop.deactivate();
   } finally { T.setQ(q0); BR.workshop.deactivate(); }
@@ -1227,8 +1271,117 @@ async function secWs(page) {
   const zone = rows.filter(r => r.kind === 'zone' && JSON.stringify(r.det) !== JSON.stringify(r.plain.det));
   check('ws：「区域」出口不占面数，叉车的档和不在工坊时一样（不白留额度）', zone.length === 0, zone.slice(0, 3));
   check('ws：工坊地图里出生块不放保底车', R.spawnWs && R.spawnWs.spawnBay === null && R.spawnWs.forklifts === 0, R.spawnWs);
-  check('ws：J2 只管 L1 正常生成 —— 工坊地图（种子 12345）出生块里本来就生成的车照旧是区块里停着的车（runtime:false、有停放档和 spans）',
-    Array.isArray(R.spawnWs12345) && R.spawnWs12345.length >= 1 && R.spawnWs12345.every(f => f.runtime === false && typeof f.detail === 'string' && f.spans), R.spawnWs12345);
+  {
+    const B = R.spawnWs12345Budget || {}, fits = B.base + B.lowT <= B.cap;
+    check('ws：J2 只管 L1 正常生成 —— 工坊地图（种子 12345）出生块里本来就生成的车按普通规则挑档：放得下 low 就停在区块里（runtime:false、有停放档和 spans），放不下才改成运行时车（K3）',
+      Array.isArray(R.spawnWs12345) && R.spawnWs12345.length >= 1 && R.spawnWs12345.every(f => fits ? (f.runtime === false && typeof f.detail === 'string' && f.spans) : (f.runtime === true && f.detail === null)), { cars: R.spawnWs12345, budget: B, fits });
+  }
+}
+
+// =====================================================================
+// k12（返修 FE1R · repair-r1，验收员 tests：K12 背面探针做成自动测试）：停放 high / mid / lite / low、可动 high / mid / lite / drvLow（升降 0 / 0.5 / 1、
+// 满舵两边）的三角形（kit:prop + 链条材质；kit:glow 是灯亮着的那份、和熄着的同一位置，不算；贴花不算）拿到 node 里软光栅（640×360、竖直视野 75°、近裁 5 cm）：
+// 每个像素最近的是背面三角形（比最近的正面近 2 mm 以上，或者根本没有正面）= 透过去看见零件里面；4 邻里至少 2 个也漏才算（棱上单像素不算）。
+// 眼点（照 stage-FE1R/verify-spec/r1/scripts/bf.mjs）：站着 1.62 m 离车外接矩形 1–4 m 每 0.5 m、每 10° 一圈（各看 5 个目标）；0.3 m 低机位同样一圈（4 个目标）；
+// 本车驾驶座环顾（每 30°、俯仰 6 档）；旁边车驾驶座 1.8 m、离 1 m；K4 两个低机位。全部 0 漏光
+// =====================================================================
+function pageK12Models() {
+  const F = BR.L1forklift, out = {}, q0 = BR.game.settings.quality;
+  const CFG = [];
+  for (const d of ['high', 'mid', 'lite', 'low']) CFG.push(['P-' + d, { detail: d, number: 88 }, d === 'low' ? 'low' : 'high']);
+  for (const d of ['high', 'mid', 'lite', 'drvLow']) {
+    const q = d === 'drvLow' ? 'low' : 'high';
+    for (const lift of [0, 0.5, 1]) CFG.push(['D-' + d + '-l' + lift, { detail: d, number: 88, drive: true, lift, levers: F.lod[d].levers }, q]);
+    for (const steer of [-1.13, 1.13]) CFG.push(['D-' + d + '-s' + steer, { detail: d, number: 88, drive: true, lift: 0, steer, levers: F.lod[d].levers }, q]);
+  }
+  try {
+    for (const [name, o, q] of CFG) {
+      BR.game.settings.quality = q;
+      const b = BR.kit.builder({}, 0, 0, () => 0, { height: 4 });
+      F.model(b, o);
+      const P = [];
+      b._accs.forEach((a, k) => {
+        if (!a || !a.idx || typeof k !== 'string' || k === 'kit:glow' || k === 'kit:decal') return;
+        for (let i = 0; i < a.idx.length; i++) { const v = a.idx[i]; P.push(+a.pos[v * 3].toFixed(5), +a.pos[v * 3 + 1].toFixed(5), +a.pos[v * 3 + 2].toFixed(5)); }
+      });
+      out[name] = P;
+    }
+  } finally { BR.game.settings.quality = q0; }
+  return out;
+}
+function k12Views() {
+  const RX = 0.62, Z0 = -2.12, Z1 = 1.3, CZ = (Z0 + Z1) / 2;
+  const ringPt = (th, d) => { const dx = Math.sin(th), dz = Math.cos(th); const tx = Math.abs(dx) > 1e-6 ? RX / Math.abs(dx) : Infinity, tz = Math.abs(dz) > 1e-6 ? (dz > 0 ? Z1 - CZ : CZ - Z0) / Math.abs(dz) : Infinity; const t = Math.min(tx, tz); return [dx * (t + d), CZ + dz * (t + d)]; };
+  const V = [];
+  const TG_STAND = [[0, 0.35, -1.6], [0, 1.0, -0.9], [0, 1.25, 0.05], [0, 0.7, 0.9], [0, 0.45, -0.5]];
+  const TG_LOW = [[0, 0.45, -0.6], [0, 0.4, 0.8], [0, 0.25, -1.6], [0, 0.7, 0.2]];
+  for (let a = 0; a < 36; a++) for (const d of [1, 1.5, 2, 2.5, 3, 3.5, 4]) {
+    const p = ringPt(a * 10 * Math.PI / 180, d);
+    for (const tg of TG_STAND) V.push({ k: 'stand', eye: [p[0], 1.62, p[1]], at: tg, tag: 'stand a' + a * 10 + ' d' + d });
+    for (const tg of TG_LOW) V.push({ k: 'low', eye: [p[0], 0.3, p[1]], at: tg, tag: 'low a' + a * 10 + ' d' + d });
+  }
+  for (let yw = 0; yw < 12; yw++) for (const pt of [-1.25, -0.9, -0.5, 0, 0.5, 1.2]) {
+    const y = yw * Math.PI / 6, e = [0, 1.8, 0.16];
+    V.push({ k: 'seat', eye: e, at: [e[0] - Math.sin(y) * Math.cos(pt), e[1] + Math.sin(pt), e[2] - Math.cos(y) * Math.cos(pt)], tag: 'seat yaw' + yw * 30 + ' p' + pt });
+  }
+  for (const s of [-1, 1]) for (const z of [-1.8, -1.0, -0.3, 0.4, 1.0, 1.6]) for (const tg of TG_STAND) V.push({ k: 'adj', eye: [s * (RX + 1.0), 1.8, z], at: tg, tag: 'adj x' + s + ' z' + z });
+  for (const s of [-1, 1]) V.push({ k: 'k4', eye: [s * 1.2, 0.3, 0.2], at: [s * 0.25, 0.3, 0.85], fov: 50, tag: 'K4 ' + s });
+  return V;
+}
+function k12Leaks(P, V) {
+  const W = 640, H = 360, NEAR = 0.05, nT = P.length / 9;
+  const dF = new Float32Array(W * H), dB = new Float32Array(W * H), tB = new Int32Array(W * H), L = new Uint8Array(W * H);
+  const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const nrm = a => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+  const raster = (a, b, c, back, t) => {
+    const area = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    if (Math.abs(area) < 1e-9) return;
+    const x0 = Math.max(0, Math.floor(Math.min(a[0], b[0], c[0]))), x1 = Math.min(W - 1, Math.ceil(Math.max(a[0], b[0], c[0])));
+    const y0 = Math.max(0, Math.floor(Math.min(a[1], b[1], c[1]))), y1 = Math.min(H - 1, Math.ceil(Math.max(a[1], b[1], c[1])));
+    if (x0 > x1 || y0 > y1) return;
+    const ia = 1 / area;
+    for (let y = y0; y <= y1; y++) { const py = y + 0.5; for (let x = x0; x <= x1; x++) {
+      const px = x + 0.5, w0 = ((b[0] - px) * (c[1] - py) - (b[1] - py) * (c[0] - px)) * ia, w1 = ((c[0] - px) * (a[1] - py) - (c[1] - py) * (a[0] - px)) * ia, w2 = 1 - w0 - w1;
+      if (w0 < 0 || w1 < 0 || w2 < 0) continue;
+      const z = 1 / (w0 * a[2] + w1 * b[2] + w2 * c[2]), i = y * W + x;
+      if (back) { if (z < dB[i]) { dB[i] = z; tB[i] = t; } } else if (z < dF[i]) dF[i] = z;
+    } }
+  };
+  const res = { views: 0, leakViews: 0, px: 0, worst: [] };
+  for (const v of V) {
+    const f = nrm(sub(v.at, v.eye)), r = nrm(cross(f, [0, 1, 0])), u = cross(r, f), ty = Math.tan((v.fov || 75) * Math.PI / 360), tx = ty * W / H;
+    dF.fill(Infinity); dB.fill(Infinity); tB.fill(-1);
+    for (let t = 0; t < nT; t++) {
+      const A = [P[t * 9], P[t * 9 + 1], P[t * 9 + 2]], B = [P[t * 9 + 3], P[t * 9 + 4], P[t * 9 + 5]], C = [P[t * 9 + 6], P[t * 9 + 7], P[t * 9 + 8]];
+      const n = cross(sub(B, A), sub(C, A));
+      if (Math.hypot(n[0], n[1], n[2]) < 1e-10) continue;
+      const back = dot(n, sub(v.eye, A)) < 0;
+      const poly = [A, B, C].map(p => { const d = sub(p, v.eye); return [dot(d, r), dot(d, u), dot(d, f)]; });
+      const out = [];
+      for (let i = 0; i < 3; i++) { const p = poly[i], q = poly[(i + 1) % 3], pin = p[2] >= NEAR, qin = q[2] >= NEAR; if (pin) out.push(p); if (pin !== qin) { const s = (NEAR - p[2]) / (q[2] - p[2]); out.push([p[0] + (q[0] - p[0]) * s, p[1] + (q[1] - p[1]) * s, NEAR]); } }
+      if (out.length < 3) continue;
+      const sp = out.map(p => [W / 2 + (p[0] / p[2]) / tx * W / 2, H / 2 - (p[1] / p[2]) / ty * H / 2, 1 / p[2]]);
+      for (let k = 1; k + 1 < sp.length; k++) raster(sp[0], sp[k], sp[k + 1], back, t);
+    }
+    L.fill(0);
+    for (let i = 0; i < W * H; i++) if (dB[i] < Infinity && dB[i] < dF[i] - 0.002) L[i] = 1;
+    let n2 = 0;
+    for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) { const i = y * W + x; if (L[i] && L[i - 1] + L[i + 1] + L[i - W] + L[i + W] >= 2) n2++; }
+    res.views++;
+    if (n2) { res.leakViews++; res.px += n2; if (res.worst.length < 4) res.worst.push([v.tag, n2]); }
+  }
+  return res;
+}
+async function secK12(page) {
+  const M = await ev(page, pageK12Models);
+  const V = k12Views(), out = {};
+  for (const [name, P] of Object.entries(M)) out[name] = k12Leaks(P, V);
+  fs.writeFileSync(path.join(OUT, 'k12.json'), JSON.stringify(out, null, 1));
+  const bad = Object.entries(out).filter(([, r]) => r.leakViews > 0);
+  check('k12：背面探针 —— 停放 high / mid / lite / low、可动 high / mid / lite / drvLow（升降 0 / 0.5 / 1、满舵两边）共 ' + Object.keys(out).length + ' 份模型 × ' + V.length +
+    ' 个机位（站着 1.62 m 离车 1–4 m 每 10° 一圈、0.3 m 低机位一圈、本车驾驶座环顾、旁边车驾驶座、K4 低机位），没有一个像素透过去看到零件里面（成片的背面）',
+    Object.keys(out).length === 24 && bad.length === 0, bad.length ? Object.fromEntries(bad.slice(0, 4)) : { views: V.length, models: Object.keys(out).length });
 }
 
 // =====================================================================
@@ -1240,7 +1393,7 @@ async function secWs(page) {
 function pagePolish() {
   const T = window.__fl1, F = BR.L1forklift, G = F.geo, out = {};
   const FK_COL = { belt: [0.95, 0.42, 0.08], steel: [0.48, 0.5, 0.53], black: [0.07, 0.07, 0.075], link: [0.36, 0.35, 0.33] };   // L1.js 的 FK 色表
-  const PARK = [['high', 'high'], ['mid', 'high'], ['lite', 'high'], ['low', 'low'], ['lowb', 'low']];
+  const PARK = [['high', 'high'], ['mid', 'high'], ['lite', 'high'], ['low', 'low']];   // 返修 FE1R · K3：停放档只剩这四档
   const DRV = [['high', 'high'], ['mid', 'high'], ['lite', 'high'], ['drvLow', 'low']];
   // 线段 p → p + d（参数 0..1）和三角形：返回 [参数, 正面?] 或 null
   const segHit = (p, d, t) => {
@@ -1289,13 +1442,13 @@ function pagePolish() {
       const m = T.buildModel({ part: 'all', detail, number: 88, drive, levers: 2 }, q);
       const L = F.lod[detail];
       const targets = [];
-      for (const s of [-1, 1]) targets.push(...grid([s * 0.43 - 0.04, 1.86, -0.685, s * 0.43 + 0.04, 1.94, -0.605], [0.15, 0.5, 0.85]));
+      for (const s of [-1, 1]) targets.push(...grid([s * 0.43 - 0.04, 1.86, -0.685, s * 0.43 + 0.04, 1.94, -0.597], [0.15, 0.5, 0.85]));
       // 灯盒五个方向的面都有（按法线数；顶面 1.94 m 比站着、坐着的眼睛都高，谁都看不到，不画）
       const dirs = new Set();
       for (const t of m.tris) {
         if (t[10] !== 'postFL' && t[10] !== 'postFR') continue;
         const bb = T.bbox([t]);
-        if (Math.abs(Math.abs((bb[0] + bb[3]) / 2) - 0.43) > 0.045 || bb[1] < 1.859 || bb[4] > 1.941 || bb[2] < -0.686 || bb[5] > -0.604) continue;
+        if (Math.abs(Math.abs((bb[0] + bb[3]) / 2) - 0.43) > 0.045 || bb[1] < 1.859 || bb[4] > 1.941 || bb[2] < -0.686 || bb[5] > -0.596) continue;
         const n = T.normal(t);
         dirs.add(n.map(v => Math.round(v)).join(','));
       }
@@ -1321,11 +1474,11 @@ function pagePolish() {
         beam.push(...gridIn(s * 0.34, 1.9, -0.94, s * 0.3649, 1.98, -0.91, [0.1, 0.5, 0.9]));
         rail.push(...gridIn(s * 0.4, 2.04, -0.6, s * 0.46, 2.1, 0.54, [0.03, 0.5, 0.97]));
         if (L.cyl) cyl.push([s * 0.2, 1.7495, -0.895], [s * 0.2, 1.7495, -0.893]);
-        if (L.heads) head.push(...gridIn(s * 0.2 - 0.025, 2.06, -0.96, s * 0.2 + 0.025, 2.115, -0.835, [0.03, 0.1, 0.5]));
+        head.push(...gridIn(s * 0.2 - 0.025, 2.06, -0.96, s * 0.2 + 0.025, 2.115, -0.835, [0.03, 0.1, 0.5]));
         post.push(...gridIn(s * 0.42, 0.54, -1.1, s * 0.46, 1.24, -1.07, [0.98, 0.995]));
       }
       for (const z of [-0.59, 0.53]) cross.push(...gridIn(-0.35, 2.04, z - 0.03, 0.35, 2.1, z + 0.03, [0.03, 0.5, 0.97]));
-      for (let k = 0; k < L.slats; k++) { const z = -0.45 + k * 0.9 / (L.slats - 1); slat.push(...gridIn(-0.35, 2.07, z - 0.025, 0.35, 2.085, z + 0.025, [0.5])); }
+      for (const z of F.slatZ(L.slats)) slat.push(...gridIn(-0.35, 2.07, z - 0.025, 0.35, 2.085, z + 0.025, [0.5]));
       if (L.handle === 1) for (const y of [1.6, 1.612, 1.617]) for (const dx of [-0.008, 0, 0.008]) handle.push([-0.43 + dx, y, zb(y) + 0.012]);
       if (L.handle === 2) for (const y of [1.59, 1.605, 1.617]) for (const dx of [-0.008, 0, 0.008]) handle.push([-0.43 + dx, y, zb(y) + 0.05]);   // repair-r1：high 档扶手顶端
       parts.beam = leaks(m.tris, side, beam);
@@ -1351,7 +1504,7 @@ function pagePolish() {
     const gIn = (x0, y0, z0, x1, y1, z1, fs) => { const f = fs || [0.15, 0.5, 0.85], o = []; for (const a of f) for (const c of f) for (const d of f) o.push([x0 + (x1 - x0) * a, y0 + (y1 - y0) * c, z0 + (z1 - z0) * d]); return o; };
     const zb = y => -0.69 + (y - 0.99) / 1.08 * 0.17;
     out.parkShut = { eyes: eyes.length, tiers: {} };
-    for (const [list, drive] of [[PARK.concat([['min', 'low']]), false], [DRV, true]]) for (const [detail, q] of list) {
+    for (const [list, drive] of [[PARK, false], [DRV, true]]) for (const [detail, q] of list) {
       const L = F.lod[detail], m = T.buildModel({ part: 'all', detail, number: 88, drive, levers: 2 }, q), tg = {};
       tg.beam = []; tg.rail = []; tg.post = []; tg.tire = []; tg.chain = [];
       for (const s of [-1, 1]) {
@@ -1359,12 +1512,12 @@ function pagePolish() {
         tg.rail.push(...gIn(s * 0.4, 2.04, -0.6, s * 0.46, 2.1, 0.54, [0.03, 0.5, 0.97]));
         tg.post.push(...gIn(s * 0.42, 0.54, -1.1, s * 0.46, 1.24, -1.07, [0.2, 0.6, 0.98]));
         if (L.cyl) (tg.cyl || (tg.cyl = [])).push([s * 0.2, 1.7495, -0.895], [s * 0.2, 1.7495, -0.893], [s * 0.2, 1.2, -0.865]);
-        if (L.heads) (tg.head || (tg.head = [])).push(...gIn(s * 0.2 - 0.025, 2.06, -0.96, s * 0.2 + 0.025, 2.115, -0.835, [0.03, 0.1, 0.5]));
+        (tg.head || (tg.head = [])).push(...gIn(s * 0.2 - 0.025, 2.06, -0.96, s * 0.2 + 0.025, 2.115, -0.835, [0.03, 0.1, 0.5]));
         tg.tire.push([s * 0.48, 0.29, -0.62 - 0.23], [s * 0.48, 0.29 + 0.16, -0.62 - 0.16], [s * 0.44, 0.23, 0.8 + 0.19], [s * 0.44, 0.23, 0.8 - 0.19]);
         tg.chain.push([s * 0.12, 1.0, -1.045], [s * 0.12, 1.6, -1.045]);
       }
       tg.cross = []; for (const z of [-0.59, 0.53]) tg.cross.push(...gIn(-0.35, 2.04, z - 0.03, 0.35, 2.1, z + 0.03, [0.03, 0.5, 0.97]));
-      if (L.slats) { tg.slat = []; for (let k = 0; k < L.slats; k++) { const z = -0.45 + k * 0.9 / (L.slats - 1); tg.slat.push(...gIn(-0.35, 2.07, z - 0.025, 0.35, 2.085, z + 0.025, [0.5])); } }
+      if (L.slats) { tg.slat = []; for (const z of F.slatZ(L.slats)) tg.slat.push(...gIn(-0.35, 2.07, z - 0.025, 0.35, 2.085, z + 0.025, [0.5])); }
       if (L.handle === 1) { tg.handle = []; for (const y of [1.3, 1.6, 1.612, 1.617]) for (const dx of [-0.008, 0, 0.008]) tg.handle.push([-0.43 + dx, y, zb(y) + 0.012]); }
       if (L.handle === 2) { tg.handle = []; for (const y of [1.3, 1.59, 1.605, 1.617]) for (const dx of [-0.008, 0, 0.008]) tg.handle.push([-0.43 + dx, y, zb(y) + 0.05]); }   // repair-r1：high 档扶手顶端
       // repair-r1（验收员 spec）：警示灯罩里面（灯罩底圈以前悬出后横梁 1.5 cm、又不画底，从车后站着往上看透得过去）
@@ -1381,9 +1534,10 @@ function pagePolish() {
     // 眼点 (−1.22, 1.62, −0.74) 看左大灯里 (−0.4, 1.865, −0.615)）。左前方一片密一点的眼点往大灯、镜壳、左前立柱里面连线
     const me = [];
     for (const h of [1.62, 1.8]) for (let x = -1.9; x <= -0.9 + 1e-9; x += 0.1) for (let z = -1.4; z <= -0.2 + 1e-9; z += 0.1) me.push([+x.toFixed(2), h, +z.toFixed(2)]);   // 人的半径 0.3：离车身侧面（x −0.6）≥0.3
-    const mt = gIn(-0.47, 1.86, -0.685, -0.39, 1.94, -0.605).concat(gIn(-0.585, 1.745, -0.66, -0.505, 1.835, -0.648), [[-0.4, 1.865, -0.615]]);
+    // 返修 FE1R：后视镜（以前只有 high 档有）为了可动模型 ≤2000 面去掉了 —— 只查左大灯、左前立柱这一片；哪一档还有后视镜就连镜壳一起查
     out.mirror = {};
-    for (const [detail, q, drive] of [['high', 'high', false], ['high', 'high', true]]) {
+    for (const [detail, q, drive] of [['high', 'high', false], ['high', 'high', true], ['mid', 'high', false], ['mid', 'high', true]]) {
+      const mt = gIn(-0.47, 1.86, -0.685, -0.39, 1.94, -0.597).concat(F.lod[detail].mirror ? gIn(-0.585, 1.745, -0.66, -0.505, 1.835, -0.648) : [], [[-0.4, 1.865, -0.615]]);
       const m = T.buildModel({ part: 'all', detail, number: 88, drive, levers: 2 }, q);
       out.mirror[detail + (drive ? '/drive' : '')] = leaks(m.tris, me, mt, 4);
     }
@@ -1393,11 +1547,11 @@ function pagePolish() {
   if (F.belt) {
     const B = F.belt, beltC = colKey(T.storedColor(FK_COL.belt)), steelC = colKey(T.storedColor(FK_COL.steel)), blackC = colKey(T.storedColor(FK_COL.black));
     const inBeltZone = t => { const bb = T.bbox([t]); const ax = Math.abs((bb[0] + bb[3]) / 2); return ax > 0.233 && ax < 0.29 && bb[1] >= 0.99 && bb[4] <= 1.5 && bb[2] >= 0.19 && bb[5] <= 0.47; };
-    const beltPart = m => m.tris.filter(t => t[10] === 'seat' && inBeltZone(t) && [beltC, steelC, blackC].includes(triCol(m, t)));
+    const redC = colKey(T.storedColor([0.78, 0.07, 0.05])), slotC = colKey(T.storedColor([0.03, 0.03, 0.03]));
+    const beltPart = m => m.tris.filter(t => t[10] === 'seat' && inBeltZone(t) && [beltC, steelC, blackC, redC, slotC].includes(triCol(m, t)));
     out.belt = { parts: {}, seatSame: {}, strap: {}, gap: {}, body: {} };
     let ref = null;
     for (const [list, drive] of [[PARK, false], [DRV, true]]) for (const [detail, q] of list) {
-      if (!drive && !F.lod[detail].belt) { out.belt.parts[detail] = beltPart(T.buildModel({ part: 'all', detail, number: 88, levers: 2 }, q)).length; continue; }
       const m = T.buildModel({ part: 'all', detail, number: 88, drive, levers: 2 }, q);
       const bp = beltPart(m), sg = sig(bp);
       if (!ref) ref = sg;
@@ -1408,7 +1562,8 @@ function pagePolish() {
       const boxPts = b => { const o = []; for (const x of [b.x0, b.x1]) for (const y of [b.y0, b.y1]) for (const z of [b.z0, b.z1]) o.push([x, y, z]); return o; };
       const inSeat = p => Math.abs(p[0]) < 0.25 && p[1] < 1.16 && p[1] > 1.0 && p[2] > 0.02 && p[2] < 0.46;
       const pen = ['strap', 'tongue', 'stub', 'buckle'].map(k => boxPts(B[k]).filter(inSeat).length).reduce((a, b2) => a + b2, 0);
-      out.belt.gap[detail + (drive ? '/drive' : '')] = { strap: +near(boxPts(B.strap)).toFixed(4), tongue: +near(boxPts(B.tongue)).toFixed(4), stub: +near(boxPts(B.stub)).toFixed(4), buckle: +near(boxPts(B.buckle)).toFixed(4), pen };
+      // 扣头（返修 FE1R · K9 抬高到坐垫顶面以上）：坐垫顶上一圈倒圆，扣头旁边的坐垫侧面往里收了 —— 量到坐垫左侧面那个平面（x −0.25）
+      out.belt.gap[detail + (drive ? '/drive' : '')] = { strap: +near(boxPts(B.strap)).toFixed(4), tongue: +near(boxPts(B.tongue)).toFixed(4), stub: +near(boxPts(B.stub)).toFixed(4), buckle: +(-0.25 - B.buckle.x1).toFixed(4), pen };
       if (!drive) {
         const md = T.buildModel({ part: 'all', detail, number: 88, drive: true, levers: 2 }, q);
         out.belt.seatSame[detail] = sig(m.tris.filter(t => t[10] === 'seat')) === sig(md.tris.filter(t => t[10] === 'seat'));
@@ -1468,9 +1623,11 @@ function pagePolish() {
     const sw = []; b._accs.forEach((a, k) => { for (let i = 0; i < a.idx.length; i += 3) { const t = []; for (let j = 0; j < 3; j++) { const v = a.idx[i + j]; t.push(a.pos[v * 3], a.pos[v * 3 + 1], a.pos[v * 3 + 2]); } t.push(k); sw.push(t); } });
     const swSig = new Set(sw.map(t => t.slice(0, 9).map(x => Math.round(x * 1e6)).join(',') + '|' + t[9]));
     out.sw = { tris: sw.length, mats: Array.from(new Set(sw.map(t => t[9]))), parked: {} };
-    // 和载具层（vehicles.js buildSwitch，上车以后画的那个，拨杆扳在「开」）逐个三角形比对：几何一样（≤1 µm、同一个顶点顺序），
-    // 颜色、材质也一样，只有指示灯：停着的车是熄着的暗绿、在 kit:prop；载具层的在 kit:glow（跟大灯一起亮）
+    // 和载具层（vehicles.js buildSwitch，上车以后画的那个，拨杆扳在「开」）逐个三角形比对：几何一样（≤1 µm），颜色、材质也一样 ——
+    // 返修 FE1R · K5：载具层的指示灯也有熄着的那一份（kit:prop、暗绿，_switchGeo(1) 缺省取它），和停着的车一模一样；亮着那份（_switchGeo(1, true)）在 kit:glow
     const vg = BR.vehicles && typeof BR.vehicles._switchGeo === 'function' ? BR.vehicles._switchGeo(1) : null;
+    const vgOn = BR.vehicles && typeof BR.vehicles._switchGeo === 'function' ? BR.vehicles._switchGeo(1, true) : null;
+    out.sw.vehOn = vgOn ? { tris: vgOn.length, glow: vgOn.filter(t => t[9] === 'kit:glow').length } : null;
     if (!vg) out.sw.veh = { missing: true };
     else {
       const parkedCol = [];
@@ -1511,7 +1668,7 @@ function pagePolish() {
     for (const x of [-0.45, -0.3, 0.3, 0.45]) for (const y of [0.45, 0.6]) for (const z of [0.3, 0.5]) targets.push([x, y, z]);   // 发动机盖里面
     out.cw = {};
     const parts = ['body', 'liftLever', 'wheelsFront', 'steeringWheel', 'mastOuter', 'mastInner', 'carriage', 'chains'];
-    for (const [list, drive] of [[DRV, true], [PARK.slice(0, 3), false]]) for (const [detail, q] of list) for (const steer of drive ? [0, G.maxSteer, -G.maxSteer] : [0]) {
+    for (const [list, drive] of [[DRV, true], [PARK, false]]) for (const [detail, q] of list) for (const steer of drive ? [0, G.maxSteer, -G.maxSteer] : [0]) {
       let tris = [];
       for (const part of parts) tris = tris.concat(T.buildModel({ part, detail, number: 88, drive, levers: 2 }, q).tris);
       for (const part of ['wheelRearL', 'wheelRearR']) tris = tris.concat(T.buildModel({ part, detail, number: 88, drive, levers: 2, steer }, q).tris);
@@ -1525,7 +1682,7 @@ function pagePolish() {
     for (const x of [-0.4, -0.2, 0, 0.2, 0.4]) for (const y of [0.2, 0.35]) for (const z of [1.12, 1.18]) targetsS.push([x, y, z]);   // 配重下半截里面
     for (const x of [-0.3, 0, 0.3]) for (const z of [-0.4, -0.2]) targetsS.push([x, 0.55, z]);   // 驾驶位地台下面（车架里）
     out.cwS = {};
-    for (const [list, drive] of [[DRV, true], [PARK.concat([['min', 'low']]), false]]) for (const [detail, q] of list) {
+    for (const [list, drive] of [[DRV, true], [PARK, false]]) for (const [detail, q] of list) {
       let tris = [];
       for (const part of parts.concat(['wheelRearL', 'wheelRearR'])) tris = tris.concat(T.buildModel({ part, detail, number: 88, drive, levers: 2, steer: 0 }, q).tris);
       out.cwS[detail + (drive ? '/drive' : '')] = leaks(tris, eyesS, targetsS);
@@ -1541,7 +1698,23 @@ function pagePolish() {
       for (const lift of [0, 0.5, 1]) {
         const m = T.buildModel({ part: 'all', detail, number: 88, drive, levers: 2, lift }, q);
         const cy = sp.y + G.pose(lift).inner, ch = m.tris.filter(t => t[10] === 'chains');
-        const r = { top: -Infinity, arcPts: 0, arcIn: Infinity, light: { front: [], back: [] }, arcLight: 0 };
+        const r = { top: -Infinity, arcPts: 0, arcIn: Infinity, arcLight: 0 };
+        // 返修 FE1R · repair-r1：链条整根在链条材质里，链板一深一浅画在贴图里 —— 查材质、每个顶点的 v × 周期（两节）= 这一点在链条上的弧长 s
+        //（s 从货叉架挂点算：前段 y − y0、链轮上 hf + R·θ、后段 hf + πR + (cy − y)），升降时链节跟着链条走
+        r.mats = Array.from(new Set(ch.map(t => t[9])));
+        {
+          const a = m.accs.get(F.chainMat), per = 2 * L.links, y0 = G.chain.carriageY + G.pose(lift).carriage, R = sp.z - G.chain.z, hf = cy - y0;
+          let worst = 0, n = 0;
+          if (a && per > 0) for (let v = 0; v < a.n; v++) {
+            if (a.uv[v * 2] * F.atlas.size > 130) continue;   // repair-r2：这个材质里还有图集别的块（车号、表盘、轮辋……），只看链条那一列
+            const x = a.pos[v * 3], y = a.pos[v * 3 + 1], z = a.pos[v * 3 + 2];
+            let sx;
+            if (y <= cy + 1e-9) sx = z < sp.z ? y - y0 : hf + Math.PI * R + (cy - y);
+            else { const th = Math.atan2(y - cy, sp.z - z); sx = hf + R * (th < 0 ? th + 2 * Math.PI : th); }
+            worst = Math.max(worst, Math.abs(a.uv[v * 2 + 1] * per - sx)); n++;
+          }
+          r.uvErr = +worst.toFixed(5); r.uvN = n;
+        }
         for (const t of ch) {
           const area = T.bbox([t]);
           if (area[4] - area[1] < 1e-9 && area[5] - area[2] < 1e-9 && area[3] - area[0] < 1e-9) continue;   // 缩成一点的占位
@@ -1557,11 +1730,6 @@ function pagePolish() {
             r.arcIn = Math.min(r.arcIn, Math.hypot(my, mz));
             if (triCol(m, t) === linkC) r.arcLight++;
           }
-          if (triCol(m, t) === linkC && Math.abs(n[2] + 1) < 1e-6 && Math.max(t[1], t[4], t[7]) <= cy + 1e-6) {
-            const zz = t[2], key = zz < sp.z ? 'front' : 'back', bb = T.bbox([t]);
-            const arr = r.light[key], y0 = +bb[1].toFixed(5);
-            if (!arr.some(v => Math.abs(v[0] - y0) < 1e-6 && Math.abs(v[2] - bb[0]) < 1e-6)) arr.push([y0, +bb[4].toFixed(5), bb[0]]);
-          }
         }
         // 链轮：侧面有几个不同方向的顶点（棱数）、两个端面
         const spr = m.tris.filter(t => t[10] === 'mastInner' && triCol(m, t) === steelC && Math.abs(Math.abs((t[0] + t[3] + t[6]) / 3) - sp.x) < 0.016 && Math.abs((t[1] + t[4] + t[7]) / 3 - cy) < sp.r && Math.abs((t[2] + t[5] + t[8]) / 3 - sp.z) < sp.r);
@@ -1569,15 +1737,14 @@ function pagePolish() {
         for (const t of spr) {
           const n = T.normal(t);
           if (Math.abs(n[0]) > 0.99) { caps.add(Math.sign((t[0] + t[3] + t[6]) / 3) + '/' + Math.sign(n[0])); continue; }
-          for (let j = 0; j < 9; j += 3) if (Math.abs(Math.hypot(t[j + 1] - cy, t[j + 2] - sp.z) - sp.r) < 1e-4) ang.add(Math.round(Math.atan2(t[j + 1] - cy, t[j + 2] - sp.z) * 1000) + '/' + Math.sign(t[j]));
+          for (let j = 0; j < 9; j += 3) if (Math.abs(Math.hypot(t[j + 1] - cy, t[j + 2] - sp.z) - sp.r) < 1e-4) ang.add(Math.round(Math.atan2(t[j + 1] - cy, t[j + 2] - sp.z) * 1e4));
         }
-        r.sprocketSides = ang.size / 2; r.caps = caps.size;
-        const pitch = arr => { const s = arr.map(v => v[0]).sort((a, b2) => a - b2); const d = []; for (let i = 1; i < s.length; i++) d.push(+(s[i] - s[i - 1]).toFixed(4)); return d; };
-        r.frontSheets = r.light.front.length; r.backSheets = r.light.back.length;
-        r.frontStep = pitch(r.light.front.filter(v => v[2] > 0)); r.backStep = pitch(r.light.back.filter(v => v[2] > 0));
+        // 返修 FE1R：链轮上半圈包在链条里、只画下半圈 —— 按轮缘相邻顶点的角度差折算一圈多少棱
+        const as = Array.from(ang).sort((a, b2) => a - b2), dd = []; for (let i = 1; i < as.length; i++) dd.push((as[i] - as[i - 1]) / 1e4);
+        const step = dd.length ? Math.min(...dd.filter(x => x > 0.05)) : 0;
+        r.sprocketSides = step ? Math.round(2 * Math.PI / step) : 0; r.caps = caps.size; r.rimVerts = as.length;
         r.wantTop = +(cy + (sp.z - G.chain.z) + 0.006).toFixed(4);
         r.obbTop = +(G.obbs(lift).find(o => o.name === 'mastInner').cy + G.obbs(lift).find(o => o.name === 'mastInner').hy).toFixed(4);
-        delete r.light;
         r.top = +r.top.toFixed(4); r.arcIn = +r.arcIn.toFixed(4);
         row['lift' + lift] = r;
       }
@@ -1587,7 +1754,7 @@ function pagePolish() {
           const b = T.builder(); const q0 = BR.game.settings.quality; T.setQ(q);
           F.model(b, { part: 'chains', detail, number: 88, drive: true, levers: 2, lift: i / 40 + (i % 3 === 1 ? 0.0037 : 0) });
           T.setQ(q0);
-          const a = b._accs.get('kit:prop'); cnt.add(a.n + '/' + a.idx.length);
+          const a = b._accs.get(F.chainMat); cnt.add(a.n + '/' + a.idx.length);
         }
         row.counts = Array.from(cnt);
       }
@@ -1602,7 +1769,7 @@ function pagePolish() {
       hub: colKey(T.storedColor([0.3, 0.3, 0.31])), black: colKey(T.storedColor([0.07, 0.07, 0.075])), gauge: colKey(T.storedColor([0.62, 0.62, 0.6])), needle: colKey(T.storedColor([0.55, 0.08, 0.05])) };
     const angN = (pts, f) => { const s2 = new Set(); for (const p of pts) { const [u, v] = f(p); s2.add(((Math.round(Math.atan2(v, u) * 360 / Math.PI) % 720) + 720) % 720); } return s2.size; };
     out.round = {};
-    for (const [list, drive] of [[PARK.concat([['min', 'low']]), false], [DRV, true]]) for (const [detail, q] of list) {
+    for (const [list, drive] of [[PARK, false], [DRV, true]]) for (const [detail, q] of list) {
       const m = T.buildModel({ part: 'all', detail, number: 88, drive, levers: 2 }, q), row = {}, LL = F.lod[detail];
       const ring = [], wheel = { tire: [], rim: [], hub: [], rear: [] }, gauge = [];
       let needle = 0;
@@ -1621,7 +1788,8 @@ function pagePolish() {
           if (t[10] === 'wheelsFront' && p[0] > 0) {
             const W = G.wheelFront, dy = p[1] - W.y, dz = p[2] - W.z, r = Math.hypot(dy, dz);
             if ((col === C.tire || col === C.lug) && Math.abs(r - W.r) < 1e-4) wheel.tire.push([dy, dz]);
-            if (col === C.rim && Math.abs(r - W.r * 0.6) < 1e-4) wheel.rim.push([dy, dz]);
+            // 返修 FE1R · repair-r2：前轮轮辋画在叉车图集（链条材质）里，正中的轮毂盖是贴图里的圆
+            if ((col === C.rim || t[9] === F.chainMat) && Math.abs(r - W.r * 0.6) < 1e-4) wheel.rim.push([dy, dz]);
             if (col === C.hub && Math.abs(r - W.r * 0.2) < 1e-4) wheel.hub.push([dy, dz]);
           }
           if (t[10] === 'wheelRearR') {
@@ -1634,12 +1802,51 @@ function pagePolish() {
       }
       row.ring = angN(ring, q2 => q2);
       row.tire = angN(wheel.tire, q2 => q2); row.rim = angN(wheel.rim, q2 => q2); row.hub = wheel.hub.length ? angN(wheel.hub, q2 => q2) : 0; row.rear = angN(wheel.rear, q2 => q2);
-      // 表盘：白色三角形的第一个顶点按两块表（x < 0 / x > 0）分开数不同的顶点
-      const gs = [new Set(), new Set()];
-      for (const t of m.tris) if (t[10] === 'dash' && triCol(m, t) === C.gauge) for (let j = 0; j < 9; j += 3) gs[t[j] < 0 ? 0 : 1].add([t[j], t[j + 1], t[j + 2]].map(v => Math.round(v * 1e5)).join(','));
-      row.gauges = gs.map(g2 => g2.size).filter(n => n > 0);
-      row.needleTris = needle;
+      // 返修 FE1R · K8：后轮轮辋、气瓶端面、转向柱顶封口 / 柱身、警示灯罩、阀门的段数（按顶点绕各自轴的不同角度数）
+      const rr = [], tk = [], col = [], bc = [], vl = [], hb = [];
+      const tankC = colKey(T.storedColor([0.62, 0.64, 0.66])), amberC = colKey(T.storedColor([1.05, 0.58, 0.1])), brassC = colKey(T.storedColor([0.75, 0.58, 0.27]));
+      for (const t of m.tris) {
+        const cc = triCol(m, t);
+        for (let j = 0; j < 9; j += 3) {
+          const p = [t[j], t[j + 1], t[j + 2]];
+          if (t[10] === 'wheelRearR' && cc === C.rim) { const W = G.wheelRear, dy = p[1] - W.y, dz = p[2] - W.z; if (Math.abs(Math.hypot(dy, dz) - W.r * 0.6) < 1e-4) rr.push([dy, dz]); }
+          if (cc === tankC && Math.abs(p[0] - 0.36) < 1e-6) { const dy = p[1] - 1.32, dz = p[2] - 0.86; if (Math.abs(Math.hypot(dy, dz) - 0.15) < 1e-4) tk.push([dy, dz]); }
+          if (t[10] === 'steer' && cc === C.black) { const d = [p[0] - SW.x, p[1] - SW.y, p[2] - SW.z], h = d[0] * ax[0] + d[1] * ax[1] + d[2] * ax[2]; if (Math.abs(Math.hypot(d[0] - ax[0] * h, d[1] - ax[1] * h, d[2] - ax[2] * h) - 0.03) < 1e-4) col.push([d[0], d[1] * e2[1] + d[2] * e2[2]]); }
+          if (cc === amberC && Math.abs(p[1] - 2.1) < 1e-6) bc.push([p[0], p[2] - 0.53]);
+          // 返修 FE1R · repair-r1：铜阀门（绕 x 轴、半径 2.2 cm）、方向盘中心盖底圈（绕方向盘轴、半径 4 cm）
+          if (cc === brassC) { const dy = p[1] - 1.32, dz = p[2] - 0.86; if (Math.abs(Math.hypot(dy, dz) - 0.022) < 1e-4) vl.push([dy, dz]); }
+          if (t[10] === 'steeringWheel' && cc === C.black) { const d = [p[0] - SW.x, p[1] - SW.y, p[2] - SW.z], h = d[0] * ax[0] + d[1] * ax[1] + d[2] * ax[2]; if (Math.abs(Math.hypot(d[0] - ax[0] * h, d[1] - ax[1] * h, d[2] - ax[2] * h) - 0.04) < 1e-4 && h < -0.01) hb.push([d[0], d[1] * e2[1] + d[2] * e2[2]]); }
+        }
+      }
+      row.rimR = angN(rr, q2 => q2); row.tank = angN(tk, q2 => q2); row.column = angN(col, q2 => q2); row.beacon = angN(bc, q2 => q2);
+      row.valve = angN(vl, q2 => q2); row.swHub = angN(hb, q2 => q2);
+      // 返修 FE1R · repair-r2：表盘（圆盘 + 指针）、前轮轮毂盖画在叉车图集里（真圆）。表盘 = 仪表台上链条材质的贴图块，四个角的 uv 都在图集的表盘格子里；
+      // 轮毂盖 = 前轮轮辋（链条材质的矮圆锥）的尖顶 uv 在轮辋格子正中
+      const AT = F.atlas;
+      const cellUV = (c, u, v) => u * AT.size >= c[0] - 1e-3 && u * AT.size <= c[0] + c[2] + 1e-3 && (1 - v) * AT.size >= c[1] - 1e-3 && (1 - v) * AT.size <= c[1] + c[3] + 1e-3;
+      let gq = 0, gqOk = 0, hubTex = 0;
+      const rc = AT.cells.rim, hubUV = [(rc[0] + rc[2] / 2) / AT.size, 1 - (rc[1] + rc[3] / 2) / AT.size];
+      for (const t of m.tris) {
+        if (t[9] !== F.chainMat) continue;
+        const a = m.accs.get(t[9]), v0 = t[11];
+        if (t[10] === 'dash' && cellUV(AT.cells.gauge, a.uv[v0 * 2], a.uv[v0 * 2 + 1])) { gq++; let ok = true;
+          const P3 = [0, 3, 6].map(j => [t[j], t[j + 1], t[j + 2]]);
+          for (const q of P3) { let best = -1, bd = 1e9; for (let i = 0; i < a.n; i++) { const d = Math.hypot(a.pos[i * 3] - q[0], a.pos[i * 3 + 1] - q[1], a.pos[i * 3 + 2] - q[2]); if (d < bd) { bd = d; best = i; } } if (!(bd < 1e-7 && cellUV(AT.cells.gauge, a.uv[best * 2], a.uv[best * 2 + 1]))) ok = false; }
+          if (ok) gqOk++; }
+        if (t[10] === 'wheelsFront' && Math.abs(a.uv[v0 * 2] - hubUV[0]) < 1e-6 && Math.abs(a.uv[v0 * 2 + 1] - hubUV[1]) < 1e-6) hubTex++;
+      }
+      row.gaugeQuads = gq / 2; row.gaugeUVok = gqOk === gq; row.hubTex = hubTex;
       row.gaugesWant = F.lod[detail].gauges;
+      // 助力球（repair-r2 补回来）：绕它自己的轴（方向盘轴方向、过轮圈 0.8π 处往里 4.5 mm）的不同角度数
+      { const kd = [Math.cos(0.8 * Math.PI), Math.sin(SW.tilt) * Math.sin(0.8 * Math.PI), -Math.cos(SW.tilt) * Math.sin(0.8 * Math.PI)], KR = SW.r - AT.knob.in;
+        const KC = [SW.x + kd[0] * KR, SW.y + kd[1] * KR, SW.z + kd[2] * KR], ks = [];
+        for (const t of m.tris) if (t[10] === 'steeringWheel' && triCol(m, t) === C.black) for (let j = 0; j < 9; j += 3) {
+          const d = [t[j] - KC[0], t[j + 1] - KC[1], t[j + 2] - KC[2]], h = d[0] * ax[0] + d[1] * ax[1] + d[2] * ax[2], rr2 = [d[0] - ax[0] * h, d[1] - ax[1] * h, d[2] - ax[2] * h];
+          if (Math.abs(Math.hypot(...rr2) - AT.knob.r) < 1e-5 && h > -1e-6 && h < AT.knob.h + 1e-6) ks.push([rr2[0], rr2[1] * e2[1] + rr2[2] * e2[2]]);
+        }
+        row.knob = angN(ks, q2 => q2); }
+      // 车号两边都喷（每位一块贴图）、操纵杆根数（杆头圆锥顶的个数）
+      { let L0 = 0, R0 = 0; for (const t of m.tris) if (t[10] === 'hood' && t[9] === F.chainMat) { if (t[0] < 0) L0++; else R0++; } row.hoodTex = [L0, R0]; }
       out.round[detail + (drive ? '/drive' : '')] = row;
     }
   }
@@ -1652,28 +1859,30 @@ function pagePolish() {
     const BARY = [[1 / 3, 1 / 3, 1 / 3], [0.8, 0.1, 0.1], [0.1, 0.8, 0.1], [0.1, 0.1, 0.8], [0.45, 0.45, 0.1], [0.45, 0.1, 0.45], [0.1, 0.45, 0.45]];
     const GP = (F.gauge && F.gauge.pos) || [];
     out.needle = {};
+    // 返修 FE1R · repair-r2：指针画在图集的表盘里（表盘一块贴图离板面 1 mm）—— 沿指针取点（盘面坐标，FK_GAUGE.needle[g] 方向从圆心后 6 mm 到前 36 mm，
+    // 指针宽 ±1.2 mm 三排），从眼点连到表盘贴图面下 0.5 mm：先碰到的必须是这块表盘贴图
+    const slantN = [0, 0.53, 0.848], slantPt = (x, f, off) => [x, 0.86 + 0.16 * f + 0.53 * off, -0.56 - 0.1 * f + 0.848 * off];
     for (const drive of [false, true]) for (const detail of ['high', 'mid']) {
       const m = T.buildModel({ part: 'all', detail, number: 88, drive, levers: 2 }, 'high');
-      const nd = m.tris.filter(t => t[10] === 'dash' && triCol(m, t) === needleCol);
-      const row = { gaugesWant: F.lod[detail].gauges, needleTris: nd.length, perGauge: {}, rays: 0, blocked: 0, ex: [] };
-      for (const t of nd) {
-        const n = T.normal(t), cx = (t[0] + t[3] + t[6]) / 3;
-        // 哪一块表：离 FK_GAUGE.pos 的 x 最近的那块
-        let gi = 0; for (let g = 1; g < GP.length; g++) if (Math.abs(GP[g][0] - cx) < Math.abs(GP[gi][0] - cx)) gi = g;
-        const pg = row.perGauge[gi] || (row.perGauge[gi] = { rays: 0, blocked: 0, by: {} });
-        for (const w of BARY) {
-          const q = [0, 1, 2].map(i => t[i] * w[0] + t[3 + i] * w[1] + t[6 + i] * w[2] - n[i] * 0.0005);
+      const AT2 = F.atlas, gc = AT2.cells.gauge, inG = t => { const a = m.accs.get(t[9]), v0 = t[11], u = a.uv[v0 * 2] * AT2.size, w = (1 - a.uv[v0 * 2 + 1]) * AT2.size; return u >= gc[0] - 1e-3 && u <= gc[0] + gc[2] + 1e-3 && w >= gc[1] - 1e-3 && w <= gc[1] + gc[3] + 1e-3; };
+      const gq = m.tris.filter(t => t[10] === 'dash' && t[9] === F.chainMat && inG(t));
+      const row = { gaugesWant: F.lod[detail].gauges, gaugeQuads: gq.length / 2, perGauge: {}, rays: 0, blocked: 0, ex: [] };
+      for (let gi = 0; gi < F.lod[detail].gauges; gi++) {
+        const pg = row.perGauge[gi] = { rays: 0, blocked: 0, by: {} }, na = F.gauge.needle[gi], gx = GP[gi][0], gf = GP[gi][1];
+        for (let k = 0; k <= 8; k++) for (const w of [-0.0012, 0, 0.0012]) {
+          const l = -0.006 + 0.042 * k / 8, u = Math.cos(na) * l - Math.sin(na) * w, v = Math.sin(na) * l + Math.cos(na) * w;
+          const q = slantPt(gx + u, gf + v / 0.189, 0.003 + 0.001 - 0.0005);
           for (const e of eyes) {
             const d = [q[0] - e[0], q[1] - e[1], q[2] - e[2]];
             let best = null;
-            for (const u of m.tris) { const h = segHit(e, d, u); if (h && h[1] && (!best || h[0] < best[0])) best = [h[0], u]; }
+            for (const t of m.tris) { if (t[9] === 'kit:glow') continue; const h = segHit(e, d, t); if (h && h[1] && (!best || h[0] < best[0])) best = [h[0], t]; }
             row.rays++; pg.rays++;
-            const ok = best && best[1][10] === 'dash' && triCol(m, best[1]) === needleCol;
+            const ok = best && best[1][10] === 'dash' && best[1][9] === F.chainMat;
             if (!ok) {
               row.blocked++; pg.blocked++;
-              const who = best ? best[1][10] + (triCol(m, best[1]) === needleCol ? ':needle' : '') : '没碰到指针';
+              const who = best ? best[1][10] + ':' + best[1][9] : '没碰到表盘';
               pg.by[who] = (pg.by[who] || 0) + 1;
-              if (row.ex.length < 4) row.ex.push({ eye: e, at: q.map(v => +v.toFixed(4)), by: who });
+              if (row.ex.length < 4) row.ex.push({ eye: e, at: q.map(x => +x.toFixed(4)), by: who });
             }
           }
         }
@@ -1681,12 +1890,165 @@ function pagePolish() {
       out.needle[detail + (drive ? '/drive' : '')] = row;
     }
   }
-  // 可动模型面数（含载具层画的大灯开关，按 dashSwitch 那一份的面数算，加最多的磨损）
+  // ---------- 返修 FE1R（主会话裁定 K8–K11、M-gaps、M-fork）----------
+  // K8 圆的零件：1280×720、竖直视野 75°，最近的正常机位（站着眼高 1.62 离车外接矩形 1.0 m 一圈每 10°、本车驾驶座、旁边车驾驶座 1.8 m 离 1 m 一圈、
+  // showOwner ②a 气瓶近拍 (1.35, 1.62, 0.7)、⑤c 链轮近拍 (−0.75, 1.62, −1.75)）上，每段直边的弦高 ≤1 px。相机对准零件中心；面朝眼睛
+  // （cos ≥ 0.25）的圆量弦高、柱身侧看量侧影离真圆最远处 R(1 − cos(π/n))。被别的零件挡住的机位不算（零件一圈 12 个点、往眼睛挪 5 mm，
+  // 看得见 ≥4 个才算这个机位看得见它）。stage-FE1R/sweep-round/scripts/fk-round.mjs 的算法
+  {
+    const FPX = 360 / Math.tan(37.5 * Math.PI / 180);
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]], mul = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2], cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const len = a => Math.hypot(a[0], a[1], a[2]), nrm = a => mul(a, 1 / (len(a) || 1));
+    const cam = (E, Tg) => { const f = nrm(sub(Tg, E)); let r = cross(f, [0, 1, 0]); if (len(r) < 1e-6) r = [1, 0, 0]; r = nrm(r); return { E, f, r, u: cross(r, f) }; };
+    const proj = (c, P) => { const d = sub(P, c.E), z = dot(d, c.f); if (z < 0.05) return null; return [640 + dot(d, c.r) / z * FPX, 360 - dot(d, c.u) / z * FPX]; };
+    const ringP = (C, ax, R, n) => { ax = nrm(ax); const e1 = nrm(cross(ax, Math.abs(ax[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0])), e2 = cross(ax, e1); return k => { const a = k / n * 2 * Math.PI; return add(C, add(mul(e1, R * Math.cos(a)), mul(e2, R * Math.sin(a)))); }; };
+    const SWt = G.steerWheel.tilt, SWax = [0, Math.cos(SWt), Math.sin(SWt)], SWC = [G.steerWheel.x, G.steerWheel.y, G.steerWheel.z];
+    const tB = [G.tiltBase.x, G.tiltBase.y, G.tiltBase.z], tE = [G.tiltEye.x, G.tiltEye.y, G.tiltEye.z], tM = add(tB, mul(sub(tE, tB), 0.62));
+    const slantP = (x, f, off) => [x, 0.86 + 0.16 * f + 0.53 * off, -0.56 - 0.1 * f + 0.848 * off];
+    const RX = 0.6, RZ0 = -2.1, RZ1 = 1.28, CZ = (RZ0 + RZ1) / 2;
+    const rd = (x, z) => Math.hypot(Math.max(0, Math.abs(x) - RX), Math.max(0, RZ0 - z, z - RZ1));
+    const ringAt = (a, off) => { const dx = Math.cos(a), dz = Math.sin(a); let lo = 0, hi = 20; for (let i = 0; i < 50; i++) { const t = (lo + hi) / 2; if (rd(dx * t, CZ + dz * t) < off) lo = t; else hi = t; } return [dx * lo, CZ + dz * lo]; };
+    const VIEWS = [{ E: [G.eye.x, G.eye.y, G.eye.z], tag: 'driver' }, { E: [1.35, 1.62, 0.7], tag: 'show2a' }, { E: [-0.75, 1.62, -1.75], tag: 'show5c' }];
+    for (let d = 0; d < 360; d += 10) { const [x, z] = ringAt(d * Math.PI / 180, 1.0); VIEWS.push({ E: [x, 1.62, z], tag: 'stand@' + d }, { E: [x, 1.8, z], tag: 'nbr@' + d }); }
+    out.k8 = {};
+    for (const [list, drive] of [[PARK, false], [DRV, true]]) for (const [detail, q] of list) {
+      const L = F.lod[detail], m = T.buildModel({ part: 'all', detail, number: 88, drive, levers: L.levers }, q);
+      const tris = m.tris.filter(t => t[9] !== 'kit:glow' && t[9] !== 'kit:decal');
+      const P = [
+        { id: 'tireF', C: [G.wheelFront.x + G.wheelFront.w / 2, G.wheelFront.y, G.wheelFront.z], ax: [1, 0, 0], R: G.wheelFront.r, n: L.wf[0] },
+        { id: 'rimF', C: [G.wheelFront.x + G.wheelFront.w / 2, G.wheelFront.y, G.wheelFront.z], ax: [1, 0, 0], R: G.wheelFront.r * 0.6, n: L.rim[0] },
+        { id: 'tireR', C: [G.wheelRear.x + G.wheelRear.w / 2, G.wheelRear.y, G.wheelRear.z], ax: [1, 0, 0], R: G.wheelRear.r, n: L.wr[0] },
+        { id: 'rimR', C: [G.wheelRear.x + G.wheelRear.w / 2, G.wheelRear.y, G.wheelRear.z], ax: [1, 0, 0], R: G.wheelRear.r * 0.6, n: L.rim[1] },
+        { id: 'steerRim', C: SWC, ax: SWax, R: G.steerWheel.r + 0.016, n: L.ring[0] },
+        { id: 'tankEnd', C: [0.36, 1.32, 0.86], ax: [1, 0, 0], R: 0.15, n: L.tank },
+        { id: 'sprocket', C: [G.sprocket.x + 0.013, G.sprocket.y, G.sprocket.z], ax: [1, 0, 0], R: G.sprocket.r, n: L.sprocket },
+        { id: 'chainArc', C: [G.sprocket.x + 0.013, G.sprocket.y, G.sprocket.z], ax: [1, 0, 0], R: G.sprocket.r + 0.006, n: L.arc * 2 },
+        { id: 'beaconTop', C: [0, 2.175, 0.53], ax: [0, 1, 0], R: 0.03, n: L.beacon },
+        { id: 'tiltCylCap', C: tM, ax: sub(tE, tB), R: 0.034, n: L.tiltCyl },
+        { id: 'liftCyl', C: [0.2, 1.0, -0.865], ax: [0, 1, 0], R: 0.04, n: L.cyl, side: true },
+        { id: 'liftRod', C: [0.2, 1.9, -0.865], ax: [0, 1, 0], R: 0.022, n: L.rod, side: true },
+        { id: 'tiltRod', C: add(tM, mul(sub(tE, tM), 0.5)), ax: sub(tE, tB), R: 0.017, n: L.tiltRod, side: true },
+        { id: 'column', C: add(SWC, mul(SWax, -0.2)), ax: SWax, R: 0.03, n: L.column, side: true },
+        { id: 'valve', C: [0.41, 1.32, 0.86], ax: [1, 0, 0], R: 0.022, n: L.valve },   // repair-r1：铜阀门、中心盖补回来
+        L.swHub ? { id: 'steerHub', C: add(SWC, mul(SWax, -0.02)), ax: SWax, R: 0.04, n: L.swHub } : { id: 'columnTop', C: add(SWC, mul(SWax, -0.004)), ax: SWax, R: 0.03, n: L.column },
+        { id: 'handle', C: [-0.43, 1.41, -0.58], ax: [0, 1, 0.157], R: 0.014, n: 8, side: true },
+        { id: 'leverKnob', C: [0.19, 1.246, -0.645], ax: [0, 1, 0], R: 0.015, n: 6 },
+        { id: 'hitchPin', C: [0, 0.4, 1.261], ax: [0, 1, 0], R: 0.014, n: 5 },
+      ];
+      // 表盘（repair-r2）画在图集里：真圆，不按段数量（图集 FK_GAUGE.r ↔ gaugePx 像素，驾驶座上一个纹素 < 1 px，见 gaugeTexel）
+      // 助力球（repair-r2 补回来）：顶面圆、柱身侧影
+      { const kd = [Math.cos(0.8 * Math.PI), Math.sin(SWt) * Math.sin(0.8 * Math.PI), -Math.cos(SWt) * Math.sin(0.8 * Math.PI)], KR = G.steerWheel.r - F.atlas.knob.in, KC = add(SWC, mul(kd, KR));
+        P.push({ id: 'knobTop', C: add(KC, mul(SWax, F.atlas.knob.h)), ax: SWax, R: F.atlas.knob.r, n: L.knob }, { id: 'knobSide', C: add(KC, mul(SWax, F.atlas.knob.h / 2)), ax: SWax, R: F.atlas.knob.r, n: L.knob, side: true }); }
+      const occl = (E, Q) => { const d = sub(Q, E); for (const t of tris) { const h = segHit(E, d, t); if (h && h[0] < 0.995) return true; } return false; };
+      const row = {};
+      for (const p of P) {
+        let worst = null, seen = 0;
+        for (const v of VIEWS) {
+          const R12 = ringP(p.C, p.ax, p.side ? 0 : p.R, 12), toE = nrm(sub(v.E, p.C));
+          let vis = 0;
+          for (let k = 0; k < 12; k++) { const Q = p.side ? add(p.C, mul(toE, p.R + 0.005)) : add(R12(k), mul(toE, 0.005)); if (!occl(v.E, Q)) vis++; if (p.side) { vis = vis ? 12 : 0; break; } }
+          if (vis < 4) continue;
+          const c = cam(v.E, p.C), dist = len(sub(p.C, v.E));
+          let val;
+          if (p.side) val = p.R * (1 - Math.cos(Math.PI / p.n)) * FPX / dist;
+          else {
+            if (Math.abs(dot(nrm(p.ax), toE)) < 0.25) continue;
+            const RP = ringP(p.C, p.ax, p.R, p.n); let mx = 0, ok = true;
+            for (let k = 0; k < p.n; k++) { const a = proj(c, RP(k)), b = proj(c, RP(k + 1)), mm = proj(c, RP(k + 0.5)); if (!a || !b || !mm) { ok = false; break; } mx = Math.max(mx, Math.hypot(mm[0] - (a[0] + b[0]) / 2, mm[1] - (a[1] + b[1]) / 2)); }
+            if (!ok) continue;
+            val = mx;
+          }
+          seen++;
+          if (!worst || val > worst.sag) worst = { sag: +val.toFixed(3), view: v.tag, dist: +dist.toFixed(2) };
+        }
+        row[p.id] = { n: p.n, seen, worst };
+      }
+      out.k8[detail + (drive ? '/drive' : '')] = row;
+    }
+    // repair-r2：表盘、前轮轮毂盖是图集里的圆 —— 最近机位上一个纹素投影多少像素（<1：比屏幕像素还细，看不出棱）
+    { const g = F.gauge.pos[0], C0 = slantP(g[0], g[1], 0.004), d = len(sub(C0, VIEWS[0].E));
+      const WF = G.wheelFront, hubC = [WF.x + WF.w / 2 + 0.01, WF.y, WF.z]; let dh = 1e9; for (const v of VIEWS) dh = Math.min(dh, len(sub(hubC, v.E)));
+      out.texel = { gauge: +((F.gauge.r / F.atlas.gaugePx) * FPX / d).toFixed(3), hub: +((WF.r * 0.6 / F.atlas.rimPx) * FPX / dh).toFixed(3) }; }
+  }
+  // K9 安全带扣头：驾驶座往左下看（③d：头往左约 1.6 rad、往下约 1.15 rad），扣头顶面的黑色插口、红色按钮各自露出多少像素（1280×720、视野 75°，
+  // 逐像素射线、先碰到的是它们自己才算）；橙色短带露出多少像素
+  {
+    const B = F.belt, E = [G.eye.x, G.eye.y, G.eye.z], yaw = 1.6, pit = -1.15;
+    const fwd = [-Math.sin(yaw) * Math.cos(pit), Math.sin(pit), -Math.cos(yaw) * Math.cos(pit)];
+    let rgt = [fwd[1] * 0 - fwd[2] * 1, fwd[2] * 0 - fwd[0] * 0, fwd[0] * 1 - fwd[1] * 0]; { const l = Math.hypot(...rgt); rgt = rgt.map(v => v / l); }
+    const up = [rgt[1] * fwd[2] - rgt[2] * fwd[1], rgt[2] * fwd[0] - rgt[0] * fwd[2], rgt[0] * fwd[1] - rgt[1] * fwd[0]];
+    const th = Math.tan(37.5 * Math.PI / 180), A = 1280 / 720;
+    out.k9 = {};
+    const cols = { slot: colKey(T.storedColor([0.03, 0.03, 0.03])), button: colKey(T.storedColor([0.78, 0.07, 0.05])), belt: colKey(T.storedColor(FK_COL.belt)), steel: colKey(T.storedColor(FK_COL.steel)) };
+    for (const [detail, q, drive] of [['mid', 'high', false], ['mid', 'high', true], ['low', 'low', false], ['drvLow', 'low', true]]) {
+      const m = T.buildModel({ part: 'all', detail, number: 88, drive, levers: F.lod[detail].levers }, q);
+      // 只留眼睛和扣头之间那一块里的三角形（别处的挡不住这几条视线）
+      const tris = m.tris.filter(t => { if (t[9] === 'kit:glow' || t[9] === 'kit:decal') return false; const bb = T.bbox([t]); return bb[3] > -0.45 && bb[0] < 0.15 && bb[4] > 0.95 && bb[1] < 1.85 && bb[5] > -0.1 && bb[2] < 0.6; });
+      const cnt = { slot: 0, button: 0, stub: 0, buckle: 0 };
+      // 只扫扣头附近那一块屏幕：扣头 8 个角投影的外接框外扩 10 px
+      const pr = p => { const d = [p[0] - E[0], p[1] - E[1], p[2] - E[2]], z = d[0] * fwd[0] + d[1] * fwd[1] + d[2] * fwd[2]; return [640 + (d[0] * rgt[0] + d[1] * rgt[1] + d[2] * rgt[2]) / z / (th * A) * 640, 360 - (d[0] * up[0] + d[1] * up[1] + d[2] * up[2]) / z / th * 360]; };
+      let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+      for (const x of [B.buckle.x0, B.buckle.x1]) for (const y of [B.stub.y0 + 0.08, B.buckle.y1 + 0.002]) for (const z of [B.buckle.z0, B.buckle.z1]) { const s2 = pr([x, y, z]); x0 = Math.min(x0, s2[0]); x1 = Math.max(x1, s2[0]); y0 = Math.min(y0, s2[1]); y1 = Math.max(y1, s2[1]); }
+      for (let py = Math.max(0, Math.floor(y0 - 10)); py <= Math.min(719, Math.ceil(y1 + 10)); py++) for (let px = Math.max(0, Math.floor(x0 - 10)); px <= Math.min(1279, Math.ceil(x1 + 10)); px++) {
+        const nx = (px + 0.5) / 1280 * 2 - 1, ny = 1 - (py + 0.5) / 720 * 2;
+        const d = [0, 1, 2].map(k => fwd[k] + rgt[k] * nx * th * A + up[k] * ny * th);
+        let best = null;
+        for (const t of tris) { const h = segHit(E, d.map(v => v * 3), t); if (h && (!best || h[0] < best[0])) best = [h[0], t]; }
+        if (!best || !best[1]) continue;
+        const cc = triCol(m, best[1]), bb = T.bbox([best[1]]);
+        if (cc === cols.slot && bb[1] > B.buckle.y1) cnt.slot++;
+        else if (cc === cols.button) cnt.button++;
+        else if (cc === cols.belt && bb[3] < 0) cnt.stub++;
+        else if (cc === cols.steel && bb[3] < 0 && bb[3] > -0.3) cnt.buckle++;
+      }
+      out.k9[detail + (drive ? '/drive' : '')] = cnt;
+    }
+    out.k9geo = { slotAbove: +(B.buckle.y1 + 0.001 - B.buckle.y1).toFixed(4), stubToSeat: +(-0.25 - B.stub.x1).toFixed(4), buckleToSeat: +(-0.25 - B.buckle.x1).toFixed(4), strapToSeat: +(B.strap.x0 - 0.25).toFixed(4) };
+  }
+  // K10 护顶横条：每档横条 z（BR.L1forklift.slatZ）、前横梁后脸 z −0.56、后横梁前脸 z 0.48，相邻两根之间的净空
+  out.k10 = {};
+  for (const d of ['high', 'mid', 'lite', 'low', 'drvLow']) {
+    const z = F.slatZ(F.lod[d].slats), edges = [-0.56].concat(...z.map(v => [v - 0.025, v + 0.025]), [0.48]);
+    let gap = 0; for (let i = 0; i + 1 < edges.length; i += 2) gap = Math.max(gap, edges[i + 1] - edges[i]);
+    out.k10[d] = { slats: z.length, z, maxGap: +gap.toFixed(4) };
+  }
+  // K11 牵引销：各档都有、最靠前的顶点插进配重后脸（z 1.25）1–5 mm，没有和凹口贴片（z 1.252）共面的面
+  out.k11 = {};
+  for (const [list, drive] of [[PARK, false], [DRV, true]]) for (const [detail, q] of list) {
+    const m = T.buildModel({ part: 'all', detail, number: 88, drive, levers: 1 }, q), steelC = colKey(T.storedColor(FK_COL.steel));
+    const pin = m.tris.filter(t => t[10] === 'counterweight' && triCol(m, t) === steelC && Math.abs((t[0] + t[3] + t[6]) / 3) < 0.03 && (t[1] + t[4] + t[7]) / 3 > 0.2 && (t[1] + t[4] + t[7]) / 3 < 0.42);
+    let zmin = Infinity, cop = 0;
+    for (const t of pin) { for (let j = 2; j < 9; j += 3) zmin = Math.min(zmin, t[j]); if ([t[2], t[5], t[8]].every(z => Math.abs(z - 1.252) < 1e-6)) cop++; }
+    out.k11[detail + (drive ? '/drive' : '')] = { tris: pin.length, into: +(1.25 - zmin).toFixed(4), coplanar: cop };
+  }
+  // M-gaps：几对该贴着的零件（顶点级）—— 灯盒后脸插进前立柱（上下沿）、镜面就是灯盒前脸；坐垫底插进发动机盖顶；货叉竖直段后脸插进上下横梁；
+  // 翼子板后下端落在踏板 / 侧裙上（插进踏板前沿）；转向柱顶封口（没有中心盖的档）
+  {
+    const zPost = y => -0.75 + 0.17 * (y - 0.99) / 1.08;
+    const m = T.buildModel({ part: 'all', detail: 'mid', number: 88 }, 'high');
+    const lamp = m.tris.filter(t => (t[10] === 'postFR') && T.bbox([t])[1] >= 1.859 && T.bbox([t])[4] <= 1.941 && Math.abs((t[0] + t[3] + t[6]) / 3 - 0.43) < 0.05);
+    const lb = T.bbox(lamp);
+    const seatBot = m.tris.filter(t => t[10] === 'seat' && T.bbox([t])[1] < 1.0 && T.bbox([t])[4] < 1.17);
+    const fork = m.tris.filter(t => t[10] === 'carriage' && Math.abs(Math.abs((t[0] + t[3] + t[6]) / 3) - 0.28) < 0.06 && T.bbox([t])[5] > -1.12 && T.bbox([t])[2] < -1.11);
+    out.mgaps = { lampBackZ: +lb[5].toFixed(4), postFrontTop: +zPost(1.94).toFixed(4), postFrontBot: +zPost(1.86).toFixed(4), lampIntoPostTop: +(lb[5] - zPost(1.94)).toFixed(4), lampIntoPostBot: +(lb[5] - zPost(1.86)).toFixed(4),
+      seatBottom: seatBot.length ? +Math.min(...seatBot.map(t => T.bbox([t])[1])).toFixed(4) : null, forkBackZ: fork.length ? +Math.max(...fork.map(t => T.bbox([t])[5])).toFixed(4) : null };
+  }
+  // M-fork：货叉顶面从叉根一直平到叉尖（所有朝上的面都在 forkY + forkT），叉尖收薄在底面
+  out.mfork = {};
+  for (const [list, drive] of [[PARK, false], [DRV, true]]) for (const [detail, q] of list) {
+    const m = T.buildModel({ part: 'all', detail, number: 88, drive, levers: 1 }, q);
+    let topY = new Set(), tipTopZ = 0, upNotFlat = 0;
+    for (const t of m.tris) if (t[10] === 'forkL' || t[10] === 'forkR') { const n = T.normal(t); if (n[1] > 0.3) { if (n[1] < 0.999) upNotFlat++; for (let j = 1; j < 9; j += 3) topY.add(+t[j].toFixed(5)); tipTopZ = Math.min(tipTopZ, t[2], t[5], t[8]); } }
+    out.mfork[detail + (drive ? '/drive' : '')] = { topY: Array.from(topY), tipTopZ: +tipTopZ.toFixed(4), upNotFlat };
+  }
+  // 可动模型面数（含载具层画的大灯开关，按 dashSwitch 那一份的面数算，加最多的磨损；K5 灯的 glow 那份和 kit:prop 那份同一时刻只画一份，不重复计）。
+  // 杆数按这一档停着时的根数（载具层 leversFor 也是这么取的）
   out.driveTotal = {};
   for (const [detail, q] of DRV) {
-    const m = T.buildModel({ part: 'all', detail, number: 88, drive: true, levers: 3 }, q);
+    const m = T.buildModel({ part: 'all', detail, number: 88, drive: true, levers: F.lod[detail].levers }, q);
     const q0 = BR.game.settings.quality; T.setQ(q); F.wear(m.b, { detail, wearN: 99 }); T.setQ(q0);
-    let tri = 0; m.b._accs.forEach(a => { if (a && a.idx) tri += a.idx.length / 3; });
+    let tri = 0; m.b._accs.forEach((a, k) => { if (a && a.idx && k !== 'kit:glow') tri += a.idx.length / 3; });
     out.driveTotal[detail] = tri + out.sw.tris;
   }
   return out;
@@ -1745,7 +2107,7 @@ async function pageBlackoutWalk(page) {
 }
 
 // J2（返修 FE1Q，主会话裁定）：真进游戏（种子 12345），出生块 (0,0) 里的车都是运行时车，一载入就在载具网格里（高画质 mid、低画质 drvLow）；
-// 站到出生柱间那台 1@0,0#v0 右侧上车、开 1 s：还是同一档、同一个模板（停着和开过是同一个网格），下车以后也一样
+// 站到出生柱间那台 1@0,0#v0 右侧上车、开 1.5 s：还是同一档、同一个模板（停着和开过是同一个网格；开着时 sig 的灯位 vis 是 3），下车以后整个 sig 一样
 async function pageSpawnRT(page, quality) {
   await ev(page, q => { __br.setAuto(true); __br.start({ mode: 'test', levelId: '1', seed: 12345, settings: { quality: q } }); return 0; }, quality);
   await page.waitForFunction(() => BR.game.screen === 'playing' && !BR.world.transitioning && String(BR.game.levelId) === '1', null, { timeout: 90000 });
@@ -1784,10 +2146,277 @@ async function pageSpawnRT(page, quality) {
   await page.waitForFunction(() => BR.game.screen === 'home', null, { timeout: 30000 }).catch(() => {});
   return { before, mid: mid || null, mount, driving, after };
 }
+// 返修 FE1R · K3 / K4 / K5：同一机位、同一位姿，区块里停着的车 vs 摆回原位的开过的车（载具网格，熄火、开关开着 —— 下车以后的样子）逐像素比。
+// 真进游戏（1280×720 的游戏画面，FOV 按机位表），人站到车后 7 m 外不挡镜头，灯不闪；渲染完立刻 readPixels，页面里比（每个通道差 >10 算一个像素）。
+// cases：[种子, 画质, 车 key, 停放档, 可动档]；dark：等到这一局第一次断电再比一遍（K5：断电时镜面、灯罩、指示灯也一样）
+const PAIR_CAMS = (() => {
+  const c = [];
+  for (let a = 0; a < 360; a += 30) { const r = a * Math.PI / 180; c.push(['ring' + a, [2.7 * Math.sin(r), 1.62, 0.15 + 2.7 * Math.cos(r)], [0, 0.85, -0.1], 50]); }   // 返修 FE1R · repair-r1：每 30°（K3(4)）
+  c.push(['seatF', [0, 1.8, 0.16], [0, 1.2, -1.2], 70], ['seatDL', [0, 1.8, 0.16], [-0.45, 0.9, 0.05], 70], ['seatDR', [0, 1.8, 0.16], [0.45, 0.9, 0.05], 70],
+    ['seatUp', [0, 1.8, 0.16], [0, 2.4, -0.15], 70], ['lowArchL', [-1.2, 0.3, 0.2], [-0.25, 0.3, 0.85], 50], ['lowArchR', [1.2, 0.3, 0.2], [0.25, 0.3, 0.85], 50],
+    ['lowB', [0.2, 0.3, 2.6], [0, 0.5, 0.6], 55], ['tankR', [1.35, 1.55, 0.95], [0.15, 1.2, 0.95], 35], ['beaconB', [0.3, 2.3, 2.4], [0, 2.15, 0.53], 28],
+    ['lampF', [0.9, 1.9, -2.5], [0.3, 1.85, -0.66], 28], ['dash', [0, 1.8, 0.16], [0, 1.0, -0.62], 45], ['hitch', [0.6, 0.75, 2.5], [0, 0.6, 1.25], 30],
+    ['wheelRR', [1.6, 1.4, 1.6], [0.5, 0.25, 0.8], 28], ['top', [0.01, 4.2, 0.0], [0, 0, -0.05], 50]);
+  return c;
+})();
+// 逐像素比的机位工具（page 里装一次）：
+//   shot(E, T, fov)：灯池只由机位决定 —— 相机先跳到 ±1 km 外再跳回来，各 gfx.render(0) 一次（位移 > 8 m 走「跳变」分支：选中的灯直接到位、
+//     不淡化；dt = 0 钟不走），然后按这个视野画一帧读像素。以前每个机位 render(0.02) 三次，灯池跟着上一个机位、淡入淡出走，
+//     同一辆车同一状态连拍两遍都能差上万像素（FE1R-model 诊断：同状态差 16280 px）
+//   mask()：只画载具网格（名字 'vehicles …'，白色、黑底、不要雾）读像素 —— 车所在的像素
+//   cmp(A, B, M)：差 > 10/255 的像素；车所在像素（M 外扩 2 px）里「成片」的（8 邻全都也差 = 至少 3×3 一块）才算不一样。
+//     棱边上的浮点舍入翻转只有一像素宽的细线 / 零星小簇（停着的车在区块本地坐标 + 区块矩阵，开过的车在世界坐标，最后一位舍入不同，
+//     见 FE1R-model risks；640×360 下斜条纹边上会挤出 2×2、6 像素的小簇），不算；少了 / 多了一个零件、换了颜色、光照不同都是成片的
+function pagePixTools() {
+  const T = window.__pix = {};
+  const cam = () => BR.gfx.camera, R = () => BR.gfx.renderer;
+  T.read = () => { const gl = R().getContext(), w = gl.drawingBufferWidth, h = gl.drawingBufferHeight, buf = new Uint8Array(w * h * 4); gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf); return { w, h, buf }; };
+  T.shot = (E, T2, fov) => {
+    const c = cam();
+    for (const dx of [1000, -1000, 0]) { c.position.set(E.x + dx, E.y, E.z); c.lookAt(T2.x + dx, T2.y, T2.z); c.updateMatrixWorld(true); BR.gfx.render(0); }
+    c.fov = fov; c.updateProjectionMatrix(); c.updateMatrixWorld(true);
+    R().render(BR.gfx.scene, c);
+    return T.read();
+  };
+  T.mask = () => {
+    const sc = BR.gfx.scene, hid = [], bg0 = sc.background, fog0 = sc.fog, ov0 = sc.overrideMaterial;
+    sc.traverse(o => { if ((o.isMesh || o.isPoints || o.isLine || o.isSprite) && o.visible && !/^vehicles /.test(o.name || '')) { o.visible = false; hid.push(o); } });
+    sc.background = new THREE.Color(0); sc.fog = null; sc.overrideMaterial = T.white || (T.white = new THREE.MeshBasicMaterial({ color: 0xffffff }));
+    try { R().render(sc, cam()); return T.read(); } finally { for (const o of hid) o.visible = true; sc.background = bg0; sc.fog = fog0; sc.overrideMaterial = ov0; }
+  };
+  T.cmp = (A, B, M) => {
+    const W = A.w, H = A.h, D = new Uint8Array(W * H), K = new Uint8Array(W * H);
+    if (M) for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (M.buf[(y * W + x) * 4] > 128) for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) { const yy = y + dy, xx = x + dx; if (yy >= 0 && yy < H && xx >= 0 && xx < W) K[yy * W + xx] = 1; }
+    let raw = 0, out = 0, car = 0, carPx = 0;
+    for (let p = 0; p < W * H; p++) {
+      if (K[p] || !M) carPx++;
+      const i = p * 4;
+      if (Math.abs(A.buf[i] - B.buf[i]) > 10 || Math.abs(A.buf[i + 1] - B.buf[i + 1]) > 10 || Math.abs(A.buf[i + 2] - B.buf[i + 2]) > 10) { D[p] = 1; raw++; if (K[p] || !M) car++; else out++; }
+    }
+    let blob = 0, at = null;
+    for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+      const p = y * W + x; if (!D[p] || (M && !K[p])) continue;
+      let nb = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if ((dx || dy) && D[p + dy * W + dx]) nb++;
+      if (nb === 8) { blob++; if (!at) at = [x, H - 1 - y]; }
+    }
+    return { carPx, car, blob, at, out };
+  };
+}
+async function pagePairs(page, cases, saveDir) {
+  const out = {};
+  await ev(page, pagePixTools);
+  for (const [seed, q, key, tierP, tierD] of cases) {
+    const tag = seed + '-' + q + '-' + key.replace(/[@,#]/g, '_');
+    await ev(page, a => { __br.setAuto(true); __br.start({ mode: 'test', levelId: '1', seed: a.seed, settings: { quality: a.q } }); return 0; }, { seed, q });
+    await page.waitForFunction(() => BR.game.screen === 'playing' && !BR.world.transitioning && String(BR.game.levelId) === '1', null, { timeout: 120000 });
+    const info = await ev(page, a => {
+      __br.setAuto(false); __br.step(0.5);
+      const pk = /@(-?\d+),(-?\d+)#/.exec(a.key), cx = +pk[1], cz = +pk[2], size = BR.world.chunkSize || 32;
+      const goto = (x, z) => { BR.player.reset({ x, y: BR.phys.groundY(x, z), z, yaw: 0 }, { full: false }); for (let i = 0; i < 40; i++) __br.step(1 / 20); };
+      goto(cx * size + size / 2, cz * size + size / 2);
+      let f = null;
+      for (const c of BR.world.chunks()) for (const r of ((c.res && c.res.data && c.res.data.forklifts) || [])) if (r.key === a.key) f = r;
+      if (!f) return { missing: true };
+      const P = { x: f.x, y: f.y || 0, z: f.z, yaw: f.rot };
+      // 人站到车后 7 m（不挡镜头）、怪清掉、灯不闪
+      const c0 = Math.cos(P.yaw), s0 = Math.sin(P.yaw);
+      goto(P.x + s0 * 7, P.z + c0 * 7);
+      if (BR.entities && typeof BR.entities.clear === 'function') try { BR.entities.clear(); } catch (e) { /* 忽略 */ }
+      for (const c of BR.world.chunks()) for (const l of (c.lights || [])) if (l && l.flicker) l.flicker = 0;
+      // 返修 FE1R · repair-r2：区块动画（地上出口圈的脉动、切出墙）也停掉 —— 停着 / 开过两张不是同一刻拍的，出口圈一明一暗，
+      // 从门架、链条之间的缝里透出来的那几个像素会被当成车上的差别（种子 157 那台 lite 车后面正好有个出口圈）
+      for (const c of BR.world.chunks()) c.tick = null;
+      const W = (v) => ({ x: P.x + c0 * v[0] + s0 * v[2], y: P.y + v[1], z: P.z - s0 * v[0] + c0 * v[2] });
+      window.__pp = { P, W, shots: {} };
+      return { P, detail: f.detail, runtime: !!f.runtime, wearN: f.wearN };
+    }, { key });
+    if (info.missing) { out[tag] = { missing: true }; continue; }
+    const shoot = async (state) => ev(page, a => {
+      const PP = window.__pp, X = window.__pix, cam = BR.gfx.camera, R = BR.gfx.renderer, fov0 = cam.fov, pos0 = cam.position.clone(), q0 = cam.quaternion.clone();
+      const res = {};
+      try {
+        for (const [n, e, t, fov] of a.cams) {
+          PP.shots[a.state + '/' + n] = X.shot(PP.W(e), PP.W(t), fov);
+          if (a.save.includes(n)) res[n] = R.domElement.toDataURL('image/png');
+          if (a.state === 'drv' || a.state === 'drvD') PP.shots['mask/' + n] = X.mask();
+        }
+      } finally { cam.fov = fov0; cam.updateProjectionMatrix(); cam.position.copy(pos0); cam.quaternion.copy(q0); cam.updateMatrixWorld(true); }
+      return res;
+    }, { state, cams: PAIR_CAMS, save: ['ring30', 'seatF', 'lowArchL', 'tankR', 'top', 'switch'] });
+    // 返修 FE1R · repair-r1（K3(4)：有电、断电各比一遍）：有电拍停着的 → 快进到这一层第一次断电（≥14 s 的那次）拍停着的 → 推一下升格、
+    // 断电里拍开过的 → 等来电再拍开过的；有电比有电、断电比断电。每组拍之前人站回车后 7 m、怪清掉、灯不闪
+    const reset = () => ev(page, () => { const P = window.__pp.P, c0 = Math.cos(P.yaw), s0 = Math.sin(P.yaw), x = P.x + s0 * 7, z = P.z + c0 * 7; BR.player.reset({ x, y: BR.phys.groundY(x, z), z, yaw: 0 }, { full: false }); __br.step(0.05); if (BR.entities && typeof BR.entities.clear === 'function') try { BR.entities.clear(); } catch (e) { /* 忽略 */ } for (const c of BR.world.chunks()) { for (const l of (c.lights || [])) if (l && l.flicker) l.flicker = 0; c.tick = null; } return 0; });
+    const lights = () => ev(page, () => { let n = 0, on = 0; for (const c of BR.world.chunks()) for (const l of (c.lights || [])) { n++; if (l.intensity > 0) on++; } return { n, on }; });
+    const st0 = await ev(page, k => { const v = BR.vehicles.byKey(k), di = BR.vehicles.debugInfo(); return { driven: v.driven, meshed: di.promoted.includes(k), tier: di.tiers[k] || null }; }, key);
+    const imgP = await shoot('park');
+    const plan = await ev(page, () => { const U = BR.util, ls = BR.world.levelSeed; for (let e = 0; e < 80; e++) { const r = U.rng(ls, 'L1-blackout', e); if (r() < 0.3) { const dur = 8 + r() * 20; if (dur >= 14) return { e, dur, at: e * 45 }; } } return null; });
+    let t = 0, dark = null;
+    for (let i = 0; i < 600 && plan && t < plan.at + 30; i++) {
+      const dt = t < plan.at - 6 ? 5 : 0.5;
+      await ev(page, dt => { __br.step(dt); return 0; }, dt);
+      t += dt;
+      const L = await lights();
+      if (L.n && L.on === 0) { dark = L; break; }
+    }
+    await reset();
+    if (dark) await shoot('parkD');
+    await ev(page, k => { const P = window.__pp.P; BR.vehicles.setPose(k, { x: P.x, z: P.z, yaw: P.yaw, steer: 0, lift: 0, spd: 0, lever: 0, on: 0 }); for (let i = 0; i < 6; i++) __br.step(1 / 30); return 0; }, key);
+    const st1 = await ev(page, k => { const v = BR.vehicles.byKey(k), di = BR.vehicles.debugInfo(); return { driven: v.driven, meshed: di.promoted.includes(k), tier: di.tiers[k] || null, on: v.pose.on, hl: v.pose.hl }; }, key);
+    await reset();
+    if (dark) await shoot('drvD');
+    let lit = null;
+    for (let i = 0; i < 120 && dark; i++) { await ev(page, () => { __br.step(0.5); return 0; }); const L = await lights(); if (L.on === L.n && L.n > 0) { lit = L; break; } }
+    await ev(page, () => { __br.step(2); return 0; });
+    await reset();
+    const imgD = await shoot('drv');
+    const diff = await ev(page, () => {
+      const PP = window.__pp, X = window.__pix, o = {};
+      for (const k of Object.keys(PP.shots)) {
+        const m = /^(park|parkD)\/(.*)$/.exec(k);
+        if (!m) continue;
+        const n = m[2], A = PP.shots[k], B = PP.shots[(m[1] === 'park' ? 'drv/' : 'drvD/') + n];
+        if (!B) continue;
+        o[(m[1] === 'park' ? '' : 'dark:') + n] = X.cmp(A, B, PP.shots['mask/' + n]);
+      }
+      return o;
+    });
+    // 返修 FE1R · repair-r1：有电那组某个机位有成片的差异时，过 1.3 s 再拍一遍开过的车、和停着那张重比，按两次里少的算（结果里记 retry）——
+    // 少了 / 多了零件、换了颜色是几何差异，再拍一遍照样成片；车外的场景在动（车外差异每个机位都有几十个像素），偶尔在车边上那 2 px 里凑出一片 3×3，
+    // 再拍一遍就没了（all.mjs 跑过一次：种子 27 lite 车 beaconB 机位一片 3×3，同一版代码单独跑时没有）
+    const retry = Object.keys(diff).filter(n => !n.startsWith('dark:') && diff[n].blob > 0);
+    if (retry.length) {
+      await ev(page, () => { __br.step(1.3); return 0; });
+      await reset();
+      const re = await ev(page, a => {
+        const PP = window.__pp, X = window.__pix, cam = BR.gfx.camera, fov0 = cam.fov, pos0 = cam.position.clone(), q0 = cam.quaternion.clone(), o = {};
+        try {
+          for (const [n, e, t, fov] of a.cams) if (a.names.includes(n)) o[n] = X.cmp(PP.shots['park/' + n], X.shot(PP.W(e), PP.W(t), fov), PP.shots['mask/' + n]);
+        } finally { cam.fov = fov0; cam.updateProjectionMatrix(); cam.position.copy(pos0); cam.quaternion.copy(q0); cam.updateMatrixWorld(true); }
+        return o;
+      }, { cams: PAIR_CAMS, names: retry });
+      for (const n of retry) if (re[n]) { const first = diff[n]; diff[n] = Object.assign({}, re[n].blob <= first.blob ? re[n] : first, { retry: { first: { blob: first.blob, at: first.at, car: first.car }, again: { blob: re[n].blob, at: re[n].at, car: re[n].car } } }); }
+    }
+    await ev(page, () => { window.__pp.shots = {}; return 0; });
+    if (saveDir) for (const [st, imgs] of [['park', imgP], ['drv', imgD]]) for (const [n, url] of Object.entries(imgs)) fs.writeFileSync(path.join(saveDir, tag + '-' + st + '-' + n + '.png'), Buffer.from(url.split(',')[1], 'base64'));
+    out[tag] = { info, st0, st1, diff, tierP, tierD, dark: { plan, t, dark, lit } };
+  }
+  await ev(page, () => { BR.bus.emit('game:home'); return 0; });
+  await page.waitForFunction(() => BR.game.screen === 'home', null, { timeout: 30000 }).catch(() => {});
+  return out;
+}
+// K5：没开灯时停着的车、开过熄了火的车、出生车（运行时车，从没开过）三台在同一位姿、同一机位，警示灯 / 大灯镜面 / 开关指示灯一模一样；有电、断电各一遍。
+// 开关机位在方向盘左边（以前从正上方看被方向盘轮圈挡掉 2/3）
+// 种子 2 低画质（返修 FE1R · repair-r1：种子 12345 低画质 (1,0) 那台普查重做以后变成运行时车了）：区块里停着的 1@-1,0#v0（low）、
+// 摆回原位的它（drvLow，熄火）、出生车（出生块里的运行时车，drvLow）挪到同一位姿（车号不在这几个机位里）
+const DARK_CAMS = [['lampF', [0.9, 1.9, -2.5], [0.3, 1.85, -0.66], 28], ['lampFL', [-0.9, 1.9, -2.5], [-0.3, 1.85, -0.66], 28], ['beaconB', [0.3, 2.3, 2.4], [0, 2.15, 0.53], 28],
+  ['beaconS', [1.6, 2.0, 0.53], [0, 2.14, 0.53], 24], ['dash', [0, 1.8, 0.16], [-0.1, 1.0, -0.62], 45], ['switch', [-0.35, 1.35, -0.25], [-0.22, 0.944, -0.603], 30]];
+async function pageDark(page, dark) {
+  await ev(page, pagePixTools);
+  await ev(page, () => { __br.setAuto(true); __br.start({ mode: 'test', levelId: '1', seed: 2, settings: { quality: 'low' } }); return 0; });
+  await page.waitForFunction(() => BR.game.screen === 'playing' && !BR.world.transitioning && String(BR.game.levelId) === '1', null, { timeout: 120000 });
+  const K1 = '1@-1,0#v0';
+  const K0 = await ev(page, () => { for (const c of BR.world.chunks()) if (c.key === '0,0') for (const r of ((c.res && c.res.data && c.res.data.forklifts) || [])) if (r.runtime) return r.key; return '1@0,0#v0'; });
+  const r0 = await ev(page, a => {
+    __br.setAuto(false); __br.step(0.5);
+    let f = null; for (const c of BR.world.chunks()) for (const r of ((c.res && c.res.data && c.res.data.forklifts) || [])) if (r.key === a.K1) f = r;
+    if (!f) return null;
+    const P = { x: f.x, y: f.y || 0, z: f.z, yaw: f.rot }, c0 = Math.cos(P.yaw), s0 = Math.sin(P.yaw);
+    const W = v => ({ x: P.x + c0 * v[0] + s0 * v[2], y: P.y + v[1], z: P.z - s0 * v[0] + c0 * v[2] });
+    window.__pd = { P, W, shots: {} };
+    return { P, detail: f.detail };
+  }, { K1 });
+  if (!r0) return { missing: true };
+  let plan = null, t = 0;
+  if (dark) {
+    plan = await ev(page, () => { const U = BR.util, ls = BR.world.levelSeed; for (let e = 0; e < 80; e++) { const r = U.rng(ls, 'L1-blackout', e); if (r() < 0.3) { const dur = 8 + r() * 20; if (dur >= 14) return { e, dur, at: e * 45 }; } } return null; });
+    for (let i = 0; i < 500 && plan && t < plan.at + 30; i++) {
+      const dt = t < plan.at - 6 ? 5 : 0.5;
+      const st = await ev(page, dt => { __br.step(dt); let n = 0, on = 0; for (const c of BR.world.chunks()) for (const l of (c.lights || [])) { n++; if (l.intensity > 0) on++; } return { n, on }; }, dt);
+      t += dt;
+      if (st.n && st.on === 0) break;
+    }
+  }
+  const stand = () => ev(page, () => { const P = window.__pd.P, c0 = Math.cos(P.yaw), s0 = Math.sin(P.yaw), x = P.x + s0 * 7, z = P.z + c0 * 7; BR.player.reset({ x, y: BR.phys.groundY(x, z), z, yaw: 0 }, { full: false }); __br.step(0.05); if (BR.entities && typeof BR.entities.clear === 'function') try { BR.entities.clear(); } catch (e) { /* 忽略 */ } for (const c of BR.world.chunks()) { for (const l of (c.lights || [])) if (l && l.flicker) l.flicker = 0; c.tick = null; } return 0; });
+  const shoot = st => ev(page, a => {
+    const PP = window.__pd, X = window.__pix, cam = BR.gfx.camera, fov0 = cam.fov, pos0 = cam.position.clone(), q0 = cam.quaternion.clone();
+    try {
+      for (const [n, e, t2, fov] of a.cams) {
+        PP.shots[a.st + '/' + n] = X.shot(PP.W(e), PP.W(t2), fov);
+        if (a.st === 'drv') PP.shots['mask/' + n] = X.mask();
+      }
+    } finally { cam.fov = fov0; cam.updateProjectionMatrix(); cam.position.copy(pos0); cam.quaternion.copy(q0); cam.updateMatrixWorld(true); }
+    return 0;
+  }, { st, cams: DARK_CAMS });
+  await stand();
+  const lit0 = await ev(page, () => { let n = 0, on = 0; for (const c of BR.world.chunks()) for (const l of (c.lights || [])) { n++; if (l.intensity > 0) on++; } return { n, on }; });
+  await shoot('park');
+  await ev(page, k => { const P = window.__pd.P; BR.vehicles.setPose(k, { x: P.x, z: P.z, yaw: P.yaw, steer: 0, lift: 0, on: 0 }); __br.step(1 / 30); return 0; }, K1);
+  await stand();
+  await shoot('drv');
+  await ev(page, a => { const P = window.__pd.P; BR.vehicles.setPose(a.K1, { x: P.x + 30, z: P.z + 30, yaw: P.yaw, steer: 0, lift: 0, on: 0 }); BR.vehicles.setPose(a.K0, { x: P.x, z: P.z, yaw: P.yaw, steer: 0, lift: 0, on: 0 }); __br.step(1 / 30); return 0; }, { K1, K0 });
+  await stand();
+  await shoot('rt');
+  const tiers = await ev(page, a => { const di = BR.vehicles.debugInfo(); return { k1: di.tiers[a.K1] || null, k0: di.tiers[a.K0] || null }; }, { K1, K0 });
+  const diff = await ev(page, () => {
+    const PP = window.__pd, X = window.__pix, o = {};
+    for (const k of Object.keys(PP.shots)) if (k.startsWith('park/')) { const n = k.slice(5), M = PP.shots['mask/' + n]; o[n] = { drv: X.cmp(PP.shots[k], PP.shots['drv/' + n], M), rt: X.cmp(PP.shots[k], PP.shots['rt/' + n], M) }; }
+    PP.shots = {};
+    return o;
+  });
+  await ev(page, () => { BR.bus.emit('game:home'); return 0; });
+  await page.waitForFunction(() => BR.game.screen === 'home', null, { timeout: 30000 }).catch(() => {});
+  return { r0, plan, t, lit0, tiers, diff };
+}
+// 返修 FE1R · repair-r2（验收员 spec critical：安全带短带和扣头朝坐垫那面同在 x −0.2505、不倒角的档坐垫和靠背侧面同在 x ±0.25 —— 同向共面会 z-fighting）：
+// 停放 4 档 + 可动 4 档，kit:prop / 链条材质的三角形两两比：法线同向（cos > 0.99999）、平面距离 <0.1 mm、投影重叠 >1 mm² 的对数 = 0
+// （可动模型的灯熄着 / 亮着两份不同时进缓冲区，kit:glow 不比）
+function pageCoplanar() {
+  const T = window.__fl1, F = BR.L1forklift, out = {};
+  const cases = [['high', 'high', false], ['mid', 'high', false], ['lite', 'high', false], ['low', 'low', false], ['high', 'high', true], ['mid', 'high', true], ['lite', 'high', true], ['drvLow', 'low', true]];
+  const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const clip = (poly, a, b) => { const o = [], sd = p => (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]); for (let i = 0; i < poly.length; i++) { const p = poly[i], q = poly[(i + 1) % poly.length], sp = sd(p), sq = sd(q); if (sp >= 0) o.push(p); if ((sp >= 0) !== (sq >= 0)) { const t = sp / (sp - sq); o.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]); } } return o; };
+  const area2 = P => { let s2 = 0; for (let i = 0; i < P.length; i++) { const p = P[i], q = P[(i + 1) % P.length]; s2 += p[0] * q[1] - q[0] * p[1]; } return s2 / 2; };
+  for (const [detail, q, drive] of cases) {
+    const m = T.buildModel({ part: 'all', detail, number: 88, drive, levers: F.lod[detail].levers }, q);
+    const tr = [];
+    for (const t of m.tris) {
+      if (t[9] === 'kit:glow' || t[9] === 'kit:decal') continue;
+      const A = [t[0], t[1], t[2]], B = [t[3], t[4], t[5]], C = [t[6], t[7], t[8]], N = cross(sub(B, A), sub(C, A)), L = Math.hypot(N[0], N[1], N[2]);
+      if (L < 1e-9) continue;
+      const n = [N[0] / L, N[1] / L, N[2] / L];
+      tr.push({ A, B, C, n, d: dot(n, A), seg: t[10], mn: [Math.min(A[0], B[0], C[0]), Math.min(A[1], B[1], C[1]), Math.min(A[2], B[2], C[2])], mx: [Math.max(A[0], B[0], C[0]), Math.max(A[1], B[1], C[1]), Math.max(A[2], B[2], C[2])] });
+    }
+    let pairs = 0, mm2 = 0; const ex = [];
+    for (let i = 0; i < tr.length; i++) {
+      const a = tr[i];
+      for (let j = i + 1; j < tr.length; j++) {
+        const b = tr[j];
+        if (b.mn[0] > a.mx[0] + 1e-4 || b.mx[0] < a.mn[0] - 1e-4 || b.mn[1] > a.mx[1] + 1e-4 || b.mx[1] < a.mn[1] - 1e-4 || b.mn[2] > a.mx[2] + 1e-4 || b.mx[2] < a.mn[2] - 1e-4) continue;
+        if (dot(a.n, b.n) < 0.99999 || Math.abs(a.d - b.d) > 1e-4) continue;
+        const t0 = Math.abs(a.n[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0], e1 = (() => { const x = cross(a.n, t0), l = Math.hypot(x[0], x[1], x[2]); return [x[0] / l, x[1] / l, x[2] / l]; })(), e2 = cross(a.n, e1);
+        const pr = p => [dot(p, e1), dot(p, e2)];
+        let pa = [a.A, a.B, a.C].map(pr), pb = [b.A, b.B, b.C].map(pr);
+        if (area2(pa) < 0) pa.reverse(); if (area2(pb) < 0) pb.reverse();
+        let poly = pb; for (let k = 0; k < 3 && poly.length; k++) poly = clip(poly, pa[k], pa[(k + 1) % 3]);
+        const ov = poly.length >= 3 ? Math.abs(area2(poly)) : 0;
+        if (ov > 1e-6) { pairs++; mm2 += ov * 1e6; if (ex.length < 4) ex.push([a.seg, b.seg, +(ov * 1e6).toFixed(1), a.A.map(v => +v.toFixed(4))]); }
+      }
+    }
+    out[(drive ? 'drive:' : 'park:') + detail] = { tris: tr.length, pairs, mm2: +mm2.toFixed(1), ex };
+  }
+  return out;
+}
 async function secPolish(page) {
   await ev(page, pageGeoTools);
   const P = await ev(page, pagePolish);
   fs.writeFileSync(path.join(OUT, 'polish.json'), JSON.stringify(P, null, 1));
+  {
+    const C = await ev(page, pageCoplanar);
+    const bad = Object.entries(C).filter(([, v]) => v.pairs !== 0);
+    check('polish repair-r2：停放 high / mid / lite / low、可动 high / mid / lite / drvLow 没有同向共面的三角形（法线同向、平面距离 <0.1 mm、重叠 >1 mm² 的对数 0；安全带短带和扣头、坐垫和靠背侧面不再共面）',
+      Object.keys(C).length === 8 && bad.length === 0, bad.length ? Object.fromEntries(bad) : Object.fromEntries(Object.entries(C).map(([k, v]) => [k, v.tris])));
+  }
   // H1
   const lb = Object.entries(P.lamp).filter(([, v]) => !(v.leaks === 0 && v.dirs === 5 && v.rays > 0));
   check('polish H1：前大灯灯盒从驾驶座（眼点左右 ±6 cm）、车外站着的 ' + (Object.values(P.lamp)[0] || {}).eyes + ' 个眼点看都是实心的：往灯盒里面连线，到达之前都先碰到正面；底面、两侧、朝前、朝司机五个方向的面都有（停放 5 档 + 可动 4 档）',
@@ -1803,24 +2432,24 @@ async function secPolish(page) {
   {
     const bad = [], n = {};
     for (const [det, parts] of Object.entries((P.parkShut || {}).tiers || {})) for (const [k, v] of Object.entries(parts)) { n[det] = (n[det] || 0) + v.rays; if (!(v.leaks === 0 && v.rays > 0)) bad.push([det + '/' + k, v]); }
-    check('polish J11：停放 6 档 + 可动模型 4 档，站着（1.62）、坐在旁边的车上（1.8）' + ((P.parkShut || {}).eyes || 0) + ' 个眼点往外门架顶梁两头、护顶纵梁 / 横梁 / 横条、缸口、杆头、挡货架立柱 / 顶横梁 / 竖条、扶手（含 high 档那根带撑的）、警示灯罩（repair-r1）、内门架顶梁、配重下半截、轮胎、链条里面连线，到达之前都先碰到正面（停着的车和开过的车一样实心）',
-      !!P.parkShut && Object.keys(P.parkShut.tiers).length === 10 && bad.length === 0, bad.length ? Object.fromEntries(bad.slice(0, 4)) : n);
+    check('polish J11：停放 4 档 + 可动模型 4 档，站着（1.62）、坐在旁边的车上（1.8）' + ((P.parkShut || {}).eyes || 0) + ' 个眼点往外门架顶梁两头、护顶纵梁 / 横梁 / 横条、缸口、杆头、挡货架立柱 / 顶横梁 / 竖条、扶手、警示灯罩、内门架顶梁、配重下半截、轮胎、链条里面连线，到达之前都先碰到正面（停着的车和开过的车一样实心）',
+      !!P.parkShut && Object.keys(P.parkShut.tiers).length === 8 && bad.length === 0, bad.length ? Object.fromEntries(bad.slice(0, 4)) : n);
     const mb = Object.entries(P.mirror || {}).filter(([, v]) => !(v.leaks === 0 && v.rays > 0));
-    check('polish J11：后视镜镜片就是镜壳的后脸、没有缝 —— 车左前方 ' + (Object.values(P.mirror || {})[0] || {}).rays + ' 条视线（含 r3 验收员那条）往左大灯、镜壳、左前立柱里面连线，先碰到的都是正面（停着的、开过的 high）',
-      Object.keys(P.mirror || {}).length === 2 && mb.length === 0, mb.length ? Object.fromEntries(mb) : P.mirror);
+    check('polish J11：车左前方 ' + (Object.values(P.mirror || {})[0] || {}).rays + ' 条视线（含 r3 验收员那条）往左大灯、左前立柱（有后视镜的档连镜壳）里面连线，先碰到的都是正面（停着的、开过的 high / mid）',
+      Object.keys(P.mirror || {}).length === 4 && mb.length === 0, mb.length ? Object.fromEntries(mb) : P.mirror);
   }
   // H2
   if (!P.belt) { check('polish H2：BR.L1forklift.belt（安全带几何）存在', false); P.belt = { parts: {}, seatSame: {}, strap: {}, gap: {}, body: {} }; }
-  const pb = Object.entries(P.belt.parts).filter(([k, v]) => (k === 'low' || k === 'lowb') ? v !== 0 : !(v.same && v.tris > 0));
-  check('polish H2：安全带（卷收器、垂下来的带子、锁舌、短带、扣头）在停着的 high / mid / lite 和可动模型 high / mid / lite / drvLow 里逐个三角形一样；low / lowb 停放档没有',
-    pb.length === 0, P.belt.parts);
+  const pb = Object.entries(P.belt.parts).filter(([k, v]) => !(v.same && v.tris > 0));
+  check('polish H2：安全带（卷收器、垂下来的带子、锁舌、短带、扣头 + 插口、红按钮）在停着的 high / mid / lite / low 和可动模型 high / mid / lite / drvLow 里逐个三角形一样（K3：low 停放档也有）',
+    pb.length === 0 && Object.keys(P.belt.parts).length === 8, P.belt.parts);
   const ss = Object.entries(P.belt.seatSame).filter(([, v]) => !v);
   check('polish H2：停着的车和同档可动模型的整个座椅（座椅 + 安全带）逐个三角形一样（high / mid / lite）', ss.length === 0, P.belt.seatSame);
   const S2 = P.belt.strap;
   check('polish H2：右边的带子竖直垂下（x 只占 4 mm、z 只占 4.4 cm），上头伸进卷收器、下头伸进锁舌；锁舌在坐垫右侧面外 1 mm、坐垫侧面平面段的高度里；左边短带脚落在发动机盖顶面（y 1.0）',
     S2.vertical && S2.intoRetractor && S2.intoTongue && S2.tongueGap >= 0.0005 && S2.tongueGap <= 0.002 && S2.tongueY[0] >= 1.06 && S2.tongueY[1] <= 1.125 + 1e-9 && Math.abs(S2.stubFoot - 1.0) < 1e-9, S2);
-  const gb = Object.entries(P.belt.gap).filter(([, v]) => !(v.pen === 0 && v.strap >= 0.0005 && v.tongue >= 0.0005 && v.tongue <= 0.002 && v.stub >= 0.0005 && v.buckle >= 0.0005));
-  check('polish H2：带子、锁舌、短带、扣头不穿进坐垫 / 靠背，离它们的面 ≥0.5 mm（不共面），锁舌离坐垫 ≤2 mm（贴着）', gb.length === 0, gb.length ? Object.fromEntries(gb) : P.belt.gap);
+  const gb = Object.entries(P.belt.gap).filter(([, v]) => !(v.pen === 0 && v.strap >= 0.00049 && v.strap <= 0.0006 && v.tongue >= 0.00049 && v.tongue <= 0.002 && v.stub >= 0.00049 && v.stub <= 0.0006 && v.buckle >= 0.00049 && v.buckle <= 0.0006));
+  check('polish H2 / K9 / S14 / S21：带子、锁舌、短带、扣头不穿进坐垫 / 靠背、离它们的面 0.5 mm（贴着、不共面；以前带子离靠背 11.5 mm）', gb.length === 0, gb.length ? Object.fromEntries(gb) : P.belt.gap);
   const bd = Object.entries(P.belt.body).filter(([, v]) => !(v && v.bodyToBelt >= 0.01 && v.beltToBody >= 0.01));
   check('polish H2：坐着的人（coop.seatBody，高 / 低画质）离安全带各件 ≥1 cm（不扣、不穿进身体）', Object.keys(P.belt.body).length === 2 && bd.length === 0, P.belt.body);
   {
@@ -1831,68 +2460,97 @@ async function secPolish(page) {
       sf.length === 2 && bad.length === 0, P.seatFeet);
   }
   // H3
-  const sw = P.sw.parked, swBad = Object.entries(sw).filter(([k, v]) => (k.endsWith('/drive') || k === 'low' || k === 'lowb') ? v !== 0 : v !== P.sw.tris);
-  check('polish H3：仪表台大灯开关（' + P.sw.tris + ' 个三角形、只在 kit:prop）在停着的 high / mid / lite 里逐个三角形都有，low / lowb 没有，可动模型里 L1 不画（载具层画）',
+  const sw = P.sw.parked, swBad = Object.entries(sw).filter(([k, v]) => k.endsWith('/drive') ? v !== 0 : v !== P.sw.tris);
+  check('polish H3：仪表台大灯开关（' + P.sw.tris + ' 个三角形、只在 kit:prop）在停着的 high / mid / lite / low 里逐个三角形都有（K3），可动模型里 L1 不画（载具层画）',
     swBad.length === 0 && P.sw.tris > 0 && P.sw.mats.length === 1 && P.sw.mats[0] === 'kit:prop', sw);
   const sv = P.sw.veh || { missing: true };
-  check('polish H3：停着的车的开关和载具层（vehicles.js buildSwitch，上车以后画的，拨杆扳在「开」）逐个三角形一样（位置 ≤1 µm、颜色一样），只有指示灯换成 kit:glow 亮着的绿',
-    !sv.missing && sv.tris === P.sw.tris && sv.matched === P.sw.tris && sv.bad.length === 0 && sv.lamp === 2 && sv.sameCol === P.sw.tris - 2, sv);
+  check('polish H3 / K5：停着的车的开关和载具层（vehicles.js buildSwitch，拨杆扳在「开」、指示灯熄着那一份）逐个三角形一样（位置 ≤1 µm、材质、颜色都一样）；亮着那一份指示灯在 kit:glow',
+    !sv.missing && sv.tris === P.sw.tris && sv.matched === P.sw.tris && sv.bad.length === 0 && sv.lamp === 0 && sv.sameCol === P.sw.tris && P.sw.vehOn && P.sw.vehOn.glow === 2 && P.sw.vehOn.tris === P.sw.tris, Object.assign({ vehOn: P.sw.vehOn }, sv));
   // H4
-  // 停着的车（主会话裁定：不动，golden 不变）只记下来对照：它在后轮正上方那截（|x| 0.34–0.55）也没有配重底面，眼睛低于 0.5 m 时一样看得进去；
-  // 正常玩眼高 1.62 m（坐着 1.8）、不能蹲，看不到
-  const cb = Object.entries(P.cw).filter(([k, v]) => k.includes('/drive') && !(v.leaks === 0 && v.rays > 0));
-  check('polish H4：轮罩外侧下方 0.15–0.6 m 的低机位（含验收员那两个）往配重上半截、发动机盖里面连线，到达之前都先碰到正面（可动模型 4 档 × 后轮摆正 / 打满两边）',
-    cb.length === 0 && Object.keys(P.cw).some(k => k.includes('/drive')), cb.length ? Object.fromEntries(cb.slice(0, 3)) : Object.fromEntries(Object.entries(P.cw).map(([k, v]) => [k, v.leaks + '/' + v.rays])));
+  // 返修 FE1R · K4：停着的车也用可动模型的车架和配重底面、挡板 —— 停放 4 档一样要看不穿
+  const cb = Object.entries(P.cw).filter(([k, v]) => !(v.leaks === 0 && v.rays > 0));
+  check('polish H4 / K4：轮罩外侧下方 0.15–0.6 m 的低机位（含验收员那两个）往配重上半截、发动机盖里面连线，到达之前都先碰到正面（可动模型 4 档 × 后轮摆正 / 打满两边，停放 high / mid / lite / low）',
+    cb.length === 0 && Object.keys(P.cw).length === 16, cb.length ? Object.fromEntries(cb.slice(0, 3)) : Object.fromEntries(Object.entries(P.cw).map(([k, v]) => [k, v.leaks + '/' + v.rays])));
   // H4（返修 r1）：站着 / 坐着的眼高
   const cbS = Object.entries(P.cwS || {}).filter(([k, v]) => !(v.leaks === 0 && v.rays > 0));
-  check('polish H4b：站着、坐着的眼高（1.0–1.8 m）从车四周往配重下半截里面、驾驶位地台下面连线，到达之前都先碰到正面（可动模型 4 档；返修 FE1Q · J11 停放 6 档也要：配重上下两截后角对齐、地台画侧面）',
-    cbS.length === 0 && Object.keys(P.cwS || {}).filter(k => k.includes('/drive')).length === 4 && Object.keys(P.cwS || {}).length === 10, cbS.length ? Object.fromEntries(cbS.slice(0, 3)) : Object.fromEntries(Object.entries(P.cwS || {}).map(([k, v]) => [k, v.leaks + '/' + v.rays])));
+  check('polish H4b：站着、坐着的眼高（1.0–1.8 m）从车四周往配重下半截里面、驾驶位地台下面连线，到达之前都先碰到正面（可动模型 4 档、停放 4 档）',
+    cbS.length === 0 && Object.keys(P.cwS || {}).filter(k => k.includes('/drive')).length === 4 && Object.keys(P.cwS || {}).length === 8, cbS.length ? Object.fromEntries(cbS.slice(0, 3)) : Object.fromEntries(Object.entries(P.cwS || {}).map(([k, v]) => [k, v.leaks + '/' + v.rays])));
   // H5
   const chBad = [];
   for (const [k, v] of Object.entries(P.chain)) {
     for (const lift of [0, 0.5, 1]) {
       const r = v['lift' + lift];
       if (!(r.arcPts > 0 && Math.abs(r.top - r.wantTop) < 1e-3 && r.top <= r.obbTop + 1e-6 && r.arcIn > G_SPR_R)) chBad.push([k, lift, 'arc', r]);
-      // 返修 FE1Q · J10：high / mid / lite / drvLow 链轮 ≥12 棱、链条搭在链轮上那半圈 ≥6 段（看上去是圆的）；low / lowb 停放档 ≥8 棱
-      const want = /^(low|lowb)$/.test(k) ? [8, 4] : [12, 6];
-      if (!(r.sprocketSides >= want[0] && r.caps === 4 && v.arcSeg >= want[1])) chBad.push([k, lift, 'sprocket', r.sprocketSides, r.caps, v.arcSeg]);
-      if (v.links > 0) {
-        const steps = r.frontStep.concat(r.backStep);
-        if (!(steps.every(s => Math.abs(s - 2 * v.links) < 1e-3) && v.links >= 0.03 && v.links <= 0.05)) chBad.push([k, lift, 'pitch', steps.slice(0, 6)]);
-        if (lift === 0.5 && !(r.frontSheets > 0 && r.backSheets > 0)) chBad.push([k, lift, 'both', r.frontSheets, r.backSheets]);
-      }
+      // 返修 FE1R · K8 R3：各档链轮 ≥20 棱（上半圈包在链条里、只画下半圈；按相邻顶点的角度差折算）、链条搭在链轮上那半圈 ≥10 段
+      if (!(r.sprocketSides >= 20 && r.caps === 4 && v.arcSeg >= 10)) chBad.push([k, lift, 'sprocket', r.sprocketSides, r.caps, v.arcSeg]);
+      // 返修 FE1R · repair-r1（H5）：各档都有链板（节距 3–5 cm，画在链条贴图里）—— 链条全在链条材质里，每个顶点 v × 两节 = 弧长（误差 ≤0.1 mm）
+      if (!(v.links >= 0.03 && v.links <= 0.05)) chBad.push([k, lift, 'pitch', v.links]);
+      if (!(r.mats && r.mats.length === 1 && r.mats[0] === 'L1:fkChain')) chBad.push([k, lift, 'mat', r.mats]);
+      if (!(r.uvN > 0 && r.uvErr <= 1e-4)) chBad.push([k, lift, 'uv', r.uvErr, r.uvN]);
     }
     if (k.endsWith('/drive') && !(v.counts && v.counts.length === 1)) chBad.push([k, 'counts', v.counts]);
   }
-  const hm = ['high', 'mid', 'high/drive', 'mid/drive'].every(k => P.chain[k] && P.chain[k].links >= 0.03 && P.chain[k].links <= 0.05);
-  check('polish H5 / J10：链条绕过链轮顶上连成一根（外表面最高 = 链轮中心 + r + 6 mm，在内门架碰撞盒里；弦离链轮轴 > r），链轮 high / mid / lite / drvLow ≥12 棱、搭在链轮上那半圈 ≥6 段（low / lowb 停放档 ≥8 棱），两个端面都画；high / mid 前后两段都有一深一浅的链板、节距 3–5 cm；可动模型链条顶点数和 lift 无关',
-    chBad.length === 0 && hm, chBad.length ? chBad.slice(0, 4) : Object.fromEntries(Object.entries(P.chain).map(([k, v]) => [k, [v.links, v.sprocket, v.arcSeg, v.lift0.frontSheets, v.lift0.backSheets, v.lift1.frontSheets, v.lift1.backSheets]])));
-  // 返修 FE1Q · repair-r1：圆的零件。方向盘轮圈 high ≥16、其余（mid / lite / drvLow，low 停放档）≥12；轮胎、轮辋 ≥12，有轮毂盖的 ≥12；
-  // 表盘 ≥12 边、每块一根指针（2 个三角形）。min（一块里实在挤不下才用的最后保底）照旧，不查。
-  // 返修 FE1Q · repair-r2：lowb 方向盘轮圈 ≥12 段、前轮 ≥10 棱、后轮 ≥8 棱（预算只放得下这么多，见 L1.js FK_LOD.lowb 注释）
+  // 返修 FE1R · repair-r1：一深一浅的链板（H5）补回来了 —— 画在链条贴图里（L1.js fkChains），各档都有、不加面
+  check('polish H5 / K8：链条绕过链轮顶上连成一根（外表面最高 = 链轮中心 + r + 6 mm，在内门架碰撞盒里；弦离链轮轴 > r），各档链轮 ≥20 棱、搭在链轮上那半圈 ≥10 段，链轮两个端面都画；各档链条全在链条材质里、节距 3–5 cm、贴图 v 跟着弧长走（升降时链节跟着链条在链轮上滑）；可动模型链条顶点数和 lift 无关',
+    chBad.length === 0 && Object.keys(P.chain).length === 8, chBad.length ? chBad.slice(0, 4) : Object.fromEntries(Object.entries(P.chain).map(([k, v]) => [k, [v.links, v.sprocket, v.arcSeg, v.lift0.sprocketSides]])));
+  // 返修 FE1R · K8：圆的零件各档一样的段数（停放 4 档、可动 4 档）：方向盘轮圈 ≥23 段、前轮胎面 ≥22 / 轮辋 ≥16、后轮胎面 ≥20 / 轮辋 ≥15、
+  // 气瓶 ≥19 棱、铜阀门 ≥8 棱、方向盘中心盖 ≥16 棱（repair-r1 补回来；转向柱 ≥10 棱插进中心盖）、警示灯罩 ≥12 棱、表盘 ≥20 边、每块一根指针；
+  // 再按真几何量最近机位上的弦高（下一项）
   {
     const bad = [];
     for (const [k, r] of Object.entries(P.round || {})) {
-      if (k === 'min') continue;
-      if (k === 'lowb') {
-        if (!(r.ring >= 12 && r.tire >= 10 && r.rim >= 10 && r.rear >= 8)) bad.push([k, 'lowb', r.ring, r.tire, r.rim, r.rear]);
-        continue;
-      }
-      const ringWant = /^high/.test(k) ? 16 : 12;
-      if (!(r.ring >= ringWant)) bad.push([k, 'ring', r.ring]);
-      if (!(r.tire >= 12 && r.rim >= 12 && r.rear >= 12)) bad.push([k, 'wheel', r.tire, r.rim, r.rear]);
-      if (r.hub && !(r.hub >= 12)) bad.push([k, 'hub', r.hub]);
-      if (r.gauges.length !== r.gaugesWant || r.gauges.some(n => n < 12) || r.needleTris !== 2 * r.gaugesWant) bad.push([k, 'gauge', r.gauges, r.needleTris]);
+      if (!(r.ring >= 23)) bad.push([k, 'ring', r.ring]);
+      if (!(r.tire >= 22 && r.rim >= 16 && r.rear >= 20 && r.rimR >= 15)) bad.push([k, 'wheel', r.tire, r.rim, r.rear, r.rimR]);
+      if (!(r.tank >= 19 && r.column >= 10 && r.beacon >= 12)) bad.push([k, 'tank/column/beacon', r.tank, r.column, r.beacon]);
+      if (!(r.valve >= 8 && r.swHub >= 16)) bad.push([k, 'valve/swHub', r.valve, r.swHub]);   // 返修 FE1R · repair-r1：K8 点名的铜阀门、中心盖不许降
+      if (r.gaugeQuads !== r.gaugesWant || !r.gaugeUVok) bad.push([k, 'gauge', r.gaugeQuads, r.gaugeUVok]);   // repair-r2：表盘是图集里的真圆
+      // 返修 FE1R · repair-r2（验收员 tests / spec：K8 点名的助力球、mid 原有的前轮轮毂盖不许删）：助力球 ≥10 棱、两个前轮都有轮毂盖（图集里的圆，16 个三角形的尖顶在轮毂盖正中）、
+      // 车号两边都喷（每边两位 + 一块百叶 = 3 块贴图 6 个三角形）
+      if (!(r.knob >= 10)) bad.push([k, 'knob', r.knob]);
+      if (r.hubTex !== 2 * 16) bad.push([k, 'hub', r.hubTex]);
+      if (!(r.hoodTex && r.hoodTex[0] === 6 && r.hoodTex[1] === 6)) bad.push([k, 'number', r.hoodTex]);
     }
-    check('polish repair-r1 / r2：圆的零件看上去是圆的 —— 方向盘轮圈 high ≥16 段、mid / lite / drvLow / low / lowb ≥12 段，前后轮轮胎和轮辋 ≥12 棱（lowb 前 ≥10、后 ≥8）、轮毂盖 ≥12 棱，表盘 ≥12 边、每块一根指针（停放 high / mid / lite / low / lowb、可动模型 4 档）',
-      !!P.round && Object.keys(P.round).length === 10 && bad.length === 0, bad.length ? bad.slice(0, 6) : P.round);
+    check('polish K8：圆的零件段数 —— 方向盘轮圈 ≥23、前轮胎面 ≥22 / 轮辋 ≥16、后轮 ≥20 / ≥15、气瓶 ≥19、铜阀门 ≥8、方向盘中心盖 ≥16、助力球 ≥10、转向柱 ≥10、警示灯罩 ≥12；表盘、前轮轮毂盖是图集里的真圆；车号两边都喷（停放 4 档、可动 4 档一样）',
+      !!P.round && Object.keys(P.round).length === 8 && bad.length === 0, bad.length ? bad.slice(0, 6) : P.round);
+    const sb = [], seenAll = {};
+    for (const [k, row] of Object.entries(P.k8 || {})) for (const [id, v] of Object.entries(row)) { if (v.worst && v.worst.sag > 1.0) sb.push([k, id, v.n, v.worst]); seenAll[id] = (seenAll[id] || 0) + v.seen; }
+    check('polish K8 / repair-r2：图集里的表盘、前轮轮毂盖在最近机位上一个纹素 <1 px（真圆，比屏幕像素细）', !!P.texel && P.texel.gauge < 1 && P.texel.hub < 1, P.texel);
+    check('polish K8：最近的正常机位上（站着离车 1 m 一圈、驾驶座、旁边车驾驶座、showOwner ②a / ⑤c，被挡住的机位不算）每个圆零件每段直边的弦高 ≤1 px（停放 4 档、可动 4 档）',
+      Object.keys(P.k8 || {}).length === 8 && sb.length === 0, sb.length ? sb.slice(0, 6) : Object.fromEntries(Object.entries((P.k8 || {})['mid/drive'] || {}).map(([id, v]) => [id, [v.n, v.worst && v.worst.sag, v.worst && v.worst.view]])));
+  }
+  // K9 安全带扣头（③d 机位）
+  {
+    const kb = Object.entries(P.k9 || {}).filter(([, c]) => !(c.slot >= 12 && c.button >= 12 && c.stub >= 20));
+    check('polish K9：驾驶座往左下看（头往左 1.6、往下 1.15 rad，1280×720）扣头顶面的黑色插口、红色按钮各 ≥12 像素，下面的橙色短带 ≥20 像素（看得出连进坐垫缝里）；停放 / 可动 mid、low / drvLow',
+      Object.keys(P.k9 || {}).length === 4 && kb.length === 0, P.k9);
+  }
+  // K10 护顶横条
+  {
+    const kb = Object.entries(P.k10 || {}).filter(([, v]) => !(v.slats >= 2 && v.maxGap <= 0.35));
+    check('polish K10：各档护顶横条均匀排开，相邻两根（含前后横梁）净空 ≤0.35 m（high / mid / lite / low / drvLow）', kb.length === 0, P.k10);
+  }
+  // K11 牵引销
+  {
+    const kb = Object.entries(P.k11 || {}).filter(([, v]) => !(v.tris > 0 && v.into >= 0.001 && v.into <= 0.005 && v.coplanar === 0));
+    check('polish K11：牵引销各档都有（停放 4 档、可动 4 档），最靠前的棱插进配重后脸 1–5 mm，没有和凹口贴片共面的面', Object.keys(P.k11 || {}).length === 8 && kb.length === 0, P.k11);
+  }
+  // M-gaps
+  {
+    const g = P.mgaps || {};
+    check('polish M-gaps：灯盒后脸插进前立柱（上沿 ≥1 mm、下沿更深）；坐垫底插进发动机盖顶（≤0.999）；货叉竖直段后脸插进上下横梁 2 mm（z > −1.115）',
+      g.lampIntoPostTop >= 0.001 && g.lampIntoPostBot > g.lampIntoPostTop && g.seatBottom != null && g.seatBottom <= 0.999 && g.seatBottom >= 0.99 && g.forkBackZ > -1.115 && g.forkBackZ <= -1.11, g);
+  }
+  // M-fork
+  {
+    const kb = Object.entries(P.mfork || {}).filter(([, v]) => !(v.topY.length === 1 && Math.abs(v.topY[0] - 0.055) < 1e-6 && v.upNotFlat === 0 && v.tipTopZ <= -2.0999));
+    check('polish M-fork：货叉顶面从叉根一直平到叉尖（朝上的面全在 0.055、没有斜面；叉尖收薄在底面），停放 4 档、可动 4 档', Object.keys(P.mfork || {}).length === 8 && kb.length === 0, P.mfork);
   }
   const dt = Object.entries(P.driveTotal).filter(([, v]) => !(v <= 2000));
   check('polish：可动模型 + 最多的磨损 + 载具层画的大灯开关，每台 ≤2000 面', dt.length === 0, P.driveTotal);
   // 返修 FE1Q · repair-r2：表盘指针从驾驶座看得见（high 两块表、mid 一块表，停着的和开过的车）
   {
-    const nb = Object.entries(P.needle || {}).filter(([, r]) => !(r.gaugesWant > 0 && Object.keys(r.perGauge).length === r.gaugesWant && r.needleTris === r.gaugesWant * 2 && r.rays > 0 && r.blocked === 0));
-    check('polish repair-r2：表盘指针从驾驶座看整根都看得见 —— 司机眼点（左中右 ±6 cm）往每根指针上 7 个点连线，先碰到的都是指针自己，不被方向盘轮圈 / 辐条 / 中心盖 / 转向柱挡住（停着的 high / mid、可动模型 high / mid）',
+    const nb = Object.entries(P.needle || {}).filter(([, r]) => !(r.gaugesWant > 0 && Object.keys(r.perGauge).length === r.gaugesWant && r.gaugeQuads === r.gaugesWant && r.rays > 0 && r.blocked === 0));
+    check('polish repair-r2：表盘指针从驾驶座看整根都看得见 —— 司机眼点（左中右 ±6 cm）往每根指针上 27 个点（repair-r2：指针画在图集的表盘贴图里）连线，先碰到的都是表盘贴图，不被方向盘轮圈 / 辐条 / 中心盖 / 转向柱挡住（停着的 high / mid、可动模型 high / mid）',
       Object.keys(P.needle || {}).length === 4 && nb.length === 0, nb.length ? Object.fromEntries(nb) : Object.fromEntries(Object.entries(P.needle || {}).map(([k, r]) => [k, [r.rays, r.blocked]])));
   }
   // J2：出生块的车一律是运行时车（真进游戏）
@@ -1903,9 +2561,39 @@ async function secPolish(page) {
     const m = R.mid, d = R.driving || {}, a2 = (R.after || []).find(f => m && f.key === m.key) || {};
     check('polish J2（' + (q === 'high' ? '高' : '低') + '画质）：种子 12345 出生块 (0,0) 的 ' + R.before.length + ' 台车都是运行时车（不在区块几何里），一载入就在载具网格里、细节档 ' + want,
       allRt, R.before);
-    check('polish J2（' + (q === 'high' ? '高' : '低') + '画质）：出生柱间那台 ' + (m ? m.key : '?') + ' 停着、上车开 1.5 s、下车以后都是同一档 ' + want + '、同一个模板（停着和开过是同一个网格）',
-      !!m && !!R.mount && R.mount.ok && R.mount.seated === m.key && d.moved > 0.3 && d.tier === want && d.sig === m.sig && d.meshed && a2.tier === want && a2.sig === m.sig,
+    // 返修 FE1R · repair-r1：sig 最后一位是 vis（K5 灯的状态，这一份模板只放用得上的那份灯：熄着的镜面 / 灯罩 / 指示灯或亮着的那份）。
+    // 开着车时发动机、大灯都开着 vis = 3，只换灯那几块；前五位（档、杆数、编号、磨损、画质）= 同一个网格。停着、下车以后 vis = 0，整个 sig 一样
+    const sigBase = s => (s || '').split('|').slice(0, 5).join('|'), sigVis = s => (s || '').split('|')[5];
+    check('polish J2（' + (q === 'high' ? '高' : '低') + '画质）：出生柱间那台 ' + (m ? m.key : '?') + ' 停着、上车开 1.5 s、下车以后都是同一档 ' + want + '、同一个模板（停着和开过是同一个网格；开着时 sig 只有灯那一位 vis 0 → 3，下车回到 0、整个 sig 一样）',
+      !!m && !!R.mount && R.mount.ok && R.mount.seated === m.key && d.moved > 0.3 && d.tier === want && sigBase(d.sig) === sigBase(m.sig) && sigVis(m.sig) === '0' && sigVis(d.sig) === '3' && d.meshed && a2.tier === want && a2.sig === m.sig,
       { mid: m && { key: m.key, tier: m.tier, sig: m.sig }, mount: R.mount, driving: d, after: { tier: a2.tier, sig: a2.sig } });
+  }
+  // K3 / K4 / K5：停着 vs 开过，同机位逐像素（停放 high / lite / low@高画质 / low@低画质；mid 停放档实际生成不出来 —— 和 high 一样贵，放得下 mid 就放得下 high）
+  {
+    const dir = path.join(OUT, 'pairs');
+    fs.mkdirSync(dir, { recursive: true });
+    const R = await pagePairs(page, PAIR_CASES, dir);
+    fs.writeFileSync(path.join(OUT, 'polish-pairs.json'), JSON.stringify(R, null, 1));
+    for (const [tag, r] of Object.entries(R)) {
+      const bad = r.missing ? ['missing'] : Object.entries(r.diff).filter(([, v]) => v.blob !== 0);
+      const seen = r.missing ? 0 : Object.values(r.diff).filter(v => v.carPx > 0).length;
+      const sum = r.missing ? null : Object.fromEntries(Object.entries(r.diff).map(([n, v]) => [n, v.car + '/' + v.carPx + (v.out ? ' 外' + v.out : '') + (v.retry ? ' 重拍（第一遍 ' + v.retry.first.blob + ' 片@' + v.retry.first.at + '，再拍 ' + v.retry.again.blob + ' 片）' : '')]));
+      const nDark = r.missing ? 0 : Object.keys(r.diff).filter(n => n.startsWith('dark:')).length;
+      check('polish K3：' + tag + '（停放 ' + (r.info && r.info.detail) + ' → 开过 ' + (r.st1 && r.st1.tier) + '）停着和摆回原位的开过的车，有电、断电各 ' + PAIR_CAMS.length + ' 个机位（一圈每 30°、驾驶座往前 / 左下 / 右下 / 上、轮罩低机位两边、车后低机位、气瓶、警示灯、大灯、仪表台、牵引销、后轮、正上方）逐像素一样：' +
+        '灯池按机位定死，车所在的像素里差 >10/255 的只有棱边上一像素宽的浮点舍入翻转，没有成片（≥3×3）的',
+        !r.missing && r.info.detail === r.tierP && !r.st0.meshed && r.st1.meshed && r.st1.tier === r.tierD && bad.length === 0 && seen >= 2 * PAIR_CAMS.length - 4 && nDark === PAIR_CAMS.length,
+        r.missing ? r : { info: r.info, st1: r.st1, dark: r.dark, bad: bad.slice(0, 6), seen, diff: sum });
+    }
+  }
+  // K5：熄着的灯停着、开过、出生车一模一样（有电 / 断电）
+  for (const dark of [false, true]) {
+    const R = await pageDark(page, dark);
+    fs.writeFileSync(path.join(OUT, 'polish-k5-' + (dark ? 'dark' : 'lit') + '.json'), JSON.stringify(R, null, 1));
+    const bad = R.missing ? ['missing'] : Object.entries(R.diff).filter(([, v]) => v.drv.blob !== 0 || v.rt.blob !== 0 || !(v.drv.carPx > 0));
+    const sum = R.missing ? null : Object.fromEntries(Object.entries(R.diff).map(([n, v]) => [n, { drv: v.drv.car + '/' + v.drv.carPx + (v.drv.blob ? ' 片' + v.drv.blob + '@' + v.drv.at : ''), rt: v.rt.car + '/' + v.rt.carPx + (v.rt.blob ? ' 片' + v.rt.blob + '@' + v.rt.at : '') }]));
+    check('polish K5（' + (dark ? '断电' : '有电') + '）：种子 2 低画质，区块里停着的 1@-1,0#v0、摆回原位熄了火的它、出生车挪到同一位姿，' + DARK_CAMS.length + ' 个机位（两盏大灯、警示灯后 / 侧、仪表台、开关）逐像素一样' + (dark ? '（等到第一次断电，灯全灭）' : '') +
+      '：灯池按机位定死，车所在的像素里没有成片（≥3×3）的差异（棱边上一像素宽的是浮点舍入）',
+      !R.missing && R.tiers.k1 === 'drvLow' && R.tiers.k0 === 'drvLow' && (!dark || (R.lit0.n > 0 && R.lit0.on === 0)) && bad.length === 0, R.missing ? R : { tiers: R.tiers, lit0: R.lit0, t: R.t, diff: sum, bad: bad.slice(0, 3) });
   }
   // H12
   const B = await pageBlackoutWalk(page);

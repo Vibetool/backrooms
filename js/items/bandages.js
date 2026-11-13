@@ -50,12 +50,12 @@ BR.itemTypes.register({
     const T = window.THREE;
     const weave = K.labelMat('bandage_weave', 64, 64, drawWeave);
     // 卷身侧躺：圆柱轴沿 X，底部贴地
-    const roll = new T.CylinderGeometry(R, R, W, 14, 1, true).rotateZ(Math.PI / 2).translate(0, R, 0);
+    const roll = new T.CylinderGeometry(R, R, W, 20, 1, true).rotateZ(Math.PI / 2).translate(0, R, 0);
     const tail = new T.BoxGeometry(W * 0.96, 0.002, 0.09).translate(0, 0.001, R + 0.04);
     const ends = [
-      K.paint(new T.RingGeometry(HOLE, R, 14, 1).rotateY(Math.PI / 2).translate(W / 2, R, 0), 0xefebe2),
-      K.paint(new T.RingGeometry(HOLE, R, 14, 1).rotateY(-Math.PI / 2).translate(-W / 2, R, 0), 0xefebe2),
-      K.paint(new T.CylinderGeometry(HOLE, HOLE, W, 10, 1, true).rotateZ(Math.PI / 2).translate(0, R, 0), 0x9c9484),
+      K.paint(new T.RingGeometry(HOLE, R, 20, 1).rotateY(Math.PI / 2).translate(W / 2, R, 0), 0xefebe2),
+      K.paint(new T.RingGeometry(HOLE, R, 20, 1).rotateY(-Math.PI / 2).translate(-W / 2, R, 0), 0xefebe2),
+      K.paint(new T.CylinderGeometry(HOLE, HOLE, W, 16, 1, true).rotateZ(Math.PI / 2).translate(0, R, 0), 0x9c9484),
     ];
     return K.assemble({
       name: 'bandages', scale: 1.4,

@@ -1,7 +1,8 @@
 // 后室 · 物品测试：node tests/items.mjs
 // 起本地静态服务（随机端口）+ 无头 Chrome（SwiftShader）。页面加载后注入 js/items/_kit.js、_effects.js 和 index.html 里还没有的物品文件，
 // 然后依次：注册/模型/图标/生成表检查 → 噩梦生存 dev 层逐个物品 生成→拾取→使用（数值、时效、背包数量）
-// → 游玩模式同样使用、数值不变 → 所有物品排成一排截图 + 图标总览。
+// → 游玩模式同样使用、数值不变 → 所有物品排成一排截图 + 图标总览 → Level 1 坐在叉车上扔不出去（FE1R F5）。
+// FE1R K8：静止姿态那一段之后量「圆的东西看起来要圆」（每个圆的段数、0.6 m 弦高、点名的几样），PTG-B 照旧斜躺 7°。
 // 任一检查失败或页面出现 console.error / 未捕获异常时退出码为 1。截图写 tests/output/items-*.png
 import http from 'node:http';
 import fs from 'node:fs';
@@ -239,8 +240,11 @@ async function staticChecks(page) {
   const badVer = ALL_TYPES.filter(t => !info[t].missing && info[t].version !== LORE[PARENT[t] || t].source)
     .map(t => ({ t, got: info[t].version, want: LORE[PARENT[t] || t].source }));
   check('每个物品的 version 与 lore-choices 选中的 source 一致', badVer.length === 0, badVer);
-  const badBuild = ALL_TYPES.filter(t => info[t].err || !(info[t].tris > 0 && info[t].tris < 400)).map(t => ({ t, tris: info[t].tris, err: info[t].err }));
-  check('模型都能 build，三角面 < 400', badBuild.length === 0, badBuild.length ? badBuild : ALL_TYPES.map(t => t + ':' + info[t].tris).join(' '));
+  // 每件物资的三角面上限：以前 400；FE1R K8（圆的东西看起来要圆：瓶身 ≥20 段、瓶塞瓶盖 ≥16 段、糖球 ≥12×8、光晕是高段数的球，⑳ 特写和 0.6 m 平视弦高 ≤1 px）
+  // 以后瓶装闪电约 970、火盐约 1300（光晕 36×18 的球就占 1224），上限放到 1400。物资的面数不算进区块预算（K8）
+  const TRIS_MAX = 1400;
+  const badBuild = ALL_TYPES.filter(t => info[t].err || !(info[t].tris > 0 && info[t].tris < TRIS_MAX)).map(t => ({ t, tris: info[t].tris, err: info[t].err }));
+  check('模型都能 build，三角面 < ' + TRIS_MAX + '（最多 ' + Math.max(...ALL_TYPES.map(t => info[t].tris)) + '）', badBuild.length === 0, badBuild.length ? badBuild : ALL_TYPES.map(t => t + ':' + info[t].tris).join(' '));
   const badMat = ALL_TYPES.filter(t => !info[t].sameMat);
   check('两次 build 的材质是同一对象（走 BR.assets.material 缓存）', badMat.length === 0, badMat);
   const badIcon = ALL_TYPES.filter(t => !info[t].iconOk);
@@ -363,6 +367,171 @@ async function restChecks(page) {
   // 正面或背面着地（歪 ≥80°），支撑点全在袋身上（封口、两颗糖、胶带都不着地），两颗糖离支撑面 >2 mm
   check('糖果袋：立不住、倒平躺着（歪 ' + cd.tilt + '°，要 ≥80°），支撑点全在袋身上（支撑网格 ' + JSON.stringify(cd.supMeshes) + '，要 [1]），两颗糖不当脚：最低的糖离支撑面 ' + cd.candyLow + ' mm（要 >2 mm）',
     cd.candyN > 0 && cd.candyLow > 2 && cd.tilt >= 80 && JSON.stringify(cd.supMeshes) === '[1]', cd);
+  // FE1R K8：推杆按压盘改成 32 段以后重算静止姿态，PTG-B 照旧斜躺 7°（指托下沿和针帽一起着地）
+  const pt = r.ptg_b || {};
+  check('PTG-B：按压盘改圆以后重算，照旧斜躺 7°±0.5°（' + pt.tilt + '°），重心往里 ' + pt.ins + ' mm', Math.abs(pt.tilt - 7) <= 0.5 && pt.ins >= 3, pt);
+}
+
+// =====================================================================
+// 坐在车上扔不出去（FE1R F5，和坐在车上丢不了东西一致）：Level 1 出生柱间那台叉车，坐上去以后按 F 用火盐、瓶装闪电三种 ——
+// 不消耗（还在手里一个）、不爆炸、不出闪电、不闪屏、不伤实体，toast「坐在车上扔不出去，下车再扔」；下车站着再用，照旧扔出去（消耗、炸 / 闪电）
+// =====================================================================
+const SEATED_THROW = ['firesalt', 'lightning_in_a_bottle', 'lightning_in_a_bottle_artificial', 'lightning_in_a_bottle_black'];
+async function seatedThrow(page) {
+  await ev(page, () => { __br.start({ mode: 'test', levelId: '1', seed: 12345, settings: { quality: 'low' } }); return 0; });
+  await page.waitForFunction(() => BR.game.screen === 'playing' && !BR.world.transitioning && String(BR.game.levelId) === '1', null, { timeout: 90000, polling: 200 });
+  await installHelpers(page);
+  const r = await ev(page, (types) => {
+    __br.setAuto(false);
+    BR.entities.clear(); BR.items.clear();
+    const P = BR.player, K = BR.itemKit;
+    for (let i = 0; i < P.inventory.length; i++) P.inventory[i] = null;
+    const c = BR.world.chunks().find(q => q.key === '0,0');
+    const f = ((c && c.res.data && c.res.data.forklifts) || []).find(q => q.x > 12 && q.x < 20 && q.z > 12 && q.z < 20);
+    if (!f) return { err: '出生柱间没有叉车' };
+    const cy = Math.cos(f.rot), sy = Math.sin(f.rot);
+    const st = { x: f.x - cy * 1.2 + sy * 0.24, z: f.z + sy * 1.2 + cy * 0.24 };
+    P.reset({ x: st.x, y: 0, z: st.z, yaw: 0 }, { full: false });
+    __br.step(0.05);
+    BR.vehicles.mount(f.key);
+    for (let i = 0; i < 30; i++) __br.step(0.05);
+    const L = { toasts: [], burst: 0, bolt: 0, flash: 0, dmg: 0 };
+    const o = { toast: BR.hud.toast, burst: K.burstFx, bolt: K.boltFx, flash: BR.gfx.flash, dmg: K.damageEntity };
+    BR.hud.toast = function (t) { L.toasts.push(String(t)); return o.toast.apply(this, arguments); };
+    K.burstFx = function () { L.burst++; return o.burst.apply(this, arguments); };
+    K.boltFx = function () { L.bolt++; return o.bolt.apply(this, arguments); };
+    BR.gfx.flash = function () { L.flash++; return o.flash.apply(this, arguments); };
+    K.damageEntity = function () { L.dmg++; return o.dmg.apply(this, arguments); };
+    const useOne = t => {
+      P.addItem(t, 1);
+      const idx = P.inventory.findIndex(q => q && q.type === t);
+      P.selected = idx;
+      const n0 = P.countOf(t), t0 = L.toasts.length, b0 = L.burst, l0 = L.bolt, f0 = L.flash, d0 = L.dmg;
+      const consumed = P.useSelected();
+      return { t, consumed, n0, n1: P.countOf(t), toasts: L.toasts.slice(t0), burst: L.burst - b0, bolt: L.bolt - l0, flash: L.flash - f0, dmg: L.dmg - d0 };
+    };
+    const out = { seated: BR.vehicles.seated, key: f.key, seatedUse: [], standUse: [] };
+    try {
+      // 前方 6 m 放一只测试怪：坐着用要是扔出去了，它会挨炸 / 挨电
+      const ahead = K.throwPoint(P, 6);
+      const e = BR.entities.spawn('_dev_hostile', ahead.x, ahead.y, ahead.z, {});
+      out.target = e ? e.id : null;
+      for (const t of types) { out.seatedUse.push(useOne(t)); for (let i = 0; i < P.inventory.length; i++) P.inventory[i] = null; }
+      out.targetAfter = e ? { hp: e.hp, dead: !!e.dead } : null;
+      BR.vehicles.dismount();
+      for (let i = 0; i < 40; i++) __br.step(0.05);
+      out.standing = !BR.vehicles.seated && !P.mounted;
+      for (const t of ['firesalt', 'lightning_in_a_bottle']) { out.standUse.push(useOne(t)); for (let i = 0; i < P.inventory.length; i++) P.inventory[i] = null; }
+    } finally {
+      BR.hud.toast = o.toast; K.burstFx = o.burst; K.boltFx = o.bolt; BR.gfx.flash = o.flash; K.damageEntity = o.dmg;
+    }
+    out.text = K.SEATED_THROW_TEXT;
+    return out;
+  }, SEATED_THROW);
+  if (r.err) { check('坐在车上扔不出去：准备', false, r); return; }
+  check('坐在车上扔不出去：坐上了出生柱间的叉车（' + r.key + '）', r.seated === r.key, { seated: r.seated, key: r.key });
+  for (const u of r.seatedUse) {
+    check('坐在车上按 F 用 ' + u.t + '：不消耗（还剩 ' + u.n1 + ' 个）、不爆炸不出闪电不闪屏不伤怪，toast「' + (u.toasts[0] || '') + '」',
+      u.consumed === false && u.n1 === u.n0 && u.n1 === 1 && !u.burst && !u.bolt && !u.flash && !u.dmg && u.toasts.length === 1 && u.toasts[0] === '坐在车上扔不出去，下车再扔' && r.text === u.toasts[0], u);
+  }
+  check('坐在车上用了四次以后，前方 6 m 的测试怪没挨打', !!r.targetAfter && !r.targetAfter.dead && r.targetAfter.hp > 0, r.targetAfter);
+  for (const u of r.standUse) {
+    const fired = u.t === 'firesalt' ? u.burst === 1 : u.bolt >= 1;
+    check('下车站着用 ' + u.t + '：照旧扔出去（消耗，' + (u.t === 'firesalt' ? '炸开' : '出闪电') + '，没有「坐在车上」的提示）', r.standing && u.consumed === true && u.n1 === 0 && fired && !u.toasts.includes('坐在车上扔不出去，下车再扔'), u);
+  }
+}
+
+// =====================================================================
+// 圆的东西看起来要圆（FE1R K8）：每种物资 build 时记下用到的每个圆柱 / 车削 / 球 / 锥 / 圆片 / 圆环（半径、段数，乘上模型的缩放），
+// 按 0.6 m 平视（1280×720、竖直视野 75°，F = 469 px）算圆的投影半径 R 和弦高 R·(1 − cos(π/n))，要 ≤1 px。
+// 点名的几样再看段数：瓶身 ≥20、瓶塞 / 瓶盖 ≥16、糖球 ≥12×8、PTG-B 按压盘 ≥16 且 ⑳a2 特写（竖直视野 14°、0.6 m）弦高 ≤1 px。
+// 故意做成多面体的不算：火盐底座（七边形的不规则岩块）、浆果顶上的五瓣萼片、杏仁水的霉斑和金枪鱼块（二十面体的不规则小块）
+// =====================================================================
+async function roundChecks(page) {
+  const r = await ev(page, (all) => {
+    const F75 = 360 / Math.tan(37.5 * Math.PI / 180), D = 0.6;
+    const T = THREE, keep = {};
+    const rec = [];
+    const wrap = (name, radiusOf, segOf) => {
+      const C0 = T[name];
+      keep[name] = C0;
+      T[name] = function (...a) { const g = new C0(...a); rec.push({ kind: name, r: radiusOf(a), n: segOf(a), a: a.filter(x => typeof x === 'number').slice(0, 6) }); return g; };
+      T[name].prototype = C0.prototype;
+    };
+    wrap('CylinderGeometry', a => Math.max(a[0] == null ? 1 : a[0], a[1] == null ? 1 : a[1]), a => (a[3] == null ? 32 : a[3]) * (a[7] != null ? 2 * Math.PI / a[7] : 1));
+    wrap('ConeGeometry', a => a[0] == null ? 1 : a[0], a => a[2] == null ? 32 : a[2]);
+    wrap('SphereGeometry', a => a[0] == null ? 1 : a[0], a => Math.min(a[1] == null ? 32 : a[1], 2 * (a[2] == null ? 16 : a[2])));
+    wrap('CircleGeometry', a => a[0] == null ? 1 : a[0], a => a[1] == null ? 32 : a[1]);
+    wrap('RingGeometry', a => a[1] == null ? 1 : a[1], a => a[2] == null ? 32 : a[2]);
+    wrap('LatheGeometry', a => Math.max(...(a[0] || []).map(p => p.x)), a => a[1] == null ? 12 : a[1]);
+    wrap('TorusGeometry', a => (a[0] == null ? 1 : a[0]) + (a[1] == null ? 0.4 : a[1]), a => a[3] == null ? 48 : a[3]);
+    wrap('IcosahedronGeometry', a => a[0] == null ? 1 : a[0], a => a[1] ? 20 * Math.pow(4, a[1]) : 5);
+    wrap('OctahedronGeometry', a => a[0] == null ? 1 : a[0], a => 4);
+    const out = {};
+    try {
+      for (const t of all) {
+        rec.length = 0;
+        const root = BR.itemTypes.get(t).build({ THREE, BR, assets: BR.assets, game: BR.game });
+        const sc = root.scale.x;
+        out[t] = rec.map(q => {
+          const rw = q.r * sc, rpx = F75 * rw / Math.max(0.05, D - rw), sag = rpx * (1 - Math.cos(Math.PI / q.n));
+          return { kind: q.kind, rmm: +(rw * 1000).toFixed(1), n: +q.n.toFixed(1), sag: +sag.toFixed(2), a: q.a };
+        });
+      }
+    } finally { for (const k in keep) T[k] = keep[k]; }
+    return out;
+  }, ALL_TYPES);
+  // 故意做成多面体的（见上）：按类型 + 几何种类 + 半径认
+  const exempt = (t, q) => (t === 'firesalt' && (q.kind === 'OctahedronGeometry' || (q.kind === 'CylinderGeometry' && q.n === 7))) ||
+    (t === 'warpberries' && q.kind === 'CircleGeometry' && q.n === 5) || (/^almond_water/.test(t) && q.kind === 'IcosahedronGeometry') ||
+    (t === 'canned_tuna' && q.kind === 'IcosahedronGeometry');
+  const bad = [];
+  let nPrim = 0, worst = { sag: 0 };
+  for (const t of ALL_TYPES) for (const q of r[t] || []) {
+    if (exempt(t, q) || q.rmm < 5) continue;
+    nPrim++;
+    if (q.sag > worst.sag) worst = Object.assign({ t }, q);
+    if (q.sag > 1 || q.kind === 'IcosahedronGeometry' || q.kind === 'OctahedronGeometry') bad.push([t, q]);
+  }
+  check('圆的东西看起来要圆：' + ALL_TYPES.length + ' 种物资里半径 ≥5 mm 的圆 ' + nPrim + ' 个，0.6 m 平视弦高都 ≤1 px（最大 ' + worst.sag + ' px，' + worst.t + ' ' + worst.kind + ' ' + worst.rmm + ' mm ' + worst.n + ' 段），没有当圆用的二十面体',
+    nPrim > 50 && bad.length === 0, bad.slice(0, 8));
+  // showOwner ⑳ 的五张特写（g2s-shoot-20.mjs：相机离东西中心 0.6 m，1280×720 原图，竖直视野按东西大小定）：每个圆的弦高 ≤1 px
+  const SHOT20 = { ptg_b: 62, lightning_in_a_bottle: 43, firesalt: 30, moth_jelly: 21, candy: 32 };
+  const bad20 = [], worst20 = {};
+  for (const [t, fov] of Object.entries(SHOT20)) {
+    const F = 360 / Math.tan(fov / 2 * Math.PI / 180);
+    for (const q of r[t] || []) {
+      if (exempt(t, q) || q.rmm < 2) continue;
+      const rw = q.rmm / 1000, rpx = F * rw / (0.6 - rw), sag = rpx * (1 - Math.cos(Math.PI / q.n));
+      if (!worst20[t] || sag > worst20[t].sag) worst20[t] = { kind: q.kind, rmm: q.rmm, n: q.n, rpx: Math.round(rpx), sag: +sag.toFixed(2) };
+      if (sag > 1) bad20.push([t, q.kind, q.rmm, q.n, +sag.toFixed(2)]);
+    }
+  }
+  check('⑳ 五张特写里每个圆的弦高都 ≤1 px（' + Object.entries(worst20).map(([t, w]) => t + ' 最大 ' + w.sag + ' px（' + w.kind.replace('Geometry', '') + ' ' + w.rmm + ' mm ' + w.n + ' 段，半径 ' + w.rpx + ' px）').join('；') + '）',
+    bad20.length === 0 && Object.keys(worst20).length === 5, bad20.slice(0, 8));
+  // 点名的几样（FE1R K8 / R8）
+  const big = (t, kind) => (r[t] || []).filter(q => !kind || q.kind === kind).sort((a, b) => b.rmm - a.rmm);
+  // 瓶身 / 罐身：半径最大的整圈圆柱或车削（只有一段弧的贴纸不算，CylinderGeometry 多给了 thetaStart / thetaLength）
+  const body = t => big(t).filter(q => q.kind === 'LatheGeometry' || (q.kind === 'CylinderGeometry' && q.a.length < 6))[0] || {};
+  const capOf = (t, rmax) => (r[t] || []).filter(q => q.kind === 'CylinderGeometry' && q.rmm < rmax).sort((a, b) => b.rmm - a.rmm)[0] || {};
+  const named = {
+    lightning: [body('lightning_in_a_bottle').n, capOf('lightning_in_a_bottle', 30).n],
+    moth_jelly: [body('moth_jelly').n, (r.moth_jelly || []).filter(q => q.kind === 'CylinderGeometry' && q.a.length < 6).map(q => q.n)],
+    water: [body('water_bottle').n, capOf('water_bottle', 20).n],
+    soft: [body('soft_drink').n, capOf('soft_drink', 20).n],
+    almond: [body('almond_water').n, capOf('almond_water', 25).n],
+    candy: (r.candy || []).filter(q => q.kind === 'SphereGeometry').map(q => q.a.slice(1, 3)),
+  };
+  const okNamed = named.lightning[0] >= 20 && named.lightning[1] >= 16 && named.moth_jelly[0] >= 20 && named.moth_jelly[1].every(n => n >= 16) &&
+    named.water[0] >= 20 && named.water[1] >= 16 && named.soft[0] >= 20 && named.soft[1] >= 16 && named.almond[0] >= 20 && named.almond[1] >= 16 &&
+    named.candy.length > 0 && named.candy.every(a => a[0] >= 12 && a[1] >= 8);
+  check('点名的几样段数够：瓶装闪电瓶身 / 瓶塞 ' + named.lightning.join(' / ') + '，飞蛾果冻罐身 / 各圆柱 ' + named.moth_jelly[0] + ' / ' + named.moth_jelly[1].join(',') +
+    '，水瓶 ' + named.water.join(' / ') + '，汽水 ' + named.soft.join(' / ') + '，杏仁水 ' + named.almond.join(' / ') + '，糖球 ' + named.candy.map(a => a.join('×')).join(' ') +
+    '（瓶身 ≥20、瓶塞瓶盖 ≥16、糖球 ≥12×8）', okNamed, named);
+  // PTG-B 按压盘：半径最大的那个圆柱（0.011 × 2.8）。⑳a2 特写：竖直视野 14°、相机离推杆那头 0.6 m
+  const disc = (r.ptg_b || []).filter(q => q.kind === 'CylinderGeometry').sort((a, b) => b.rmm - a.rmm)[0] || {};
+  const F14 = 360 / Math.tan(7 * Math.PI / 180), rpx = F14 * disc.rmm / 1000 / 0.6, sag = rpx * (1 - Math.cos(Math.PI / disc.n));
+  check('PTG-B 推杆按压盘 ' + disc.n + ' 段（≥16），⑳a2 特写里半径 ' + rpx.toFixed(0) + ' px、弦高 ' + sag.toFixed(2) + ' px（≤1）', disc.n >= 16 && sag <= 1, disc);
 }
 
 // 静静放在地上（FE1P H13）：每种物资按 items.move 不给 y 那条路落地（interact 拖地上的物资、车推开的都走这条），
@@ -895,6 +1064,8 @@ async function main() {
     lap('注册检查');
     await restChecks(page);
     lap('静止姿态（只算实物）');
+    await roundChecks(page);
+    lap('圆的东西看起来要圆');
     await nightmare(page);
     lap('噩梦生存');
     await casual(page);
@@ -903,6 +1074,8 @@ async function main() {
     lap('静静放在地上');
     await screenshots(page);
     lap('截图');
+    await seatedThrow(page);
+    lap('坐在车上扔不出去');
   } catch (err) {
     check('测试流程未中断', false, String(err && err.stack || err));
   }

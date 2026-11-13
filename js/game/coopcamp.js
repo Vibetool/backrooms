@@ -1832,6 +1832,7 @@ function debugInfo() {
     transit: { phase: G.phase, kind: G.kind, text: G.text, host: G.host, entered: G.entered, arrived: G.arrived, revealed: G.revealed },
     ask: !!S.ask, askIn: !!S.askIn, gone: !!(S.gone && S.gone.open),
     meshes: { board: !!S.board, paper: !!S.paper }, lantern: !!S.lantern, role: myChar(), inputAt: S.inputAt,
+    peerSpeed: +num(S.peerSpeed, 0).toFixed(3),   // 测试用：队友人形的平滑速度（< PEER_STILL 才算站着不动、挡路）
   };
 }
 

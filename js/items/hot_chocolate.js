@@ -14,7 +14,7 @@ const BR = window.BR;
 const K = BR.itemKit;
 if (!K) { console.error('[items] hot_chocolate 需要先加载 js/items/_kit.js'); return; }
 
-const SEG = 12;
+const SEG = 20;   // FE1R K8：以前 12 段，0.6 m 弦高 1.2 px
 const SHELL = [[0, 0.002], [0.03, 0], [0.036, 0.01], [0.036, 0.11], [0.03, 0.135], [0.016, 0.15], [0.016, 0.166]];
 
 function drawLabel(g, w, h) {

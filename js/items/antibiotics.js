@@ -11,7 +11,7 @@ const BR = window.BR;
 const K = BR.itemKit;
 if (!K) { console.error('[items] antibiotics 需要先加载 js/items/_kit.js'); return; }
 
-const SEG = 12;
+const SEG = 20;   // FE1R K8：以前 12 段，0.6 m 弦高 1.2 px
 
 // 胶囊两半两种颜色：按局部 y 的正负分色，再摆位置
 function capsule(x, y, z, rotZ, rotY) {

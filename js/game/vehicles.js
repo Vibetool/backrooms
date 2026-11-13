@@ -12,7 +12,7 @@
 //   准心对准车身、护顶架或门架，人站在左右两侧（geo.mountZone）、离座椅 ≤1.5 m：短按空格「上车」；
 //   在车前 / 车尾：灰字「绕到侧面上车」；侧面但离得远：「再走近一点」；长按：「叉车太重，拖不动」，车一点不动；队友坐着：「队友在开叉车」。
 //   上车 0.5 s 眼点插值（player 按 handle.path('in') 走），落座「吱」→ 钥匙「咔」起动 0.8 s（不让走，提示「发动中」）→ 怠速循环、大灯、警示灯 1 Hz 闪。
-//   下车：短按空格（drive 情境里「互动」就是「下车」）；车还在动先刹停（≤0.6 s），按视角选边（sim.exitSpot），三面都挡住提示「两边都被挡住，开出来再下车」。
+//   下车：短按空格（drive 情境里「互动」就是「下车」）；车还在动先刹停（≤0.6 s），按视角选边（sim.exitSpot），三面都挡住提示「两边和后面都下不去，开出来再下车」（FE1R UI-12：照实说三面）。
 //   强制下车（死亡、reset、换层、回主页）：sim.exitSpot(…, force=true)，不提示、不刹车动画、人直接落在落点。
 //
 // 升格（keyDecisions[0]）：停着、没人开过的叉车仍在区块网格里（几何、碰撞框、账面全不动，golden 不变）；第一次有人上车、或收到队友的位姿，
@@ -59,7 +59,7 @@
 //     会顺手升格、挪 'veh|' OBB（影子模拟、大灯、远端音效、推开物资归 vehicles_net）。
 //     不带 remote = levelState 回放（没人开着的车按记录摆好）。本机正坐着的车一律不理（以本机模拟为准）；别的层的 key 不理
 //   update(dt)（main.js 每帧，排在 entities 之后）   applyChunk(c, st) / unloadChunk(c)（world 建块 / 卸块时调）   clear()
-//   debugInfo() → { promoted, meshes, calls, tris, perVehicle, tiers, lease, riders, obbs, seated, phase, light, loops, capacity, lit, btnLabel,
+//   debugInfo() → { promoted, meshes, calls, tris, perVehicle（画出来的面数，K5 灯叠起来的那份不算）, perVehicleBuf（缓冲区全部）, tiers, lease, riders, obbs, seated, phase, light, loops, capacity, lit, btnLabel,
 //                   falls, throws（最近 256 次：{ key, v0, list, at, by, id（联机时这次甩货的编号 'h<页面载入时的随机串>:<序号>'，单机 null）, how,
 //                   dur 最后一件落地 / 停下的时刻, off 车锁了多久 = 最晚停下那一排的 Tr }）,
 //                   throwMs（最近一次算甩货用了多少毫秒）, throwBusy（撞车后锁着的车）, vehicles, … }
@@ -102,7 +102,7 @@ const T = {
   peer: '队友在开叉车',
   old: '对方版本较旧，联机时开不了车',
   starting: '发动中',
-  blocked: '两边都被挡住，开出来再下车',
+  blocked: '两边和后面都下不去，开出来再下车',
   lifted: '货叉还举着',
   retry: '没连上，再试一次',
   high: '货叉举得太高，够不着',
@@ -144,12 +144,19 @@ function headlight() {
   return { color: c && c.color != null ? c.color : HEADLIGHT.color, intensity: num(c && c.intensity, HEADLIGHT.intensity), range: num(c && c.range, HEADLIGHT.range), decay: HEADLIGHT.decay };
 }
 // 部件的建模顺序：链条放最后（它的顶点数随 lift 变，后面预留空位）。lightSwitch / lightToggle 是本文件自己画的大灯开关（见下）
-const PART_ORDER = ['body', 'mastOuter', 'wheelsFront', 'wheelRearL', 'wheelRearR', 'steeringWheel', 'liftLever', 'mastInner', 'carriage',
-  'lightSwitch', 'lightToggle', 'chains'];
-const MATS = ['kit:prop', 'kit:glow', 'kit:decal'];
+// 返修 FE1R · K5：前大灯镜面 / 警示灯罩 / 开关指示灯各两份 —— 'lampOff' / 'beaconOff' / 'indOff' 在 kit:prop（熄着的样子，和区块里停着的车逐个三角形一样），
+// 'lampOn' / 'beaconOn' / 'indOn' 在 kit:glow（发光）。用不上的那份由 mPart 叠成一点（lampVis）
+const PART_ORDER = ['body', 'lampOff', 'lampOn', 'beaconOff', 'beaconOn', 'mastOuter', 'wheelsFront', 'wheelRearL', 'wheelRearR', 'steeringWheel', 'liftLever', 'mastInner', 'carriage',
+  'lightSwitch', 'indOff', 'indOn', 'lightToggle', 'chains'];
+// 链条在自己的材质里（返修 FE1R · repair-r1：链板花纹在贴图里，L1.js fkChains / BR.L1forklift.chainMat）
+const CHAIN_MK = 'L1:fkChain';
+const MATS = ['kit:prop', 'kit:glow', 'kit:decal', CHAIN_MK];
 const PB = { body: 1, mastOuter: 2, wheelsFront: 4, wheelRearL: 8, wheelRearR: 16, steeringWheel: 32, liftLever: 64, mastInner: 128, carriage: 256, chains: 512, oil: 1024,
-  lightSwitch: 2048, lightToggle: 4096 };
-const ALL_PARTS = 8191;
+  lightSwitch: 2048, lightToggle: 4096, lampOff: 8192, lampOn: 16384, beaconOff: 32768, beaconOn: 65536, indOff: 131072, indOn: 262144 };
+const ALL_PARTS = 524287;
+const LAMP_PARTS = PB.lampOff | PB.lampOn | PB.beaconOff | PB.beaconOn | PB.indOff | PB.indOn;
+// 叠起来的那份叠到哪一点（车本地；零面积三角形不出像素）
+const LAMP_PIN = { lampOff: [0, 1.9, -0.69], lampOn: [0, 1.9, -0.69], beaconOff: [0, 2.13, 0.53], beaconOn: [0, 2.13, 0.53] };
 // ---- 仪表台大灯开关（FE1 返修 r2，家长定的规则）----
 // 载具网格里画（开过的车、保底车）；区块里停着的 high / mid / lite 档由 L1.js fkDashSwitch 画同一份（FE1P H3，主会话裁定：停着的车也有开关，
 // 拨杆扳在出厂的「开」、指示灯熄着，上车发动以后换成这里画的、指示灯跟大灯一起亮）。改这里的位置、大小、颜色必须同步 L1.js 的 FK_SW ——
@@ -164,7 +171,8 @@ const SW_PIVOT = slantPt(SW_X, SW_F, 0.008);
 // 准心命中盒（车本地，轴对齐）：底板 + 两个方向扳过去的拨杆都在里面
 const SW_BOX = { min: [SW_X - 0.05, 0.885, -0.655], max: [SW_X + 0.05, 1.0, -0.56] };
 const SW_PREFIX = 'fkhl:';    // 开关候选的 key：'fkhl:' + 车 key
-const SW_COL = { plate: [0.09, 0.09, 0.095], bat: [0.8, 0.82, 0.84], knob: [0.05, 0.05, 0.05], icon: [0.78, 0.78, 0.72], lamp: [0.3, 0.95, 0.35] };
+// lampOff：熄着的指示灯（kit:prop，吃光照）—— 和 L1.js FK_SW.lampOff 一样，区块里停着的车画的就是这一份（K5）
+const SW_COL = { plate: [0.09, 0.09, 0.095], bat: [0.8, 0.82, 0.84], knob: [0.05, 0.05, 0.05], lamp: [0.3, 0.95, 0.35], lampOff: [0.1, 0.3, 0.11] };
 // ---- 全速撞车掉货（家长定的规则）----
 // 撞上（「哐」）而且撞前车速 ≥2 m/s、往前开：货叉上的东西整排往前滑，最靠车那件落在叉尖前方 0.2–0.5 m（车速 2 → 0.2、3.9 及以上 → 0.5），写进本层状态；
 // 慢慢碰上（「咚」）不掉。倒车撞上不甩：东西往车这边冲，被挡货架挡住。联机以房主为准（见 throwRiders）
@@ -426,7 +434,7 @@ function newVeh(key) {
   const veh = {
     key: String(key), lv: k ? k.lv : S.lv, cx: k ? k.cx : 0, cz: k ? k.cz : 0, i: k ? k.i : 0,
     ck: k ? k.cx + ',' + k.cz : null, pkey: k ? k.cx + ',' + k.cz + '#v' + k.i : null,
-    n: 0, data: null, parkedTier: null, wearN: null, runtime: false,
+    n: 0, data: null, parkedTier: null, wearN: null, runtime: false, parkQ: null,
     driven: false, chunk: null, hiddenRes: null,
     pose: { x: 0, y: 0, z: 0, yaw: 0, steer: 0, lift: 0, spd: 0, lever: 0, on: 0, hl: 1 },   // hl：仪表台大灯开关（1 开 / 0 关，出厂开着）
     park: null,                 // 停放位姿（保底车的油渍钉在这里）
@@ -448,6 +456,7 @@ function adopt(veh, f, c, i) {
   veh.parkedTier = f.detail != null ? String(f.detail) : null;
   veh.wearN = f.wearN != null ? Math.max(0, f.wearN | 0) : null;
   veh.runtime = !!f.runtime;
+  veh.parkQ = quality();
   if (f.number != null) veh.n = f.number | 0;
   if (!veh.ck && c) { veh.cx = c.cx; veh.cz = c.cz; veh.ck = c.key; veh.i = i; veh.pkey = c.key + '#v' + i; }
   veh.park = { x: num(f.x, 0), y: num(f.y, 0), z: num(f.z, 0), yaw: num(f.rot, 0) };
@@ -543,9 +552,10 @@ function hideChunk(veh, c) {
   veh.hiddenRes = c.res;
   const sp = veh.data && veh.data.spans;
   if (!sp || veh.runtime) return;   // 保底车本来就不在区块几何里
-  const spans = { 'kit:prop': [], 'kit:decal': [] };
+  const spans = { 'kit:prop': [], 'kit:decal': [], [CHAIN_MK]: [] };
   const ok = r => Array.isArray(r) && r.length >= 2 && r[1] > r[0];
   if (ok(sp.prop)) spans['kit:prop'].push([sp.prop[0], sp.prop[1]]);
+  if (ok(sp.chain)) spans[CHAIN_MK].push([sp.chain[0], sp.chain[1]]);
   if (Array.isArray(sp.wear)) for (const r of sp.wear) if (ok(r)) spans['kit:decal'].push([r[0], r[1]]);
   const K = BR.kit;
   if (K && has(K, 'hideSpans')) {
@@ -709,12 +719,12 @@ function tierFor(veh) {
   if (F && has(F, 'driveTier')) {
     try { const t = F.driveTier(q, veh.parkedTier); if (t) return String(t); } catch (err) { /* 走兜底 */ }
   }
-  if (q === 'low') return 'drvLow';
   const t = veh.parkedTier;
-  return t === 'high' || t === 'mid' || t === 'lite' ? t : t ? 'lite' : 'mid';
+  if (q === 'low' || t === 'low') return 'drvLow';
+  return t === 'high' || t === 'mid' || t === 'lite' ? t : 'mid';
 }
 function lodOf(name) { const F = FL(), L = F && F.lod; return (L && L[name]) || null; }
-// 杆数按停放档（上车前后一样）；停放档是 lowb / min（0 根）的车上车后升到 lite，至少留一根升降杆（驾驶位右手边要看得见、会动）
+// 杆数按停放档（上车前后一样，返修 FE1R · K3：各停放档都至少 1 根）；至少留一根升降杆（驾驶位右手边要看得见、会动）
 function leversFor(veh) {
   const L = lodOf(veh.parkedTier || 'mid');
   return Math.max(1, L && L.levers != null ? L.levers | 0 : 2);
@@ -725,11 +735,56 @@ function wearFor(veh, tier) {
   const L = lodOf('mid');
   return Math.max(0, (L && L.decals != null ? L.decals | 0 : 6) - 1);   // 去掉 FK_WEAR[0] 那滩油
 }
-function modelInfo(veh) {
-  const tier = tierFor(veh);
-  return { tier, levers: leversFor(veh), number: veh.n || 0, wearN: wearFor(veh, tier), q: quality() };
+// ---- 停放档（返修 FE1R · M-return）----
+// 这台车在本机画质下的停放档 / 磨损片数 / 是不是运行时车。原区块建过（adopt）就照区块数据；没建过（离开这一层再回来原区块还没载入、
+// 队友从本机没载入过的地方把车开过来）先看 levelState 记录里本机画质那一份（writeLs 记的），没有就离线把原区块生成一遍（不放进场景）读出来 ——
+// 和以后原区块载入时 adopt 到的一模一样（生成是确定性的），所以不会先按 mid 画、等原区块载入再当着面换档
+const parkCache = new Map();   // '车 key|画质' → { t, w, rt } | null
+function setPark(veh, r, q) {
+  veh.parkedTier = r && r.t != null ? String(r.t) : null;
+  veh.wearN = r && r.w != null ? Math.max(0, r.w | 0) : null;
+  veh.runtime = !!(r && r.rt);
+  veh.parkQ = q;
 }
-function sigOf(info) { return info.tier + '|' + info.levers + '|' + info.number + '|' + info.wearN + '|' + info.q; }
+function offlinePark(veh, q) {
+  const k = parseKey(veh.key), ck = veh.key + '|' + q;
+  if (parkCache.has(ck)) return parkCache.get(ck);
+  const W = BR.world, lv = W && W.current;
+  if (!k || k.lv !== S.lv || !lv || !has(lv, 'buildChunk') || !THREE || !U || !has(U, 'rng') || editing()) return null;
+  let out = null, res = null;
+  try {
+    const seed = W.levelSeed;
+    res = lv.buildChunk({ THREE, BR, level: lv, levelSeed: seed, assets: BR.assets, game: BR.game, scene: null }, k.cx, k.cz, U.rng(seed, k.cx, k.cz));
+    const list = res && res.data && Array.isArray(res.data.forklifts) ? res.data.forklifts : [];
+    const f = list.find(x => x && String(x.key) === veh.key) || list[k.i] || null;
+    if (f) out = { t: f.detail != null ? String(f.detail) : null, w: f.wearN != null ? f.wearN | 0 : null, rt: f.runtime ? 1 : 0 };
+  } catch (err) { once('offpark', () => console.warn('[vehicles] 离线生成原区块出错（按 mid 画）', err)); }
+  finally {
+    try {
+      if (res && res.group) res.group.traverse(o => { const g = o.geometry; if (g && typeof g.dispose === 'function' && !(g.userData && g.userData.shared)) g.dispose(); });
+      if (res && has(res, 'dispose')) res.dispose();
+    } catch (err) { /* 忽略 */ }
+  }
+  parkCache.set(ck, out);
+  return out;
+}
+function resolvePark(veh) {
+  const q = quality();
+  if (veh.data || veh.parkQ === q) return;
+  const v = lsVeh(veh.key), r = v && v.park && typeof v.park === 'object' ? v.park[q] : null;
+  if (r && typeof r === 'object') { setPark(veh, r, q); return; }
+  const o = offlinePark(veh, q);
+  if (o) setPark(veh, o, q); else veh.parkQ = q;
+}
+function modelInfo(veh) {
+  resolvePark(veh);
+  const tier = tierFor(veh);
+  return { tier, levers: leversFor(veh), number: veh.n || 0, wearN: wearFor(veh, tier), q: quality(), vis: lampVis(veh) };
+}
+// vis（返修 FE1R · repair-r1，可动模型每台 ≤2000 面按缓冲区算）：灯的亮 / 灭（K5）不再是两份都放进缓冲区、用不上的那份叠成一点，
+// 而是按 lampVis 建对应的那一份模板（熄着的大灯镜面 / 警示灯罩 / 指示灯在 kit:prop、亮着的在 kit:glow，同一时刻一台车只有一份）；
+// 灯一换状态（着车 / 熄火、开关大灯）就按新模板重排一次共用网格（layout，次数很少）
+function sigOf(info) { return info.tier + '|' + info.levers + '|' + info.number + '|' + info.wearN + '|' + info.q + '|' + info.vis; }
 function callModel(b, info, part, lift) {
   BR.L1forklift.model(b, { part, drive: true, detail: info.tier, levers: info.levers, number: info.number, lift: lift || 0, steer: 0 });
 }
@@ -741,7 +796,7 @@ function chainCap(info) {
   for (let i = 0; i <= 20; i++) {
     const b = newBuilder();
     try { callModel(b, info, 'chains', i / 20); } catch (err) { break; }
-    const a = b._accs && b._accs.get('kit:prop');
+    const a = b._accs && b._accs.get(CHAIN_MK);
     if (a) { c.n = Math.max(c.n, a.n); c.ni = Math.max(c.ni, a.idx.length); }
   }
   chainCaps.set(k, c);
@@ -753,8 +808,9 @@ function buildTemplate(info) {
   const b = newBuilder();
   const marks = [];
   for (const part of PART_ORDER) {
+    if ((PB[part] & LAMP_PARTS) && lampHidden(part, info.vis | 0)) continue;   // K5：这一份模板只放现在用得上的那份灯
     const m0 = markOf(b);
-    try { if (part === 'lightSwitch' || part === 'lightToggle') buildSwitch(b, part); else callModel(b, info, part, 0); }
+    try { if (part === 'lightSwitch' || part === 'lightToggle' || part === 'indOff' || part === 'indOn') buildSwitch(b, part); else callModel(b, info, part, 0); }
     catch (err) { once('model:' + part, () => console.error('[vehicles] L1forklift.model 出错', part, err)); }
     marks.push([part, m0, markOf(b)]);
   }
@@ -780,7 +836,7 @@ function buildTemplate(info) {
       if (v1 > v0) parts.push({ name: part, v0, v1, i0, i1 });
     }
     // 链条段必须正好是这个累加器的最后一段（PART_ORDER 把它排在最后），后面才能接预留的空位
-    let chainPart = mk === 'kit:prop' ? parts.find(p => p.name === 'chains') : null;
+    let chainPart = mk === CHAIN_MK ? parts.find(p => p.name === 'chains') : null;
     if (chainPart && (chainPart.v1 !== a.n || chainPart.i1 !== a.idx.length)) {
       once('chaintail', () => console.warn('[vehicles] 链条不在 kit:prop 末尾，升降时链条不重建'));
       chainPart = null;
@@ -830,20 +886,21 @@ function boxTN(b, c, hx, ht, hn, col, noBottom, noTop) {
 function buildSwitch(b, part) {
   if (!has(b, 'quad')) return;
   const X = SW_AX, T3 = SW_T, N3 = SW_N;
+  // 指示灯：拨杆上方，绿色。'indOn' 在 kit:glow（跟大灯一起亮），'indOff' 在 kit:prop（熄着的暗绿，和停着的车一样，K5）
+  if (part === 'indOn' || part === 'indOff') {
+    quadC(b, part === 'indOn' ? 'kit:glow' : 'kit:prop', v3(slantPt(SW_X, SW_F, 0.009), T3, 0.031), sc(X, 0.009), sc(T3, 0.0065), part === 'indOn' ? SW_COL.lamp : SW_COL.lampOff);
+    return;
+  }
   if (part === 'lightSwitch') {
-    // 底板 7 × 9.2 cm、厚 8 mm（底面贴着仪表台斜面，不画）
-    boxTN(b, slantPt(SW_X, SW_F, 0.004), 0.035, 0.046, 0.004, SW_COL.plate, true);
-    // 指示灯：拨杆上方，绿色（kit:glow，跟大灯一起亮灭）
-    quadC(b, 'kit:glow', v3(slantPt(SW_X, SW_F, 0.0092), T3, 0.031), sc(X, 0.009), sc(T3, 0.0065), SW_COL.lamp);
-    // 小灯头图标：拨杆下方，一个方灯头 + 三道光（浅色，离底板 1.2 mm）
-    const ic = v3(slantPt(SW_X, SW_F, 0.0092), T3, -0.03);
-    quadC(b, 'kit:prop', v3(ic, X, -0.008), sc(X, 0.0065), sc(T3, 0.0075), SW_COL.icon);
-    for (const k of [-1, 0, 1]) quadC(b, 'kit:prop', v3(v3(ic, X, 0.008), T3, k * 0.0055), sc(X, 0.0055), sc(T3, 0.0012), SW_COL.icon);
+    // 底板 7 × 9.2 cm、顶面离斜面 8 mm（底面贴着仪表台斜面，不画）。返修 FE1R · repair-r1：顶面整块一个面、指示灯离顶面 1 mm
+    // （K12 S18：≤1 mm 且不共面；上一版在顶面开口拼 4 块，多 6 面）；小灯头图标去掉了。L1.js fkDashSwitch 同一份
+    boxTN(b, slantPt(SW_X, SW_F, 0.004), 0.035, 0.046, 0.004, SW_COL.plate, true, false);   // 返修 FE1R · repair-r1：顶面整块，指示灯离它 1 mm
     return;
   }
   // 拨杆：从底板中心沿法线伸出 3.2 cm 的方杆 + 黑色杆头（中位；开 = 往上扳，关 = 往下扳）
   const L = 0.032;
-  boxTN(b, v3(SW_PIVOT, N3, L / 2), 0.0045, 0.0045, L / 2, SW_COL.bat, true, true);   // 拨杆顶面插在杆头里看不见，不画（FE1Q · J10 腾面；L1.js fkDashSwitch 同一份）
+  // 拨杆从底板顶面下 4 mm 起（扳过去以后底端还埋在底板里，不留缝，返修 FE1R · K12）；顶面插在杆头里看不见，不画（L1.js fkDashSwitch 同一份）
+  boxTN(b, v3(SW_PIVOT, N3, L / 2 - 0.002), 0.0045, 0.0045, L / 2 + 0.002, SW_COL.bat, true, true);
   boxTN(b, v3(SW_PIVOT, N3, L), 0.007, 0.007, 0.006, SW_COL.knob, false);
 }
 
@@ -891,7 +948,7 @@ function entFor(veh) {
   const mats = {};
   for (const mk in tpl.mats) {
     const t = tpl.mats[mk];
-    if (mk === 'kit:prop' && t.chain) {
+    if (t.chain) {
       mats[mk] = Object.assign({}, t, { pos: t.pos.slice(), nor: t.nor.slice(), uv: t.uv.slice(), col: t.col.slice(), idx: t.idx.slice(), chain: Object.assign({}, t.chain) });
     } else mats[mk] = t;
   }
@@ -900,15 +957,15 @@ function entFor(veh) {
 
 // ---- 链条按 lift 重建 ----
 function rebuildChain(ent, lift) {
-  const d = ent.mats['kit:prop'];
+  const d = ent.mats[CHAIN_MK];
   const ch = d && d.chain;
   if (!ch) return false;
   const b = newBuilder();
   try { callModel(b, ent.info, 'chains', lift); } catch (err) { return false; }
-  const a = b._accs && b._accs.get('kit:prop');
+  const a = b._accs && b._accs.get(CHAIN_MK);
   if (!a) return false;
   if (a.n > ch.cap || a.idx.length > ch.icap) { once('chaincap', () => console.warn('[vehicles] 链条顶点超出预留', a.n, ch.cap)); return false; }
-  fillUVs(a, 'kit:prop');
+  fillUVs(a, CHAIN_MK);
   d.pos.set(a.pos, ch.v0 * 3); d.nor.set(a.nor, ch.v0 * 3); d.uv.set(a.uv, ch.v0 * 2); d.col.set(a.col, ch.v0 * 3);
   for (let i = 0; i < a.idx.length; i++) d.idx[ch.i0 + i] = ch.v0 + a.idx[i];
   ch.n = a.n; ch.ni = a.idx.length;
@@ -951,8 +1008,24 @@ function mWorld(M, p) {
   return M;
 }
 // 部件在车身坐标里的变换（lift = 0、steer = 0、不滚的那份 → 现在的样子）
+// 灯的两份里这会儿用哪一份（K5）：1 = 大灯镜面 + 开关指示灯亮（着车且开关开着），2 = 警示灯亮（着车）
+let lampForce = null;   // 测试口（_lampForce）：null = 照车的状态；0..3 = 所有车都按这个 lampVis 画（forklift.mjs K6 拿它比「灯罩藏掉 = 开洞」）
+function lampVis(veh) { if (lampForce != null) return lampForce; const p = veh.pose; return (p.on && p.hl !== 0 ? 1 : 0) | (p.on ? 2 : 0); }
+function lampHidden(name, vis) {
+  if (name === 'lampOff' || name === 'indOff') return !!(vis & 1);
+  if (name === 'lampOn' || name === 'indOn') return !(vis & 1);
+  if (name === 'beaconOff') return !!(vis & 2);
+  if (name === 'beaconOn') return !(vis & 2);
+  return false;
+}
 function mPart(M, veh, name) {
   const p = veh.pose;
+  if (PB[name] & LAMP_PARTS) {
+    if (!lampHidden(name, lampVis(veh))) return mIdent(M);
+    const q = LAMP_PIN[name] || SW_PIVOT;
+    M.fill(0); M[9] = q[0]; M[10] = q[1]; M[11] = q[2];
+    return M;
+  }
   if (name === 'mastInner' || name === 'carriage') {
     mIdent(M);
     M[10] = innerTravel() * clamp(p.lift, 0, 1) * (name === 'carriage' ? 2 : 1);
@@ -1062,7 +1135,7 @@ function writeFull(ent, mk) {
 }
 // 链条段重建后：uv、颜色、索引也要重写这一段
 function writeChain(ent) {
-  const d = ent.mats['kit:prop'], s = ent.slot['kit:prop'], g = SH.get('kit:prop');
+  const d = ent.mats[CHAIN_MK], s = ent.slot[CHAIN_MK], g = SH.get(CHAIN_MK);
   if (!d || !s || !g || !g.geo || !d.chain) return;
   const ch = d.chain, A = g.geo.attributes;
   A.uv.array.set(d.uv.subarray(ch.v0 * 2, (ch.v0 + ch.cap) * 2), (s.vb + ch.v0) * 2);
@@ -1072,13 +1145,13 @@ function writeChain(ent) {
   const I = g.geo.index.array;
   for (let i = 0; i < ch.icap; i++) I[s.ib + ch.i0 + i] = s.vb + d.idx[ch.i0 + i];
   markRange(g.geo.index, s.ib + ch.i0, ch.icap);
-  writeParts(ent, 'kit:prop', PB.chains);
+  writeParts(ent, CHAIN_MK, PB.chains);
 }
 function snapW(ent) {
   const p = ent.veh.pose;
   const w = ent.w || (ent.w = {});
   w.x = p.x; w.y = p.y; w.z = p.z; w.yaw = p.yaw; w.steer = p.steer; w.lift = p.lift; w.lever = p.lever; w.hl = p.hl === 0 ? 0 : 1;
-  w.rollF = ent.veh.rollF; w.rollR = ent.veh.rollR;
+  w.rollF = ent.veh.rollF; w.rollR = ent.veh.rollR; w.vis = lampVis(ent.veh);
 }
 // 哪些车要放进网格：本机坐着的、玩家（联机加队友）R+1 块以内的开过的车 / 保底车
 function nearChunk(x, z, R) {
@@ -1178,6 +1251,8 @@ function bounds() {
 // 每帧：动过的车只重写动过的部件
 function refreshMesh() {
   const ents = S.ents || [];
+  // K5（repair-r1）：灯换了状态 → 换模板（sig 里带 vis），整个重排
+  for (const e of ents) if (e.kind === 'veh' && e.info && (e.info.vis | 0) !== lampVis(e.veh)) { layout(); return; }
   let moved = false;
   for (const e of ents) {
     if (e.kind !== 'veh') continue;
@@ -1192,6 +1267,7 @@ function refreshMesh() {
       if (Math.abs(w.lift - p.lift) > EPS) mask |= PB.mastInner | PB.carriage | PB.chains;
       if (Math.abs(w.lever - p.lever) > EPS) mask |= PB.liftLever;
       if (w.hl !== (p.hl === 0 ? 0 : 1)) mask |= PB.lightToggle;
+      if (w.vis !== lampVis(veh)) mask |= LAMP_PARTS;
     }
     if (Math.abs(e.chainLift - p.lift) > EPS && rebuildChain(e, p.lift)) { writeChain(e); mask &= ~PB.chains; }
     if (mask) {
@@ -2354,7 +2430,9 @@ function typeShape(it) {
         x0 = Math.min(x0, V[i]); x1 = Math.max(x1, V[i]); y0 = Math.min(y0, V[i + 1]); y1 = Math.max(y1, V[i + 1]); z0 = Math.min(z0, V[i + 2]); z1 = Math.max(z1, V[i + 2]);
       }
       const P = [], vox = new Set();
-      const addP = (x, y, z) => { const k = Math.round(x * 333) + ',' + Math.round(y * 333) + ',' + Math.round(z * 333); if (!vox.has(k)) { vox.add(k); P.push(x, y, z); } };
+      // 查碰撞的点按 1 cm 一格去重（返修 FE1R · repair-r2，验收员 tests：K8-ui 把水瓶、汽水这些圆的东西段数从 8 加到 20 以后，甩货时每帧按点查的点
+      // 多了约 2.5 倍，T1 慢了 1.4 倍）：圆柱面上相邻两点最多隔 ~1.7 cm，两点之间的面鼓出去不到 1.5 mm，比查碰撞留的 THROW_PAD 6 mm 小得多
+      const addP = (x, y, z) => { const k = Math.round(x * 100) + ',' + Math.round(y * 100) + ',' + Math.round(z * 100); if (!vox.has(k)) { vox.add(k); P.push(x, y, z); } };
       const nb = Math.max(1, Math.ceil((y1 - y0) / SLICE_H - 1e-6)), bands = [];
       for (let k = 0; k < nb; k++) bands.push([]);
       // 一层 [y0 + k·H, y0 + (k + 1)·H] 收上下各多一层的点（截面在这一层里变化，取包住它的凸包）
@@ -2737,6 +2815,24 @@ function prepItem(T, id, r, it) {
   const Lc = linCar(e, num(pose.yaw, 0)), Li = inv3(Lc);
   if (!Li) return null;
   const ox = num(r.lx, 0), oz = num(r.lz, 0), oy = T.surf + num(r.dy, 0);
+  // 只跟「哪种东西、什么朝向」有关的那一大块（模型点换到车本地、包围盒、看得见的重心、支撑凸包、回转半径、侧面轮廓）：同一次甩货里同一种东西、
+  // 同一个朝向的（两根货叉摆满 20 瓶水，一排都一样摆）算一遍共用（返修 FE1R · repair-r3，验收员 play / tests / spec：T1 比 FE1Q 慢 1.4 倍 ——
+  // K8-ui 把水瓶段数加多以后每件的点、边、三角形多了约 2.5 倍）。结果和每件各算一遍逐位一样（同一份输入、同一套运算）
+  const memo = T.memoP || (T.memoP = new Map());
+  const mk = String(it.type) + '|' + Array.prototype.join.call(Lc, ',');   // 朝向逐位一样才共用
+  let Gm = memo.get(mk);
+  if (!Gm) { Gm = prepGeom(sh, Lc); memo.set(mk, Gm); }
+  const { Vc, Q, x0, x1, y0, z0, z1, cn, lift, H, g, cpts, k2, prof } = Gm;
+  const bot0 = oy + y0, cz0 = oz - cn, E = (z1 - z0) / 2;
+  const I = { id, it, r, sh, Lc, Li, ox, oy, oz, cn, lift, H, E, bot0, cz0, ry, sC: cz0 - T.tip, sA: cz0 + g[2] - T.tip, rear0: oz + z1, front0: oz + z0, g,
+    xa: ox + x0, xb: ox + x1, comX: ox + g[0], bx: [x0, x1], bzc: [z0 + cn, z1 + cn], Q, Vc, fr: footRaw(it), capMul: 1, EsT: null, Lt: null, cap: THROW_TILT_MAX, prof, cpts, k2, mk };
+  // 翻下去时最多歪多少：THROW_TILT_MAX；前端最多低下去 2E·sinθ，不碰棱下面的地
+  const gA = landGround(T, ox, T.tip - E), clear = bot0 - (gA == null ? T.py : gA) - 0.012;
+  I.cap0 = clamp(Math.asin(clamp(clear / (2 * Math.max(0.005, E)), 0, 1)), 0.02, THROW_TILT_MAX);
+  return I;
+}
+// prepItem 里只跟形状和朝向（Lc）有关的那一块（同一次甩货里按「种类 | 朝向」共用；数组只读）
+function prepGeom(sh, Lc) {
   const V = sh.V, nv = V.length / 3, Vc = new Float32Array(V.length);
   let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
   for (let i = 0; i < V.length; i += 3) {
@@ -2753,7 +2849,7 @@ function prepItem(T, id, r, it) {
     Q[i] = Lc[0] * x + Lc[1] * y + Lc[2] * z; Q[i + 1] = Lc[3] * x + Lc[4] * y + Lc[5] * z - y0; Q[i + 2] = Lc[6] * x + Lc[7] * y + Lc[8] * z + cn;
   }
   for (let i = 0; i < nv; i++) { Vc[3 * i + 1] -= y0; Vc[3 * i + 2] += cn; }
-  const bot0 = oy + y0, cz0 = oz - cn, E = (z1 - z0) / 2;
+  const E = (z1 - z0) / 2;
   // 看得见的重心（模型三角面按面积加权的质心，返修 r12 裁定 B / C）：相对 C 的 [x（相对原点）, 比底面高多少, 往车尾多远]
   const sc = sh.com, g = [Lc[0] * sc[0] + Lc[1] * sc[1] + Lc[2] * sc[2], Lc[3] * sc[0] + Lc[4] * sc[1] + Lc[5] * sc[2] - y0, Lc[6] * sc[0] + Lc[7] * sc[1] + Lc[8] * sc[2] + cn];
   // 支撑凸包（离底面 ≤2 mm 的顶点，相对 C 的 [x, z]）：落地、落在矮东西顶上时这些点底下都得是同一个面（放得稳）
@@ -2770,12 +2866,7 @@ function prepItem(T, id, r, it) {
     k2 += ar * (my * my + mz * mz); kA += ar;
   }
   k2 = kA > 0 ? k2 / kA : (H * H + 4 * E * E) / 12;
-  const I = { id, it, r, sh, Lc, Li, ox, oy, oz, cn, lift, H, E, bot0, cz0, ry, sC: cz0 - T.tip, sA: cz0 + g[2] - T.tip, rear0: oz + z1, front0: oz + z0, g,
-    xa: ox + x0, xb: ox + x1, comX: ox + g[0], bx: [x0, x1], bzc: [z0 + cn, z1 + cn], Q, Vc, fr: footRaw(it), capMul: 1, EsT: null, Lt: null, cap: THROW_TILT_MAX, prof: profHull(Vc), cpts: hullPts(cp), k2 };
-  // 翻下去时最多歪多少：THROW_TILT_MAX；前端最多低下去 2E·sinθ，不碰棱下面的地
-  const gA = landGround(T, ox, T.tip - E), clear = bot0 - (gA == null ? T.py : gA) - 0.012;
-  I.cap0 = clamp(Math.asin(clamp(clear / (2 * Math.max(0.005, E)), 0, 1)), 0.02, THROW_TILT_MAX);
-  return I;
+  return { Vc, Q, x0, x1, y0, z0, z1, cn, lift, H, g, cpts: hullPts(cp), k2, prof: profHull(Vc) };
 }
 // 托着它的那一截（只算横着落在 strips 里的部分 —— 这根 / 这两根货叉的叉面那一条，伸出去的下面是空的）随倾斜变化的表：
 // 比底面高的部分也算：底面贴着叉面那一截过了棱，它还在叉面上方的话，往下一掉就搁在棱上（针筒的推杆、推杆盘）。放上货叉时 orientOnTine 已经保证底面真的贴着叉面
@@ -2835,6 +2926,23 @@ function clipX(poly, x, keepGreater) {
   }
   return out;
 }
+// lowTable 处理三角形的顺序（最低点从低到高，同高按下标）：按形状 + 朝向 y 那一行（逐位一样）缓存（repair-r3，T1 计时）
+const lowOrdCache = new WeakMap();
+function lowOrder(sh, Lc, V, Tr) {
+  const key = Lc[3] + ',' + Lc[4] + ',' + Lc[5];
+  let m = lowOrdCache.get(sh);
+  if (!m) { m = new Map(); lowOrdCache.set(sh, m); }
+  let o = m.get(key);
+  if (o) return o;
+  const n = Tr.length / 3, ym = new Float64Array(n), a = new Array(n);
+  for (let t = 0; t < n; t++) { ym[t] = Math.min(V[3 * Tr[3 * t] + 1], V[3 * Tr[3 * t + 1] + 1], V[3 * Tr[3 * t + 2] + 1]); a[t] = t; }
+  a.sort((p, q) => ym[p] - ym[q] || p - q);
+  o = new Int32Array(n);
+  for (let t = 0; t < n; t++) o[t] = 3 * a[t];
+  if (m.size > 8) m.clear();
+  m.set(key, o);
+  return o;
+}
 function lowTable(I, strips) {
   const V = I.Vc, Tr = I.sh.T, ox = I.ox;
   I.Lt = null;
@@ -2842,11 +2950,24 @@ function lowTable(I, strips) {
   const z0 = I.bzc[0] - 0.002, z1 = I.bzc[1] + 0.002, nb = Math.max(2, Math.ceil((z1 - z0) / ENV_DZ) + 1);
   const env = new Float64Array(nb).fill(Infinity);
   const put = (z, y) => { const j = Math.round((z - z0) / ENV_DZ); if (j >= 0 && j < nb && y < env[j]) env[j] = y; };
+  // 三角形按最低点从低到高处理，轮廓已经比它整块还低的跳过（返修 FE1R · repair-r3，T1 计时：以前每个三角形都裁一遍、每条边按 1 mm 一格画进去，
+  // 水瓶段数加多以后这一步占了算一次甩货的三分之一）。跳过的三角形本来也一格都改不了（裁出来的点都在三角形上：y ≥ 它的最低点、z 在它的范围里），
+  // 表逐位一样
+  // 顺序只跟各顶点的高度有关（= 朝向矩阵的 y 那一行 · 模型点），立着放、只绕竖直轴转的东西（一排水瓶各转各的）共用一份，按形状缓存
+  const tord = lowOrder(I.sh, I.Lc, V, Tr);
   for (const [lo, hi] of strips) {
     const a0 = lo - ES_PAD - ox, b0 = hi + ES_PAD - ox;   // 和 esTable 同一条（外扩 2 mm）：表里没有点了 ⟺ 整件离开货叉
-    for (let t = 0; t < Tr.length; t += 3) {
+    for (let q = 0; q < tord.length; q++) {
+      const t = tord[q];
       const ia = 3 * Tr[t], ib = 3 * Tr[t + 1], ic = 3 * Tr[t + 2];
       if ((V[ia] < a0 && V[ib] < a0 && V[ic] < a0) || (V[ia] > b0 && V[ib] > b0 && V[ic] > b0)) continue;
+      {
+        const ym = Math.min(V[ia + 1], V[ib + 1], V[ic + 1]);
+        const ja = Math.max(0, Math.floor((Math.min(V[ia + 2], V[ib + 2], V[ic + 2]) - z0) / ENV_DZ)), jb = Math.min(nb - 1, Math.ceil((Math.max(V[ia + 2], V[ib + 2], V[ic + 2]) - z0) / ENV_DZ));
+        let low = false;
+        for (let j = ja; j <= jb; j++) if (env[j] > ym) { low = true; break; }
+        if (!low) continue;
+      }
       let poly = [[V[ia], V[ia + 1], V[ia + 2]], [V[ib], V[ib + 1], V[ib + 2]], [V[ic], V[ic + 1], V[ic + 2]]];
       poly = clipX(clipX(poly, a0, true), b0, false);
       for (let k = 0; k < poly.length; k++) {
@@ -2864,6 +2985,7 @@ function lowTable(I, strips) {
   for (let j = jg; j >= 0; j--) if (env[j] <= SUP_TOL) { js = j; break; }
   const zs = js < 0 || js === jg ? gz : z0 + js * ENV_DZ;
   I.sA = I.sC + zs;
+  I.zs = zs;   // 共用时照这个重算 sA（repair-r3 memoE，逐位一样）
   // 平底：从支撑点往车尾、一直到整件离开货叉时最后过叉尖的那一点，底都贴着底面（≤1.5 mm：瓶底、罐底外圈的小倒角也算平）——
   // 翻下叉尖时托着它的一直是这块底，按「底面所在的平面贴着棱」算就是真实的接触
   let aMax = -Infinity;
@@ -2878,11 +3000,19 @@ function lowTable(I, strips) {
   const np = pts.length / 2;
   if (np < 2) return;
   const A0 = zs - 0.004, na = Math.max(2, Math.ceil((aMax + 0.004 - A0) / LT_DA) + 1), tab = new Float32Array(ES_N * na), zc = new Float32Array(ES_N * na);
-  const Z = new Float64Array(np), Y = new Float64Array(np), ord = new Array(np), pm = new Float64Array(np);
+  const Z = new Float64Array(np), Y = new Float64Array(np), ord = new Int32Array(np), pm = new Float64Array(np);
+  for (let i = 0; i < np; i++) ord[i] = np - 1 - i;
   for (let k = 0; k < ES_N; k++) {
     const th = k * THROW_TILT_MAX / (ES_N - 1), c = Math.cos(th), sn = Math.sin(th);
-    for (let i = 0; i < np; i++) { const z = pts[2 * i], y = pts[2 * i + 1]; Z[i] = z * c - y * sn; Y[i] = y * c + z * sn; ord[i] = i; }
-    ord.sort((a, b) => Z[b] - Z[a]);   // 从车尾往前
+    for (let i = 0; i < np; i++) { const z = pts[2 * i], y = pts[2 * i + 1]; Z[i] = z * c - y * sn; Y[i] = y * c + z * sn; }
+    // 从车尾往前（Z 从大到小，一样大的按下标从小到大 —— 和以前从 0…np−1 稳定排序的结果逐位一样）。从上一档倾斜的顺序接着插入排序：
+    // 倾斜每档只差 1°，顺序几乎不变，差不多是线性的（repair-r3，T1 计时：以前每档都从头 sort 一遍）
+    for (let i = 1; i < np; i++) {
+      const v = ord[i];
+      let j = i - 1;
+      while (j >= 0 && (Z[ord[j]] < Z[v] || (Z[ord[j]] === Z[v] && ord[j] > v))) { ord[j + 1] = ord[j]; j--; }
+      ord[j + 1] = v;
+    }
     let m = Infinity, mz = 0;
     const pz = new Float64Array(np);
     for (let i = 0; i < np; i++) { if (Y[ord[i]] < m) { m = Y[ord[i]]; mz = Z[ord[i]]; } pm[i] = m; pz[i] = mz; }
@@ -3406,9 +3536,14 @@ function planThrow(veh, v0, pose) {
     const strips = [];
     for (let k = 0; k < 2; k++) if (R.own[k]) strips.push([tx[k] - half, tx[k] + half]);
     const Dfull = throwDfull(Math.max(...R.items.map(I => I.rear0)), T.tip, v0);
+    const memoE = T.memoE || (T.memoE = new Map());
     for (const I of R.items) {
-      esTable(I, strips);
-      lowTable(I, strips);
+      // 托着它的那一截（esTable）、侧面下轮廓（lowTable）只跟形状、朝向和叉面那一条相对它原点在哪有关：同一种东西、同一个朝向、在同一根货叉上同一个横向位置的
+      // 共用一份（repair-r3，T1 计时；表只读）
+      const ek = I.mk + '|' + strips.map(q => (q[0] - I.ox) + ':' + (q[1] - I.ox)).join(',');
+      const em = memoE.get(ek);
+      if (em) { I.EsT = em.EsT; I.Lt = em.Lt; if (em.zs != null) { I.zs = em.zs; I.sA = I.sC + em.zs; } }
+      else { esTable(I, strips); lowTable(I, strips); memoE.set(ek, { EsT: I.EsT, Lt: I.Lt, zs: I.zs }); }
       I.sS = stableSlide(T, I, strips);
       const f = freeAlong(T, I, I.bot0, I.cz0, Dfull + 0.05, true);
       I.freeA = f.d; I.hitA = f.hit;
@@ -3931,7 +4066,10 @@ function writeLs(veh, on) {
   const L = BR.levelState;
   if (!L || !has(L, 'set') || !S.lv) return;
   const p = veh.pose;
-  const v = { x: r4(p.x), z: r4(p.z), yaw: r4(p.yaw), steer: r4(p.steer), lift: r4(p.lift), on: on ? 1 : 0, carry: null, n: veh.n | 0, hl: p.hl === 0 ? 0 : 1 };
+  // 停放档 / 磨损片数 / 运行时车按画质分开记（返修 FE1R · M-return）：写记录的这一端只记自己画质那一份，别的画质那一份照旧留着
+  const prev = lsVeh(veh.key), park = Object.assign({}, prev && prev.park && typeof prev.park === 'object' ? prev.park : null), q = quality();
+  if (veh.data || veh.parkQ === q) park[q] = { t: veh.parkedTier || null, w: veh.wearN != null ? veh.wearN : null, rt: veh.runtime ? 1 : 0 };
+  const v = { x: r4(p.x), z: r4(p.z), yaw: r4(p.yaw), steer: r4(p.steer), lift: r4(p.lift), on: on ? 1 : 0, carry: null, n: veh.n | 0, hl: p.hl === 0 ? 0 : 1, park };
   try { L.set(S.lv, 'veh', veh.key, v); } catch (err) { console.error('[vehicles] levelState 写叉车出错', err); }
 }
 
@@ -4033,6 +4171,7 @@ function update(dt) {
 // ---------- 生命周期 ----------
 function resetAll() {
   if (S.seated) clearSeat();
+  parkCache.clear();
   S.falls.length = 0;
   V.forEach(veh => removeObbs(veh));
   V.clear();
@@ -4113,15 +4252,22 @@ function debugInfo() {
     meshes++;
     if (g.mesh.visible && g.ni > 0 && g.mesh.parent) { calls++; tris += g.ni / 3; }
   }
-  const per = {};
+  // perVehicle = 这台车画出来的面数：灯的两份（K5，lampOff / lampOn、beaconOff / beaconOn、indOff / indOn）里叠成一点的那份不算
+  // （零面积、不出像素；返修 FE1R-model 的口径，和 tests/forklift_l1.mjs drive「≤2000 面」一样）；perVehicleBuf = 缓冲区里的全部三角形（含叠起来的那份）
+  const per = {}, perBuf = {};
   for (const e of S.ents || []) {
-    let t = 0;
-    for (const mk in e.mats) { const d = e.mats[mk]; t += (d.chain ? d.ni - (d.chain.icap - d.chain.ni) : d.ni) / 3; }
-    if (e.kind === 'veh') { per[e.veh.key] = Math.round(t); live += t; } else live += t;
+    let t = 0, hid = 0;
+    const vis = e.kind === 'veh' ? lampVis(e.veh) : 0;
+    for (const mk in e.mats) {
+      const d = e.mats[mk];
+      t += (d.chain ? d.ni - (d.chain.icap - d.chain.ni) : d.ni) / 3;
+      if (e.kind === 'veh' && d.parts) for (const part of d.parts) if ((PB[part.name] & LAMP_PARTS) && lampHidden(part.name, vis)) hid += (part.i1 - part.i0) / 3;
+    }
+    if (e.kind === 'veh') { per[e.veh.key] = Math.round(t - hid); perBuf[e.veh.key] = Math.round(t); live += t - hid; } else live += t;
   }
   const D = S.drive;
   return {
-    level: S.lv, count: V.size, promoted, meshes, calls, tris: Math.round(live), slotTris: Math.round(tris), perVehicle: per, tiers, lease, riders, obbs,
+    level: S.lv, count: V.size, promoted, meshes, calls, tris: Math.round(live), slotTris: Math.round(tris), perVehicle: per, perVehicleBuf: perBuf, tiers, lease, riders, obbs,
     seated: S.seated, phase: D ? D.phase : null, exiting: !!(D && D.exit), pendingGrab: S.pendingGrab ? S.pendingGrab.key : null,
     light: S.lightOwner, loops: { engine: !!S.loops.engine, hyd: !!S.loops.hyd, rev: !!S.loops.rev },
     capacity: Array.from(SH.values()).map(g => ({ mat: g.mk, cap: g.cap, icap: g.icap, nv: g.nv, ni: g.ni })),
@@ -4163,10 +4309,11 @@ function _step(dt, inp, key) {
 
 // 测试口（只读，FE1P H3）：载具层画的仪表台大灯开关，拨杆按 hl（缺省 1 = 开）转好，车本地坐标的三角形
 // [[x0, y0, z0, x1, y1, z1, x2, y2, z2, 材质, r, g, b], …]（和 L1.js dashSwitch 比对：几何逐个一样，只有指示灯在 kit:glow、颜色是亮着的绿）
-function _switchGeo(hl) {
+// lit 为真时指示灯取亮着的那份（kit:glow），缺省取熄着的那份（kit:prop，K5：和停着的车逐个三角形一样）
+function _switchGeo(hl, lit) {
   if (!BR.kit || !has(BR.kit, 'builder')) return null;
   const out = [], M = mRot(new Float64Array(12), 1, 0, 0, hl === 0 ? SW_ANG : -SW_ANG, SW_PIVOT[0], SW_PIVOT[1], SW_PIVOT[2]);
-  for (const part of ['lightSwitch', 'lightToggle']) {
+  for (const part of ['lightSwitch', lit ? 'indOn' : 'indOff', 'lightToggle']) {
     const b = newBuilder();
     buildSwitch(b, part);
     b._accs.forEach((a, mk) => {
@@ -4212,6 +4359,7 @@ BR.vehicles = {
   footOf: it => footRaw(it),   // 物资模型离它竖直转轴最远的水平距离（按类型量一次；forklift.js 在车旁找空地时用）
   footPoly,                    // 物资在地上的水平外形（世界坐标凸包）和竖直范围（forklift.js 推地上物资按它，返修 r10）
   update, applyChunk, unloadChunk, clear, debugInfo, _step, _switchGeo,
+  _lampForce: v => { lampForce = v == null ? null : v | 0; refreshMesh(); },   // 测试口：见 lampForce
   lightSwitch, toggleLight,
   headlightLit: seatLit,   // 本机坐着的车大灯正亮着（L1 断电提示用）
   get seated() { return S.seated; },

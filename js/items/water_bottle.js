@@ -12,7 +12,8 @@ const BR = window.BR;
 const K = BR.itemKit;
 if (!K) { console.error('[items] water_bottle 需要先加载 js/items/_kit.js'); return; }
 
-const SEG = 8;
+// 段数（FE1R K8）：瓶身、水 20 段，瓶盖 16 段（以前全是 8 段，近看是八棱瓶；0.6 m 平视弦高 0.3 px）
+const SEG = 20, CAP_SEG = 16;
 // 带加强筋的瓶身：每隔一段收进去一圈
 const SHELL = [[0, 0.003], [0.024, 0], [0.031, 0.008], [0.031, 0.03], [0.028, 0.036], [0.031, 0.042], [0.031, 0.07],
   [0.028, 0.076], [0.031, 0.082], [0.031, 0.11], [0.028, 0.116], [0.031, 0.122], [0.031, 0.14], [0.022, 0.165],
@@ -62,8 +63,8 @@ BR.itemTypes.register({
       name: 'water_bottle', scale: 1.25,
       solid: [
         K.paint(K.cyl(0.027, 0.027, 0.139, SEG, 0.006), 0xc6deee),
-        K.paint(K.cyl(0.0128, 0.0128, 0.016, SEG, 0.188), 0x6fb3e8),
-        K.paint(K.cyl(0.0138, 0.0138, 0.003, SEG, 0.184, true), 0x6fb3e8),
+        K.paint(K.cyl(0.0128, 0.0128, 0.016, CAP_SEG, 0.188), 0x6fb3e8),
+        K.paint(K.cyl(0.0138, 0.0138, 0.003, CAP_SEG, 0.184, true), 0x6fb3e8),
       ],
       glass: [[K.lathe(SHELL, SEG), 0xe3eef6, 0.32]],
     });

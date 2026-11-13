@@ -18,7 +18,8 @@ const BR = window.BR;
 
 // 与 _kit.js 同一换算：设定里 1 小时 → 游戏 60 秒
 const LORE_HOUR = 60;
-const SEG = 12;
+// 段数（FE1R K8）：瓶身、水、标签 20 段，瓶盖和防盗环 16 段（以前 12 / 10 段；0.6 m 平视弦高 ≤0.5 px）
+const SEG = 20, CAP_SEG = 16;
 const SCALE = 1.2;             // 比真实 500ml 瓶大一点，放在地上远处也认得出
 
 // 瓶身轮廓 [半径, 高度]（米），原点在瓶底中心
@@ -179,13 +180,13 @@ function makeBottle(THREE, opts) {
     .translate(0, (LIQ_Y0 + LIQ_Y1) / 2, 0), o.liquid != null ? o.liquid : LIQUID);
   if (o.dent) dent(liquid, 0.24);
   inner.push(liquid);
-  const cap = new THREE.CylinderGeometry(CAP_R, CAP_R, CAP_H, 10, 1, false);
+  const cap = new THREE.CylinderGeometry(CAP_R, CAP_R, CAP_H, CAP_SEG, 1, false);
   if (o.brokenSeal) {
     // 瓶封破了：防盗环没了，盖子歪着没拧到底
     cap.rotateZ(0.45).translate(0.005, CAP_Y + CAP_H / 2 + 0.005, 0);
   } else {
     cap.translate(0, CAP_Y + CAP_H / 2, 0);
-    inner.push(paint(THREE, new THREE.CylinderGeometry(0.0163, 0.0163, 0.004, 10, 1, true).translate(0, 0.207, 0), th.cap));
+    inner.push(paint(THREE, new THREE.CylinderGeometry(0.0163, 0.0163, 0.004, CAP_SEG, 1, true).translate(0, 0.207, 0), th.cap));
   }
   inner.push(paint(THREE, cap, th.cap));
   if (o.mold) {

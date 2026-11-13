@@ -13,7 +13,7 @@ const BR = window.BR;
 const K = BR.itemKit;
 if (!K) { console.error('[items] canned_tuna 需要先加载 js/items/_kit.js'); return; }
 
-const R = 0.042, H = 0.04, SEG = 16;
+const R = 0.042, H = 0.04, SEG = 20;   // FE1R K8：以前 16 段，0.6 m 弦高 1 px
 const TIN = 0xc5c9ce, TIN_DARK = 0x8f949a, TUNA = 0xd9b99a;
 // "带出本层后可能很快腐烂（约 1/100 概率）"
 const ROT_CHANCE = 0.01;

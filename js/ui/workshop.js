@@ -1247,7 +1247,11 @@ function refreshOpenPanel() {
 }
 
 function isDevEntityType(type) { return type === 'test_dummy' || String(type).charAt(0) === '_'; }
-function levelLabelFor(lv) { return (lv.name ? lv.name : 'Level ' + lv.id) + (lv.title ? ' · ' + lv.title : ''); }
+function levelLabelFor(lv) {
+  // FE1R UI-5：已注册的层统一用 hud 的中文显示名（「Level 2 · 管道之梦」），和大标题、左上角信息块同一份
+  if (lv && BR.levels && BR.levels.has && BR.levels.has(String(lv.id)) && BR.hud && typeof BR.hud.levelLabel === 'function') return BR.hud.levelLabel(lv.id);
+  return (lv.name ? lv.name : 'Level ' + lv.id) + (lv.title ? ' · ' + lv.title : '');
+}
 // 隐藏层（def.hidden，例如联机营地 coopcamp）不列：它不是玩家能去的层，实体面板里也不该冒出一组「联机营地」
 function sortedLevelDefs() {
   const order = BR.LEVEL_ORDER || [];

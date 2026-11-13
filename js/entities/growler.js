@@ -70,6 +70,9 @@ A.register({
     lurkDark: true, darkThreshold: A.LIGHT.dim,   // 依据：偏好黑暗区域做巢
     lure: { sound: 'static', range: 12, cooldown: 8, chance: 0.6 },  // 依据：诱导声"通常伴有白噪音"
   }),
+  // 打坐在叉车上的人（返修 FE1R · repair-r1：以前够不到坐车的人，叉车成了安全屋）：扑起来、身子最前面那一点贴到司机近侧肩膀外侧（_archetypes.js seatLeap），
+  // 扑的时候两条前腿往后收。攻击距离、扣血、出手时机不变
+  seatStrike: { kind: 'leap', reach: 1.6, tuck: { legFL: [-2.2, 0, 0], legFR: [-2.2, 0, 0] } },   // 前腿整条往后折到肚子底下（返修 FE1R · repair-r2：趴上发动机盖时前腿不伸进座椅、司机身上）
   anim: {
     gait: 'quad',
     twitch: 0.08,   // 非设定：选中版本没写这个细节，纯粹为了在画面上多一点"电线颤动"的识别度，注明非依据描述

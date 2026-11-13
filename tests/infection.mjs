@@ -7,6 +7,10 @@
 // 攻击距离 + 0.15 m 就算没打中；坐在叉车上的人攻击距离量到司机身体（座椅上的人），扣血那一帧怪的手离司机身体包围盒 ≤ 0.15 m，
 // 车外 1 m 的怪打不到司机，游玩模式坐在车上照样不挨打。返修 r1：抡的这一下里怪接着往前扑（h2b），人一直往前走甩不掉悲尸（h6）。
 // FE1Q J1：笑魇也同一个出手时刻（h7：60 fps 推 8 s，每次扣血那一帧脸正好鼓到最大，±1 帧）。
+// FE1R K6（k 段）：怪打坐在叉车上的人 —— 所有会近战的怪 × 车的前 / 左 / 后 / 右 × 高 / 低画质 × 噩梦，逐帧（1/30 s）顶点级：
+//   走近、抬手、抡、收手的整个过程，怪的任何顶点压进叉车实心部件（14 个部件盒 + 斜立柱、靠背棱柱 + 坐垫、减震底座）≤1 cm，脚（离地 0.25 m 以下）
+//   不进底盘碰撞盒；所有会近战的怪（返修 FE1R · repair-r1：车的 8 个方向；胳膊、整张脸、整只扑上去、伸一条肢体，BR.arch.seatReach 都给得出）
+//   10 s 内出手，扣血那一帧手（脸 / 嘴 / 肢体梢）离司机身体（coop.seatBody 同一套坐姿人形的三角形）≤2 cm、插进去 ≤1 cm（叉车不是安全屋）。
 // 任一检查失败或页面出现 console.error / 未捕获异常时退出码为 1。
 import http from 'node:http';
 import fs from 'node:fs';
@@ -20,6 +24,14 @@ const { chromium } = require('/Users/xuanjiang/Downloads/project/ESP-S3/rocket-l
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SEED = 20260914;
 const KEY = 'wretch_cycle';
+// 调试用（返修 FE1R · repair-r1）：--only k 只跑坐车那一段；--types a,b 只跑这几种怪；--dirs …；--q high|low
+const argOf = n => { const i = process.argv.indexOf('--' + n); return i > 0 ? process.argv[i + 1] : null; };
+const ONLY = argOf('only') ? new Set(argOf('only').split(',')) : null;
+const K_TYPES = argOf('types') ? argOf('types').split(',') : null;
+const K_DIRS_ARG = argOf('dirs') ? argOf('dirs').split(',') : null;
+const K_QS = argOf('q') ? [argOf('q')] : ['high', 'low'];
+// 有链的怪额外强制的摆动相位（返修 FE1R · repair-r2）：--phases 1.9,4.4（缺省这两个，加上按实体 id 定的那个一共 3 个）
+const K_PHASES = argOf('phases') ? argOf('phases').split(',').map(Number) : [1.9, 4.4];
 
 // ---------- 静态服务 ----------
 const MIME = {
@@ -162,6 +174,12 @@ async function main() {
   });
   let hostRows = null;
   try {
+    if (ONLY && !ONLY.has('base') && !ONLY.has('nightmare') && !ONLY.has('strike')) {
+      // 只跑 k 段（返修 FE1R · repair-r1：调没有胳膊的怪打坐车的人时用）
+      const C = await newPage(browser, base, 'strike');
+      for (const q of K_QS) await seatedMelee(C.page, q);
+      await C.ctx.close();
+    } else {
     const A = await newPage(browser, base, 'test');
     hostRows = await testMode(A.page);
     await naturalFlow(A.page);
@@ -183,7 +201,10 @@ async function main() {
 
     const C = await newPage(browser, base, 'strike');
     await strike(C.page);
+    // k：坐车顶点级（FE1R K6），同一个页面先高后低画质（各重新开一局）
+    for (const q of K_QS) await seatedMelee(C.page, q);
     await C.ctx.close();
+    }
   } catch (err) {
     check('测试流程未中断', false, String(err && err.stack || err));
   }
@@ -1054,6 +1075,328 @@ async function strike(page) {
 // =====================================================================
 // 快照：客机侧（新房主 → 新客机、旧房主 → 新客机、新房主 → 旧客机）；客机回单机
 // =====================================================================
+// =====================================================================
+// k：怪打坐在叉车上的人（FE1R K6），顶点级
+// =====================================================================
+function k6Helpers() {
+  const K = window.__k6 = {};
+  K.toL = (p, x, y, z) => { const c = Math.cos(p.yaw), s = Math.sin(p.yaw), dx = x - p.x, dz = z - p.z; return [c * dx - s * dz, y - (p.y || 0), s * dx + c * dz]; };
+  K.W = (p, lx, lz) => { const c = Math.cos(p.yaw), s = Math.sin(p.yaw); return { x: p.x + c * lx + s * lz, z: p.z - s * lx + c * lz }; };
+  const vis = o => { for (let q = o; q; q = q.parent) if (!q.visible) return false; return true; };
+  // 实体此刻的全部顶点（蒙皮按 CPU 算，世界坐标）；加法混合的光晕、精灵不算
+  K.verts = root => {
+    const out = [], bones = [], v = new THREE.Vector3(), acc = new THREE.Vector3(), tmp = new THREE.Vector3();
+    root.updateMatrixWorld(true);
+    const comp = (a, i, j) => (j === 0 ? a.getX(i) : j === 1 ? a.getY(i) : j === 2 ? a.getZ(i) : a.getW(i));
+    root.traverse(o => {
+      if (!o.isMesh || o.isInstancedMesh || !o.geometry || !o.geometry.attributes.position || !vis(o)) return;
+      const m = Array.isArray(o.material) ? o.material[0] : o.material;
+      if (m && m.transparent && m.blending === THREE.AdditiveBlending) return;
+      const pos = o.geometry.attributes.position, si = o.geometry.attributes.skinIndex, sw = o.geometry.attributes.skinWeight;
+      const sk = o.isSkinnedMesh && o.skeleton && si && sw ? o.skeleton : null;
+      const mats = sk ? sk.bones.map((b, q) => new THREE.Matrix4().multiplyMatrices(b.matrixWorld, sk.boneInverses[q])) : null;
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i);
+        let bn = '';
+        if (sk) {
+          v.applyMatrix4(o.bindMatrix); acc.set(0, 0, 0); let bw = -1;
+          for (let j = 0; j < 4; j++) { const w = comp(sw, i, j); if (!(w > 0)) continue; const bi = comp(si, i, j); acc.add(tmp.copy(v).applyMatrix4(mats[bi]).multiplyScalar(w)); if (w > bw) { bw = w; bn = sk.bones[bi].name; } }
+          v.copy(acc).applyMatrix4(o.bindMatrixInverse);
+        }
+        v.applyMatrix4(o.matrixWorld);
+        out.push(v.x, v.y, v.z); bones.push(bn);
+      }
+    });
+    return { out, bones };
+  };
+  // 叉车实心部件（车本地）：14 个部件盒（随升降）+ 斜立柱、靠背按真实棱柱 + 坐垫、减震底座
+  const PR = [['postFL*', -0.455, -0.405, [[-0.75, 0.99], [-0.69, 0.99], [-0.52, 2.07], [-0.58, 2.07]]], ['postFR*', 0.405, 0.455, [[-0.75, 0.99], [-0.69, 0.99], [-0.52, 2.07], [-0.58, 2.07]]],
+    ['postRL*', -0.455, -0.405, [[0.59, 1.08], [0.65, 1.08], [0.56, 2.07], [0.5, 2.07]]], ['postRR*', 0.405, 0.455, [[0.59, 1.08], [0.65, 1.08], [0.56, 2.07], [0.5, 2.07]]],
+    ['backrest', -0.25, 0.25, [[0.4, 1.13], [0.5, 1.13], [0.54, 1.63], [0.44, 1.63]]]];
+  // 坐垫：FE1R 起各档没有减震底座，坐垫一整块 y 0.998–1.16（S13）；靠背 K9 加宽到 ±0.25（L1.js forkliftModel）
+  const BX = [['cushion', -0.25, 0.25, 0.998, 1.16, 0.02, 0.46]];
+  K.parts = lift => {
+    const ob = BR.L1forklift.geo.obbs(lift || 0).map(o => ({ name: o.name, kind: 'box', x0: o.cx - o.hx, x1: o.cx + o.hx, y0: o.cy - o.hy, y1: o.cy + o.hy, z0: o.cz - o.hz, z1: o.cz + o.hz }));
+    for (const b of BX) ob.push({ name: b[0], kind: 'box', x0: b[1], x1: b[2], y0: b[3], y1: b[4], z0: b[5], z1: b[6] });
+    for (const p of PR) ob.push({ name: p[0], kind: 'prism', x0: p[1], x1: p[2], poly: p[3] });
+    return ob;
+  };
+  const inPoly = (P, z, y) => { let c = false; for (let i = 0, j = P.length - 1; i < P.length; j = i++) { const a = P[i], b = P[j]; if ((a[1] > y) !== (b[1] > y) && z < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]) c = !c; } return c; };
+  const segD = (a, b, z, y) => { const dz = b[0] - a[0], dy = b[1] - a[1], L = dz * dz + dy * dy; let t = L > 0 ? ((z - a[0]) * dz + (y - a[1]) * dy) / L : 0; t = Math.max(0, Math.min(1, t)); return Math.hypot(z - a[0] - t * dz, y - a[1] - t * dy); };
+  K.depth = (P, x, y, z) => {
+    if (P.kind === 'box') { const d = Math.min(x - P.x0, P.x1 - x, y - P.y0, P.y1 - y, z - P.z0, P.z1 - z); return d > 0 ? d : 0; }
+    const dx = Math.min(x - P.x0, P.x1 - x);
+    if (dx <= 0 || !inPoly(P.poly, z, y)) return 0;
+    let m = Infinity; for (let i = 0; i < P.poly.length; i++) m = Math.min(m, segD(P.poly[i], P.poly[(i + 1) % P.poly.length], z, y));
+    return Math.min(dx, m);
+  };
+  const cp = (px, py, pz, ax, ay, az, bx, by, bz, cx, cy, cz, o) => {
+    const abx = bx - ax, aby = by - ay, abz = bz - az, acx = cx - ax, acy = cy - ay, acz = cz - az, apx = px - ax, apy = py - ay, apz = pz - az;
+    const d1 = abx * apx + aby * apy + abz * apz, d2 = acx * apx + acy * apy + acz * apz;
+    if (d1 <= 0 && d2 <= 0) { o[0] = ax; o[1] = ay; o[2] = az; return; }
+    const bpx = px - bx, bpy = py - by, bpz = pz - bz, d3 = abx * bpx + aby * bpy + abz * bpz, d4 = acx * bpx + acy * bpy + acz * bpz;
+    if (d3 >= 0 && d4 <= d3) { o[0] = bx; o[1] = by; o[2] = bz; return; }
+    const vc = d1 * d4 - d3 * d2;
+    if (vc <= 0 && d1 >= 0 && d3 <= 0) { const v = d1 / (d1 - d3); o[0] = ax + v * abx; o[1] = ay + v * aby; o[2] = az + v * abz; return; }
+    const cpx = px - cx, cpy = py - cy, cpz = pz - cz, d5 = abx * cpx + aby * cpy + abz * cpz, d6 = acx * cpx + acy * cpy + acz * cpz;
+    if (d6 >= 0 && d5 <= d6) { o[0] = cx; o[1] = cy; o[2] = cz; return; }
+    const vb = d5 * d2 - d1 * d6;
+    if (vb <= 0 && d2 >= 0 && d6 <= 0) { const w = d2 / (d2 - d6); o[0] = ax + w * acx; o[1] = ay + w * acy; o[2] = az + w * acz; return; }
+    const va = d3 * d6 - d5 * d4;
+    if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) { const w = (d4 - d3) / ((d4 - d3) + (d5 - d6)); o[0] = bx + w * (cx - bx); o[1] = by + w * (cy - by); o[2] = bz + w * (cz - bz); return; }
+    const den = 1 / (va + vb + vc), v = vb * den, w = vc * den;
+    o[0] = ax + abx * v + acx * w; o[1] = ay + aby * v + acy * w; o[2] = az + abz * v + acz * w;
+  };
+  // 怪的顶点（车本地）离坐着的人（三角形）最近多远、插进去最深多深：按最近三角形的法线判里外，但只认最近点落在三角形面里的
+  // （最近点在棱上 / 角上时面法线判不准 —— 坐着的人身上的反光条、臂章是薄薄的一圈 / 一块，外面 5 cm 的点会被判成「在里面」）
+  K.vsDriver = (L, D, bones) => {
+    const V = D.V, I = D.I, bx = D.box, o = [0, 0, 0], gapBy = {};
+    let gap = Infinity, inD = 0, inI = -1, inT = -1, inP = null;
+    for (let i = 0; i < L.length; i += 3) {
+      const x = L[i], y = L[i + 1], z = L[i + 2];
+      if (x < bx.min[0] - 0.05 || x > bx.max[0] + 0.05 || y < bx.min[1] - 0.05 || y > bx.max[1] + 0.05 || z < bx.min[2] - 0.05 || z > bx.max[2] + 0.05) continue;
+      let dm = Infinity, sg = 0, face = false, tm = -1;
+      for (let t = 0; t < I.length; t += 3) {
+        const a = I[t] * 3, b = I[t + 1] * 3, c = I[t + 2] * 3;
+        cp(x, y, z, V[a], V[a + 1], V[a + 2], V[b], V[b + 1], V[b + 2], V[c], V[c + 1], V[c + 2], o);
+        const d = (o[0] - x) ** 2 + (o[1] - y) ** 2 + (o[2] - z) ** 2;
+        if (d < dm) {
+          dm = d; tm = t;
+          const ux = V[b] - V[a], uy = V[b + 1] - V[a + 1], uz = V[b + 2] - V[a + 2], wx = V[c] - V[a], wy = V[c + 1] - V[a + 1], wz = V[c + 2] - V[a + 2];
+          const nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
+          sg = (x - o[0]) * nx + (y - o[1]) * ny + (z - o[2]) * nz;
+          // 最近点的重心坐标：三个都 > 0 才是落在面里
+          const px = o[0] - V[a], py = o[1] - V[a + 1], pz = o[2] - V[a + 2];
+          const d00 = ux * ux + uy * uy + uz * uz, d01 = ux * wx + uy * wy + uz * wz, d11 = wx * wx + wy * wy + wz * wz, d20 = px * ux + py * uy + pz * uz, d21 = px * wx + py * wy + pz * wz;
+          const den = d00 * d11 - d01 * d01, bv = den ? (d11 * d20 - d01 * d21) / den : 0, bw = den ? (d00 * d21 - d01 * d20) / den : 0;
+          face = bv > 1e-4 && bw > 1e-4 && 1 - bv - bw > 1e-4;
+        }
+      }
+      const d = Math.sqrt(dm);
+      gap = Math.min(gap, d);
+      if (bones) { const bn = bones[i / 3]; if (/^fore/.test(bn) && !(gapBy[bn] <= d)) gapBy[bn] = +d.toFixed(4); }
+      if (sg < 0 && face && d > inD) { inD = d; inI = i / 3; inT = tm; inP = [x, y, z].map(v => +v.toFixed(3)); }
+    }
+    // inT：插得最深的那个顶点离得最近的司机三角形（调用方换成司机身上的骨骼名，失败时好定位）
+    return { gap: Number.isFinite(gap) ? +gap.toFixed(4) : null, inD: +inD.toFixed(4), inI, inT, inP, gapBy };
+  };
+  // 站不站得稳（返修 FE1R · repair-r3）：L = 怪的顶点（车本地，打平）；着力点 = 离地 ≤2 cm 的顶点、部件盒顶面上方 0–1 cm 落在它脚印里的顶点、
+  // 部件盒侧面外 ≤1 cm（落在它竖直范围里）的顶点；返回顶点重心（x, z）在着力点凸包里往里多少 m（凸包外为负，围不成一块为 −9）
+  K.balance = (L, parts) => {
+    const S = [];
+    let mx = 0, mz = 0, n = 0;
+    for (let j = 0; j < L.length; j += 3) {
+      const x = L[j], y = L[j + 1], z = L[j + 2];
+      mx += x; mz += z; n++;
+      if (y <= 0.02) { S.push([x, z]); continue; }
+      for (const B of parts) {
+        if (B.kind !== 'box') continue;
+        if (B.y1 > 0.3 && x >= B.x0 && x <= B.x1 && z >= B.z0 && z <= B.z1 && y >= B.y1 - 0.004 && y <= B.y1 + 0.01) { S.push([x, z]); break; }
+        if (y < B.y0 || y > B.y1) continue;
+        const ox = x > B.x1 ? x - B.x1 : x < B.x0 ? B.x0 - x : 0, oz = z > B.z1 ? z - B.z1 : z < B.z0 ? B.z0 - z : 0;
+        if ((ox > 0 || oz > 0) && ox <= 0.01 && oz <= 0.01) { S.push([x, z]); break; }
+      }
+    }
+    if (!n || S.length < 3) return -9;
+    mx /= n; mz /= n;
+    S.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const lo = [], hi = [];
+    for (const q of S) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q); }
+    for (let q = S.length - 1; q >= 0; q--) { const a = S[q]; while (hi.length >= 2 && cr(hi[hi.length - 2], hi[hi.length - 1], a) <= 0) hi.pop(); hi.push(a); }
+    const H = lo.slice(0, -1).concat(hi.slice(0, -1));
+    if (H.length < 3) return -9;
+    let m = Infinity;
+    for (let q = 0; q < H.length; q++) { const a = H[q], b = H[(q + 1) % H.length], Ln = Math.hypot(b[0] - a[0], b[1] - a[1]); if (Ln > 1e-9) m = Math.min(m, cr(a, b, [mx, mz]) / Ln); }
+    return +m.toFixed(4);
+  };
+  // 一趟：type 从车本地 dir 方向 3.6 m 处出来，逐帧推 1/30 s，最多 maxF 帧；扣血两次后再推 1 s（收手）
+  K.run = (key, type, dir, maxF, phase) => {
+    const P = BR.player, veh = BR.vehicles.byKey(key);
+    BR.entities.clear(); if (BR.effects.clear) BR.effects.clear();
+    P.hp = 100; P.sanity = 100; P.hunger = 100;
+    let restore = null;
+    if (type === 'smiler') { if (veh.pose.hl !== 0) BR.vehicles.toggleLight(); const o = BR.world.lightAt; BR.world.lightAt = () => 0.05; restore = () => { BR.world.lightAt = o; if (veh.pose.hl === 0) BR.vehicles.toggleLight(); }; }
+    const def = BR.entityTypes.get(type), r = +def.radius || 0.4, h = +def.height || 1.8;
+    const q2 = Math.SQRT1_2, D = { front: [0, -1], frontLeft: [-q2, -q2], left: [-1, 0], backLeft: [-q2, q2], back: [0, 1], backRight: [q2, q2], right: [1, 0], frontRight: [q2, -q2] }[dir];
+    let at = null;
+    // 伏击型（返修 FE1R · repair-r1）：啼物 3 m 内才扑（triggerRange 3），放在 2.5 m 左右；Nguithr'xurh 是一动不动挂在天花板上的陷阱（1.2 m 内才落下来），
+    // 放在离座椅 1 m 的天花板上（它的碰撞圆柱在地上、和车身重叠也不要紧：fixed，不被推、不挡车）
+    const RR = { growler: [2.5, 2.8, 2.2, 2.9], nguithrxurh: [1.0, 1.1, 0.95] }[type] || [3.6, 4.2, 3.2, 4.8, 5.4, 2.8, 6.0, 6.8];
+    // 返修 FE1R · repair-r2（验收员 tests：啼物车前 2.5 m 那个出生点前腿第 1 帧就插在货叉里 —— 测试摆错了，不是怪走进去的）：
+    // 出生点还要让怪的网格整个在车外（出生那一帧网格顶点压进车的实心部件 = 0），压到了就往两边挪一点（同一个距离左右 0.6 / 0.9 m）再换下一个距离
+    const parts0 = K.parts(veh.pose.lift), PX = [-D[1], D[0]];
+    let e = null;
+    for (const rr of RR) for (const lat of (type === 'nguithrxurh' ? [0] : [0, 0.6, -0.6, 0.9, -0.9])) {
+      if (e) break;
+      const w = K.W(veh.pose, D[0] * rr + PX[0] * lat, 0.24 + D[1] * rr + PX[1] * lat);
+      if (type !== 'nguithrxurh' && BR.phys.overlapCircle(w.x, w.z, r, BR.phys.groundY(w.x, w.z) + 0.02, h)) continue;
+      const c = BR.entities.spawn(type, w.x, undefined, w.z, { force: true });
+      if (!c) continue;
+      if (type !== 'nguithrxurh') {
+        c.obj.updateMatrixWorld(true);
+        const E0 = K.verts(c.obj); let d0 = 0;
+        for (let j = 0; j < E0.out.length; j += 3) { const q = K.toL(veh.pose, E0.out[j], E0.out[j + 1], E0.out[j + 2]); for (const Pt of parts0) d0 = Math.max(d0, K.depth(Pt, q[0], q[1], q[2])); }
+        if (d0 > 0) { BR.entities.remove(c); continue; }
+      }
+      e = c; at = w;
+    }
+    if (!e) { if (restore) restore(); return { type, dir, error: 'no free spot' }; }
+    // 摆动相位（返修 FE1R · repair-r2：按实体 id 定，测试再强制几个相位各跑一遍）
+    { const u = e.obj && e.obj.userData && e.obj.userData.arch; if (u && phase != null) { u.seedFor = e.id; u.seed = phase; } }
+    // 拟态（窃皮者）伪装着只在目标 3 m 内才现形：这里量的是打坐车的人，直接按现形以后算（伪装、现形的逻辑不在这一项）
+    const ar = e.data && e.data.arch;
+    if (ar && ar.form === 'disguise') { ar.form = 'true'; ar.lostAt = BR.entities.api.time; e.state = 'chase'; }
+    const reach = !!(BR.arch.seatReach && BR.arch.seatReach(e));
+    const parts = K.parts(veh.pose.lift);
+    const ch = parts.find(o => o.name === 'chassis');
+    const ua = e.obj && e.obj.userData && e.obj.userData.arch;
+    const ssd = e.def.seatStrike, sup = !!(ssd && (ssd.kind === 'chain' || (ssd.kind === 'leap' && !ssd.fixed)));
+    const res = { type, dir, sup: sup ? [] : null, phase: phase == null ? null : phase, chains: !!(ua && ua.rig && ua.rig.meta && ua.rig.meta.chains && ua.rig.meta.chains.length), at: K.toL(veh.pose, at.x, 0, at.z).map(v => +v.toFixed(2)), reach, hits: [], pen: 0, penAt: null, feet: 0, frames: 0 };
+    let stopAt = maxF, nd = __inf.ev.damage.length, still = 0, lx0 = e.x, lz0 = e.z;
+    for (let i = 0; i < stopAt; i++) {
+      __inf.step(1 / 30);
+      res.frames = i + 1;
+      P.sanity = 100;
+      BR.entities.makeNoise(1, 0.2);
+      if (e.removed || e.dead) break;
+      // 够不着的怪走到车旁守着不动了（1.5 s 挪不到 2 cm）：再看 1 s 就收（省时间，走近那一段已经量过）
+      if (!reach) { if (Math.hypot(e.x - lx0, e.z - lz0) < 0.02) still++; else { still = 0; lx0 = e.x; lz0 = e.z; } if (still === 45 && stopAt === maxF) stopAt = Math.min(maxF, i + 30); }
+      P.yaw = Math.atan2(-(e.x - P.x), -(e.z - P.z));
+      const p = veh.pose, l = K.toL(p, e.x, e.y, e.z);
+      // 只算这只怪扣的血（不算光盯着扣理智的、断电的手臂之类）
+      const hit = __inf.ev.damage.slice(nd).some(d => d.src === type && d.hp > 0);
+      nd = __inf.ev.damage.length;
+      if (!(Math.abs(l[0]) < 3.2 && l[2] > -3.6 && l[2] < 3.2) && !hit) continue;
+      const E = K.verts(e.obj), L = new Float32Array(E.out.length);
+      for (let j = 0; j < E.out.length; j += 3) { const q = K.toL(p, E.out[j], E.out[j + 1], E.out[j + 2]); L[j] = q[0]; L[j + 1] = q[1]; L[j + 2] = q[2]; }
+      for (let j = 0; j < L.length; j += 3) {
+        const x = L[j], y = L[j + 1], z = L[j + 2];
+        if (Math.abs(x) > 0.7 || z < -2.2 || z > 1.4 || y > 2.3 || y < -0.05) continue;
+        for (const Pt of parts) { const d = K.depth(Pt, x, y, z); if (d > res.pen) { res.pen = +d.toFixed(4); res.penAt = { part: Pt.name, f: i, bone: E.bones[j / 3], swing: BR.entities.api.swinging(e), vf: ua ? [ua.vfDepth, ua.vfAfter, ua.vfAfterBone, ua._ext] : null, el: K.toL(veh.pose, e.x, e.y, e.z).map(v => +v.toFixed(2)) }; } }
+        if (y < 0.25) { const d = K.depth(ch, x, y, z); if (d > res.feet) res.feet = +d.toFixed(4); }
+      }
+      // 返修 FE1R · repair-r2（验收员 play：猎犬扑坐车的人时整只浮在半空、悬停）：有没有东西托着 —— 最低的顶点离地 ≤2 cm（脚踩在地上），
+      // 或者有顶点在车身哪个部件盒顶面上方 0–1 cm、落在它的脚印里（前脚搭在发动机盖顶面上）；pivot 的高度（腾空那几帧看是不是按重力走的抛物线）
+      if (sup) {
+        let ymin = Infinity, onCar = false;
+        for (let j = 0; j < L.length; j += 3) {
+          const x = L[j], y = L[j + 1], z = L[j + 2];
+          if (y < ymin) ymin = y;
+          if (!onCar) for (const Pt of parts) if (Pt.kind === 'box' && Pt.y1 > 0.3 && x >= Pt.x0 && x <= Pt.x1 && z >= Pt.z0 && z <= Pt.z1 && y >= Pt.y1 - 0.004 && y <= Pt.y1 + 0.01) { onCar = true; break; }
+        }
+        const pw = ua && ua.pivot ? ua.pivot.getWorldPosition(new THREE.Vector3()) : null;
+        // 返修 FE1R · repair-r3（验收员 play major：猎犬前爪搭在发动机盖上、后腿离地 0.4 m 吊着，重心在着力线外 26 cm）：扑在车上的那几帧（ua.leap）
+        // 站不站得稳 —— 顶点重心（水平投影）在着力点（离地 ≤2 cm、部件盒顶面 0–1 cm、部件盒侧面外 ≤1 cm）凸包里往里多少（口径同物资裁定 B）
+        const bal = ua && ua.leap ? K.balance(L, parts) : null;
+        res.sup.push([i, ymin <= 0.02 || onCar ? 1 : 0, pw ? +(pw.y - (p.y || 0)).toFixed(5) : null, ua && ua.perch ? ua.perch.phase : null, ua && ua.leap ? 1 : 0, onCar ? 1 : 0, bal]);
+      }
+      if (hit) {
+        let hy = P.yaw - p.yaw; while (hy > Math.PI) hy -= 2 * Math.PI; while (hy < -Math.PI) hy += 2 * Math.PI;
+        const sb = BR.coop.seatBody({ headYaw: Math.max(-1.5, Math.min(1.5, hy)), pitch: P.pitch, parts: true });
+        const vd = K.vsDriver(L, { V: sb.verts, I: sb.index, box: sb.box }, E.bones);
+        if (!(vd.gap > 0.02)) delete vd.gapBy;
+        if (vd.inI >= 0) vd.inBone = E.bones[vd.inI];
+        if (vd.inT >= 0 && sb.bone) vd.drvBone = sb.boneNames[sb.bone[sb.index[vd.inT]]] + '/' + sb.slotNames[sb.slot[sb.index[vd.inT]]];
+        delete vd.inI; delete vd.inT;
+        if (!(vd.inD > 0.01)) delete vd.inP;
+        res.hits.push(Object.assign({ f: i, el: l.map(v => +v.toFixed(3)) }, vd));
+        P.hp = 100;
+        if (res.hits.length >= 2 && stopAt === maxF) stopAt = Math.min(maxF, i + 30);
+      }
+    }
+    { const l = K.toL(veh.pose, e.x, e.y, e.z); res.end = { l: l.map(v => +v.toFixed(2)), state: e.state, side: e._m && e._m.seatSide, cd: +(+e.cooldown || 0).toFixed(2)}; }
+    // 没东西托着的那几帧：连着的一段一段，每段里 pivot 竖直加速度（二阶差分 × 30²）都在 −g ±25%（按重力走的抛物线，不是匀速平移、悬停）；
+    // 第一次扣血以前这样的段最多一段（一次起跳）
+    if (res.sup) {
+      const S = res.sup, segs = [];
+      let cur = null;
+      for (let q = 0; q < S.length; q++) {
+        const contig = q > 0 && S[q][0] === S[q - 1][0] + 1;
+        // 跑起来四脚同时离地那一两帧（步态）不算：只看扑人的动作（seatLeap 摆着 pivot）那几帧
+        // 腾空途中擦过车身顶面那一两帧（算「托着」）不把一次起跳拆成几段：隔 ≤2 帧的接起来
+        if (!S[q][1] && S[q][4]) { if (!cur || !contig || S[q][0] - cur.f1 > 3) { cur = { f0: S[q][0], ys: [], fs: [] }; segs.push(cur); } cur.ys.push(S[q][2]); cur.fs.push(S[q][0]); cur.f1 = S[q][0]; }
+        else if (cur && S[q][0] - cur.f1 > 2) cur = null;
+      }
+      const hit0 = res.hits.length ? res.hits[0].f : Infinity;
+      res.air = segs.map(sg => {
+        let worst = 0;
+        for (let q = 1; q + 1 < sg.ys.length; q++) { if (sg.fs[q + 1] - sg.fs[q] !== 1 || sg.fs[q] - sg.fs[q - 1] !== 1) continue; const a = (sg.ys[q + 1] - 2 * sg.ys[q] + sg.ys[q - 1]) * 900; worst = Math.max(worst, Math.abs(a / -9.8 - 1)); }
+        return { f0: sg.f0, f1: sg.f1, s: +((sg.f1 - sg.f0 + 1) / 30).toFixed(3), gErr: +worst.toFixed(3), beforeHit: sg.f1 < hit0 };
+      });
+      res.airBad = res.air.filter(a => a.gErr > 0.25).length + Math.max(0, res.air.filter(a => a.beforeHit).length - 1);
+      res.airMax = res.air.reduce((m, a) => Math.max(m, a.s), 0);
+      // 站稳（repair-r3）：趴在车上不下来的那几帧（perch 'on'）每一帧重心都在凸包里 ≥3 mm；搭在车身上又站不稳的（扑上去前脚落在发动机盖上、
+      // 咬一口、一蹬那一下）每次连着最多 9 帧（0.3 s）—— 站不稳的只许扑咬一口就落回去，不许挂在车上（改前猎犬一直挂到不打为止）
+      let onMin = Infinity, run = 0;
+      res.hang = 0; res.onFrames = 0;
+      for (const r of S) {
+        if (r[3] === 'on' && r[6] != null) { res.onFrames++; onMin = Math.min(onMin, r[6]); }
+        if (r[4] && r[5] && !(r[6] >= 0.003)) { run++; res.hang = Math.max(res.hang, run); } else run = 0;
+      }
+      res.onBal = res.onFrames ? +onMin.toFixed(4) : null;
+      delete res.sup;
+    }
+    BR.entities.remove(e);
+    if (restore) restore();
+    return res;
+  };
+  return 0;
+}
+async function seatedMelee(page, q) {
+  await ev(page, a => {
+    __br.setAuto(true);
+    __br.start({ mode: 'nightmare', difficulty: 'easy', seed: 12345, levelId: '1', settings: { visibility: 1, spawnSlider: 0, quality: a } });
+    return 0;
+  }, q);
+  await page.waitForFunction(() => BR.game.screen === 'playing' && !BR.world.transitioning && String(BR.game.levelId) === '1', null, { timeout: 90000 });
+  await ev(page, () => { __br.setAuto(false); __inf.step(0.5); return 0; });
+  await ev(page, strikeHelpers);
+  await ev(page, k6Helpers);
+  const seat = await ev(page, () => __stk.seat());
+  if (!seat || !seat.seated) { check('k 坐车顶点级（' + q + '）：坐上叉车', false, seat); return; }
+  // 一下打死人的怪（窃皮者 lethal）：这一项只看手碰没碰到、车里穿没穿，扣血封顶 40（照样发 player:damage），人不会死、局不会结束
+  await ev(page, () => { const P = BR.player; if (!P.__k6dmg) { const od = P.damage; P.__k6dmg = od; P.damage = function (o) { if (o && o.hp > 40) o = Object.assign({}, o, { hp: 40 }); return od.call(this, o); }; } return 0; });
+  // 会近战的怪（照排查 pAB 的口径：敌对、有近战 attack、攻击距离 ≤3.5 m），只有 Level 1 有叉车，所以按 Level 1 的实体表挑
+  const types = await ev(page, () => { const lv = BR.levels.get('1'), inL1 = new Set(((lv && lv.entities) || []).map(x => x.type)); return BR.entityTypes.all().filter(d => inL1.has(d.type) && d.faction === 'hostile' && d.attack && +d.attack.range <= 3.5 && d.type[0] !== '_').map(d => d.type); });
+  // 返修 FE1R · repair-r1（规则员 K6(3)(5)）：8 个方向（车前、左前、左、左后、后、右后、右、右前）
+  const dirs = K_DIRS_ARG || ['front', 'frontLeft', 'left', 'backLeft', 'back', 'backRight', 'right', 'frontRight'];
+  const rows = [];
+  for (const type of (K_TYPES ? types.filter(t => K_TYPES.includes(t)) : types)) for (const dir of dirs) {
+    const r = await ev(page, a => __k6.run(a.key, a.type, a.dir, 300), { key: seat.key, type, dir });
+    rows.push(r);
+    // 返修 FE1R · repair-r2（验收员 tests：牧蛇 / 肢团的链（尾巴、触手）摆动相位以前每次随机，走近那几帧时好时坏）：
+    // 有链的怪每个方向再强制两个相位各跑一遍（加上按 id 定的那个，一共 3 个），每一遍都要 ≤1 cm
+    if (r.chains) for (const ph of K_PHASES) rows.push(await ev(page, a => __k6.run(a.key, a.type, a.dir, 300, a.ph), { key: seat.key, type, dir, ph }));
+  }
+  await ev(page, () => { const P = BR.player; if (P.__k6dmg) { P.damage = P.__k6dmg; delete P.__k6dmg; } return 0; });
+  const nT = K_TYPES ? types.filter(t => K_TYPES.includes(t)).length : types.length;
+  const reachers = rows.filter(r => r.reach), others = rows.filter(r => !r.reach);
+  const bad = rows.filter(r => r.error || r.pen > 0.01 || r.feet > 0.005);
+  check('k 坐车（' + q + '画质）：' + nT + ' 种近战怪 × ' + dirs.length + ' 个方向（有链的怪每个方向 3 个摆动相位），走近、抬手、抡、收手整个过程，任何顶点压进叉车实心部件 ≤1 cm、脚不进底盘（逐帧顶点级）',
+    rows.filter(r => r.phase == null).length === nT * dirs.length && bad.length === 0, bad.length ? bad.slice(0, 6) : rows.map(r => [r.type, r.dir, r.phase, r.pen, r.feet]));
+  // 返修 FE1R · repair-r1（验收员 play / tests：叉车不是安全屋）：所有会近战的怪都打得到坐车的人 —— 胳膊、整张脸（笑魇）、整只扑上去、伸一条肢体
+  const slow = rows.filter(r => r.error || !r.reach || !(r.hits && r.hits.length) || r.hits[0].f > 300);
+  check('k 坐车（' + q + '画质）：所有会近战的怪（' + [...new Set(rows.map(r => r.type))].join('、') + '）从 ' + dirs.length + ' 个方向过来 10 s 内都出手打中（叉车不是安全屋）',
+    rows.length > 0 && others.length === 0 && slow.length === 0, slow.length ? slow.map(r => [r.type, r.dir, r.error || (r.reach ? 'reach' : 'noReach'), r.hits && r.hits.length && r.hits[0].f, r.frames, r.end]) : rows.map(r => [r.type, r.dir, r.hits[0].f]));
+  // 返修 FE1R · repair-r2（验收员 play：猎犬扑坐车的人时竖直浮到驾驶舱高度、在半空悬停、后腿吊着底下什么都没有）：
+  // 地上的扑人怪（leap，挂天花板的 Nguithr'xurh 除外）和伸肢体的（chain）每一帧都有东西托着 —— 脚踩在地上，或者前脚搭在车身部件顶面上；
+  // 没有托着的只许是一次起跳的腾空：竖直按重力走（加速度 −g ±25%），第一次扣血前最多一段
+  const unsup = rows.filter(r => r.air && r.airBad > 0);
+  const supRows = rows.filter(r => r.air);
+  check('k 坐车（' + q + '画质）：扑人 / 伸肢体的怪每一帧都有东西托着（脚踩地或前脚搭在车身顶面上），腾空只许是按重力走的一次起跳（竖直加速度 −g ±25%，第一次扣血前最多一段；最长腾空 ' + supRows.reduce((m, r) => Math.max(m, r.airMax || 0), 0).toFixed(2) + ' s）',
+    supRows.length > 0 && unsup.length === 0, unsup.length ? unsup.slice(0, 6).map(r => [r.type, r.dir, r.air]) : supRows.filter(r => r.air.length).map(r => [r.type, r.dir, r.air.map(a => a.s + 's/' + a.gErr)]));
+  // 返修 FE1R · repair-r3（验收员 play major：猎犬前爪搭在发动机盖上、后半截身子悬在车侧外面，后腿离地 0.4 m 一直吊着）：
+  // 趴在车上不下来的（perch 'on'）每一帧重心都在着力点凸包里往里 ≥3 mm（口径同物资裁定 B）；站不稳的只许扑上去前脚落在车身上咬一口、一蹬
+  // 那一下搭着（每次连着 ≤9 帧 = 0.3 s），扑咬一口就按重力落回地上，不许挂在车上
+  const hangRows = rows.filter(r => r.air && ((r.onBal != null && r.onBal < 0.003) || r.hang > 9));
+  check('k 坐车（' + q + '画质）：扑上车的怪站得稳 —— 趴在车上的每一帧顶点重心都在着力点（脚踩地 / 搭在车身顶面 / 贴着车身侧面）凸包里往里 ≥3 mm；站不稳的扑咬一口就落回地上，搭在车身上又站不稳的每次 ≤0.3 s',
+    supRows.length > 0 && hangRows.length === 0, (hangRows.length ? hangRows : supRows).map(r => [r.type, r.dir, r.onFrames, r.onBal, r.hang]));
+  const touch = reachers.filter(r => (r.hits || []).some(h => !(h.gap != null && h.gap <= 0.02 && h.inD <= 0.01)));
+  check('k 坐车（' + q + '画质）：扣血那一帧手（脸 / 嘴 / 肢体梢）离司机身体（坐姿人形三角形）≤2 cm、插进去 ≤1 cm', reachers.length > 0 && touch.length === 0,
+    touch.length ? touch.map(r => [r.type, r.dir, r.hits]) : reachers.map(r => [r.type, r.dir, (r.hits || []).map(h => [h.gap, h.inD])]));
+}
+
 async function snapshotGuest(page, host) {
   if (!host) { check('快照客机测试有房主数据', false); return; }
   const r = await ev(page, (h) => {

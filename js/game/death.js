@@ -85,6 +85,8 @@ function fmtWords(sec) {
 // 与 hud.js 同样的写法，结算和左上角显示的层级名保持一致
 function levelLabel(id) {
   if (!id) return '未知层级';
+  // FE1R UI-5：已注册的层统一用 hud 的中文显示名（「Level 2 · 管道之梦」），和大标题、左上角信息块同一份
+  if (BR.levels.has && BR.levels.has(id) && BR.hud && typeof BR.hud.levelLabel === 'function') return BR.hud.levelLabel(id);
   const def = BR.levels.get(id);
   const name = (def && def.name) || ('Level ' + id);
   return def && def.title ? name + ' · ' + def.title : name;

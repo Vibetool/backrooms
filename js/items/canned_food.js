@@ -13,7 +13,7 @@ const BR = window.BR;
 const K = BR.itemKit;
 if (!K) { console.error('[items] canned_food 需要先加载 js/items/_kit.js'); return; }
 
-const R = 0.038, H = 0.1, SEG = 14;
+const R = 0.038, H = 0.1, SEG = 20;   // FE1R K8：以前 14 段
 const TIN = 0xc5c9ce, TIN_DARK = 0x8f949a;
 
 BR.itemTypes.register({

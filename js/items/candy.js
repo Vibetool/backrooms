@@ -85,9 +85,10 @@ function drawBag(g, w, h) {
 // 单颗包装糖：糖身 + 两头拧起来的包装纸（糖身扁的那一面朝 ±y、长的方向顺着 x）
 function wrappedGeos() {
   const T = window.THREE;
-  const body = new T.SphereGeometry(0.012, 6, 4).scale(1.3, 0.8, 1);
-  const l = new T.ConeGeometry(0.009, 0.014, 6).rotateZ(Math.PI / 2).translate(0.021, 0, 0);
-  const r = new T.ConeGeometry(0.009, 0.014, 6).rotateZ(-Math.PI / 2).translate(-0.021, 0, 0);
+  // 段数（FE1R K8）：糖身 16×8（以前 6×4，近看是个多面体；横着一圈 16 段、竖着一圈也是 16 段，⑳e 特写里弦高 ≤0.8 px）；两头拧起来的包装纸 12 段
+  const body = new T.SphereGeometry(0.012, 16, 8).scale(1.3, 0.8, 1);
+  const l = new T.ConeGeometry(0.009, 0.014, 12).rotateZ(Math.PI / 2).translate(0.021, 0, 0);
+  const r = new T.ConeGeometry(0.009, 0.014, 12).rotateZ(-Math.PI / 2).translate(-0.021, 0, 0);
   return [body, l, r];
 }
 const CANDY_THIN = 0.012 * 0.8;   // 糖身扁的那个方向的半厚

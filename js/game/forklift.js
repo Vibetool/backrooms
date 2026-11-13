@@ -29,7 +29,7 @@
 //            货叉架升 2.6·lift 米、内门架升 1.3·lift 米）；spd = 车速 m/s（+ 前进）；lever = 升降杆 −0.35..0.35 rad（+ = 往后扳 = 升）；
 //            engine = 0 熄火 / 0..1 起动中（进度）/ 1 着车；rpm 0..1；hyd = 液压泵在转（在升或降）；beep = 倒车蜂鸣该响
 //     events = 这一步发生的事，字符串：'ignite' 'off' 'bang' 'bump' 'radar' 'end' 'strain'（音效名 = 'fk_' + 事件名）
-//     note   = 状态行文字 | null（「发动中」「雷达自动刹车」「前面是出口」……，见 playerSpec texts；倒车撞上的说「后面是出口」
+//     note   = 状态行文字 | null（「发动中」「雷达自动刹车」「前面是出口，下车走过去」……，见 playerSpec texts；倒车撞上的说「后面是出口，下车走过去」
 //              「后面有东西挡着，下车把它拖开」，repair-r1 新加，返修 r3 已同步进方案 playerSpec.texts）
 //     noise  = 0 熄火 / 0.25 怠速 / 0.6 行驶 / 0.8 倒车；本机在开时另外每步调 BR.entities.makeNoise（只在噩梦模式生效）
 //     shake  = 这一步要不要抖镜头：撞上（≥ 0.8 m/s）时 0.15（秒），系统设了减少动态效果时恒为 0
@@ -38,10 +38,15 @@
 //       pref：玩家朝向（世界 yaw，数字）或 'left' / 'right' / 'rear'；偏左 > 20° 先左、偏右 > 20° 先右、正前方先左，再另一边，再车尾。
 //       force = true（死在车上、换层、回主页）：三面都不行就从车旁一圈圈往外找，永远不落进 OBB 和出口圈
 //   sim.lightSpot() → { x, y, z, range, color, intensity, flicker, decay }：前大灯借灯池的那盏（world.setExtraLights 的格式）。
-//       光球不伸到墙 / 货架 / 正前方挡着的东西后面（FE1P H8，见 lightBound；货架这种厚的到远侧面往里 0.1 m，FE1Q J9）：range 是收过的，
-//       收小时 intensity 补到光源正下方地面和 range 8 时一样亮（≤2.2 倍）。world.lightAt 按画面上这盏灯的 range / intensity 算（FE1Q J8）。
-//       sim.lightInfo = 上一次的 { range, intensity, R0（不管墙的名义范围）, seatLit, bound, hit, by: { kind: 'wall'|'hit'|'noclip', key, box } }
-//       （调试、测试看是被哪一样收住的）
+//       FE1R：落点每帧在叉尖前一排候选里挑（见 lightSolve：车前判定区亮、正前方窄东西朝车那面亮、叉尖前 5 m 亮、天花板不比地面亮），
+//       逐帧平滑挪过去；光球按平滑后的实际位置收：不伸进跨过光源高度的墙 / 宽块 / 别的车（整车外包盒）的影子里，货架到远侧面往里 0.1 m
+//       （FE1Q J9），窄东西（水平两个方向都 ≤1.0 m）不收（K1）。停着 / 刚上车 / 瞬移时当帧收到严格上限；开车时当帧只不越过把端面楔形细缝
+//       放宽到 LT.w0r 的上限，再按 LT.rDown 收到严格上限（光源横扫过端面所在平面时不一跳）；顶比光源低不到 LT.yFade 的矮堆垛只当收的目标。
+//       强度按判定区要的给，按光源下地面、离光源最近的面封顶（不发白），开得快时封顶再压低。
+//       world.lightAt 按画面上这盏灯的 range / intensity 算（FE1Q J8）。
+//       sim.lightInfo = 上一次的 { range, intensity, R0（名义范围）, seatLit, bound（影子界限）, hit（车宽带里第一个挡光体离叉尖）, narrow,
+//       by: { kind: 'wall'|'rack'|'wide'|'car', key, box }（收住光球的那一样）, s / u / h（光源在叉尖前、横偏、离地）, tgt, zone, zoneMin, zoneCov,
+//       faceE, far, ceil, ohE, score, blocker }（调试、测试看）；BR.forklift._light = { LT, ctx, eval, occBound, occKind, sMaxU, ALB, albProf, albGet, surfCap, ambAt, texHi }（测试看候选打分、不发白的上限）
 //   sim.litSeat(x, z) → (x, z) 在驾驶舱里时返回 lightInfo.seatLit（≈ 0.34：开着大灯司机算被照亮，FE1Q J8），否则 0。world.lightAt 用
 //   附带：sim.key、sim.pose（只读拷贝）、sim.setPose(pose, {push})、sim.start()/stop()、sim.seatWorld()、sim.eyeWorld()、
 //         sim.chestWorld()、sim.cab()、sim.toWorld(lx, lz)、sim.toLocal(x, z)、sim.clearItems()、sim.release()、sim.dispose()、
@@ -61,7 +66,11 @@
 //      降的时候货叉 / 货叉架正下方有人、怪、地上物资、sideObs 条目或碰撞体就停在它们上面。
 //   ④ 推开地上物资（车身和货叉的 OBB）；⑤ 藤蔓拨开再摆回（kit.spanEdit / spanRestore，纯表现；FE1P H9 / FE1Q J3：贴着看得见的护顶架
 //      （纵梁、横梁、格栅横条、斜立柱、灯盒、后视镜、警示灯）、门架零件和链条 0–1 cm，不按物理 OBB）；
-//   ⑥ 下车落点；⑦ 噪音；⑧ 前大灯落点（FE1P H8：光不透墙；FE1Q J9：货架通道里照得远）；⑨ 坐车的人的位置由 BR.vehicles 按座椅给。
+//   ⑥ 下车落点；⑦ 噪音；⑧ 前大灯落点（FE1P H8：光不透墙；FE1Q J9：货架通道里照得远；FE1R K1 / K2 / L-occluders / L-ceiling：见 lightSolve）；
+//   ⑨ 坐车的人的位置由 BR.vehicles 按座椅给。
+//   FE1R F1：升货叉时头顶静态碰撞体（门楣「上面有门框，升不上去」、别的「上面有东西挡着，升不上去」）和别的车也挡；F2：两只后轮各一个 OBB
+//   跟着 steer 转，往外打方向会压进墙 / 人 / 地上的东西就停在刚好碰不到的角度（「后轮挨着墙，打不了方向」），开车扫掠也算它；
+//   F3：叉上的货（env.riders）按外接盒跟着货叉架升降、参加升降和开车的碰撞（伸出叉尖那一截也算）；F4：降货叉按部件真实平面投影往下扫（不再三条射线）。
 (function () {
 'use strict';
 const BR = window.BR;
@@ -83,26 +92,33 @@ const CFG = {
   noise: { idle: 0.25, drive: 0.6, reverse: 0.8 },
   lever: 0.35, leverRate: 6,         // 升降杆扳到底的角度、扳动速度
   overheadGap: 0.02,                 // 升到头顶东西底面以下这么多停
-  underGap: { person: 0.02, item: 0.005, solid: 0.005 },
-  // 前大灯：点光源放在叉根前 ahead 米、离地 y 米。L1 断电（只剩环境光）时车前 4 m 地面要亮到环境的 3 倍以上：光源抬到 1.6 m、
-  // 放在车前 4 m 的正上方附近，光斑在车前 2–8 m 铺开（不是脚下一个刺眼的亮点），车尾后面在 range 8 以外
+  // person：人 / 实体外形顶（实体按网格量的 shapeOf 已经往上让了 1 cm，人按 personH + 1 cm）再让 1 cm —— 合计停在顶上 2 cm（FE1R ACT-veh）
+  underGap: { person: 0.01, item: 0.005, solid: 0.005 },
+  // 前大灯：颜色在这里；落点、光球、强度 FE1R 起由 lightSolve 按 LT 算（空地上光源在叉尖前 2.6 m、离地 0.9 m、光球 4.4–6.5 m、强度 2.8 起）。
+  // 这几个数只是 vehicles / vehiclesNet 没有模拟时兜底摆灯用的缺省（BR.forklift.config.light）
   light: { ahead: 4.0, y: 1.6, range: 8, near: 2.2, nearMin: 1.8, color: 0xfff0d8, intensity: 3.2 },
   // 藤蔓：车 reach 米内的才拨；摆回去用 back 秒；pad = 护顶 / 门架盒子外扩多少（FE1P H9：0 —— 藤蔓贴着把它推开的东西，
   // 表面离护顶 / 门架真实包围盒 0–1 cm）；head = 司机头胸那段胶囊的半径
   vine: { reach: 4, back: 1.2, pad: 0, head: 0.15 },
   exitMargin: 0.4,
-  personR: 0.3, personH: 1.8,
+  // personR：人对载具的碰撞半径（FE1R A7）= hazmat.glb 站立 / 走路动画里离竖轴最远的点 + 1 cm（手套甩到外面），本机、队友一样；
+  // 车按它刹停 / 扫掠、下车落点按它离车身 OBB。人和墙、静态碰撞体照旧按 BR.config.player.radius（0.3）
+  personR: 0.377, personH: 1.8,
 };
 const DT_MAX = 0.1, SUB_DT = 1 / 30;
 const OH_WORD = { pipe: '管子', valve: '管子', gauge: '管子', drip: '管子', lamp: '吊灯', beam: '横梁', tray: '桥架', cable: '电缆', arch: '拱顶' };
 // 车身高度上伸出来的东西（b.data.sideObs）升货叉被它挡住时的叫法；没列的按 OH_WORD，再没有说「东西」
 const SIDE_WORD = { cabinet: '消火栓箱', extinguisher: '灭火器', switch: '开关盒', cone: '路锥', lamp: '灯' };
 const TXT = {
-  crank: '发动中', radar: '雷达自动刹车', exit: '前面是出口', prop: '前面有东西挡着，下车把它拖开',
+  // FE1R UI-11：出口提示告诉孩子怎么办（车开不进出口圈，得下车走过去）
+  crank: '发动中', radar: '雷达自动刹车', exit: '前面是出口，下车走过去', prop: '前面有东西挡着，下车把它拖开',
   // 倒车撞上的（出口圈、拖出来的家具在车尾那边）：说「后面」，孩子不会往前找
-  exitBack: '后面是出口', propBack: '后面有东西挡着，下车把它拖开',
+  exitBack: '后面是出口，下车走过去', propBack: '后面有东西挡着，下车把它拖开',
   tail: '车尾会往外甩，先倒车带出来', underPerson: '货叉下面有人', underThing: '货叉下面有东西',
   overhead: w => '上面有' + w + '，升不上去',
+  // FE1R F1：升货叉被静态的东西挡住（门楣 = 门框）；F2：后轮打方向会压进墙 / 人 / 地上的东西
+  overDoor: '上面有门框，升不上去', overThing: '上面有东西挡着，升不上去',
+  wheelWall: '后轮挨着墙，打不了方向', wheelPerson: '后轮旁边有人，打不了方向', wheelThing: '后轮挨着东西，打不了方向',
 };
 
 function num(v, d) { v = +v; return Number.isFinite(v) ? v : d; }
@@ -263,7 +279,7 @@ function worldBoxes(g, x, z, y, yaw, lift, list, out) {
     const p = list[i], cy = p.cy + (p.ly || 0) * lift;
     let b = arr[i];
     if (!b) b = arr[i] = { name: '', cx: 0, cz: 0, hx: 0, hz: 0, rot: 0, minY: 0, maxY: 0 };
-    b.name = p.name; b.cx = x + c * p.cx + s * p.cz; b.cz = z - s * p.cx + c * p.cz; b.hx = p.hx; b.hz = p.hz; b.rot = yaw;
+    b.name = p.name; b.cx = x + c * p.cx + s * p.cz; b.cz = z - s * p.cx + c * p.cz; b.hx = p.hx; b.hz = p.hz; b.rot = yaw + (p.rot || 0);
     b.minY = y + cy - p.hy; b.maxY = y + cy + p.hy;
   }
   arr.length = list.length;
@@ -388,6 +404,8 @@ function peerSeatedKey() {
   try { const p = BR.coop && BR.coop.peerPose; if (p && (p.mode === 'drive' || p[0] === 'drive')) return String(p.key != null ? p.key : p[1]); } catch (err) { /* 没有 */ }
   return null;
 }
+// 人对载具的碰撞半径（FE1R A7）：BR.config.player.vehRadius（缺省 CFG.personR = 0.377）
+function personVehR() { return num(BR.config && BR.config.player && BR.config.player.vehRadius, CFG.personR); }
 // 人和实体（竖直圆柱）。坐在这台车驾驶舱里的人不算（他是司机）
 function peopleCircles(sim, env, out) {
   out.length = 0;
@@ -397,13 +415,13 @@ function peopleCircles(sim, env, out) {
   const riderIsMe = env.local === true || (BR.vehicles && BR.vehicles.seated === sim.key) || (P && P.mounted && P.mounted.key === sim.key);
   if (P && !P.dead && Number.isFinite(+P.x) && !riderIsMe && !(P.mounted)) {
     const feet = Number.isFinite(+P.feetY) ? +P.feetY : num(P.y, 1.62) - num(BR.config.player && BR.config.player.eyeHeight, 1.62);
-    if (!inCab(P.x, P.z)) out.push({ kind: 'circle', x: +P.x, z: +P.z, r: num(BR.config.player && BR.config.player.radius, 0.3), minY: feet, maxY: feet + CFG.personH, id: 'p:me', person: true });
+    if (!inCab(P.x, P.z)) out.push({ kind: 'circle', x: +P.x, z: +P.z, r: personVehR(), minY: feet, maxY: feet + CFG.personH + 0.01, id: 'p:me', person: true });
   }
   let peer = null;
   try { peer = BR.coop && BR.coop.peer; } catch (err) { peer = null; }
   if (peer && Number.isFinite(+peer.x) && Number.isFinite(+peer.z) && peerSeatedKey() !== sim.key) {
     const feet = num(peer.y, 1.62) - 1.62;
-    if (Math.abs(feet - sim.y) < 2.5 && !inCab(peer.x, peer.z)) out.push({ kind: 'circle', x: +peer.x, z: +peer.z, r: 0.3, minY: feet, maxY: feet + CFG.personH, id: 'p:peer', person: true });
+    if (Math.abs(feet - sim.y) < 2.5 && !inCab(peer.x, peer.z)) out.push({ kind: 'circle', x: +peer.x, z: +peer.z, r: personVehR(), minY: feet, maxY: feet + CFG.personH + 0.01, id: 'p:peer', person: true });
   }
   const E = BR.entities && BR.entities.list;
   if (E && typeof E.length === 'number') {
@@ -411,6 +429,21 @@ function peopleCircles(sim, env, out) {
       const e = E[i];
       if (!e || e.dead || e.removed || !Number.isFinite(+e.x)) continue;
       if (Math.abs(e.x - sim.x) > 8 || Math.abs(e.z - sim.z) > 8) continue;
+      // 扒在这台车上 / 立起来够这台车上的人的怪（返修 FE1R · repair-r2 _archetypes.js seatLeap 的 u.perch）不挡这台车：
+      // 它的网格就压在车身旁边，算进来车一步都动不了；车一挪它就松开落回地上（seatLeap 里车位姿变了就 leapRelease）
+      { const ua = e.obj && e.obj.userData && e.obj.userData.arch, pc = ua && ua.perch; if (pc && pc.phase !== 'drop' && pc.key != null && String(pc.key) === String(sim.key)) continue; }
+      // FE1R ACT-veh：按网格此刻的真实外形（BR.entities.shapeOf：0–0.6 / 0.6–1.2 / 1.2 m 以上三段竖直圆柱），不再用碰撞圆柱 e.r / e.h ——
+      // 车停在怪的网格外面；挂在天花板上的 Nguithr'xurh（2.59–2.69 m）不挡车身、不触发雷达，只挡升起来的门架和货叉
+      let sh = null;
+      try { sh = BR.entities && has(BR.entities, 'shapeOf') ? BR.entities.shapeOf(e) : null; } catch (err) { sh = null; }
+      if (sh && sh.length) {
+        for (let j = 0; j < sh.length; j++) {
+          const c = sh[j];
+          if (!c || !Number.isFinite(+c.x) || !Number.isFinite(+c.z) || !(c.r > 0)) continue;
+          out.push({ kind: 'circle', x: +c.x, z: +c.z, r: +c.r, minY: +c.minY, maxY: +c.maxY, id: 'e:' + e.id + '#' + j, person: true, ent: e });
+        }
+        continue;
+      }
       const r = num(e.r, 0.4), y = num(e.y, sim.y), h = num(e.h, 1.8);
       out.push({ kind: 'circle', x: e.x, z: e.z, r, minY: y, maxY: y + h, id: 'e:' + e.id, person: true, ent: e });
     }
@@ -510,6 +543,47 @@ function skipBoxesOf(side, out) {
     if (Array.isArray(b) && b.length >= 6 && out.indexOf(b) < 0) out.push(b);
   }
   return out;
+}
+
+// ---------- 后轮（FE1R F2）、叉上的货（FE1R F3）：和车身部件一起参加碰撞 ----------
+// 两只后轮各一个小 OBB（轮胎 宽 w × 直径 2r，跟着 steer 绕自己的中心转：worldBoxes 的 p.rot），打方向、开车扫掠都算它（FK_OBB 不动）。
+// 叉上的货：BR.items 的外形（footOf：静止时是真实的水平凸包和竖直范围）换到车本地取外接盒，跟着货叉架升降（ly = carriageTravel）
+const wheelBuf = [0, 1].map(i => ({ name: i ? 'wheelRR' : 'wheelRL', cx: 0, cy: 0, cz: 0, hx: 0, hy: 0, hz: 0, ly: 0, rot: 0, wheel: true }));
+function wheelParts(g, steer) {
+  const w = g.wheelRear;
+  for (let i = 0; i < 2; i++) {
+    const p = wheelBuf[i];
+    p.cx = (i ? 1 : -1) * num(w.x, 0.44); p.cy = num(w.y, 0.23); p.cz = num(w.z, 0.8);
+    p.hx = num(w.w, 0.16) / 2; p.hy = num(w.r, 0.23); p.hz = num(w.r, 0.23); p.rot = steer;
+  }
+  return wheelBuf;
+}
+function cargoParts(sim, riders, out) {
+  out.length = 0;
+  if (!riders || !has(riders, 'has') || !(riders.size > 0)) return out;
+  const I = BR.items, list = I && Array.isArray(I.list) ? I.list : null;
+  if (!list) return out;
+  const g = G(), T = g.carriageTravel;
+  for (let k = 0; k < list.length; k++) {
+    const it = list[k];
+    if (!it || it.owner || !riders.has(String(it.id)) || !Number.isFinite(+it.x)) continue;
+    const f = footOf(it);
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (let i = 0; i + 1 < f.pts.length; i += 2) {
+      const l = toL(sim.x, sim.z, sim.yaw, f.pts[i], f.pts[i + 1], tmpW);
+      if (l.x < x0) x0 = l.x; if (l.x > x1) x1 = l.x; if (l.z < z0) z0 = l.z; if (l.z > z1) z1 = l.z;
+    }
+    if (!(x1 > x0) || !(z1 > z0) || !(f.y1 > f.y0)) continue;
+    out.push({ name: 'cargo:' + it.id, cx: (x0 + x1) / 2, cy: (f.y0 + f.y1) / 2 - sim.y - T * sim.lift, cz: (z0 + z1) / 2,
+      hx: (x1 - x0) / 2, hy: (f.y1 - f.y0) / 2, hz: (z1 - z0) / 2, ly: T, rot: 0, cargo: true, id: it.id });
+  }
+  return out;
+}
+// 头顶静态的东西是不是门楣（门洞上面那一截墙：离地 1.8 m 以上、不高、薄）
+function lintelLike(s, gy) {
+  if (!s || s.obb) return false;
+  const w = s.maxX - s.minX, d = s.maxZ - s.minZ;
+  return s.minY - gy >= 1.8 && s.maxY - s.minY <= 1.2 && Math.min(w, d) <= 0.35 && Math.max(w, d) <= 1.8;
 }
 
 // ---------- phys 扫掠（静态碰撞体 + 别的车） ----------
@@ -723,7 +797,7 @@ function pushY(p, x, z) {
 
 // ---------- 模拟 ----------
 const sims = new Map();
-const bufBoxes = [], bufObs = [], bufPeople = [], bufOh = [], bufSide = [], bufSkip = [];
+const bufBoxes = [], bufObs = [], bufPeople = [], bufOh = [], bufSide = [], bufSkip = [], bufWheel = [], bufCol = [], bufBoxes2 = [];
 
 function Sim(rec) {
   const r = rec || {};
@@ -742,6 +816,8 @@ function Sim(rec) {
   this.vines = new Map();        // 'chunkKey|i' → 状态
   this.t = 0;
   this.ignore = null;
+  this.cargo = [];               // 叉上的货（FE1R F3，每步按 env.riders 重算）
+  this.partsAll = [];            // 车身部件 + 两只后轮 + 叉上的货（碰撞用）
   this.lastNote = null;
   sims.set(this.key, this);
 }
@@ -777,6 +853,38 @@ Sim.prototype = {
     return { cx: w.x, cz: w.z, hx: c.x, hz: (c.z1 - c.z0) / 2, rot: this.yaw, minY: this.y + c.yFloor, maxY: this.y + c.yTop };
   },
   obbsWorld() { const g = G(); return worldBoxes(g, this.x, this.z, this.y, this.yaw, this.lift, g.parts, []); },
+  // 碰撞用的部件表：FK_OBB 那 14 块 + 两只后轮（按当前 steer 转）+ 叉上的货（FE1R F2 / F3）
+  allParts() {
+    const g = G(), a = this.partsAll;
+    a.length = 0;
+    for (let i = 0; i < g.parts.length; i++) a.push(g.parts[i]);
+    const w = wheelParts(g, this.steer);
+    a.push(w[0], w[1]);
+    for (let i = 0; i < this.cargo.length; i++) a.push(this.cargo[i]);
+    return a;
+  },
+  // 后轮在转角 st 时压到什么（静态碰撞体 / 别的车、人、地上的物资）：返回提示文字 | null（FE1R F2，容差 2 mm）
+  wheelHit(st, people, ign, riders) {
+    const g = G(), w = wheelParts(g, st), boxes = worldBoxes(g, this.x, this.z, this.y, this.yaw, this.lift, w, bufWheel);
+    const P = BR.phys, skip = this.skipNow && this.skipNow.length ? this.skipNow : undefined;
+    for (let i = 0; i < boxes.length; i++) {
+      const b = boxes[i];
+      b.minY += 0.05;   // 轮胎压得过去的矮东西（地上的板、5 cm 以下）不算
+      if (P && has(P, 'overlapOBB')) { let n = 0; try { n = P.overlapOBB(b, { ignoreKey: ign, skipBoxes: skip, tol: 0.002 }); } catch (err) { n = 0; } if (n) return TXT.wheelWall; }
+      for (const c of people) if (yOver(b.minY, b.maxY, c.minY, c.maxY) && circleDist2(b, c.x, c.z) < c.r * c.r - 1e-6) return TXT.wheelPerson;
+      const I = BR.items, list = I && Array.isArray(I.list) ? I.list : null;
+      if (list) for (let k = 0; k < list.length; k++) {
+        const it = list[k];
+        if (!it || it.owner || it.held || !Number.isFinite(+it.x)) continue;
+        if (riders && has(riders, 'has') && riders.has(String(it.id))) continue;
+        if (Math.abs(it.x - b.cx) > 0.8 || Math.abs(it.z - b.cz) > 0.8) continue;
+        const f = footOf(it);
+        if (!yOver(b.minY, b.maxY, f.y0, f.y1)) continue;
+        if (polyBox(b, f.pts, 0, 0)) return TXT.wheelThing;
+      }
+    }
+    return null;
+  },
 
   // 联机远端 / levelState 摆位：不做碰撞。opts.push = true 时按上一步到这一步推开地上物资（房主替客机司机推）
   setPose(p, opts) {
@@ -874,12 +982,25 @@ Sim.prototype = {
     const oh = overheadList(this, bufOh);
     this.sideNow = sideList(this, bufSide);
     this.skipNow = skipBoxesOf(this.sideNow, bufSkip);
+    this.cargo = cargoParts(this, E.riders, this.cargo);
     for (let k = 0; k < nSub; k++) {
       // 方向（液压助力：着车才打得动；熄火停着的车轮子保持原来的角度）
       if (running) {
         const tgt = -st * g.maxSteer;           // 往左打（st > 0）：后轮朝右前方（steer < 0），车头往左
         const back = Math.abs(tgt) < Math.abs(this.steer) - 1e-6 && (tgt === 0 || Math.sign(tgt) === Math.sign(this.steer));
-        this.steer = approach(this.steer, tgt, (back ? CFG.steerReturn : CFG.steerRate) * h);
+        const s0 = this.steer, s1 = approach(this.steer, tgt, (back ? CFG.steerReturn : CFG.steerRate) * h);
+        this.steer = s1;
+        // FE1R F2：往外打（|steer| 变大）时后轮会压进墙 / 别的车 / 人 / 地上的东西 —— 停在刚好碰不到的角度（回正一律放行：转角越小后轮伸出车身越少）
+        if (Math.abs(s1) > Math.abs(s0) + 1e-9) {
+          const w1 = this.wheelHit(s1, people, ign, E.riders);
+          if (w1) {
+            let lo = s0, hi = s1;
+            if (this.wheelHit(s0, people, ign, E.riders)) hi = lo;
+            else for (let it = 0; it < 10; it++) { const m = (lo + hi) / 2; if (this.wheelHit(m, people, ign, E.riders)) hi = m; else lo = m; }
+            this.steer = lo;
+            note = note || w1;
+          }
+        }
       }
       // 车速
       const fb = g.forkY + this.lift * g.carriageTravel;
@@ -972,10 +1093,13 @@ Sim.prototype = {
     if (lv > 0) {
       let want = Math.min(1, cur + CFG.liftUp * lv * h / T);
       // 头顶条目：内门架顶 2.12 + d、挡货架顶 1.24 + 2d 的平面范围和它相交、底面更低 → 停在底面以下 2 cm
+      // FE1R F1 / F3：叉上的货跟着货叉架一起算；头顶静态的碰撞体（门楣、货架板……）和别的车也挡（停在它底面以下 2 cm）
       let maxL = 1, word = null;
-      const boxes = worldBoxes(g, this.x, this.z, this.y, this.yaw, 0, g.parts, bufBoxes);
+      const parts = this.allParts();
+      const boxes = worldBoxes(g, this.x, this.z, this.y, this.yaw, 0, parts, bufBoxes);
+      const P = BR.phys, skip = this.skipNow && this.skipNow.length ? this.skipNow : undefined;
       for (let i = 0; i < boxes.length; i++) {
-        const p = g.parts[i];
+        const p = parts[i];
         if (!(p.ly > 0)) continue;
         const b = boxes[i], top0 = b.maxY;   // lift = 0 时的顶
         for (const e of oh) {
@@ -992,6 +1116,23 @@ Sim.prototype = {
           const lim = (y0 - CFG.overheadGap - top0) / p.ly;
           if (lim < maxL) { maxL = lim; word = sideWord(e); }
         }
+        // 静态碰撞体、别的车：这个部件现在的顶到升到底时的顶这一柱（真实平面投影）里、底面在它上面的
+        if (P && has(P, 'overlapOBB')) {
+          const topNow = top0 + p.ly * cur, topMax = top0 + p.ly;
+          if (topMax > topNow + 1e-3) {
+            const col = bufCol[0] || (bufCol[0] = { cx: 0, cz: 0, hx: 0, hz: 0, rot: 0, minY: 0, maxY: 0 });
+            col.cx = b.cx; col.cz = b.cz; col.hx = b.hx; col.hz = b.hz; col.rot = b.rot; col.minY = topNow - 0.004; col.maxY = topMax + CFG.overheadGap + 0.02;
+            const out = bufCol[1] || (bufCol[1] = []);
+            try { P.overlapOBB(col, { out, ignoreKey: ign, skipBoxes: skip, tol: 0.001 }); } catch (err) { out.length = 0; }
+            for (let k = 0; k < out.length; k++) {
+              const so = out[k], y0 = +so.minY;
+              if (!(y0 >= topNow - 0.003)) continue;             // 已经和它在同一高度上（旁边的墙、车身挨着的）：不是头顶的
+              const lim = (y0 - CFG.overheadGap - top0) / p.ly;
+              if (lim < maxL) { maxL = lim; word = lintelLike(so, this.y) ? TXT.overDoor : TXT.overThing; }
+            }
+            out.length = 0;
+          }
+        }
       }
       if (want > maxL) want = Math.max(cur, maxL);
       if (want >= 1 && cur < 1) { want = 1; if (this.endLatch !== 1) { events.push('end'); this.endLatch = 1; } }
@@ -1001,7 +1142,7 @@ Sim.prototype = {
         this.strainT -= h;
         if (this.strainT <= 0) { events.push('strain'); this.strainT = 1.5; }
         this.hyd = true;
-        return TXT.overhead(word || '横梁');
+        return word === TXT.overDoor || word === TXT.overThing ? word : TXT.overhead(word || '横梁');
       }
       this.strainT = 0;
       this.hyd = true;
@@ -1072,22 +1213,29 @@ Sim.prototype = {
         consider(i, Math.max(+e.minY, +e.maxY), CFG.underGap.solid, false);
       }
     }
-    // 碰撞体：每根货叉三点、货叉架两点往下打射线
+    // 碰撞体（FE1R F4：以前每根货叉三点、货叉架两点往下打射线，车轮挡卡在两条射线中间、货叉侧边下面就漏）：
+    // 每个跟着降的部件（货叉架、两根货叉）正下方那一柱 —— 部件的真实平面投影、从地面到部件底面 —— 里的静态碰撞体、别的车，停在最高的顶上
     const P = BR.phys;
-    if (P && has(P, 'raycast')) {
-      for (let i = 0; i < boxes.length; i++) {
-        const p = g.parts[i];
+    if (P && has(P, 'overlapOBB')) {
+      const skip = this.skipNow && this.skipNow.length ? this.skipNow : undefined;
+      const col = bufCol[2] || (bufCol[2] = { cx: 0, cz: 0, hx: 0, hz: 0, rot: 0, minY: 0, maxY: 0 });
+      const out = bufCol[3] || (bufCol[3] = []);
+      // 叉上的货（FE1R F3）伸出叉尖、悬在外面的那截也一样：它的底面下面有东西就停
+      const parts = this.allParts(), pb = worldBoxes(g, this.x, this.z, this.y, this.yaw, this.lift, parts, bufBoxes2);
+      for (let i = 0; i < pb.length; i++) {
+        const p = parts[i];
         if (!(p.ly > 0) || p.name === 'mastInner') continue;
-        const b = boxes[i];
-        const pts = p.name === 'carriage' ? [[-b.hx * 0.85, 0], [b.hx * 0.85, 0]] : [[0, -b.hz * 0.9], [0, 0], [0, b.hz * 0.9]];
-        for (const [lx, lz] of pts) {
-          const w = boxWorld(b, lx, lz), y0 = b.minY - 0.002;
-          const ground = groundAt(w.x, w.z, this.y);
-          if (y0 - ground < 0.01) continue;
-          let hit = null;
-          try { hit = P.raycast(w.x, y0, w.z, 0, -1, 0, y0 - ground + 0.02, { ignoreKey: ign, skipBoxes: this.skipNow && this.skipNow.length ? this.skipNow : undefined }); } catch (err) { hit = null; }
-          if (hit && Number.isFinite(+hit.y) && hit.y > ground + 0.005) consider(i, +hit.y, CFG.underGap.solid, false);
+        const b = pb[i], ground = groundAt(b.cx, b.cz, this.y);
+        if (b.minY - ground < 0.012) continue;
+        col.cx = b.cx; col.cz = b.cz; col.hx = b.hx; col.hz = b.hz; col.rot = b.rot; col.minY = ground - 0.005; col.maxY = b.minY - 0.0005;
+        try { P.overlapOBB(col, { out, ignoreKey: ign, skipBoxes: skip, tol: 0.0005 }); } catch (err) { out.length = 0; }
+        for (let k = 0; k < out.length; k++) {
+          const top = +out[k].maxY;
+          if (!(top > ground + 0.005) || top > b.minY + 0.005) continue;   // 已经和它重叠的不管（phys 本来就挡着）
+          const lim = (top + CFG.underGap.solid - (b.minY - p.ly * this.lift)) / p.ly;
+          if (!best || lim > best.lift) best = { lift: lim, person: false };
         }
+        out.length = 0;
       }
     }
     if (best) best.lift = clamp(best.lift, 0, 1);
@@ -1109,9 +1257,12 @@ Sim.prototype = {
     blockerObs(this, obs);
     ohObs(oh, obs);
     if (this.sideNow) sideObs(this.sideNow, obs);
+    // 扫掠的部件：车身 14 块 + 两只后轮（FE1R F2）+ 叉上的货（FE1R F3，伸出叉尖那一截也算）
+    const all = this.allParts();
     const test = (mo, list) => {
-      const a = physSweep(this, g, this.lift, mo, ign, list);
-      const b = sweepLocal(g, this, this.lift, mo, list || g.parts, obs);
+      const pl = list || all;
+      const a = physSweep(this, g, this.lift, mo, ign, pl);
+      const b = sweepLocal(g, this, this.lift, mo, pl, obs);
       if (!a && !b) return null;
       if (a && (!b || a.t <= b.t)) return { t: a.t, key: a.key, ob: null };
       return { t: b.t, key: b.ob.key || b.ob.id, ob: b.ob };
@@ -1127,7 +1278,7 @@ Sim.prototype = {
         // ② 不转角（沿车头方向直走）：只在车头那一半蹭着时允许 —— 倒车打方向把车尾带离墙时，前轮前面那截会蹭着墙滑。
         //    车尾那一半撞上（后轮转向，车尾往外甩）就是真走不了：停住；往前开时提示先倒车带出来
         const turning = Math.abs(dpsi) > 1e-7;
-        const tail = turning && !!test(full, g.rearParts);
+        const tail = turning && !!test(full, g.rearParts.concat(wheelParts(g, this.steer)));
         const sHit = turning ? test(straight) : hit;
         if (turning && !sHit && !tail) { mo = straight; }
         else {
@@ -1141,12 +1292,13 @@ Sim.prototype = {
       const disp = Math.hypot(mo.dx, mo.dz) + Math.abs(mo.dyaw) * 2.6;
       frac = disp > 1e-9 ? Math.max(0, frac - 0.002 / disp) : 0;
     }
-    const b0 = E.pushItems === false ? null : boxesAt(g, this, this.lift, mo, 0, g.parts, []);
+    const pushL = g.parts.concat(wheelParts(g, this.steer));   // 推地上物资：车身 + 后轮（FE1R F2：打着方向开，轮胎不扫进物资）
+    const b0 = E.pushItems === false ? null : boxesAt(g, this, this.lift, mo, 0, pushL, []);
     const o = rotAbout(this.x, this.z, mo.px, mo.pz, mo.dyaw * frac, { x: 0, z: 0 });
     const nx = o.x + mo.dx * frac, nz = o.z + mo.dz * frac, nyaw = wrap(this.yaw + mo.dyaw * frac);
     // 地上物资：先算推得开推不开（被夹在车和墙之间就整步不走）
     if (b0 && frac > 0) {
-      const b1 = worldBoxes(g, nx, nz, this.y, nyaw, this.lift, g.parts, []);
+      const b1 = worldBoxes(g, nx, nz, this.y, nyaw, this.lift, pushL, []);
       const plan = planPush(b0, b1, (this.x + nx) / 2, (this.z + nz) / 2, 4, this.pushed, E.riders, E.ignoreKey);
       if (!plan.ok) {
         // 有一件被夹在车和墙之间（FE1 返修 r3 裁定 ②）：车停在还推得动的最远处（这一步里二分），被推的东西停在车和墙之间，
@@ -1157,7 +1309,7 @@ Sim.prototype = {
           const mid = (lo + hi) / 2;
           const om = rotAbout(this.x, this.z, mo.px, mo.pz, mo.dyaw * mid, { x: 0, z: 0 });
           const mx = om.x + mo.dx * mid, mz = om.z + mo.dz * mid, myaw = wrap(this.yaw + mo.dyaw * mid);
-          const pm = planPush(b0, worldBoxes(g, mx, mz, this.y, myaw, this.lift, g.parts, []), (this.x + mx) / 2, (this.z + mz) / 2, 4, this.pushed, E.riders, E.ignoreKey);
+          const pm = planPush(b0, worldBoxes(g, mx, mz, this.y, myaw, this.lift, pushL, []), (this.x + mx) / 2, (this.z + mz) / 2, 4, this.pushed, E.riders, E.ignoreKey);
           if (pm.ok) { lo = mid; best = pm; bx = mx; bz = mz; byaw = myaw; } else hi = mid;
         }
         if (best) {
@@ -1283,7 +1435,7 @@ Sim.prototype = {
     return null;
   },
   spotBasic(x, z, boxes, blk) {
-    const r = CFG.personR;
+    const r = personVehR();
     for (const b of boxes) if (circleDist2(b, x, z) < (r + 0.02) * (r + 0.02)) return false;
     for (const b of blk) {
       if (b.kind === 'circle') { if (Math.hypot(b.x - x, b.z - z) < b.r) return false; }
@@ -1293,14 +1445,15 @@ Sim.prototype = {
   },
   // 站得下：返回地面高度 | null。from = 座椅胸口点（看得见）/ 'rear'（翻过配重：经过配重上方）/ null
   spotOk(x, z, boxes, people, blk, from, strict) {
-    const r = CFG.personR, P = BR.phys;
+    // 落点离车身 OBB 按人对载具的半径（spotBasic）；离墙 / 静态碰撞体按人自己的碰撞半径
+    const r = num(BR.config && BR.config.player && BR.config.player.radius, 0.3), rv = personVehR(), P = BR.phys;
     const gy = groundAt(x, z, this.y);
     if (Math.abs(gy - this.y) > 0.35) return null;
     if (!this.spotBasic(x, z, boxes, blk)) return null;
     if (P && has(P, 'overlapCircle')) { try { if (P.overlapCircle(x, z, r, gy + 0.02, CFG.personH - 0.04)) return null; } catch (err) { /* 当成能站 */ } }
     if (strict) for (const c of people) {
       if (c.maxY < gy + 0.05 || c.minY > gy + 1.8) continue;
-      if (Math.hypot(c.x - x, c.z - z) < c.r + r) return null;
+      if (Math.hypot(c.x - x, c.z - z) < c.r + rv) return null;
     }
     if (from && P && has(P, 'los')) {
       const ty = gy + 1.2;
@@ -1317,55 +1470,13 @@ Sim.prototype = {
   },
 
   // ---------- 前大灯 ----------
-  // 点光源没有阴影（全游戏 shadowMap 关着）：「不透墙」靠光球不伸到挡光的东西后面（FE1P H8，见 lightBound）。
-  // 返回的 range / intensity 就是画面上那盏灯的；world.lightAt 也按它们算（FE1Q J8：画面上亮的地方才算亮），
-  // 只有驾驶舱另算（litSeat：开着大灯司机算被照亮，不因为旁边有货架、光球收小了就变）
+  // 点光源没有阴影（全游戏 shadowMap 关着）：「不透墙」靠光球不伸到挡光的东西的影子里（FE1P H8 → FE1R，见 lightSolve / shadowBound）。
+  // 光源落点每帧在叉尖前一排候选位置里挑（FE1R K2：车前是空地时叉尖前 0.5–3 m 的地面一定亮），挑中的位置逐帧平滑过去（不一跳一跳），
+  // 光球按平滑后的实际位置当帧收（不漏光）。返回的 range / intensity 就是画面上那盏灯的；world.lightAt 也按它们算（FE1Q J8），
+  // 只有驾驶舱另算（litSeat：开着大灯司机算被照亮）
   lightSpot() {
-    const g = G(), L = CFG.light;
-    const LZ = -0.7;                                   // 射线从两盏大灯之间（前立柱）出发
-    const o = this.toWorld(0, LZ);
-    const ox = o.x, oz = o.z;
-    const fx = fwdX(this.yaw), fz = fwdZ(this.yaw);
-    // 「车头」= 门架前脸 / 叉根（forkZ 里靠后的那个）；灯放在它前面 CFG.light.ahead（4 m）、离地 1.6 m（数值以这里为准，方案已同步）
-    const heel = Array.isArray(g.forkZ) ? Math.max(+g.forkZ[0], +g.forkZ[1]) : -1.16;
-    const maxD = Math.abs(LZ - heel) + L.ahead;
-    const y = this.y + L.y;
-    const ign = this.ignoreKeys(null);
-    let d = maxD, R0 = L.range, dh = Infinity, hit = null, k = 1;
-    const P = BR.phys;
-    if (P && has(P, 'raycast')) {
-      try { hit = P.raycast(ox, y, oz, fx, 0, fz, maxD, { ignoreKey: ign }); } catch (err) { hit = null; }
-      if (hit && Number.isFinite(+hit.dist)) dh = +hit.dist; else hit = null;
-    }
-    // 切出墙那段（kit 'noclip'）没有碰撞体，看上去是墙：射线照样被它挡
-    const ncs = noclipBoxes(ox, oz, maxD + L.range);
-    let hitNc = null;
-    for (let i = 0; i < ncs.length; i++) {
-      const t = rayBoxXZ(ox, y, oz, fx, fz, ncs[i]);
-      if (t != null && t < dh) { dh = t; hit = null; hitNc = ncs[i]; }
-    }
-    if (dh <= maxD) {
-      d = Math.max(0.15, dh - 0.3);
-      // 墙前：光源放在墙前 0.3 m，名义范围收到 1.8–2.2 m；墙在窗口最远那半米时慢慢放回 range（8），不跳
-      const nearR = clamp(dh, L.nearMin, L.near);
-      k = clamp((dh - (maxD - 0.5)) / 0.5, 0, 1);
-      R0 = nearR + (L.range - nearR) * k;
-    }
-    const x = ox + fx * d, z = oz + fz * d;
-    const B = lightBound(x, y, z, R0, ign, hit, k, ncs, hitNc);
-    const range = Math.max(0.05, Math.min(R0, B - OCC.margin));
-    // 光球收小了补强度：光源正下方的地面（离光源 L.y = 1.6 m）和光球 8 m 时一样亮（衰减 (1 − d/range)²），最多 2.2 倍；
-    // 光球比 1.6 m 还小（贴着墙）时给满 2.2 倍 —— 车灯离墙越近，墙上那块光斑本来就越亮
-    const hy = Math.max(0.5, L.y);
-    const keep = range > hy ? Math.pow((1 - hy / L.range) / (1 - hy / range), 2) : Infinity;
-    const intensity = L.intensity * clamp(keep, 1, OCC.boost);
-    // 「开着大灯，司机算被照亮」（FE1Q J8，保留「开着车灯怪不敢靠近司机」）：座椅处固定按空地上光源放在最远处（车前 4.46 m）、名义 range 8 时
-    // 座椅离光源的水平距离（0.94 + 4.46 = 5.4 m）算，≈ 0.34 —— 和改前空地上一样，贴着墙、在货架通道里也不变（见 litSeat）
-    const seatD = Math.abs(g.seatP.z - LZ) + maxD;
-    const seatLit = L.intensity * Math.pow(Math.max(0, 1 - seatD / L.range), 2);
-    this.lightInfo = { range, intensity, R0, seatLit, bound: B, hit: dh <= maxD ? dh : null,
-      by: occBy.kind ? { kind: occBy.kind, key: occBy.key, box: occBy.box } : null };
-    return { x, y, z, range, color: L.color, intensity, flicker: 0, decay: 2, owner: 'forklift:' + this.key };
+    const r = lightSolve(this);
+    return { x: r.x, y: r.y, z: r.z, range: r.range, color: CFG.light.color, intensity: r.intensity, flicker: 0, decay: 2, owner: 'forklift:' + this.key };
   },
   // (x, z) 在这台车的驾驶舱里（cab 的矩形：本地 |x| ≤ 0.4、z −0.5…0.55，坐着的司机的位置 = 眼点 z 0.16）就返回 lightInfo.seatLit，否则 0。
   // world.lightAt 对开着的大灯（'fk:' / 'fkr:'）取 max(画面上这一点被照得多亮, litSeat)（FE1Q J8）
@@ -1634,12 +1745,13 @@ function vineVolsFor(vn, vols) {
 // 车本地坐标、lift 无关；数值抄 L1.js forkliftModel 的护顶架（dbox 的 y 是底面、x / z 是中心）：
 //   两侧纵梁 dbox(±0.43, 2.04, −0.03, 0.06, 0.06, 1.18) → |x| 0.40–0.46、y 2.04–2.10、z −0.62…0.56
 //   前 / 后横梁 dbox(0, 2.04, −0.59 / 0.53, 0.8, 0.06, 0.06) → |x| ≤ 0.40、y 2.04–2.10、z −0.62…−0.56 / 0.50…0.56
-//   格栅横条（按这台车可动模型的细节档 FK_LOD[档].slats 根）dbox(0, 2.07, −0.45 + k·0.9/(slats − 1), 0.8, 0.015, 0.05) → y 2.07–2.085
+//   格栅横条（按这台车可动模型的细节档 FK_LOD[档].slats 根）dbox(0, 2.07, z, 0.8, 0.015, 0.05) → y 2.07–2.085，z 取 BR.L1forklift.slatZ(slats)
+//     （FE1R K10：在前横梁后脸 −0.56 和后横梁前脸 0.48 之间均匀排开：3 根 −0.3125 / −0.04 / 0.2325，2 根 −0.2217 / 0.1417）
 //   立柱：fkPrism 斜的四棱柱（x 宽 5 cm），截面 (z, y)：前立柱 (−0.75…−0.69, 0.99) → (−0.58…−0.52, 2.07)、后立柱 (0.59…0.65, 1.08) → (0.50…0.56, 2.07)，
 //         按沿 z 斜切的盒子算（sk = dz/dy；斜切空间里量的距离和真距离差不到 8%，贴着时 <1 mm）
-//   前大灯灯盒 dbox(±0.43, 1.86, −0.645, 0.08, 0.08, 0.08) → |x| 0.39–0.47、y 1.86–1.94、z −0.685…−0.605（灯面 sheet 在 −0.688）
-//   后视镜（有 mirror 的档）：镜壳 dbox(−0.545, 1.74, −0.655, 0.09, 0.1, 0.02)，镜杆 stick((−0.46, 1.76, −0.6) → (−0.53, 1.79, −0.655), 0.008)
-//   警示灯：后横梁正中 (0, 0.53) 竖着的正 n 棱台（fkPost，n = FK_LOD[档].beacon）：有底座的档底座 r 0.05、y 2.10–2.125，灯罩 r 0.045 → 0.03、高 0.075
+//   前大灯灯盒（FE1R S8：往后加深、插进前立柱，镜面就是灯盒前脸）dbox(±0.43, 1.86, (−0.685 − 0.597)/2, 0.08, 0.08, 0.088) → |x| 0.39–0.47、y 1.86–1.94、z −0.685…−0.597
+//   后视镜：FE1R 起各档都不画（FK_LOD[档].mirror = false，K8 腾面）；有 mirror 的档才按下面 mirror 那份挡
+//   警示灯：后横梁正中 (0, 0.53) 竖着的正 n 棱台（fkPost，n = FK_LOD[档].beacon，FE1R 起各档 12 棱、没有底座）：灯罩 r 0.045 → 0.03、y 2.10–2.175
 // 车上别的东西（扶手、座椅、方向盘……）在护顶下面，藤蔓先碰到护顶，够不着
 const VINE_GUARD = {
   boxes: [
@@ -1647,13 +1759,13 @@ const VINE_GUARD = {
     ['railL', -0.46, -0.40, 2.04, 2.10, -0.62, 0.58], ['railR', 0.40, 0.46, 2.04, 2.10, -0.62, 0.58],
     ['beamF', -0.40, 0.40, 2.04, 2.10, -0.62, -0.56], ['beamR', -0.40, 0.40, 2.04, 2.10, 0.48, 0.58],
   ],
-  slat: { x: 0.40, y0: 2.07, y1: 2.085, d: 0.05, z0: -0.45, z1: 0.45 },
+  slat: { x: 0.40, y0: 2.07, y1: 2.085, d: 0.05, z0: -0.56, z1: 0.48 },
   posts: [
     // [名字, x0, x1, y0, y1, 底端 z0, z1, 顶端 z0, z1]
     ['postFL', -0.455, -0.405, 0.99, 2.07, -0.75, -0.69, -0.58, -0.52], ['postFR', 0.405, 0.455, 0.99, 2.07, -0.75, -0.69, -0.58, -0.52],
     ['postRL', -0.455, -0.405, 1.08, 2.07, 0.59, 0.65, 0.50, 0.56], ['postRR', 0.405, 0.455, 1.08, 2.07, 0.59, 0.65, 0.50, 0.56],
   ],
-  lamps: [['lampL', -0.47, -0.39, 1.86, 1.94, -0.688, -0.605], ['lampR', 0.39, 0.47, 1.86, 1.94, -0.688, -0.605]],
+  lamps: [['lampL', -0.47, -0.39, 1.86, 1.94, -0.685, -0.597], ['lampR', 0.39, 0.47, 1.86, 1.94, -0.685, -0.597]],
   mirror: { box: ['mirror', -0.59, -0.50, 1.74, 1.84, -0.665, -0.642], a: [-0.46, 1.76, -0.6], b: [-0.53, 1.79, -0.655], r: 0.008 * Math.SQRT2 },
   beacon: { x: 0, z: 0.53, y: 2.10, base: { r: 0.05, h: 0.025 }, lamp: { r0: 0.045, r1: 0.03, h: 0.075 } },
 };
@@ -1832,7 +1944,8 @@ function chainVolumes(sim, L, g, inner, carriage, c, s, pad, boxes, polys) {
   for (const sx of [-1, 1]) {
     const x = sx * sp.x;
     box('chain', x - hw, x + hw, ch.carriageY + carriage, cy, ch.z - T / 2 - 0.002, ch.z + T / 2);
-    if (L && !L.backChain) continue;
+    // 后段链条：FE1R 起各档都画（FK_LOD 不再有 backChain 字段）；只有明说 backChain: false 的档才不画
+    if (L && L.backChain === false) continue;
     box('chain', x - hw, x + hw, ch.anchorY, cy, ch.back - T / 2 - 0.002, ch.back + T / 2);
     const N = L && L.arc ? L.arc : 6, pl = [];
     for (let k = 0; k < N; k++) { const am = Math.PI * (k + 0.5) / N; pl.push([0, Math.sin(am), -Math.cos(am), Ro * Math.cos(Math.PI / (2 * N)) + Math.sin(am) * cy - Math.cos(am) * sp.z]); }
@@ -1862,6 +1975,12 @@ function segPolyDist(ax, ay, az, bx, by, bz, P, r) {
   }
   return Math.min(f1, f2, f(0), f(1));
 }
+// 护顶横条的 z（和 L1.js fkSlatZ 同一条规则：前横梁后脸 −0.56、后横梁前脸 0.48 之间均匀排开，相邻净空相等）
+function slatZLocal(n) {
+  const sl = VINE_GUARD.slat, g = (sl.z1 - sl.z0 - n * sl.d) / (n + 1), out = [];
+  for (let k = 0; k < n; k++) out.push(sl.z0 + g * (k + 1) + sl.d * k + sl.d / 2);
+  return out;
+}
 function guardVolumes(sim, L, pad, boxes, caps, cyls) {
   const G0 = VINE_GUARD, y = sim.y, tw = { x: 0, z: 0 };
   const add = (name, x0, x1, y0, y1, z0, z1, sk) => {
@@ -1870,8 +1989,10 @@ function guardVolumes(sim, L, pad, boxes, caps, cyls) {
   };
   for (const b of G0.boxes) add(b[0], b[1], b[2], b[3], b[4], b[5], b[6]);
   const n = L ? Math.max(0, L.slats | 0) : 3, sl = G0.slat;
-  for (let k = 0; k < n; k++) {
-    const zc = n > 1 ? sl.z0 + k * (sl.z1 - sl.z0) / (n - 1) : (sl.z0 + sl.z1) / 2;
+  // 横条位置和模型同一份（BR.L1forklift.slatZ，FE1R K10）；没有 L1forklift 时按同一条规则自己算
+  const F = BR.L1forklift, zs = F && has(F, 'slatZ') ? F.slatZ(n) : slatZLocal(n);
+  for (let k = 0; k < zs.length; k++) {
+    const zc = +zs[k];
     add('slat', -sl.x, sl.x, sl.y0, sl.y1, zc - sl.d / 2, zc + sl.d / 2);
   }
   for (const p of G0.posts) {
@@ -1996,121 +2117,901 @@ function segSegDist(p1x, p1y, p1z, q1x, q1y, q1z, p2x, p2y, p2z, q2x, q2y, q2z) 
   return Math.sqrt(x * x + y * y + z * z);
 }
 
-// ---------- 前大灯不透墙（FE1P H8）----------
-// 光球半径上限：光源 (x, y, z)、名义半径 R0；ign = 车自己的碰撞 key；hit = 正前方射线打到的（phys.raycast 的结果）；k = 打到的点在
-// 窗口最远那半米时从 0 到 1（放开）；ncs = 附近的切出墙片。点光源没有阴影，光球里所有朝着光源的面都会亮，所以：
-//   ① 墙类 —— 竖直方向跨过光源高度、水平方向细长（长边 ≥ 2 × 短边，长边 ≥ 0.4 m）的静态碰撞体和切出墙片：取沿薄的方向的中面
-//      （两头各伸出 min(厚/2, 0.15) m，墙角两面墙的中面接得上），光源到中面的距离 d、到中面所在平面的垂距 p；穿过中面才到得了的点
-//      （= 被这面墙挡住的）离光源至少 d·(1 + t/p)，range 不超过它；t = 光能穿进去多深（见 occDepth：薄墙到远侧面，货架那种厚的到远侧面往里 0.1 m）。
-//      侧着看墙头（p → 0）时被挡住的只是贴着墙面的一条缝，不收。车从墙边开过、在货架通道里，光球都跟着收小（货架通道里照到对面货架上的货为止）
-//   ② 射线正前方打到的那一样（墙、货架、柱子、堆垛、别的车、切出墙片）：光源在它哪个面的里侧，这个面后面就是它的影子，
-//      range 不超过光源到这个面的距离（k 放开：range 上限 = 距离 + (R0 − 距离)·k）。对着货架头、墙头这种侧着的，① 不收，靠这一条：
-//      货架头后面那条通道、拐角那边一点光都不吃
-// 光源离被挡住的地方再留 OCC.margin。柱子、堆垛这种方的、矮于光源的东西不算（没有影子是全游戏的约定，挡不住一间屋）
-const OCC = { minLong: 0.4, ratio: 2, ext: 0.15, thick: 0.1, ramp: 0.5, margin: 0.01, boost: 2.2 };
-const bufOcc = [], bufNc = [];
-const occBy = { kind: '', key: '', box: null };   // 最后一次 lightBound 是被哪一样收住的（测试、调试看 sim.lightInfo.by）
-function lightBound(x, y, z, R0, ign, hit, k, ncs, hitNc) {
-  let B = Infinity;
-  occBy.kind = ''; occBy.key = ''; occBy.box = null;
-  const P = BR.phys;
-  if (P && has(P, 'overlapBox') && R0 > 0) {
-    const out = bufOcc;
-    try { P.overlapBox(x - R0, z - R0, x + R0, z + R0, y - R0, 2 * R0, { out, ignoreKey: ign }); } catch (err) { out.length = 0; }
-    for (let i = 0; i < out.length; i++) {
-      const s = out[i];
-      let lx, lz, hx, hz;
-      if (s.obb) {
-        const c = Math.cos(s.rot), sn = Math.sin(s.rot), dx = x - s.cx, dz = z - s.cz;
-        lx = dx * c - dz * sn; lz = dx * sn + dz * c; hx = s.hx; hz = s.hz;
-      } else {
-        hx = (s.maxX - s.minX) / 2; hz = (s.maxZ - s.minZ) / 2;
-        lx = x - (s.minX + s.maxX) / 2; lz = z - (s.minZ + s.maxZ) / 2;
-      }
-      const hy = (s.maxY - s.minY) / 2, ly = y - (s.minY + s.maxY) / 2;
-      // 车（别的叉车、叉着的货）不当墙；正前方打到它时照 ② 算
-      const wall = !s.obb && wallShape(hx, hz);
-      if (wall) { const w = wallBound(lx, ly, lz, hx, hy, hz); if (w < B) { B = w; occWho('wall', s); } }
-      if (hit && hitOn(s, hit)) {
-        const bb = backBound(lx, ly, lz, hx, hy, hz), e = bb + Math.max(0, R0 - bb) * k;
-        if (e < B) { B = e; occWho('hit', s); }
-      }
-    }
-    out.length = 0;
+// ---------- 前大灯落点（FE1R：K1 窄东西不收光球、K2 车前是空地时一定亮、宽块 / 别的车背后不漏光、天花板不比地面亮）----------
+// 一盏点光源（从灯池借一盏），没有阴影：画面上光球里朝着光源的面全亮。所以「不透墙」= 光球不伸进挡光体的影子里。
+//   挡光体（光源附近的静态碰撞体、切出墙片、别的车）分类（阈值见 LT，写进 ARCHITECTURE）：
+//     窄   水平两个方向都 ≤ LT.narrow（1.0 m）：树干 0.34、门框立柱 0.16×0.08、柱子 0.7 / 0.9、灯杆、消火栓箱 0.8×0.32。挡不住视线后面那片地，
+//          不收光球（K1，没有影子是全游戏的约定：光照到它身上，也照到它周围和后面的地面）。墙段（长 ≥ 2×厚、高 ≥ 2.4 m）不算窄。
+//          光源不越过它放到后面：车宽带里第一个窄东西前 LT.passN 以内不放（它朝车那一面照得到）
+//     货架 墙形（长 ≥ 2×厚、长 ≥ 0.4）且厚 > 1.0 m（2.32 × 7.1 的货架）：FE1Q J9，长边那两面按远侧面往里 0.1 m 收（照得到朝通道的货，
+//          照不到另一侧的通道）；两头的端面不收（返修 FE1R · repair-r2：端面背后那片影子在这排货架自己那一条里 —— 两节之间的空当、货架头外的横通道，
+//          照 FE1Q「货架头那一下漏光接受」；以前按端面收，宽通道正中光球被收到 3 m、叉尖前 5 m 全黑），顶面不收（货架是透的、顶上没东西）
+//     墙 / 宽块 / 别的车 —— 其余的：墙（小屋墙 0.2、承重墙 0.3、周转箱架 0.8）、堆垛 1.44、整车外包盒（别的叉车按整车，FE1R L-occluders）、
+//          切出墙片。影子里一点光都不吃：光球不超过光源到它「背面」（光源在这个面的里侧的那几个面，含顶面；贴地的底面不算）的最近距离 ——
+//          对凸的盒子，影子里离光源最近的点就在背面上
+//     只有竖直方向跨过光源高度的收光球（矮于光源的、悬在头顶的不收：同裁定「竖直方向跨过光源高度的静态盒子」）；顶比光源低不到 LT.yFade
+//     （底比光源高不到 LT.yFade）的按 1 / (1 − 差 / yFade) 放宽了当收的目标（开车时限速收，不当帧硬收），光源高度挪过箱子顶时光球不一跳
+//   落点：叉尖前 s、横偏 u、离地 h 一排候选（LT.s × LT.u × LT.h）。每个候选：光球 R = min(够得着判定区最远点的名义范围, 上面的上限 − 1 cm)；
+//   强度 I = max(LT.I0, 判定区最暗处到 LT.zT 要的强度、正前方窄东西那面到 LT.nT 要的强度)，再封顶：光源正下方地面 ≤ LT.eFloor、近处表面不发白
+//   （返修 FE1R · repair-r5：按每个挡体表面的颜色、高光和已经吃到的别的光算，见 surfCap；以前是离光源最近的面照度 ≤ LT.eSurf，不看颜色）。打分 = 4·叉尖前 1.5 m 以内覆盖 + 2·更远覆盖 + 叉尖前 5 m 那点 + 1.5·正前方窄东西朝车那面
+//   （乘叉尖前 1.5 m 以内最暗那点到 LT.zN 的比例：照那一面不拿近处地面换）− 0.6·天花板 / 头顶条目罚 + 离空地上的位置（LT.nom）近。
+//   粗搜 LT.s × LT.u × LT.h，再在粗搜最好的 LT.topK 处（互相隔开的）各细搜两圈；每 LT.every 帧一次，其余帧从上一帧目标爬山。
+//   判定区（K2）= 叉尖前 0.5 m 起到 min(3, 车宽带里第一个挡光体 − 0.2)，横向 −0.5…0.5 每 0.25，离任何实体面 < 0.3 m 的点不算。
+//   平滑：选中的位置（车本地）按 LT.tauL / LT.tau 逐帧靠过去、每帧挪 ≤ LT.vMax·dt，强度 LT.tau、每帧相对 ≤ LT.iRate·dt；新目标要比当前
+//   目标高出 LT.sw 分才换（滞回）。位置不越过车宽带里挡光体前 0.1 m（硬限，当帧）；光球放大 ≤ LT.rUp、收小 ≤ LT.rDown，当帧只受
+//   occSoft（楔形细缝放宽到 LT.w0r 的上限）硬限，停稳 / 跳变时就是严格上限。
+const LT = {
+  s: [-0.5, -0.125, 0.25, 0.625, 1.0, 1.375, 1.75, 2.125, 2.6, 3.1], // 粗搜（叉尖前多远；3.1：货架通道里越过前面货架头放，叉尖前 5 m 照得到）
+  u: [0, -0.5, 0.5],                                      // 横偏
+  h: [0.5, 0.75, 1.0, 1.2],                               // 离地
+  ds: 0.19, du: 0.25, dh: 0.125, topK: 3,                // 细搜：粗搜最好的 topK 处周围各试两圈（第二圈步长减半）
+  hMin: 0.45, hMax: 1.2, uMax: 0.55,
+  nom: { s: 2.6, u: 0, h: 0.9 },
+  R0: 4.4, Rmax: 6.5, reachK: 0.62, I0: 2.8, Imax: 12, ImaxMove: 2.8, eFloorMove: 1.6,
+  // eSurf：没建剖面的挡体（别的车、切出墙片）照旧按「最近那个面照度 ≤ eSurf」；wSurf / wSurfG：按颜色封顶时近处表面的线性亮度上限（墙、树干、柱子 / 货架、堆垛的货），见 surfCap
+  eFloor: 5.0, eSurf: 2.0, wSurf: 0.78, wSurfG: 0.86, zT: 0.22, zN: 0.12, fT: 0.2, zOkN: 0.15, zOkF: 0.15, badN: 3.0, badF: 2.0,
+  ceilY: 4.0, eCeil: 0.3, eOh: 0.5, ceilK: 0.7,
+  narrow: 1.0, yFade: 0.1, ySoft: 0.25, wallH: 2.4, deep: 1.0, rackIn: 0.1, w0: 0.03, w0r: 0.15,
+  band: 0.6, blockH: 0.5, zU: [-0.5, -0.25, 0, 0.25, 0.5], z0: 0.5, z1: 3, zStep: 0.25, zEnd: 0.2, zClear: 0.3, far: 5,
+  pad: 0.2, passN: 0.3, passW: 0.35, passU: 0.3, mid: 0.35, sMin: -0.5, faceY: [0.5, 1.0, 1.6], nT: 0.35,
+  tau: 0.15, tauL: 0.05, sw: 0.4, margin: 0.01, every: 4, vMax: 3, rUp: 3, rDown: 3, iRate: 2.4, ls: 0.06, lu: 0.06, lh: 0.04,
+  // 两边货架朝通道那面的货（返修 FE1R · repair-r4，主会话 L3，见 lightCtx 的 goods）：车两侧横向 gLat 以内、和车平行的货架，朝车那面上
+  // 叉尖前 0–gFar m、离地 gY 每 gStep 一点；照度到 gT 算照满；打分权重 wG（低于车前判定区：近段 4、远段 2）；名义范围按最远那一点 / reachK 放大
+  // gCeil（repair-r5）：两边有货架时天花板 / 头顶条目的绝对上限放宽到 gCeil × 两边货里暗的那四分之一档的照度
+  gLat: 3.6, gFar: 4, gStep: 1, gY: [0.6, 1.2], gT: 1.0, wG: 1.2, gCeil: 1.0,
+};
+// 「开着大灯，司机算被照亮」（FE1Q J8，保留「开着车灯怪不敢靠近司机」）：按改前空地上的数（光源在车前 4.46 m、名义 range 8、强度 3.2 时
+// 座椅离光源水平 5.4 m）固定 ≈ 0.34，贴着墙、在货架通道里都不变（见 litSeat）
+const SEAT_LIT = 3.2 * Math.pow(1 - 5.4 / 8, 2);
+const occPool = [], bufOcc = [], bufOccRaw = [], bufNc = [], bufPoly = [], bufPoly2 = [], bufZone = [], bufE1 = [], bufGoods = [], bufGe = [];
+const tmpLW = { x: 0, z: 0 }, tmpLL = { x: 0, z: 0 };
+function occRec(i) { return occPool[i] || (occPool[i] = { t: '', cx: 0, cz: 0, c: 1, s: 0, hx: 0, hz: 0, minY: 0, maxY: 0, r: 0, key: '', src: null }); }
+function occKind(hx, hz, H) {
+  const a = Math.max(hx, hz) * 2, b = Math.min(hx, hz) * 2;
+  const wallish = a >= 0.4 && a >= 2 * b;
+  if (a <= LT.narrow && !(wallish && H >= LT.wallH)) return 'narrow';
+  if (wallish && b > LT.deep) return 'rack';
+  if (wallish) return 'wall';
+  return 'wide';
+}
+// 光源附近的挡光体（世界坐标的 OBB 记录：中心、cos / sin、半宽、上下沿；别的车的部件按 key 合成整车外包盒）
+function lightOcc(sim, gy, ign, x0, z0, x1, z1) {
+  const out = bufOcc, P = BR.phys;
+  out.length = 0;
+  let n = 0;
+  const raw = bufOccRaw;
+  raw.length = 0;
+  if (P && has(P, 'overlapBox')) { try { P.overlapBox(x0, z0, x1, z1, gy + 0.02, 3.0, { out: raw, ignoreKey: ign }); } catch (err) { raw.length = 0; } }
+  for (let i = 0; i < raw.length; i++) {
+    const s = raw[i];
+    if (!s || s.obb || !Number.isFinite(+s.minX)) continue;   // 车的部件 OBB 不在这里收：别的车按整车外包盒另外加（下面）
+    const o = occRec(n++); out.push(o);
+    o.cx = (s.minX + s.maxX) / 2; o.cz = (s.minZ + s.maxZ) / 2; o.hx = (s.maxX - s.minX) / 2; o.hz = (s.maxZ - s.minZ) / 2; o.c = 1; o.s = 0;
+    o.minY = s.minY; o.maxY = s.maxY; o.key = s.key != null ? String(s.key) : ''; o.src = s;
+    o.t = occKind(o.hx, o.hz, o.maxY - o.minY);
   }
+  // 别的叉车（停着的、运行时车、联机队友的车）：整车外包盒（货叉尖到配重后脸、车最宽处、地面到护顶 / 升起来的门架顶），FE1R L-occluders。
+  // 按 BR.vehicles 的位姿建（不按 phys 里落进查询范围的那几块部件拼，免得车开近时盒子一块块长出来）
+  const V = BR.vehicles, list = V && has(V, 'list') ? V.list() : null;
+  if (Array.isArray(list)) {
+    const g = G();
+    for (let i = 0; i < list.length; i++) {
+      const v = list[i];
+      if (!v || String(v.key) === sim.key || !Number.isFinite(+v.x) || !Number.isFinite(+v.z)) continue;
+      if (v.x < x0 - 3 || v.x > x1 + 3 || v.z < z0 - 3 || v.z > z1 + 3) continue;
+      const yaw = num(v.yaw, 0), lift = clamp(num(v.lift, 0), 0, 1), c = Math.cos(yaw), sn = Math.sin(yaw), mz = (g.front + g.rear) / 2;
+      const o = occRec(n++); out.push(o);
+      o.t = 'car'; o.key = 'veh|' + v.key; o.src = null; o.c = c; o.s = sn; o.hx = g.halfW; o.hz = (g.rear - g.front) / 2;
+      o.cx = v.x + sn * mz; o.cz = v.z + c * mz;
+      o.minY = num(v.y, gy); o.maxY = o.minY + Math.max(g.guardTop + 0.1, 2.125 + g.innerTravel * lift, 1.24 + g.carriageTravel * lift);
+    }
+  }
+  // 切出墙片（kit 'noclip'，没有碰撞体、看上去是墙）：当墙
+  const ncs = noclipBoxes((x0 + x1) / 2, (z0 + z1) / 2, Math.max(x1 - x0, z1 - z0) / 2);
   for (let i = 0; i < ncs.length; i++) {
-    const b = ncs[i];
-    const hx = (b.maxX - b.minX) / 2, hz = (b.maxZ - b.minZ) / 2, hy = (b.maxY - b.minY) / 2;
-    const lx = x - (b.minX + b.maxX) / 2, ly = y - (b.minY + b.maxY) / 2, lz = z - (b.minZ + b.maxZ) / 2;
-    const w = wallBound(lx, ly, lz, hx, hy, hz);
-    if (w < B) { B = w; occWho('noclip', b); }
-    if (b === hitNc) {
-      const bb = backBound(lx, ly, lz, hx, hy, hz), e = bb + Math.max(0, R0 - bb) * k;
-      if (e < B) { B = e; occWho('hit', b); }
+    const b = ncs[i], o = occRec(n++); out.push(o);
+    o.cx = (b.minX + b.maxX) / 2; o.cz = (b.minZ + b.maxZ) / 2; o.hx = (b.maxX - b.minX) / 2; o.hz = (b.maxZ - b.minZ) / 2; o.c = 1; o.s = 0;
+    o.minY = b.minY; o.maxY = b.maxY; o.key = 'noclip'; o.t = 'wall'; o.src = null;
+  }
+  for (let i = 0; i < out.length; i++) { const o = out[i]; o.r = Math.hypot(o.hx, o.hz); }
+  raw.length = 0;
+  return out;
+}
+function occLocal(o, x, z, out) { const dx = x - o.cx, dz = z - o.cz; out.x = dx * o.c - dz * o.s; out.z = dx * o.s + dz * o.c; return out; }
+// 光源 (x, y, z) 到挡体 o 的最近距离（任何面）
+function occDist(o, x, y, z) {
+  const l = occLocal(o, x, z, tmpLL);
+  const ex = Math.max(0, Math.abs(l.x) - o.hx), ez = Math.max(0, Math.abs(l.z) - o.hz);
+  const ey = y < o.minY ? o.minY - y : y > o.maxY ? y - o.maxY : 0;
+  return Math.sqrt(ex * ex + ey * ey + ez * ez);
+}
+// ---------- 不发白封顶按表面颜色算（返修 FE1R · repair-r5，主会话 L3；验收员 play / spec / tests）----------
+// 以前「离光源最近的面不发白」是一个固定的照度代理：最近那个面（任何碰撞体）的照度 ≤ LT.eSurf（2.0），不管那个面是什么颜色。宽货架通道正中
+// 离光源最近的是 0.45 m 外一根下段刷深绿漆的柱子，照度 2.0 时画面上最亮才 101，强度却被卡在 2.42，两边货架的货只有 FE1Q 的一半；
+// 把 eSurf 统一放大又会让 K1 的枯树干（树皮更浅）发白。现在按「画面上会不会真发白」封：光源照得到的近处表面里，反照率 × 照度
+// （I·k²·cos）最大的那一点 ≤ LT.wSurf（线性、色调映射前；树皮在照度 2.0 时正好是这个数 —— K1 树干的封顶和以前一样，最大通道 <245）。
+// 反照率 = 那一点看得见的最外一层（刷漆、贴花盖着的按盖在外面的那层，半透明的贴花、玻璃取它和后面那层里亮的）：顶点色 × 材质色 ×
+// 贴图亮处（p98，sRGB 贴图先解码成线性）；发光件（Basic）不吃光，记 0。
+// 剖面（albProf）：每个静态挡体第一次用到时，沿它的四个侧面（和不高的顶面）一格格往里打射线（行 ALB.dv、列 ≤ALB.du，最多进 ALB.depth），
+// 记下打到的点、法线、反照率；按 phys 的记录缓存（区块卸载重建后记录换了就重算）。一次 lightCtx 最多新建 ALB.build 个，没建好的、
+// 别的车、切出墙片照旧按 LT.eSurf（反照率当 LT.wSurf / LT.eSurf，和以前一模一样）
+const ALB = { exp: 0.05, expN: 0.12, duN: 0.06, dv: 0.1, du: 0.25, cols: 28, vMax: 4.2, depth: 1.2, win: 1.5, build: 8, pct: 0.98, topH: 3.0, tauA: 0.5, minHead: 0.25 };
+const albCache = new WeakMap(), texStat = new WeakMap(), ALB_T = 13, ALB_C = 9;
+let albLeft = 0;
+// 贴图亮处：把贴图画到 ≤128×128 的画布上（不插值），R / G / B 各取 p98（sRGB 贴图解码成线性）—— 分通道（返修 FE1R · repair-r5 标定：
+// 柱子下段刷的绿漆是 G 通道最亮，混凝土贴图的 G 比最大通道暗一点；不分通道时柱子按最大通道估亮 15%）；拿不到图（还没载入、跨域）返回 [1, 1, 1]
+const TEX1 = [1, 1, 1];
+function texHi(t) {
+  if (!t || !t.image) return TEX1;
+  const c = texStat.get(t);
+  if (c != null) return c;
+  let v = TEX1, ok = false;
+  try {
+    const img = t.image, w0 = +(img.width || img.videoWidth || 0), h0 = +(img.height || img.videoHeight || 0);
+    let d = null, step = 4;
+    if (img.data && w0 && h0) { d = img.data; step = Math.round(d.length / (w0 * h0)) || 4; if (!(d instanceof Uint8Array || d instanceof Uint8ClampedArray)) d = null; }
+    else if (w0 && h0 && typeof document !== 'undefined' && (img.complete !== false)) {
+      const w = Math.min(w0, 128), h = Math.min(h0, 128), cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      const g = cv.getContext('2d');
+      g.imageSmoothingEnabled = false;
+      g.drawImage(img, 0, 0, w, h);
+      d = g.getImageData(0, 0, w, h).data; step = 4;
+    }
+    if (d && d.length >= step) {
+      const srgb = t.encoding === THREE.sRGBEncoding, out = [0, 0, 0];
+      for (let ch = 0; ch < 3; ch++) {
+        const hist = new Uint32Array(256);
+        let n = 0;
+        for (let i = ch; i < d.length; i += step) { hist[d[i]]++; n++; }
+        let acc = 0, q = 255;
+        for (let k = 0; k < 256; k++) { acc += hist[k]; if (acc >= n * ALB.pct) { q = k; break; } }
+        const x = q / 255;
+        out[ch] = srgb ? (x <= 0.04045 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4)) : x;
+      }
+      v = out; ok = true;
+    }
+  } catch (err) { v = TEX1; ok = false; }
+  if (ok || (t.image && t.image.complete !== false)) texStat.set(t, v);
+  return v;
+}
+// Phong 高光的峰值（白色、按照度算）：BlinnPhong = F·¼·(shininess / 2 + 1)·(N·H)^shininess，F 取材质高光色最大通道；Lambert、Basic 没有
+function specPeak(m) {
+  if (!m || !m.isMeshPhongMaterial || !m.specular) return 0;
+  const sp = Math.max(m.specular.r, m.specular.g, m.specular.b);
+  return sp * 0.25 * (num(m.shininess, 30) / 2 + 1);
+}
+// 区块网格里碰到盒子（外扩 ALB.exp）的三角形：[9 个坐标, 漫反射反照率, 高光峰值 ks, shininess, 半透明 1 / 不透明 0]（每个 ALB_T 个数）
+function albTris(box, ex) {
+  const out = [], e3 = ex;
+  const x0 = box.minX - e3, x1 = box.maxX + e3, y0 = box.minY - e3, y1 = box.maxY + e3, z0 = box.minZ - e3, z1 = box.maxZ + e3;
+  const seen = new Set();
+  for (const ch of nearChunks((box.minX + box.maxX) / 2, (box.minZ + box.maxZ) / 2)) {
+    const g = ch && (ch.group || (ch.res && ch.res.group));
+    if (!g || !Array.isArray(g.children) || seen.has(g)) continue;
+    seen.add(g);
+    for (const m of g.children) {
+      if (!m || !m.isMesh || m.visible === false || !m.geometry || !m.geometry.attributes || !m.geometry.attributes.position || Array.isArray(m.material)) continue;
+      const mat = m.material;
+      if (!mat) continue;
+      const geo = m.geometry, P = geo.attributes.position, Ix = geo.index;
+      const Cc = mat.vertexColors && geo.attributes.color ? geo.attributes.color : null;
+      m.updateMatrixWorld();
+      const E = m.matrixWorld.elements;
+      if (!geo.boundingBox) geo.computeBoundingBox();
+      const bb = geo.boundingBox;
+      // 盒子粗筛（只平移、没旋转的区块网格最常见；有旋转时按 8 个角的包围盒）
+      let bx0 = Infinity, bx1 = -Infinity, by0 = Infinity, by1 = -Infinity, bz0 = Infinity, bz1 = -Infinity;
+      for (let k = 0; k < 8; k++) {
+        const px = k & 1 ? bb.max.x : bb.min.x, py = k & 2 ? bb.max.y : bb.min.y, pz = k & 4 ? bb.max.z : bb.min.z;
+        const wx = E[0] * px + E[4] * py + E[8] * pz + E[12], wy = E[1] * px + E[5] * py + E[9] * pz + E[13], wz = E[2] * px + E[6] * py + E[10] * pz + E[14];
+        if (wx < bx0) bx0 = wx; if (wx > bx1) bx1 = wx; if (wy < by0) by0 = wy; if (wy > by1) by1 = wy; if (wz < bz0) bz0 = wz; if (wz > bz1) bz1 = wz;
+      }
+      if (bx1 < x0 || bx0 > x1 || by1 < y0 || by0 > y1 || bz1 < z0 || bz0 > z1) continue;
+      const basic = !!mat.isMeshBasicMaterial, clear = !!mat.transparent && !basic;
+      const mc = mat.color || { r: 1, g: 1, b: 1 }, tf = texHi(mat.map), ks = basic ? 0 : specPeak(mat), sh = num(mat.shininess, 30);
+      const nt = Ix ? Ix.count / 3 : P.count / 3;
+      const pa = P.array, ps = P.itemSize || 3, ia = Ix ? Ix.array : null;
+      const v = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+      for (let t = 0; t < nt; t++) {
+        let tx0 = Infinity, tx1 = -Infinity, ty0 = Infinity, ty1 = -Infinity, tz0 = Infinity, tz1 = -Infinity, cr = 0, cg = 0, cb = 0;
+        for (let j = 0; j < 3; j++) {
+          const vi = ia ? ia[t * 3 + j] : t * 3 + j, o = vi * ps;
+          const px = pa[o], py = pa[o + 1], pz = pa[o + 2];
+          const wx = E[0] * px + E[4] * py + E[8] * pz + E[12], wy = E[1] * px + E[5] * py + E[9] * pz + E[13], wz = E[2] * px + E[6] * py + E[10] * pz + E[14];
+          v[j * 3] = wx; v[j * 3 + 1] = wy; v[j * 3 + 2] = wz;
+          if (wx < tx0) tx0 = wx; if (wx > tx1) tx1 = wx; if (wy < ty0) ty0 = wy; if (wy > ty1) ty1 = wy; if (wz < tz0) tz0 = wz; if (wz > tz1) tz1 = wz;
+          if (Cc) { cr += Cc.getX(vi); cg += Cc.getY(vi); cb += Cc.getZ(vi); }
+        }
+        if (tx1 < x0 || tx0 > x1 || ty1 < y0 || ty0 > y1 || tz1 < z0 || tz0 > z1) continue;
+        if (!Cc) { cr = cg = cb = 3; }
+        const a = basic ? 0 : Math.max(mc.r * cr * tf[0], mc.g * cg * tf[1], mc.b * cb * tf[2]) / 3;
+        out.push(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], a, ks, sh, clear ? 1 : 0);
+      }
     }
   }
-  return B;
+  return out;
 }
-function occWho(kind, s) {
-  occBy.kind = kind; occBy.key = s.key != null ? String(s.key) + (s.name ? ':' + s.name : '') : '';
-  occBy.box = s.obb ? { cx: s.cx, cz: s.cz, hx: s.hx, hz: s.hz, rot: s.rot, minY: s.minY, maxY: s.maxY }
-    : { minX: s.minX, maxX: s.maxX, minY: s.minY, maxY: s.maxY, minZ: s.minZ, maxZ: s.maxZ };
+// 射线 (o, d) 和三角形（双面）：返回 t 或 Infinity
+function rayTri(T, i, ox, oy, oz, dx, dy, dz) {
+  const ax = T[i], ay = T[i + 1], az = T[i + 2];
+  const e1x = T[i + 3] - ax, e1y = T[i + 4] - ay, e1z = T[i + 5] - az, e2x = T[i + 6] - ax, e2y = T[i + 7] - ay, e2z = T[i + 8] - az;
+  const px = dy * e2z - dz * e2y, py = dz * e2x - dx * e2z, pz = dx * e2y - dy * e2x, det = e1x * px + e1y * py + e1z * pz;
+  if (Math.abs(det) < 1e-12) return Infinity;
+  const inv = 1 / det, sx = ox - ax, sy = oy - ay, sz = oz - az, u = (sx * px + sy * py + sz * pz) * inv;
+  if (u < -1e-6 || u > 1 + 1e-6) return Infinity;
+  const qx = sy * e1z - sz * e1y, qy = sz * e1x - sx * e1z, qz = sx * e1y - sy * e1x, w = (dx * qx + dy * qy + dz * qz) * inv;
+  if (w < -1e-6 || u + w > 1 + 1e-6) return Infinity;
+  const t = (e2x * qx + e2y * qy + e2z * qz) * inv;
+  return t > 0 ? t : Infinity;
 }
-function wallShape(hx, hz) { const a = Math.max(hx, hz), b = Math.min(hx, hz); return 2 * a >= OCC.minLong && a >= OCC.ratio * b; }
-// ① 墙类（本地坐标：光源相对盒心 (lx, ly, lz)，半尺寸 hx、hy、hz）
-function wallBound(lx, ly, lz, hx, hy, hz) {
-  if (Math.abs(ly) > hy) return Infinity;            // 光源高过墙顶 / 低过墙底：光从上面 / 下面过去，不算
-  const thinX = hx <= hz, hn = thinX ? hx : hz, ha = thinX ? hz : hx;
-  const pn = Math.abs(thinX ? lx : lz), pa = Math.abs(thinX ? lz : lx);
-  if (pn < hn && pa < ha) return 0;                  // 光源在墙里面
-  if (!(pn > 1e-4)) return Infinity;
-  const da = Math.max(0, pa - (ha + Math.min(hn, OCC.ext)));
-  return Math.sqrt(pn * pn + da * da) * (1 + occDepth(hn, pn) / pn);
-}
-// 光能穿进挡光体多深（从中面往远侧量）：薄墙（厚 ≤ 0.2 m）到远侧面为止（光球伸到墙朝车那面、照出亮斑，墙里那间屋一点光都不吃，FE1P H8 照旧）；
-// 厚的（货架 2.32 m，FE1Q J9）到远侧面往里 0.1 m —— 光照得到货架上朝通道的货，照不到货架另一侧的通道（原来到中面外 0.1 m，货架通道里光球只剩约 2.5 m）。
-// 光源在厚挡光体的进深范围里（对着货架头）时，中面这一套只管得住一部分影子（货架头后面拐角那边的通道靠它收），照旧按中面外 0.1 m；
-// 光源离开进深范围 0.5 m（OCC.ramp）以内从 0.1 m 慢慢放到远侧面往里 0.1 m，光球不跳
-function occDepth(hn, pn) {
-  const T = OCC.thick;
-  if (hn <= T) return hn;
-  const deep = Math.max(T, hn - T);
-  return T + (deep - T) * clamp((pn - hn) / OCC.ramp, 0, 1);
-}
-// ② 背面：光源在面的里侧的那几个面，光源到面矩形的最近距离
-function backBound(lx, ly, lz, hx, hy, hz) {
-  const ax = Math.abs(lx), ay = Math.abs(ly), az = Math.abs(lz);
-  if (ax < hx && ay < hy && az < hz) return 0;
-  const ex = Math.max(0, ax - hx), ey = Math.max(0, ay - hy), ez = Math.max(0, az - hz);
-  let b = Infinity;
-  for (let s = -1; s <= 1; s += 2) {
-    if (s * lx < hx) b = Math.min(b, Math.hypot(hx - s * lx, ey, ez));
-    if (s * ly < hy) b = Math.min(b, Math.hypot(ex, hy - s * ly, ez));
-    if (s * lz < hz) b = Math.min(b, Math.hypot(ex, ey, hz - s * lz));
+// 一个静态挡体（phys 的 AABB 记录）的表面剖面：{ amax, faces: [{ ax, sg, p, ua, va, u0, du, nu, v0, dv, nv, amax, cells }] }，
+// ax 法线轴（0 = x、1 = y、2 = z）、sg 朝外的符号、p 面所在的坐标，ua / va 面内两根轴；cells 每格 ALB_C 个数：打到的点 xyz、朝外的法线 xyz、漫反射反照率（0 = 没打到）、
+// 高光峰值、shininess；amax = 漫反射 + 高光峰值的最大值（剪枝、窗口外的上界用）
+function albProf(s) {
+  const box = { minX: +s.minX, maxX: +s.maxX, minY: +s.minY, maxY: Math.min(+s.maxY, +s.minY + ALB.vMax), minZ: +s.minZ, maxZ: +s.maxZ };
+  // 窄的（树干、柱子）：盒子外扩多一点（树杈根、柱子护角伸出碰撞盒），列也密一点（树干 0.34 m 一面至少 6 列：7 棱的树干，正对着光的那个面要采到）
+  const narrowBox = Math.max(box.maxX - box.minX, box.maxZ - box.minZ) <= LT.narrow, EX = narrowBox ? ALB.expN : ALB.exp;
+  const T = albTris(box, EX), nT = T.length / ALB_T;
+  const lo = [box.minX, box.minY, box.minZ], hi = [box.maxX, box.maxY, box.maxZ];
+  const faces = [];
+  let amax = 0;
+  const dirs = [[0, -1], [0, 1], [2, -1], [2, 1]];
+  if (+s.maxY - +s.minY <= ALB.topH) dirs.push([1, 1]);
+  const ord = [], hits = [];
+  for (const [ax, sg] of dirs) {
+    const ua = ax === 0 ? 2 : 0, va = ax === 1 ? 2 : 1;
+    const p = sg > 0 ? hi[ax] : lo[ax];
+    const wu = hi[ua] - lo[ua], wv = hi[va] - lo[va];
+    if (!(wu > 0) || !(wv > 0)) continue;
+    const nu = clamp(Math.max(Math.ceil(wu / ALB.du), Math.ceil(wu / ALB.duN)), 1, ALB.cols), nv = clamp(Math.ceil(wv / ALB.dv), 1, 64);
+    const du = wu / nu, dv = wv / nv;
+    const depth = Math.min(hi[ax] - lo[ax], ALB.depth) + EX;
+    // 三角形按投影分到格子里
+    const bins = new Array(nu * nv);
+    for (let t = 0; t < nT; t++) {
+      const i = t * ALB_T;
+      let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity, c0 = Infinity, c1 = -Infinity;
+      for (let j = 0; j < 3; j++) {
+        const a = T[i + j * 3 + ua], b = T[i + j * 3 + va], c = T[i + j * 3 + ax];
+        if (a < a0) a0 = a; if (a > a1) a1 = a; if (b < b0) b0 = b; if (b > b1) b1 = b; if (c < c0) c0 = c; if (c > c1) c1 = c;
+      }
+      // 深度范围：面外 EX 到面里 depth
+      const dIn = sg > 0 ? p - c1 : c0 - p, dOut = sg > 0 ? c0 - p : p - c1;
+      if (dOut > EX || dIn > depth) continue;
+      const iu0 = Math.max(0, Math.floor((a0 - lo[ua]) / du)), iu1 = Math.min(nu - 1, Math.floor((a1 - lo[ua]) / du));
+      const iv0 = Math.max(0, Math.floor((b0 - lo[va]) / dv)), iv1 = Math.min(nv - 1, Math.floor((b1 - lo[va]) / dv));
+      for (let iv = iv0; iv <= iv1; iv++) for (let iu = iu0; iu <= iu1; iu++) { const k = iv * nu + iu; (bins[k] || (bins[k] = [])).push(i); }
+    }
+    const cells = new Float32Array(nu * nv * ALB_C);
+    let fmax = 0;
+    for (let iv = 0; iv < nv; iv++) for (let iu = 0; iu < nu; iu++) {
+      const k = iv * nu + iu, list = bins[k];
+      if (!list) continue;
+      const o = [0, 0, 0], d = [0, 0, 0];
+      o[ax] = p + sg * EX; o[ua] = lo[ua] + (iu + 0.5) * du; o[va] = lo[va] + (iv + 0.5) * dv; d[ax] = -sg;
+      hits.length = 0; ord.length = 0;
+      for (const i of list) { const t = rayTri(T, i, o[0], o[1], o[2], d[0], d[1], d[2]); if (t <= depth + EX) { hits.push(t, i); } }
+      if (!hits.length) continue;
+      for (let q = 0; q < hits.length; q += 2) ord.push(q);
+      ord.sort((x, y) => hits[x] - hits[y]);
+      // 最外一层不透明的那个面；它前面半透明的（贴花、玻璃）取亮的
+      let a = 0, ks = 0, sh = 30, hit = -1;
+      for (const q of ord) { const i = hits[q + 1]; if (T[i + 9] > a) a = T[i + 9]; if (T[i + 10] > ks) { ks = T[i + 10]; sh = T[i + 11]; } if (T[i + 12]) continue; hit = q; break; }
+      if (hit < 0 && ord.length) hit = ord[0];
+      const i = hits[hit + 1], t = hits[hit];
+      let nx = (T[i + 4] - T[i + 1]) * (T[i + 8] - T[i + 2]) - (T[i + 5] - T[i + 2]) * (T[i + 7] - T[i + 1]);
+      let ny = (T[i + 5] - T[i + 2]) * (T[i + 6] - T[i]) - (T[i + 3] - T[i]) * (T[i + 8] - T[i + 2]);
+      let nz = (T[i + 3] - T[i]) * (T[i + 7] - T[i + 1]) - (T[i + 4] - T[i + 1]) * (T[i + 6] - T[i]);
+      const nl = Math.hypot(nx, ny, nz) || 1;
+      nx /= nl; ny /= nl; nz /= nl;
+      if (nx * d[0] + ny * d[1] + nz * d[2] > 0) { nx = -nx; ny = -ny; nz = -nz; }   // 朝射线来的方向（朝外）
+      const c = k * ALB_C;
+      cells[c] = o[0] + d[0] * t; cells[c + 1] = o[1] + d[1] * t; cells[c + 2] = o[2] + d[2] * t;
+      cells[c + 3] = nx; cells[c + 4] = ny; cells[c + 5] = nz; cells[c + 6] = a; cells[c + 7] = ks; cells[c + 8] = sh;
+      if (a + ks > fmax) fmax = a + ks;
+    }
+    if (fmax > amax) amax = fmax;
+    faces.push({ ax, sg, p, ua, va, u0: lo[ua], du, nu, v0: lo[va], dv, nv, amax: fmax, cells });
   }
-  return b;
+  return { amax, faces, nT };
 }
-// 射线打到的点在不在这块碰撞体上（AABB 外扩 1 mm；OBB 按 raycast 给的 key + 部件名）
-function hitOn(s, h) {
-  if (s.obb) return !!h.obb && s.key === h.key && s.name === h.name;
-  if (h.obb) return false;
-  const e = 1e-3;
-  return h.x >= s.minX - e && h.x <= s.maxX + e && h.y >= s.minY - e && h.y <= s.maxY + e && h.z >= s.minZ - e && h.z <= s.maxZ + e;
+function albGet(o) {
+  const s = o.src;
+  if (!s) return null;
+  const c = albCache.get(s);
+  if (c !== undefined) return c;
+  if (albLeft <= 0) return null;
+  albLeft--;
+  let p = null;
+  try { p = albProf(s); if (!p.nT) p = null; } catch (err) { p = null; }
+  albCache.set(s, p);
+  return p;
 }
-// 水平射线 (ox, y, oz) + t·(fx, 0, fz) 进 AABB 的 t（不进返回 null）
-function rayBoxXZ(ox, y, oz, fx, fz, b) {
-  if (y < b.minY || y > b.maxY) return null;
-  let t0 = 0, t1 = Infinity;
-  for (const [o, f, lo, hi] of [[ox, fx, b.minX, b.maxX], [oz, fz, b.minZ, b.maxZ]]) {
-    if (Math.abs(f) < 1e-9) { if (o < lo || o > hi) return null; continue; }
-    let a = (lo - o) / f, c = (hi - o) / f;
-    if (a > c) { const q = a; a = c; c = q; }
-    if (a > t0) t0 = a;
-    if (c < t1) t1 = c;
-    if (t0 > t1) return null;
+const tmpPL = [0, 0, 0];
+// 一个面上不发白要的强度上限：每格 (LT.wSurf / a − Ea) / (k²·cos)。只看光源投影周围 ALB.win 以内的格子，
+// 窗口外的按这个面最亮的反照率、窗口边上的距离、面法线方向的余弦给个下界
+function albFaceCap(F, x, y, z, R, Ea, cap, eye, faceOn, WS) {
+  tmpPL[0] = x; tmpPL[1] = y; tmpPL[2] = z;
+  const sd = F.sg * (tmpPL[F.ax] - F.p);
+  if (!(sd > 0)) return cap;
+  const pu = tmpPL[F.ua], pv = tmpPL[F.va], C = F.cells, W = ALB.win, mh = ALB.minHead;
+  const iu0 = Math.max(0, Math.floor((pu - W - F.u0) / F.du)), iu1 = Math.min(F.nu - 1, Math.floor((pu + W - F.u0) / F.du));
+  const iv0 = Math.max(0, Math.floor((pv - W - F.v0) / F.dv)), iv1 = Math.min(F.nv - 1, Math.floor((pv + W - F.v0) / F.dv));
+  for (let iv = iv0; iv <= iv1; iv++) for (let iu = iu0; iu <= iu1; iu++) {
+    const c = (iv * F.nu + iu) * ALB_C, a = C[c + 6];
+    if (!(a > 0)) continue;
+    const dx = x - C[c], dy = y - C[c + 1], dz = z - C[c + 2], d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (!(d < R) || d < 1e-4) continue;
+    const nx = C[c + 3], ny = C[c + 4], nz = C[c + 5], cs = (nx * dx + ny * dy + nz * dz) / d;
+    if (!(cs > 0)) continue;
+    if (Math.max(WS - a * Ea, mh * WS) / ((1 - d / R) * (1 - d / R) * cs * (a + C[c + 7])) >= cap) continue;   // 高光开到峰值也不比现在的上限紧
+    // 高光（Blinn-Phong）：朝着司机的眼睛看；faceOn（墙、树干、柱子这类正对着车的挡体 —— K1 / K2 是贴近了正对着量最亮那一点）再和「正对着这一面看」取大
+    //（视线就是法线：N·H = cos(θ / 2)，θ 是光线和法线的夹角）。货架、堆垛朝通道那面的货按司机看到的算（L3：驾驶座画面里两边货架的货）
+    let sp = C[c + 7];
+    if (sp > 0) {
+      let se = 0;
+      if (eye) {
+        const vx = eye.x - C[c], vy = eye.y - C[c + 1], vz = eye.z - C[c + 2], vl = Math.sqrt(vx * vx + vy * vy + vz * vz) || 1;
+        const hx = dx / d + vx / vl, hy = dy / d + vy / vl, hz = dz / d + vz / vl, hl = Math.sqrt(hx * hx + hy * hy + hz * hz) || 1, nh = (nx * hx + ny * hy + nz * hz) / hl;
+        se = nh > 0 ? Math.pow(nh, C[c + 8]) : 0;
+      } else se = 1;
+      if (faceOn) se = Math.max(se, Math.pow(Math.sqrt((1 + cs) / 2), C[c + 8]));
+      sp *= se;
+    }
+    const k = 1 - d / R, v = Math.max(WS - a * Ea, mh * WS) / (k * k * cs * (a + sp));
+    if (v < cap) cap = v;
   }
-  return t0;
+  const u1 = F.u0 + F.nu * F.du, v1 = F.v0 + F.nv * F.dv;
+  const full = pu - W <= F.u0 && pv - W <= F.v0 && pu + W >= u1 && pv + W >= v1;
+  if (!full) {
+    // 窗口外的格子：面内离光源投影 ≥ max(窗口半宽, 投影到这个面矩形的距离)；反照率按这个面最亮的（含高光峰值）
+    const ru = Math.max(0, F.u0 - pu, pu - u1), rv = Math.max(0, F.v0 - pv, pv - v1), dout = Math.hypot(sd, Math.max(W, Math.hypot(ru, rv)));
+    if (dout < R) { const k = 1 - dout / R, v = Math.max(WS - F.amax * Ea, mh * WS) / (k * k * (sd / dout) * F.amax); if (v < cap) cap = v; }
+  }
+  return cap;
 }
+// 挡体那一处已经吃到的别的光（层级的半球环境光 + 区块灯，按灯的原始亮度、不算闪烁，3D 距离、不算朝向 —— 往大里估）：
+// 开着灯的仓库里墙、树干本来就亮，再加车灯更容易发白；断电时只剩一层很暗的环境光。按挡体记录缓存，每帧最多算一次，
+// 再按 ALB.tauA 慢慢跟（断电 / 来电那一下封顶不一跳，强度本来也是逐帧平滑的）
+const ambCache = new WeakMap();
+let hemiRef = null;
+function ambAt(o, gy) {
+  const s = o.src, now = BR.game && Number.isFinite(+BR.game.time) ? +BR.game.time : 0;
+  const c = s ? ambCache.get(s) : null;
+  if (c && c.t === now) return c.v;
+  let v = 0;
+  if (!hemiRef || !hemiRef.parent) { hemiRef = null; const sc = BR.gfx && BR.gfx.scene; if (sc) for (const ch of sc.children) if (ch && ch.isHemisphereLight) { hemiRef = ch; break; } }
+  if (hemiRef) v += hemiRef.intensity * Math.max(hemiRef.color.r, hemiRef.color.g, hemiRef.color.b);
+  const W = BR.world, x = o.cx, z = o.cz, y = gy + 1.0;
+  if (W && typeof W.chunks === 'function') {
+    for (const ch of nearChunks(x, z)) {
+      const ls = ch && ch.lights;
+      if (!Array.isArray(ls)) continue;
+      for (let i = 0; i < ls.length; i++) {
+        const L = ls[i], I = L && L.intensity != null ? +L.intensity : 0;
+        if (!(I > 0)) continue;
+        const r = num(L.range, num(L.distance, 10)), d = Math.hypot(num(L.x, 0) - x, num(L.y, y + 2.5) - y, num(L.z, 0) - z) - o.r;
+        if (!(d < r)) continue;
+        const k = 1 - Math.max(0, d) / r;
+        v += I * k * k * Math.max(0.2, Math.min(1, num(L.color && L.color.r != null ? Math.max(L.color.r, L.color.g, L.color.b) : 1, 1)));
+      }
+    }
+  }
+  if (c && Number.isFinite(c.v)) {
+    const dt = clamp(now - c.t, 0, 1);
+    v = c.v + (v - c.v) * (1 - Math.exp(-dt / ALB.tauA));
+  }
+  if (s) ambCache.set(s, { t: now, v });
+  return v;
+}
+// 光源 (x, y, z)、光球 R 时不发白要的强度上限（Infinity = 不封）：近处每个表面格子 a·(I·k²·cos + Ea) ≤ LT.wSurf，
+// a 反照率、Ea 那一处已经吃到的别的光（ambAt）。没剖面的挡体（别的车、切出墙片、还没建）照旧按 LT.eSurf：I·k² ≤ LT.eSurf
+// floor（可选）：调用方最后和它取大（旧的 eSurf 上限）—— 上限一旦降到 floor 以下就不用再算了，直接返回
+function surfCap(occ, x, y, z, R, gy, eye, floor) {
+  let cap = Infinity;
+  const fl = floor > 0 ? floor : 0;
+  for (let i = 0; i < occ.length; i++) {
+    if (cap <= fl) return cap;
+    const o = occ[i];
+    if (Math.hypot(x - o.cx, z - o.cz) - o.r >= R) continue;
+    const d = occDist(o, x, y, z);
+    if (!(d < R)) continue;
+    const k = 1 - d / R, p = albGet(o);
+    if (!p) { const c = LT.eSurf / (k * k); if (c < cap) cap = c; continue; }
+    if (!(p.amax > 0)) continue;
+    const Ea = ambAt(o, gy), faceOn = o.t !== 'rack' && o.t !== 'wide', WS = faceOn ? LT.wSurf : LT.wSurfG;
+    // 这个挡体能给的最紧的上限（最亮的反照率、最近的距离、正对着）比现在的还松就不用细算
+    const head = Math.max(WS - p.amax * Ea, ALB.minHead * WS) / p.amax;
+    if (head / (k * k) >= cap) continue;
+    for (let f = 0; f < p.faces.length; f++) {
+      const F = p.faces[f];
+      if (!(F.amax > 0)) continue;
+      const hf = Math.max(WS - F.amax * Ea, ALB.minHead * WS) / F.amax;
+      if (hf / (k * k) >= cap) continue;
+      cap = albFaceCap(F, x, y, z, R, Ea, cap, eye, faceOn, WS);
+      if (cap <= fl) return cap;
+    }
+  }
+  return cap;
+}
+// 从驾驶座眼点看叉尖前 t、横偏 u 的地面那一点，有没有被车自己的门架零件挡住（车本地坐标；零件 = mastPieces 的凸块，内门架 +inner、货叉架 +carriage）。
+// 按 档 | lift（0.02 一档）| t | u 缓存
+const cabVis = new Map();
+function cabHidden(sim, tipZ, t, u) {
+  const tier = driveTier(sim.key), lq = Math.round(clamp(num(sim.lift, 0), 0, 1) * 50);
+  const key = tier + '|' + lq + '|' + t.toFixed(3) + '|' + u.toFixed(3);
+  const hit = cabVis.get(key);
+  if (hit !== undefined) return hit;
+  if (cabVis.size > 20000) cabVis.clear();
+  const parts = mastPieces(tier), g = G(), E = g.eyeP;
+  let res = false;
+  if (parts && E) {
+    const lift = lq / 50, dys = [0, g.innerTravel * lift, g.carriageTravel * lift];
+    const ax = +E.x || 0, ay = +E.y || 1.8, az = +E.z || 0, bx = u, by = 0.02, bz = tipZ - t;
+    for (let k = 0; k < parts.length && !res; k++) {
+      const dy = dys[MAST_SRC[k][1]];
+      for (const q of parts[k]) { if (segPiece(q, dy, ax, ay, az, bx, by, bz)) { res = true; break; } }
+    }
+  }
+  cabVis.set(key, res);
+  return res;
+}
+// 线段（只算 0–0.97 那一截，终点那一点本身在地上）穿不穿过凸零件 q（外包盒 + 平面，竖直平移 dy）
+function segPiece(q, dy, ax, ay, az, bx, by, bz) {
+  const B = q.box;
+  let t0 = 0, t1 = 0.97;
+  const clip = (p0, d, lo, hi) => {
+    if (Math.abs(d) < 1e-12) return p0 >= lo && p0 <= hi;
+    let a = (lo - p0) / d, b = (hi - p0) / d; if (a > b) { const k = a; a = b; b = k; }
+    if (a > t0) t0 = a; if (b < t1) t1 = b; return t0 < t1;
+  };
+  if (!clip(ax, bx - ax, B[0], B[1]) || !clip(ay, by - ay, B[2] + dy, B[3] + dy) || !clip(az, bz - az, B[4], B[5])) return false;
+  if (!q.planes) return true;
+  for (const P of q.planes) {
+    // 平面 n·p ≤ d + ny·dy 在里面
+    const d = P[3] + P[1] * dy, s0 = P[0] * ax + P[1] * ay + P[2] * az - d, s1 = P[0] * bx + P[1] * by + P[2] * bz - d, ds = s1 - s0;
+    if (Math.abs(ds) < 1e-12) { if (s0 > 0) return false; continue; }
+    const tc = -s0 / ds;
+    if (ds > 0) { if (tc < t1) t1 = tc; } else if (tc > t0) t0 = tc;
+    if (t0 >= t1) return false;
+  }
+  return t0 < t1;
+}
+// 线段 (ax, ay, az) → (bx, by, bz) 穿不穿过挡体 o（水平按 OBB 夹、竖直按这一截线段的高度范围和 minY…maxY 有没有重叠）
+const tmpSA = { x: 0, z: 0 }, tmpSB = { x: 0, z: 0 };
+function segHits(o, ax, ay, az, bx, by, bz) {
+  const a = occLocal(o, ax, az, tmpSA), b = occLocal(o, bx, bz, tmpSB);
+  let t0 = 0, t1 = 1;
+  const dx = b.x - a.x, dz = b.z - a.z;
+  if (Math.abs(dx) < 1e-9) { if (Math.abs(a.x) > o.hx) return false; }
+  else { let p = (-o.hx - a.x) / dx, q = (o.hx - a.x) / dx; if (p > q) { const k = p; p = q; q = k; } t0 = Math.max(t0, p); t1 = Math.min(t1, q); if (t0 >= t1) return false; }
+  if (Math.abs(dz) < 1e-9) { if (Math.abs(a.z) > o.hz) return false; }
+  else { let p = (-o.hz - a.z) / dz, q = (o.hz - a.z) / dz; if (p > q) { const k = p; p = q; q = k; } t0 = Math.max(t0, p); t1 = Math.min(t1, q); if (t0 >= t1) return false; }
+  const y0 = ay + (by - ay) * t0, y1 = ay + (by - ay) * t1;
+  return Math.min(y0, y1) < o.maxY && Math.max(y0, y1) > o.minY;
+}
+function occDist2(o, x, z) {
+  const l = occLocal(o, x, z, tmpLL);
+  const ex = Math.max(0, Math.abs(l.x) - o.hx), ez = Math.max(0, Math.abs(l.z) - o.hz);
+  return Math.sqrt(ex * ex + ez * ez);
+}
+// 光源 (x, y, z) 对挡体 o 的光球上限（见上面的分类）；窄的、不跨过光源高度的 → Infinity
+function occBound(o, x, y, z, gy) {
+  occSoft = Infinity;
+  if (o.t === 'narrow') return Infinity;
+  // 光源高过挡体顶（或低过底）cv：不算"跨光源高度"的挡体（L-occluders 只管跨的），但不能一越过顶就整个不算 —— 光源高度
+  // 本来就在 0.45–1.2 m 之间挪，1 m 左右高的箱子垛顶一来一回，光球会一跳（FE1R K2 平滑：柱子旁边打满方向转圈）。
+  // 越过 cv 以后按 1 / (1 − cv / LT.yFade) 连续放宽，cv ≥ LT.yFade 才不算；背面距离带上竖直那一截
+  const cv = Math.max(y - o.maxY, o.minY - y);
+  if (cv >= Math.max(LT.yFade, LT.ySoft)) return Infinity;
+  const kf = cv >= LT.yFade ? Infinity : cv > 0 ? 1 / (1 - cv / LT.yFade) : 1, cy = Math.max(0, cv);
+  const l = occLocal(o, x, z, tmpLL), lx = l.x, lz = l.z, hx = o.hx, hz = o.hz;
+  const ax = Math.abs(lx), az = Math.abs(lz);
+  if (ax < hx && az < hz && cv <= 0) { occSoft = 0; return 0; }
+  const ex = Math.max(0, ax - hx), ez = Math.max(0, az - hz);
+  // 背面 F（光源在它所在平面的里侧，离平面 a）：影子里离光源最近的点在 F 上，距离 d。光源几乎和 F 共面（a → 0，比如车头刚好开过货架头那个端面）时
+  // F 后面的影子只是贴着 F 的一条楔形细缝（离 F 的棱 ρ 处宽 ≈ ρ·a/d）：宽不到 LT.w0 的那段不算，上限放到 d·(1 + w0/a) —— 光源从端面里侧
+  // 挪到外侧时光球连续地放开，不一跳（FE1R K2 平滑）；正对着的远侧面只多出 w0
+  // 货架（J9）：长边那两面到远侧面往里 0.1 m（照得到朝通道的货、照不到另一侧的通道）；两头的端面不收（repair-r2，见下）
+  // occSoft：同一个上限，楔形细缝按 LT.w0r 放宽（货架长边那两面除外，照严格的收）：开车时光球往严格上限收（限速 LT.rDown）、
+  // 当帧只不越过 occSoft，静下来收到 occBound（见 lightSolve）。光源横扫过某个端面所在平面时（原地打满方向转圈，叉尖前的光源
+  // 一帧横移十几厘米）严格上限 d·(1 + w0/a) 随 a 变得很陡，当帧硬收光球会一跳；端面后面那条楔形细缝开车经过时亮一下看不出来
+  const rack = o.t === 'rack', thinX = hx <= hz, w0 = LT.w0, wr = LT.w0r;
+  let b = Infinity, bs = Infinity;
+  // 返修 FE1R · repair-r2（验收员 spec / play / tests：宽货架通道正中车灯只照 1.9–3 m，叉尖前 5 m 开关灯一样黑 —— 收住光球的不是货架长边，
+  // 是两节货架之间空当里、货架头拐角背后那片影子）：货架两头的端面不再收光球。端面背后的影子在这排货架自己的那一条里（两节之间的空当、
+  // 货架头外面的横通道），照 FE1Q「货架头那一下漏光接受」；另一侧的通道一定在远侧长边那个平面后面，长边那条界限（远侧面往里 0.1 m）照旧管着
+  for (let sg = -1; sg <= 1; sg += 2) {
+    if (sg * lx < hx && !(rack && !thinX)) {
+      const a = hx - sg * lx, h0 = Math.hypot(a, ez, cy), off = rack && thinX ? LT.rackIn : 0;
+      const d = h0 * (1 + w0 / a) - off; if (d < b) b = d;
+      const ds = h0 * (1 + (rack && thinX ? w0 : wr) / a) - off; if (ds < bs) bs = ds;
+    }
+    if (sg * lz < hz && !(rack && thinX)) {
+      const a = hz - sg * lz, h0 = Math.hypot(a, ex, cy), off = rack && !thinX ? LT.rackIn : 0;
+      const d = h0 * (1 + w0 / a) - off; if (d < b) b = d;
+      const ds = h0 * (1 + (rack && !thinX ? w0 : wr) / a) - off; if (ds < bs) bs = ds;
+    }
+  }
+  if (!rack && o.maxY > y) { const a = o.maxY - y, h0 = Math.hypot(ex, a, ez), d = h0 * (1 + w0 / a), ds = h0 * (1 + wr / a); if (d < b) b = d; if (ds < bs) bs = ds; }
+  if (o.minY > gy + 0.05 && o.minY < y) { const a = y - o.minY, h0 = Math.hypot(ex, a, ez), d = h0 * (1 + w0 / a), ds = h0 * (1 + wr / a); if (d < b) b = d; if (ds < bs) bs = ds; }
+  // occSoft 在光源高度挪过挡体顶 / 底的上下 LT.ySoft 以内连续放宽（顶上 ySoft 处放到无穷，正好在顶的高度放宽一倍）：
+  // 开车时光源高度一帧挪 2–3 cm，硬限不能随它一跳（原地打满方向转圈，光源从 1.06 m 落到 1.03 m，1.05 m 高的箱子垛一下变成跨光源高度）
+  const ys = LT.ySoft, kS = cv <= -ys ? 1 : cv >= ys ? Infinity : 1 / (1 - (cv + ys) / (2 * ys));
+  occSoft = Math.max(0, bs) * kS;
+  return kf === Infinity ? Infinity : Math.max(0, b) * kf;
+}
+let occSoft = Infinity;
+const bufTops = [];
+// o 的地面投影进叉尖前车宽带（车本地 |x| ≤ hw、t = 从叉尖往前的距离 ≥ 0）的最小 t；不进 → Infinity
+const CORN = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+function clipU(src, dst, lim, sgn) {
+  dst.length = 0;
+  const n = src.length / 2;
+  for (let i = 0; i < n; i++) {
+    const au = src[2 * i], at = src[2 * i + 1], j = (i + 1) % n, bu = src[2 * j], bt = src[2 * j + 1];
+    const ain = sgn * au <= lim, bin = sgn * bu <= lim;
+    if (ain) dst.push(au, at);
+    if (ain !== bin) { const k = (sgn * lim - au) / (bu - au); dst.push(sgn * lim, at + (bt - at) * k); }
+  }
+  return dst;
+}
+function bandEntry(o, sim, tipZ, hw) {
+  const P = bufPoly;
+  P.length = 0;
+  for (let i = 0; i < 4; i++) {
+    const lx = CORN[i][0] * o.hx, lz = CORN[i][1] * o.hz;
+    const wx = o.cx + o.c * lx + o.s * lz, wz = o.cz - o.s * lx + o.c * lz;
+    const l = toL(sim.x, sim.z, sim.yaw, wx, wz, tmpLW);
+    P.push(l.x, tipZ - l.z);
+  }
+  const A = clipU(P, bufPoly2, hw, 1), B = clipU(A, P, hw, -1);
+  if (!B.length) return Infinity;
+  let mn = Infinity, mx = -Infinity, u0 = Infinity, u1 = -Infinity;
+  for (let i = 0; i < B.length; i += 2) { u0 = Math.min(u0, B[i]); u1 = Math.max(u1, B[i]); if (B[i + 1] < mn) mn = B[i + 1]; if (B[i + 1] > mx) mx = B[i + 1]; }
+  if (mx < 0) return Infinity;
+  bandSpan.u0 = u0; bandSpan.u1 = u1;
+  return Math.max(0, mn);
+}
+const bandSpan = { u0: 0, u1: 0 };   // 上一次 bandEntry 进带那一截的横向范围
+// 地面上一点的照度（I = 1）：光源离地 h、到这一点的距离 d、光球 R —— 和 gfx 一样 (1 − d/R)²，再乘入射角
+function e1(d, h, R) { if (!(d < R)) return 0; const k = 1 - d / R; return k * k * h / d; }
+
+function lightCtx(sim) {
+  const g = G();
+  albLeft = ALB.build;
+  const gy = sim.y;
+  const tipZ = Array.isArray(g.forkZ) ? Math.min(+g.forkZ[0], +g.forkZ[1]) : -2.1;
+  const ign = sim.ignoreKeys(null);
+  // 收挡体：叉尖到叉尖前 5 m 这一段，四周外扩 Rmax
+  const a = toW(sim.x, sim.z, sim.yaw, 0, tipZ - LT.sMin, { x: 0, z: 0 }), b = toW(sim.x, sim.z, sim.yaw, 0, tipZ - LT.far, { x: 0, z: 0 });
+  const E = LT.Rmax;
+  const occ = lightOcc(sim, gy, ign, Math.min(a.x, b.x) - E, Math.min(a.z, b.z) - E, Math.max(a.x, b.x) + E, Math.max(a.z, b.z) + E);
+  // 车宽带里第一个挡光体（不是窄的、高过 0.5 m）、第一个窄东西
+  // 窄东西记下进带的位置和横向范围：光源只是不越过挡在它自己前面（横向 LT.passU 以内）的窄东西（贴墙的柜子在车宽带边上，光源从旁边过去照样行）
+  // gM：挡在车正前方（中心横向 ±LT.mid 以内）的第一个窄东西 —— 光源不越过它（K1）。返修 FE1R · repair-r1：判定区不再到它为止（整合 FE1R 那样
+  // 截断，树干、柱子旁边和后面看得见的那片地就不查了，验收员 tests 按裁定原文的判定区量出来有照不亮的）
+  let gB = Infinity, gN = Infinity, gM = Infinity, gBy = null, face = null;
+  const nar = [];
+  for (let i = 0; i < occ.length; i++) {
+    const o = occ[i];
+    if (o.maxY < gy + LT.blockH || o.minY > gy + 1.9) continue;
+    if (o.t === 'narrow') {
+      const t = bandEntry(o, sim, tipZ, LT.band + LT.passU);
+      if (t < Infinity) {
+        // 挡在车正前方（中心横向在 ±LT.mid 以内）的：光源一律不越过它（树干、杆子、柱子朝车那一面要照得到，K1）；偏在车宽带边上的，
+        // 光源只要横向离它 ≥LT.passU 就能从旁边过去（判定区远端照得到；它朝车那面斜着照到）
+        const lc = toL(sim.x, sim.z, sim.yaw, o.cx, o.cz, tmpLL), mid = Math.abs(lc.x) <= LT.mid;
+        nar.push({ t, u0: mid ? -9 : bandSpan.u0, u1: mid ? 9 : bandSpan.u1 });
+        if (t < gN && bandSpan.u1 > -LT.band && bandSpan.u0 < LT.band) gN = t;
+        if (mid && (!face || t < face.t)) face = { t, u: clamp(0, bandSpan.u0, bandSpan.u1), o };
+        // 判定区到它前面为止：按它进车宽带（±LT.band，和测试 __lt.blockDist 的 5 条水平射线同宽）的位置，不按放宽了 LT.passU 的带
+        if (mid) { const tm = bandEntry(o, sim, tipZ, LT.band); if (tm < gM) gM = tm; }
+      }
+    } else { const t = bandEntry(o, sim, tipZ, LT.band); if (t < gB) { gB = t; gBy = o; } }
+  }
+  // 判定区（K2）
+  const zone = bufZone;
+  zone.length = 0;
+  // 返修 FE1R · repair-r1（验收员 tests：K1 窄东西不算挡光体，它周围、后面的地照样是车前的空地）：判定区不再到正前方的窄东西为止（gM 只留着给调试看）；
+  // 被它挡住、从驾驶座看不见的那几点照旧不算（下面 hidden）
+  const T = Math.min(LT.z1, gB - LT.zEnd);
+  const ts = [];
+  for (let t = LT.z0; t <= T + 1e-6; t += LT.zStep) ts.push(t);
+  if (T >= LT.z0 && ts.length && T - ts[ts.length - 1] > 0.1) ts.push(T);
+  const near = (x, z) => { for (let i = 0; i < occ.length; i++) { const o = occ[i]; if (o.maxY < gy + 0.03 || o.minY > gy + 2) continue; if (occDist2(o, x, z) < LT.zClear) return true; } return false; };
+  // 从驾驶座看不见的点不算（整合 FE1R：和 tests/forklift_polish.mjs 判定区去掉「驾驶座看不见的点」一致；以前偏在车宽带边上的树干、柱子
+  // 后面那几点也拿来打分，求解器为了照它们把看得见的远角让掉了 —— 种子 39 #172 树、#179 柱子）。按挡体盒子算视线（车自己的门架不算）
+  // 车自己的门架、货叉架、链条（从驾驶座往前看，立柱、横梁、挡货架会挡住一部分地面）按这一档可动模型的零件（mastPieces，藤蔓也用它）算，
+  // 车本地坐标、按 lift 缓存（cabHidden）
+  const eye = sim.eyeWorld();
+  const hidden = (x, z, t, u) => { if (cabHidden(sim, tipZ, t, u)) return true; for (let i = 0; i < occ.length; i++) if (segHits(occ[i], eye.x, eye.y, eye.z, x, gy + 0.02, z)) return true; return false; };
+  let z1i = -1;
+  for (const t of ts) for (const u of LT.zU) {
+    const w = toW(sim.x, sim.z, sim.yaw, u, tipZ - t, tmpLW);
+    if (near(w.x, w.z)) continue;
+    if (hidden(w.x, w.z, t, u)) continue;
+    if (u === 0 && (z1i < 0 || Math.abs(t - 1) < Math.abs(zone[z1i].t - 1))) z1i = zone.length;
+    zone.push({ x: w.x, z: w.z, t, u });
+  }
+  let far = null;
+  if (gB >= LT.far + 0.3) { const w = toW(sim.x, sim.z, sim.yaw, 0, tipZ - LT.far, tmpLW); if (!near(w.x, w.z)) far = { x: w.x, z: w.z }; }
+  // 正前方的窄东西（K1）：朝车那一面 0.5 / 1.0 / 1.6 m 高三点要照亮（车宽带里第一个挡光体前面、LT.far 以内）
+  let fpts = null;
+  if (face && face.t < Math.min(gB, LT.far)) {
+    const w = toW(sim.x, sim.z, sim.yaw, face.u, tipZ - face.t, { x: 0, z: 0 });
+    fpts = [];
+    for (const y of LT.faceY) if (gy + y > face.o.minY + 0.05 && gy + y < face.o.maxY - 0.05) fpts.push({ x: w.x, y: gy + y, z: w.z });
+    if (!fpts.length) fpts = null;
+  }
+  // 两边货架朝通道那面的货（返修 FE1R · repair-r4，主会话 L3：宽货架通道正中开灯减关灯，两边货架上的货只剩 FE1Q 的 3 成 —— 求解器只给车前判定区、
+  // 叉尖前 5 m 和正前方窄东西打分，光球收到最小的 4.4 m、强度 2.4，2.8 m 外的货几乎照不到）：车两侧（车宽带外）横向 LT.gLat 以内、长边和车平行的货架，
+  // 朝车那一面上叉尖前 0–LT.gFar m、离地 LT.gY 每 LT.gStep m 一点，法线朝车中线。光照不到货架另一侧照旧（J9：界限到远侧面往里 0.1 m）
+  const goods = bufGoods;
+  goods.length = 0;
+  for (let i = 0; i < occ.length; i++) {
+    const o = occ[i];
+    if (o.t !== 'rack' || o.maxY < gy + 0.6) continue;
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (let k = 0; k < 4; k++) {
+      const lx = CORN[k][0] * o.hx, lz = CORN[k][1] * o.hz, l = toL(sim.x, sim.z, sim.yaw, o.cx + o.c * lx + o.s * lz, o.cz - o.s * lx + o.c * lz, tmpLL);
+      if (l.x < x0) x0 = l.x; if (l.x > x1) x1 = l.x; if (l.z < z0) z0 = l.z; if (l.z > z1) z1 = l.z;
+    }
+    if (x1 - x0 > z1 - z0) continue;   // 长边不和车平行（车头对着货架）
+    const sd = x0 > LT.band + 0.1 ? 1 : x1 < -(LT.band + 0.1) ? -1 : 0;
+    if (!sd) continue;
+    const fx = sd > 0 ? x0 : x1;
+    if (Math.abs(fx) > LT.gLat) continue;
+    const nw = toW(0, 0, sim.yaw, -sd, 0, { x: 0, z: 0 });   // 法线（车本地 −sd·x）换到世界：toW 的平移部分是 0
+    for (let t = 0; t <= LT.gFar + 1e-6; t += LT.gStep) {
+      const lz = tipZ - t;
+      if (lz < z0 + 0.05 || lz > z1 - 0.05) continue;
+      const w = toW(sim.x, sim.z, sim.yaw, fx, lz, tmpLW);
+      for (const yy of LT.gY) if (gy + yy < o.maxY - 0.05 && gy + yy > o.minY + 0.05) goods.push({ x: w.x, y: gy + yy, z: w.z, nx: nw.x, nz: nw.z, sd });
+    }
+  }
+  // 头顶：天花板（L1 楼板底 4.0）和头顶条目（梁、管子、桥架的底面）
+  const oh = overheadList(sim, bufOh);
+  const sMax = Math.max(LT.sMin, gB - LT.passW);
+  // 开得快时强度封顶压低（地上一块很亮的小光斑跟车跑，车前某一点逐帧的明暗变化太大，FE1R K2 平滑）：停着 / 慢开照常，2.5 m/s 以上压到 LT.ImaxMove
+  const mv = clamp((Math.abs(num(sim.spd, 0)) - 0.5) / 2, 0, 1);
+  return { sim, gy, tipZ, occ, zone, far, oh, z1i, sMax, gB, gN, gBy, nar, fpts, goods, eye, nx: -fwdX(sim.yaw), nz: -fwdZ(sim.yaw), T: Math.max(LT.z0, T), tFar: clamp(gB - 0.3, LT.z1, LT.far),
+    Imax: LT.Imax + (LT.ImaxMove - LT.Imax) * mv, eFloor: LT.eFloor + (LT.eFloorMove - LT.eFloor) * mv };
+}
+// 横偏 u 处光源最远能放到叉尖前多远：不进车宽带里挡光体前 LT.passW、不越过横向挡在它前面的窄东西（前 LT.passN）
+function sMaxU(ctx, u) {
+  let m = ctx.sMax;
+  for (let i = 0; i < ctx.nar.length; i++) { const n = ctx.nar[i]; if (u > n.u0 - LT.passU && u < n.u1 + LT.passU) m = Math.min(m, n.t - LT.passN); }
+  return Math.max(LT.sMin, m);
+}
+function lightSolve(sim) {
+  const g = G();
+  const st = sim.lt || (sim.lt = { s: 0, u: 0, h: 0, I: 0, tgt: null, clock: null, x: NaN, z: NaN, yaw: NaN, init: false });
+  const now = BR.game && Number.isFinite(+BR.game.time) ? +BR.game.time : 0;
+  let dt = st.clock == null ? 0 : now - st.clock;
+  st.clock = now;
+  const jump = !st.init || dt < 0 || dt > 0.5 || !(Math.hypot(sim.x - st.x, sim.z - st.z) <= 1.0) || !(Math.abs(wrap(sim.yaw - st.yaw)) <= 0.6);
+  dt = clamp(dt, 0, 0.1);
+  st.x = sim.x; st.z = sim.z; st.yaw = sim.yaw;
+  const ctx = lightCtx(sim);
+  const { gB, gN, gBy, sMax, zone } = ctx;
+  // 候选：粗搜一遍，再在粗搜最好的 LT.topK 处（s、u 互相隔开的）周围各细搜两圈。只细搜最好那一处不够：光源挪过货架头 / 墙头那个端面
+  // 所在平面时上限一下放开（种子 12345 #6：叉尖前 2.6 m 光球 1.95、2.65 m 就 3.5），粗网格正好跨过那一段，别处又有个次好的
+  let best = null, lb = null;
+  const tops = bufTops;
+  tops.length = 0;
+  const tryC = (s, u, h, top) => {
+    if (s > sMaxU(ctx, u) + 1e-6 || s < LT.sMin - 1e-6 || Math.abs(u) > LT.uMax + 1e-6 || h < LT.hMin - 1e-6 || h > LT.hMax + 1e-6) return;
+    const c = lightEval(ctx, s, u, h, false);
+    if (!c) return;
+    if (!best || c.score > best.score) best = c;
+    if (!lb || c.score > lb.score) lb = c;
+    if (top) {
+      let k = -1;
+      for (let i = 0; i < tops.length; i++) if (Math.abs(tops[i].s - c.s) < 0.4 && Math.abs(tops[i].u - c.u) < 0.3) { k = i; break; }
+      if (k >= 0) { if (c.score > tops[k].score) tops[k] = c; }
+      else tops.push(c);
+      tops.sort((a, b) => b.score - a.score);
+      if (tops.length > LT.topK) tops.length = LT.topK;
+    }
+  };
+  // 全局搜每 LT.every 帧一次（摊开省时间：手机上一帧也只多一点点）；刚上车、瞬移、上一帧没目标时马上搜
+  st.n = (st.n || 0) + 1;
+  const full = jump || !st.tgt || st.n % LT.every === 0;
+  if (full) for (const s of LT.s) for (const u of LT.u) for (const h of LT.h) tryC(s, u, h, true);
+  const seeds = tops.slice();
+  for (let q = 0; q < seeds.length; q++) {
+    lb = seeds[q];
+    for (let r = 0; r < 2 && lb; r++) {
+      const b0 = lb, f = r ? 0.5 : 1;
+      for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (let k = -1; k <= 1; k++) if (i || j || k) tryC(b0.s + i * LT.ds * f, b0.u + j * LT.du * f, b0.h + k * LT.dh * f, false);
+    }
+  }
+  if (!best && full) best = lightEval(ctx, sMaxU(ctx, 0), 0, LT.h[1], true);
+  // 跟踪：从上一帧的目标出发在附近细步爬山（目标随车的处境连续地挪，没有滞后）；全局搜到的明显更好（高出 LT.sw）才跳过去（滞回）
+  let loc = null;
+  if (st.tgt && !jump) {
+    const lc = (s, u, h) => (s > sMaxU(ctx, u) + 1e-6 || s < LT.sMin - 1e-6 || Math.abs(u) > LT.uMax + 1e-6 || h < LT.hMin - 1e-6 || h > LT.hMax + 1e-6) ? null : lightEval(ctx, s, u, h, false);
+    let c = lc(Math.min(st.tgt.s, sMaxU(ctx, st.tgt.u)), st.tgt.u, st.tgt.h);
+    for (let it = 0; c && it < 3; it++) {
+      let nb = c;
+      for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (let k = -1; k <= 1; k++) {
+        if (!(i || j || k)) continue;
+        const q = lc(c.s + i * LT.ls, c.u + j * LT.lu, c.h + k * LT.lh);
+        if (q && q.score > nb.score + 1e-6) nb = q;
+      }
+      if (nb === c) break;
+      c = nb;
+    }
+    loc = c;
+  }
+  if (!loc && !best) best = lightEval(ctx, sMaxU(ctx, 0), 0, LT.h[1], true);
+  let tgt = best, far = !loc;
+  if (loc && !(best && best.score > loc.score + LT.sw)) tgt = loc;
+  st.tgt = { s: tgt.s, u: tgt.u, h: tgt.h };
+  // 平滑（车本地）：沿着爬山挪的用短时间常数（几乎不滞后），全局换了个位置的用长一点的（不一跳），每帧挪动再限个速（LT.vMax）
+  if (jump) { st.s = tgt.s; st.u = tgt.u; st.h = tgt.h; }
+  else {
+    const k = 1 - Math.exp(-dt / (tgt === loc && !far ? LT.tauL : LT.tau)), m = LT.vMax * dt;
+    st.s += clamp((tgt.s - st.s) * k, -m, m); st.u += clamp((tgt.u - st.u) * k, -m, m); st.h += clamp((tgt.h - st.h) * k, -m / 2, m / 2);
+  }
+  // 退到限制以内：挡光体（墙、货架、宽块、别的车）前 0.1 m 是硬的（光源不许越过它，当帧退）；挡光体前 LT.passW、窄东西前 LT.passN 是软的
+  // （拐弯时柱子扫进车宽带，光源按 LT.vMax 退回来，不一下跳 1 m 多）
+  const soft = sMaxU(ctx, st.u);
+  if (st.s > soft) st.s = jump ? soft : Math.max(soft, st.s - LT.vMax * dt);
+  st.s = clamp(st.s, LT.sMin, Math.max(LT.sMin, ctx.gB - 0.1));
+  const fin = lightEval(ctx, st.s, st.u, st.h, true);
+  // 光球：放大按 LT.rUp 慢慢放（货架头、墙头这种光源一挪过端面界限就整个放开的地方不一跳）；收小也按 LT.rDown 收，但当帧不超过
+  // 放宽了货架端面的那个上限（occSoft：只有货架两头的楔形细缝放宽，墙、宽块、别的车、货架长边一律当帧收），静下来收敛到严格上限
+  // Rhi 不跟 Rlo 取大：矮堆垛顶附近严格上限随光源高度变得很陡，硬限只按 occSoft（连续）走
+  const Rlo = Math.max(0.05, fin.R), Rhi = Math.max(0.05, Math.min(fin.R0, fin.Bs - LT.margin));
+  if (jump || !(st.R > 0)) st.R = Rlo;
+  else st.R = Math.min(st.R < Rlo ? Math.min(Rlo, st.R + LT.rUp * dt) : Math.max(Rlo, st.R - LT.rDown * dt), Rhi);
+  // 强度：照这个光球重算封顶，逐帧平滑；白点封顶允许平滑途中超 25%（静止时收敛到封顶以内）
+  const kF = st.R > st.h ? 1 - st.h / st.R : 1;
+  let cap = Math.min(ctx.Imax, ctx.eFloor / (kF * kF));
+  { const co = fin.dsurf < st.R ? LT.eSurf / ((1 - fin.dsurf / st.R) * (1 - fin.dsurf / st.R)) : Infinity; cap = Math.min(cap, Math.max(surfCap(ctx.occ, fin.x, fin.y, fin.z, st.R, ctx.gy, ctx.eye, co), co)); }
+  // 每帧最多变 LT.iRate·dt（相对）：光球慢慢放大、开快了封顶压低时强度都是一点点变，地上一点逐帧不跳；封顶允许途中超 50%（停稳后收敛到封顶以内）
+  const Iw = Math.min(fin.I, cap), Iprev = st.I;
+  if (jump || !(st.I > 0)) st.I = Iw;
+  else {
+    const r = Math.exp(LT.iRate * dt), next = st.I + (Iw - st.I) * (1 - Math.exp(-dt / LT.tau));
+    st.I = clamp(next, st.I / r, st.I * r);
+  }
+  // 超过封顶 1.5 倍的往回压，但连同上面的平滑一帧合计最多压 1.5·LT.iRate·dt（光源扫向一个面、光球按 LT.rUp 放大时，离光源最近那个面的
+  // 封顶一帧掉百分之十几，当帧硬压会一跳；原地打满方向转圈，叉尖前 1.5 m 地面一帧暗 9 级）；跳变（刚放上车、瞬移）照旧当帧压
+  st.I = jump ? Math.min(st.I, cap * 1.5) : Math.min(st.I, Math.max(cap * 1.5, Iprev * Math.exp(-1.5 * LT.iRate * dt)));
+  st.init = true;
+  const range = st.R;
+  sim.lightInfo = { range, intensity: st.I, R0: fin.R0, seatLit: SEAT_LIT, bound: fin.B, hit: Number.isFinite(gB) ? gB : null, narrow: Number.isFinite(gN) ? gN : null,
+    by: fin.by ? { kind: fin.by.t, key: fin.by.key, box: { cx: fin.by.cx, cz: fin.by.cz, hx: fin.by.hx, hz: fin.by.hz, c: fin.by.c, s: fin.by.s, minY: fin.by.minY, maxY: fin.by.maxY } } : null,
+    s: st.s, u: st.u, h: st.h, tgt: st.tgt, zone: zone.length, zoneMin: fin.zMin, zoneCov: fin.zs, faceE: fin.faceE, far: fin.fE, ceil: fin.Ec, ohE: fin.Eh, score: fin.score, blocker: gBy ? gBy.t : null, goods: fin.gS, goodsN: fin.gN };
+  return { x: fin.x, y: fin.y, z: fin.z, range, intensity: st.I };
+}
+// 一个候选（叉尖前 s、横偏 u、离地 h）：光球、强度、打分。force = 位置太贴着东西也照样算（最后用的那个位置）
+function lightEval(ctx, s, u, h, force) {
+  const { sim, gy, tipZ, occ, zone, far, oh } = ctx;
+  const w = toW(sim.x, sim.z, sim.yaw, u, tipZ - s, tmpLW);
+  const x = w.x, z = w.z, y = gy + h;
+  // 名义范围：够得着判定区最远的角（叉尖前 T、横向 ±0.5；光源放到判定区前头时还有叉尖前 0.5 m 那两个角）和更远那一点（叉尖前 clamp(挡光体 − 0.3, 3, 5)），那里还剩 1 − LT.reachK 的余量。
+  // 按挡光体距离连续地算（不按判定区里剩下哪几个点），光球不因为某个点进出判定区跳一下
+  const dT = Math.max(0, ctx.T - s), dF = Math.max(0, ctx.tFar - s), dN = Math.max(0, s - LT.z0), du = 0.5 + Math.abs(u);
+  let dFar = Math.max(Math.hypot(dT, du, h), Math.hypot(dF, Math.abs(u), h), Math.hypot(dN, du, h));
+  // 两边货架的货（L3）：名义范围也要够得着最远那一点
+  const goods = ctx.goods;
+  for (let i = 0; i < goods.length; i++) { const q = goods[i], d = Math.hypot(q.x - x, q.y - y, q.z - z); if (d > dFar) dFar = d; }
+  const R0 = clamp(dFar / LT.reachK, LT.R0, LT.Rmax);
+  let B = Infinity, Bs = Infinity, dsurf = Infinity, by = null;
+  for (let i = 0; i < occ.length; i++) {
+    const o = occ[i];
+    const d0 = Math.hypot(x - o.cx, z - o.cz) - o.r;
+    if (d0 > R0 && d0 > dsurf) continue;
+    const dd = occDist(o, x, y, z);
+    if (dd < dsurf) dsurf = dd;
+    const bb = occBound(o, x, y, z, gy);
+    if (bb < B) { B = bb; by = o; }
+    if (occSoft < Bs) Bs = occSoft;
+  }
+  if (!force && dsurf < LT.pad) return null;
+  // 整合 FE1R：按实际会用上的光球打分 —— lightSolve 摆灯时光球还要被 occSoft（Bs）封顶（Rhi = min(R0, Bs − margin)）。光源刚好高过矮堆垛顶
+  // LT.yFade–LT.ySoft 那一截时 occBound 不算它（B = ∞）、occSoft 却还收着：以前打分按 4.4 m 的光球算判定区都照得到，摆上去光球只有 3 m，
+  // 叉尖前 0.5 m 那点只剩 6.8 级（种子 16 #10）
+  const R = Math.min(R0, B - LT.margin, Bs - LT.margin);
+  if (!force && !(R > h + 0.1)) return null;
+  // 判定区、5 m（I = 1）：叉尖前 1.5 m 以内的点算两份（够不全时先保近处，K2 的例外也要求 0.5–1.5 m 全亮）
+  let z1 = Infinity, zr = Infinity, g1 = 0;
+  const e1s = bufE1;
+  e1s.length = 0;
+  for (let i = 0; i < zone.length; i++) {
+    const q = zone[i], d = Math.hypot(q.x - x, h, q.z - z), e = e1(d, h, R);
+    e1s.push(e);
+    if (e < z1) z1 = e;
+    if (e > 1e-4 && e < zr) zr = e;
+    if (i === ctx.z1i) g1 = e;
+  }
+  const f1 = far ? e1(Math.hypot(far.x - x, h, far.z - z), h, R) : null;
+  // 强度：底值 / 判定区（够得着的点里最暗的）要的，封顶（光源下的地面、离光源最近的面不发白）
+  let Icap = ctx.Imax;
+  if (R > h) { const k = 1 - h / R; Icap = Math.min(Icap, ctx.eFloor / (k * k)); }
+  // 不发白（返修 FE1R · repair-r5）：按近处表面的颜色封（surfCap，见上），但不比以前「最近那个面照度 ≤ LT.eSurf」更严 —— 颜色说安全的地方
+  // （深色漆的柱子、货）放开，颜色估计更严的地方（亮黄护角、白箱子、高光强的树皮）照旧按 eSurf（验收员的第二种办法：保留 eSurf 2.0、按反照率放宽；
+  // 全按颜色收严时种子 12345 的 K2 几何例外从 5 个涨到 7 个，车前地面让给了护角）。按颜色那一份只在用得上时算（要的强度超过了别的上限和旧上限；
+  // 最后摆上去的那个位置 force 时一定算）：结果逐位一样，候选多的那几帧省时间
+  const capOld = dsurf < R ? LT.eSurf / ((1 - dsurf / R) * (1 - dsurf / R)) : Infinity;
+  // 正前方窄东西朝车那一面（法线朝车）
+  let n1 = Infinity;
+  if (ctx.fpts) for (let i = 0; i < ctx.fpts.length; i++) {
+    const q = ctx.fpts[i], dx = x - q.x, dy = y - q.y, dz = z - q.z, d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const c = (dx * ctx.nx + dz * ctx.nz) / d;
+    const e = d < R && c > 0 ? (1 - d / R) * (1 - d / R) * c : 0;
+    if (e < n1) n1 = e;
+  }
+  // 两边货架的货（L3）：每一点的照度（I = 1，竖直面、法线朝车中线）；强度要够把照得到的点里暗的那四分之一档照满
+  let gReq = 0;
+  const ge = bufGe;
+  ge.length = 0;
+  for (let i = 0; i < goods.length; i++) {
+    const q = goods[i], dx = x - q.x, dy = y - q.y, dz = z - q.z, d = Math.sqrt(dx * dx + dy * dy + dz * dz), c = (dx * q.nx + dz * q.nz) / d;
+    ge.push(d < R && c > 0 ? (1 - d / R) * (1 - d / R) * c : 0);
+  }
+  let gQ = 0;
+  if (ge.length) { const srt = ge.filter(v => v > 1e-4).sort((a, b) => a - b); if (srt.length) { gQ = srt[srt.length >> 2]; gReq = LT.gT / gQ; } }
+  const need = Math.max(LT.I0, zone.length && zr < Infinity ? LT.zT / zr : 0, ctx.fpts && n1 > 1e-4 ? LT.nT / n1 : 0, gReq);
+  Icap = force || need > Math.min(Icap, capOld) ? Math.min(Icap, Math.max(surfCap(ctx.occ, x, y, z, R, gy, ctx.eye, capOld), capOld)) : Math.min(Icap, capOld);
+  const I = Math.min(Icap, need);
+  // 头顶：天花板（楼板底，正上方）和头顶条目（梁、管子、吊灯的底面）
+  const dc = LT.ceilY - h;
+  let dh = Infinity;
+  for (let i = 0; i < oh.length; i++) {
+    const e = oh[i], yb = +e.y - gy;
+    if (!(yb > h)) continue;
+    const ex = Math.max(0, Math.min(e.minX, e.maxX) - x, x - Math.max(e.minX, e.maxX)), ez = Math.max(0, Math.min(e.minZ, e.maxZ) - z, z - Math.max(e.minZ, e.maxZ));
+    const d = Math.hypot(ex, yb - h, ez);
+    if (d < dh) dh = d;
+  }
+  const Ec = dc < R ? I * (1 - dc / R) * (1 - dc / R) : 0, Eh = dh < R ? I * (1 - dh / R) * (1 - dh / R) : 0;
+  // 判定区覆盖：叉尖前 1.5 m 以内（K2 例外也必须全亮）和更远的分开算
+  let nw = 0, ns = 0, fw = 0, fsum = 0, nmin = 1, bad = 0;
+  for (let i = 0; i < zone.length; i++) {
+    const v = Math.min(1, I * e1s[i] / LT.zT), near = zone[i].t <= 1.5 + 1e-6;
+    if (near) { nw++; ns += v; const vn = Math.min(1, I * e1s[i] / LT.zN); if (vn < nmin) nmin = vn; } else { fw++; fsum += v; }
+    // 照不亮的点：近段照度不到 LT.zOkN 扣 LT.badN、远段不到 LT.zOkF 扣 LT.badF（两个阈值都是 0.15，和测试暴力搜判「照得全」同一个；
+    // 近段扣得更重：一盏灯照不全时先保叉尖前 0.5–1.5 m，再保 1.5–3 m，最后才是叉尖前 5 m 那一点（K2 比 J9 的 5 m 优先，见 ARCHITECTURE 15.13）
+    if (I * e1s[i] < (near ? LT.zOkN : LT.zOkF)) bad += near ? LT.badN : LT.badF;
+  }
+  const nearC = nw ? ns / nw : 1, farC = fw ? fsum / fw : 1, zs = zone.length ? (ns + fsum) / (nw + fw) : 1;
+  const fs = far ? Math.min(1, I * f1 / LT.fT) : 1;
+  const faceS = ctx.fpts ? Math.min(1, I * n1 / LT.nT) : 1;
+  let cp = 0;
+  // 天花板的绝对上限（L-ceiling：空地上 ≤40 级）：两边有货架时放宽到两边货里暗的那四分之一档的照度（天花板不比两边的货亮；返修 FE1R · repair-r5，
+  // 主会话 L3 —— 货架通道里一盏点光源照两边 2.8 m 外的货，头顶 3 m 的天花板必然差不多亮，按空地的上限卡，货永远只有 FE1Q 的一半）。
+  // 「天花板不比叉尖前 1 m 的地面亮」（下面 ceilK 那条）照旧
+  const eCeil = gQ > 0 ? Math.max(LT.eCeil, LT.gCeil * I * gQ) : LT.eCeil;
+  if (Ec > eCeil) cp += Math.min(1, (Ec - eCeil) / LT.eCeil);
+  const eOh = gQ > 0 ? Math.max(LT.eOh, LT.gCeil * I * gQ) : LT.eOh;
+  if (Eh > eOh) cp += Math.min(1, (Eh - eOh) / LT.eOh);
+  if (ctx.z1i >= 0 && Ec > LT.ceilK * I * g1) cp += 0.5;
+  const pref = -0.04 * Math.abs(s - LT.nom.s) - 0.2 * Math.abs(h - LT.nom.h) - 0.3 * Math.abs(u - LT.nom.u);
+  // 正前方窄东西那一面（1.5·faceS）按叉尖前 1.5 m 以内最暗那一点打折（nmin：照度到 LT.zN 算 1）：K2 的例外也要求这一段全亮，
+  // 照那一面不能拿近处地面换（种子 16 #150：光源抬到 1 m 照柱子，叉尖前 1.25 m 有一点只剩 3.5 级）
+  // bad（整合 FE1R）：判定区里照不亮的点按个数扣分 —— 以前只按平均覆盖算，远角一点差一截（v 0.6）只扣 0.05 分，比光源横偏的偏好分（0.3·|u|）
+  // 还小，求解器宁可让远角暗着也不往边上挪（种子 39 #172 树、#179 柱子，暴力搜照得全）。只在照不亮时才扣，照得全的位姿挑法和以前一样
+  // 两边货架的货（L3）：照满的比例，两边都有货架时按照得差的那一边算（光源不偏到一边去，两边都要亮），权重 LT.wG（低于车前判定区）；
+  // 没有货架时这一项不算（同一个位姿的候选都一样，不影响挑法）
+  let gS = 0;
+  if (ge.length) {
+    let sl = 0, nl = 0, sr = 0, nr = 0;
+    for (let i = 0; i < ge.length; i++) { const v = Math.min(1, I * ge[i] / LT.gT); if (goods[i].sd > 0) { sr += v; nr++; } else { sl += v; nl++; } }
+    gS = nl && nr ? Math.min(sl / nl, sr / nr) : (sl + sr) / (nl + nr);
+  }
+  // 货那一项按车前判定区里最暗那一点打折（照度到 LT.zT 才算 1）：车前地面没照满时不拿它换两边的货（K2 优先；repair-r4 第一版没打折，
+  // 种子 16 #122 货架端头叉尖前 2.75 m 那一点被让到 6.9 级）
+  const gGate = zone.length ? Math.min(1, I * z1 / LT.zT) : 1;
+  const score = 4 * nearC + 2 * farC + fs + 1.5 * (ctx.fpts ? faceS * nmin : 1) - 0.6 * cp + pref - bad + LT.wG * gS * gGate;
+  return { s, u, h, x, y, z, R0, B, Bs, R, I, Icap, by, score, nearC, farC, bad, nmin, fs, cp, pref, zs, faceS, faceE: ctx.fpts ? I * n1 : null, zMin: zone.length ? I * z1 : null, fE: far ? I * f1 : null, Ec, Eh, dsurf, gS: ge.length ? gS : null, gN: ge.length, gQ, g1 };
+}
+
 // 切出墙片：kit 'noclip' 出口那段没有碰撞体、会闪的墙（网格名 'noclip'，顶点是区块本地坐标，区块 group 摆在区块原点）。
 // 按网格的包围盒（世界坐标）当墙；每个区块 group 扫一次记在 WeakMap 里（子节点个数变了再扫）。(x, z) 附近 reach 米以内的
 const ncCache = new WeakMap();   // group → { n: 子节点个数, list: [盒子…] }
@@ -2208,5 +3109,7 @@ BR.forklift = {
   // 纯函数（测试 / 别的模块用）
   _geom: { obbHitsRect, obbHitsObb, circleDist2, worldBoxes, toW, toL, sweepLocal, sideShape, sideHit, vineHit },
   _disposeAll: disposeAll,
+  // 大灯落点（测试、调试看候选打分）
+  _light: { LT, ctx: lightCtx, eval: lightEval, solve: lightSolve, occBound, occKind, sMaxU, ALB, albProf, albGet, surfCap, ambAt, texHi },
 };
 })();

@@ -75,6 +75,9 @@ A.register({
   sounds: SOUNDS,
   brain: A.stalker({ patrol: 'wander', patrolRadius: 22, searchSec: 8, alertCry: 'growl' }),
   // 依据："雄性攻击并吃掉视野里的一切"——主动追猎的追猎者骨架；栖息范围给得比一般实体大，呼应巨物体型，非设定具体数字
+  // 打坐在叉车上的人（返修 FE1R · repair-r1：以前够不到坐车的人，叉车成了安全屋）：前半截蛇身（最后三节）抬起来拱成一道弧，头横着落到司机近侧肩膀外侧（_archetypes.js seatChain）；
+  // 后面的蛇身贴地铺向车那一边，站点让出这一截再多 1.7 m（前半截拱起来要的余地）。攻击距离、扣血、出手时机不变
+  seatStrike: { kind: 'chain', chain: 'tail0', from: 4, pad: 1.7 },
   anim: { gait: 'none', sway: 0.4, swaySpeed: 1.8, breathe: 0, strike: 'bite', fall: 'side' },
   // 依据：链条骨骼自动 sway（模拟蛇身游动摆动，摆幅取偏大值以贴合"巨蛇"体量感，非设定精确数字）；
   // fall:'side' 让长条状蛇身倒下时侧倒，比人形的向后倒更符合蛇的形态

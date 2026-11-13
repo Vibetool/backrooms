@@ -26,6 +26,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import os from 'node:os';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('/Users/xuanjiang/Downloads/project/ESP-S3/rocket-launch-3d/node_modules/playwright-core');
@@ -199,6 +200,19 @@ function ev(page, fn, arg) {
     new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('page.evaluate 超过 ' + EV_TIMEOUT / 1000 + ' 秒没返回（页面卡死？）')), EV_TIMEOUT); }),
   ]).finally(() => clearTimeout(timer));
 }
+// 页面里跨很多帧的 __v.hold / untilStop / accelTo（返修 FE1R · repair-r3，验收员 play / tests：V.hold 自己最多等 60 s 墙钟，比 EV_TIMEOUT 45 s 还长，
+// 机器忙时 V5 / V6 必挂「page.evaluate 超过 45 秒」）：__v.run 开始、马上返回一个号，这边每 250 ms 用一个很短的 page.evaluate 取结果。
+// 墙钟最多等 limit（缺省 200 s，页面里自己的上限是 180 s），到了还没完照旧抛错（真卡死）
+async function evRun(page, name, args, limit) {
+  const id = await ev(page, a => __v.run(a.n, a.a), { n: name, a: args || [] });
+  const t0 = Date.now(), lim = limit || 200000;
+  for (;;) {
+    const r = await ev(page, i => __v._res[i], id);
+    if (r) { await ev(page, i => { delete __v._res[i]; return 0; }, id); if (r.e) throw new Error('__v.' + name + ' 出错：' + r.e); return r.r; }
+    if (Date.now() - t0 > lim) throw new Error('__v.' + name + '(' + JSON.stringify(args) + ') 超过 ' + Math.round(lim / 1000) + ' 秒没完（页面卡死？）');
+    await sleep(250);
+  }
+}
 // 短按（N1 minor ⑤）：同一个 evaluate 里先造好 keydown、keyup 两个事件（event.timeStamp 是造出来的时刻，只差零点几毫秒）再接连派发。
 // 两次 CDP 按键之间、或者 setTimeout 隔开的两次派发，机器忙时会被渲染帧拖到几百毫秒以后，interact 就当成了长按
 function tapKey(page, code) {
@@ -210,9 +224,12 @@ function tapKey(page, code) {
     return 0;
   }, code);
 }
+// 机器忙的倍数（返修 FE1R · repair-r4，主会话 L5：联机状态的等待不按固定墙钟判）：1 分钟平均负载 / 核数，夹在 1–4 之间。
+// 等联机状态的地方墙钟上限都乘它 —— 机器闲时和以前一样快判，负载 60（8 核 ×4）时多等几倍；真没发生的照样判失败，只是晚一点
+function loadK() { const n = Math.max(1, (os.cpus() || []).length); return Math.min(4, Math.max(1, os.loadavg()[0] / n)); }
 async function waitFor(page, fn, arg, timeout) {
   try {
-    await page.waitForFunction(fn, arg, { timeout: timeout || 10000, polling: 100 });
+    await page.waitForFunction(fn, arg, { timeout: Math.round((timeout || 10000) * loadK()), polling: 100 });
     return true;
   } catch (err) {
     return false;
@@ -747,9 +764,19 @@ async function joinCamp(page, code, opts) {
   const joined = await waitFor(page, () => BR.coop.active && BR.coop.phase === 'active', null, o.timeout || 90000) && await waitCamp(page, 45000);
   return { card, joined };
 }
+// 等两边都回到联机（phase 'active'）。返修 FE1R · repair-r4（主会话 L5；验收员 play：负载 40–60 时 V8 重连要 60 s 以上，waitActive 60 s 墙钟到点判 back:false，
+// 那时其实已经 active、跳变 0.0 cm）：每 250 ms 短轮询一次（单个 evaluate 很短）；有一边还在重连 / 握手（游戏自己 90 s 的重连期限没到、没放弃）就接着等，
+// 最多 8 分钟；两边都不在过渡态又没连上时，等满 timeout × 负载倍数（loadK）再判没连上。游戏放弃重连（回到 idle）以后不再算过渡态，照样判失败
+const COOP_PENDING = /^(reconnecting|handshake|connecting)$/;
 async function waitActive(pages, timeout) {
-  const r = await Promise.all(pages.map(p => waitFor(p, () => BR.coop.active && BR.coop.phase === 'active', null, timeout || 45000)));
-  return r.every(Boolean);
+  const t0 = Date.now(), base = timeout || 45000;
+  for (;;) {
+    const st = await Promise.all(pages.map(p => ev(p, () => ({ a: !!(BR.coop.active && BR.coop.phase === 'active'), ph: String(BR.coop.phase) })).catch(() => ({ a: false, ph: '?' }))));
+    if (st.every(q => q.a)) return true;
+    const pending = st.some(q => !q.a && COOP_PENDING.test(q.ph)), el = Date.now() - t0;
+    if (el > 480000 || (!pending && el > base * loadK())) { info('waitActive 没等到两边都 active（' + Math.round(el / 1000) + ' s）：' + JSON.stringify(st)); return false; }
+    await sleep(250);
+  }
 }
 // 帐篷里改选择：走 BR.coopCamp._debugSet（房主直接写、客机走 use，和选单同一条广播路径）
 function tentPick(page, sel) { return ev(page, s => BR.coopCamp._debugSet(s), sel); }
@@ -1252,9 +1279,10 @@ async function run(browser, base) {
       const inT = await enterTent(A);
       await waitFor(A, () => !BR.coopCamp.debugInfo().walking, null, 6000);
       await ev(B, ([x, z]) => { BR.player.reset({ x, y: 0, z, yaw: 0 }, { full: false }); }, [door.x, bz]);
-      // A 那边看到的 B 站稳（插值追上、速度降下来）
+      // A 那边看到的 B 站稳（插值追上、速度降下来）。返修 FE1R · repair-r5（验收员 tests，主会话 L5：负载 15–50 时 A 还当 B 在走，
+      // 堵门判断没成立就按了 onBack，A 从 B 身边走了出去）：不再固定睡 2.5 s，等到 A 页面里队友的平滑速度 < 0.2 m/s（堵门判断按 < 0.4 算站着）
       await waitFor(A, ([x, z]) => BR.coop.peer && Math.hypot(BR.coop.peer.x - x, BR.coop.peer.z - z) < 0.05, [door.x, bz], 10000);
-      await sleep(2500);
+      await waitFor(A, () => BR.coopCamp.debugInfo().peerSpeed < 0.2, null, 10000);
       const n0 = await ev(A, () => __t.toasts.length);
       await ev(A, () => BR.coopCamp.onBack());
       await waitFor(A, () => !BR.coopCamp.panelOpen && !BR.coopCamp.debugInfo().walking, null, 6000);
@@ -1269,7 +1297,7 @@ async function run(browser, base) {
     await ev(A, () => { BR.player.reset({ x: 16, y: 0, z: 19.8, yaw: 0 }, { full: false }); });
     await ev(B, ([x, z]) => { BR.player.reset({ x, y: 0, z, yaw: 0 }, { full: false }); }, [door.x, door.z + 0.5]);
     await waitFor(A, ([x, z]) => BR.coop.peer && Math.hypot(BR.coop.peer.x - x, BR.coop.peer.z - z) < 0.05, [door.x, door.z + 0.5], 10000);
-    await sleep(2500);
+    await waitFor(A, () => BR.coopCamp.debugInfo().peerSpeed < 0.2, null, 10000);
     const n1 = await ev(A, () => __t.toasts.length);
     const er = await ev(A, () => BR.coopCamp.enter());
     await sleep(300);
@@ -1289,7 +1317,9 @@ async function run(browser, base) {
     const synced = await waitFor(B, v => { const s = BR.coopCamp.state; return !!(s && s.v >= v && s.lv === 'dev' && s.mode === 'casual'); }, st ? st.v : 1e9, 3000);
     const ms = Date.now() - t0;
     const [sa, sb] = await Promise.all([A, B].map(p => ev(p, () => ({ st: BR.coopCamp.state, toasts: __t.toasts.slice(-3), board: __t.boardText() }))));
-    check('4c 房主选「游玩 + Level Dev」，客机 1 s 内收到同一份 state', !!st && synced && ms <= 1000 && sb.st.v === sa.st.v && sb.st.lv === 'dev' && sb.st.mode === 'casual', { ms, A: sa.st && { v: sa.st.v, lv: sa.st.lv, mode: sa.st.mode }, B: sb.st && { v: sb.st.v, lv: sb.st.lv } });
+    // 1 s 是墙钟（两页都在这台机器上跑，负载高时页面一帧就要几百 ms）：上限按负载放宽（loadK，返修 FE1R · repair-r5，主会话 L5）
+    const lim4c = Math.round(1000 * loadK());
+    check('4c 房主选「游玩 + Level Dev」，客机 1 s 内收到同一份 state（墙钟上限 ' + lim4c + ' ms）', !!st && synced && ms <= lim4c && sb.st.v === sa.st.v && sb.st.lv === 'dev' && sb.st.mode === 'casual', { ms, lim: lim4c, A: sa.st && { v: sa.st.v, lv: sa.st.lv, mode: sa.st.mode }, B: sb.st && { v: sb.st.v, lv: sb.st.lv } });
     check('4c 改了选择，两边的准备都清掉（客机先点过准备）', bReady && !sa.st.rdy[0] && !sa.st.rdy[1] && !sb.st.rdy[0] && !sb.st.rdy[1], { bReady, A: sa.st.rdy, B: sb.st.rdy });
     check('4c 客机 toast「「房主A」改成了 …」，小黑板写下一站', sb.toasts.some(t => /房主A」改成了/.test(t)) && /下一站/.test(sa.board || ''), { toasts: sb.toasts, board: sa.board });
   });
@@ -1384,7 +1414,8 @@ async function run(browser, base) {
     })) : { miss: true };
     const arrived = await waitArrived([A, B], 'dev', 'casual', 45000);
     // 申请到房主时倒数已经到 0（房主已开始出发、goAt 清掉）会回 ok:true（没什么可取消的）——只要照样出发了也算对
-    check('4e 最后半秒内取消无效：房主回「来不及取消了」，两人照样出发', ready && arrived && !!late.r && (late.r.ok === false ? /来不及/.test(late.r.why || '') : late.r.ok === true), late);
+    // 返修 FE1R · repair-r5（主会话 L5）：负载高时扣住的取消申请到房主那边，房主已经进了 Level Dev，回的是「不在同一层」—— 两人照样都到了 Dev，也是「取消无效、照样出发」
+    check('4e 最后半秒内取消无效：房主回「来不及取消了」（或者房主已经出发、回「不在同一层」），两人照样出发', ready && arrived && !!late.r && (late.r.ok === false ? /来不及|不在同一层/.test(late.r.why || '') : late.r.ok === true), late);
     await sleep(1500);
     const [sa, sb] = await Promise.all([A, B].map(p => snapRun(p)));
     seed = sa.seed;
@@ -1441,7 +1472,7 @@ async function run(browser, base) {
     await A.keyboard.up('KeyW');
     const tUp = Date.now();
     let follow = null, last = null;
-    while (Date.now() - tUp < 1000) {
+    while (Date.now() - tUp < 1000 * loadK()) {
       const [a1, ps] = await Promise.all([ev(A, () => ({ x: BR.player.x, z: BR.player.z, fy: BR.player.feetY })), ev(B, () => __t.peerSuit())]);
       const d = ps ? Math.hypot(ps.x - a1.x, ps.z - a1.z) : 99;
       last = { ms: Date.now() - tUp, d: +d.toFixed(3), dy: ps ? +(ps.y - a1.fy).toFixed(3) : null, moved: +Math.hypot(a1.x - a0.x, a1.z - a0.z).toFixed(2) };
@@ -2143,13 +2174,14 @@ async function run(browser, base) {
       check('20 预备：刚打开的页面 C 开营地，老页面 A（早开 ' + (ages[0] - ages[1]) + ' s、用过联机时钟）加入', !!c && j.joined && ages[0] - ages[1] > 60 && aClk > ages[1], { ages, aClk, code: c, joined: j.joined });
       if (!j.joined) return;
       await sleep(1500);
-      const both = () => Promise.all([ev(A, () => BR.coop.clock()), ev(C, () => BR.coop.clock())]);
+      // 两页分别读时钟（两次 page.evaluate 的往返在负载高时差几百 ms）：各读 5 次取差最小的那一对；容差按负载放宽（返修 FE1R · repair-r5，主会话 L5）
+      const both = async () => { let best = null; for (let i = 0; i < 5; i++) { const m = await Promise.all([ev(A, () => BR.coop.clock()), ev(C, () => BR.coop.clock())]); if (!best || Math.abs(m[0] - m[1]) < Math.abs(best[0] - best[1])) best = m; } return best; };
       const m1 = await both();
       await sleep(3000);
       const m2 = await both();
-      const adv = [m2[0] - m1[0], m2[1] - m1[1]];
-      check('20 A 的联机时钟跟上 C（差 < 0.3 s），3 s 里两边走得一样多（差 < 0.3 s）', Math.abs(m1[0] - m1[1]) < 0.3 && Math.abs(adv[0] - adv[1]) < 0.3 && adv[0] > 2.5,
-        { m1, m2, adv: adv.map(x => +x.toFixed(3)) });
+      const adv = [m2[0] - m1[0], m2[1] - m1[1]], tol20 = +(0.3 * loadK()).toFixed(2);
+      check('20 A 的联机时钟跟上 C（差 < 0.3 s，负载放宽到 ' + tol20 + ' s），3 s 里两边走得一样多', Math.abs(m1[0] - m1[1]) < tol20 && Math.abs(adv[0] - adv[1]) < tol20 && adv[0] > 2.5,
+        { m1, m2, adv: adv.map(x => +x.toFixed(3)), tol: tol20 });
       await tentPick(C, { mode: 'casual', lv: 'dev' });
       await sleep(800);
       // A 这边：从收到 goAt 到黑幕落下（transit 离开 idle）过了多久
@@ -2245,11 +2277,13 @@ function installVeh() {
   if (BR.vehicles && typeof BR.vehicles.update === 'function') { const ou = BR.vehicles.update; BR.vehicles.update = function (dt) { V.simT += +dt || 0; return ou.apply(this, arguments); }; }
   V.down = code => { window.dispatchEvent(new KeyboardEvent('keydown', { code, key: code.replace(/^Key/, '').toLowerCase(), bubbles: true, cancelable: true })); return 0; };
   V.up = code => { window.dispatchEvent(new KeyboardEvent('keyup', { code, key: code.replace(/^Key/, '').toLowerCase(), bubbles: true, cancelable: true })); return 0; };
-  // 按住 sec 秒（模拟时间；墙钟最多等 60 s）
+  // 按住 sec 秒（模拟时间；墙钟最多等 180 s）。返修 FE1R · repair-r3（验收员 play / tests：机器忙时 rAF 一秒只有一两帧，按住 4.4 s 模拟时间
+  // 要一两分钟墙钟，以前一个 page.evaluate 等到底，超过 EV_TIMEOUT 45 s 整步记「流程未中断」）：测试那边一律用 evRun（V.run 开始、马上返回，
+  // 每 250 ms 轮询一次结果），单个 page.evaluate 都很短；页面里墙钟上限放到 180 s，只防真卡死
   V.hold = (code, sec) => new Promise(res => {
     V.down(code);
     const t0 = V.simT, w0 = performance.now();
-    const tick = () => { if (V.simT - t0 >= sec || performance.now() - w0 > 60000) { V.up(code); res(+(V.simT - t0).toFixed(3)); return; } requestAnimationFrame(tick); };
+    const tick = () => { if (V.simT - t0 >= sec || performance.now() - w0 > 180000) { V.up(code); res(+(V.simT - t0).toFixed(3)); return; } requestAnimationFrame(tick); };
     tick();
   });
   // 按住 W 撞上去；「哐」那一帧（这台车 throwBusy：客机在等房主回落点 / 东西还在叉面上，或者 throws 多了一条）松开 W、按住 S sec 秒（模拟时间）——
@@ -2319,7 +2353,7 @@ function installVeh() {
       const v = BR.vehicles.byKey(k);
       const sp = v ? Math.abs(v.pose.spd) : 0;
       if (sp < 0.05) { res(+(V.simT - t0).toFixed(3)); return; }
-      if (V.simT - t0 > max || performance.now() - w0 > 60000) { res(null); return; }
+      if (V.simT - t0 > max || performance.now() - w0 > 180000) { res(null); return; }
       requestAnimationFrame(tick);
     };
     tick();
@@ -2331,11 +2365,19 @@ function installVeh() {
     const tick = () => {
       const p = BR.vehicles.byKey(k);
       if (p && Math.abs(p.pose.spd) >= v) { res(Math.abs(p.pose.spd)); return; }
-      if (V.simT - t0 > max || performance.now() - w0 > 60000) { res(p ? Math.abs(p.pose.spd) : null); return; }
+      if (V.simT - t0 > max || performance.now() - w0 > 180000) { res(p ? Math.abs(p.pose.spd) : null); return; }
       requestAnimationFrame(tick);
     };
     tick();
   });
+  // 跨很多帧的那几个（hold / untilStop / accelTo）在页面里开始、马上返回一个号，测试那边 evRun 按号轮询结果（repair-r3）
+  V._res = {}; V._rid = 0;
+  V.run = (name, args) => {
+    const id = ++V._rid;
+    V._res[id] = null;
+    Promise.resolve().then(() => V[name].apply(null, args || [])).then(r => { V._res[id] = { r }; }, e => { V._res[id] = { e: String(e && e.stack || e) }; });
+    return id;
+  };
   // 等落座、起动走完（phase 'run'）
   V.untilRun = () => new Promise(res => {
     const w0 = performance.now();
@@ -2565,10 +2607,10 @@ async function runVeh(browser, base) {
     if (!driver) return;
     await step('V3 司机按住 W 1 s：对方看到车移动 >1 m；停车 0.5 s 后两边位姿差 <5 cm', async () => {
       const p0 = await ev(watcher, k => __v.pose(k), K);
-      await ev(driver, () => __v.hold('KeyW', 1.0));
+      await evRun(driver, 'hold', ['KeyW', 1.0]);
       await sleep(300);
       const p1 = await ev(watcher, k => __v.pose(k), K);
-      const stopMs = await ev(driver, k => __v.untilStop(k, 4), K);
+      const stopMs = await evRun(driver, 'untilStop', [K, 4]);
       await sleep(500 + 200);   // 停住 0.5 s（加上 100 ms 插值缓冲）
       const [pd, pw] = await Promise.all([ev(driver, k => __v.pose(k), K), ev(watcher, k => __v.pose(k), K)]);
       const moved = Math.hypot(p1.x - p0.x, p1.z - p0.z), diff = Math.hypot(pd.x - pw.x, pd.z - pw.z);
@@ -2601,19 +2643,19 @@ async function runVeh(browser, base) {
     });
     await step('V5 对方站在举起的货叉下面：司机按 C 降不下来（「货叉下面有人」）', async () => {
       // 司机先把货叉升到底面 ≈2 m（升 4.4 s）
-      await ev(driver, () => __v.hold('KeyR', 4.4));
+      await evRun(driver, 'hold', ['KeyR', 4.4]);
       await sleep(300);
       const lift0 = await ev(driver, k => __v.pose(k).lift, K);
       await ev(watcher, k => { const w = __v.W(k, 0, -1.63); const P = BR.player; P.x = w.x; P.z = w.z; P.vx = 0; P.vz = 0; return 0; }, K);
       await sleep(1200);
       const n0 = await ev(driver, () => __v.notes.length);
-      await ev(driver, () => __v.hold('KeyC', 2.5));
+      await evRun(driver, 'hold', ['KeyC', 2.5]);
       await sleep(300);
       const r = await ev(driver, a => { const v = BR.vehicles.byKey(a.k); const G = BR.L1forklift.geo; return { lift: v.pose.lift, forkBottom: v.pose.y + (G.forkY || 0.015) + 2.6 * v.pose.lift, notes: __v.notes.slice(a.n) }; }, { k: K, n: n0 });
       check('V5 对方站在货叉下面，司机按 C：货叉停在他头顶以上（底 ' + r.forkBottom.toFixed(2) + ' m），提示「货叉下面有人」', lift0 > 0.6 && r.forkBottom >= 1.8 - 0.01 && r.notes.includes('货叉下面有人'), { lift0, r });
       await ev(watcher, k => { const w = __v.W(k, -3, 0.24); const P = BR.player; P.x = w.x; P.z = w.z; return 0; }, K);
       await sleep(800);
-      await ev(driver, () => __v.hold('KeyC', 4.5));
+      await evRun(driver, 'hold', ['KeyC', 4.5]);
       await sleep(300);
     });
     await step('V6 联机暂停 / 结算 / 切后台：3 m/s 的车 0.6 s 内停住，货叉不动，雷达照常', async () => {
@@ -2624,12 +2666,12 @@ async function runVeh(browser, base) {
       ];
       for (const [name, on, off] of cases) {
         // 每次先倒回起点附近再开（往东开）
-        await ev(driver, () => __v.hold('KeyS', 1.5));
-        await ev(driver, k => __v.untilStop(k, 3), K);
-        const v = await ev(driver, k => __v.accelTo(k, 'KeyW', 3.0, 4), K);
+        await evRun(driver, 'hold', ['KeyS', 1.5]);
+        await evRun(driver, 'untilStop', [K, 3]);
+        const v = await evRun(driver, 'accelTo', [K, 'KeyW', 3.0, 4]);
         const lift0 = await ev(driver, k => __v.pose(k).lift, K);
         await on();
-        const sec = await ev(driver, k => __v.untilStop(k, 2), K);
+        const sec = await evRun(driver, 'untilStop', [K, 2]);
         await ev(driver, () => __v.up('KeyW'));
         const r = await ev(driver, k => ({ lift: __v.pose(k).lift, seated: BR.vehicles.seated, screen: BR.game.screen }), K);
         check('V6 联机' + name + '：' + (v || 0).toFixed(2) + ' m/s 的车 ' + sec + ' s 内停住（≤0.6 s，模拟时间），货叉不动，人还在车上', v >= 3 && sec != null && sec <= 0.6 + 0.1 + 1e-6 && Math.abs(r.lift - lift0) < 1e-6 && r.seated === K, { v, sec, lift0, r });
@@ -2657,7 +2699,7 @@ async function runVeh(browser, base) {
           }, K);
           // 测试人要先经联机同步到司机那边（真实时间），机器忙时 2 s 不一定到：每 250 ms 看一次，最多等 8 s
           let snd = [];
-          for (let t0 = Date.now(); Date.now() - t0 < 8000;) {
+          for (let t0 = Date.now(), lim = 8000 * loadK(); Date.now() - t0 < lim;) {
             await sleep(250);
             snd = await ev(driver, n => __v.sounds.slice(n), n0);
             if (snd.includes('fk_radar')) break;
@@ -2671,11 +2713,55 @@ async function runVeh(browser, base) {
         await sleep(800);
       }
     });
+    // 返修 FE1R · repair-r1（验收员 spec：A1「人形不许消失超过 0.1 s」没量过）：不靠 rAF 快慢 —— 观察那页每一帧记对方人形在不在画面里
+    // （没有人形、坐姿时没有坐姿模型、站姿时 visible false 但相机离它 >0.6 m（HIDE_NEAR 以外）都算消失），按游戏自己的帧时长
+    // （main.js：min(0.1, 两帧间隔)）累计每一段连续消失的时长，最长一段 ≤0.1 s；机器忙时一帧就封顶 0.1 s，连着两帧消失就判失败
+    const a1Vanish = rows => {
+      let cur = 0, worst = 0, frames = 0, worstAt = -1;
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i], dt = i ? Math.min(0.1, Math.max(0, (r.t - rows[i - 1].t) / 1000)) : 0;
+        if (r.gone) { cur += dt; frames++; if (cur > worst) { worst = cur; worstAt = i; } } else cur = 0;
+      }
+      return { worst: +worst.toFixed(3), frames, at: worstAt >= 0 ? rows.slice(Math.max(0, worstAt - 2), worstAt + 2) : [] };
+    };
+    const a1Row = (a, v, cam) => {
+      if (!a) return { t: performance.now(), m: 'none', gone: true };
+      const ax = a.mode === 'walk' ? a.x : v.pose.x, az = a.mode === 'walk' ? a.z : v.pose.z;
+      const near = Math.hypot(cam.position.x - ax, cam.position.z - az) < 0.6;
+      return { t: performance.now(), m: a.mode, vis: a.visible, sm: a.mode === 'drive' ? !!a.seatModel : null, gone: a.mode === 'drive' ? !a.seatModel || (!a.visible && !near) : (!a.visible && !near) };
+    };
     await step('V7 司机下车后，房主 levelState.vehicles 和司机最后位姿差 <1 cm', async () => {
       await ev(driver, k => { BR.player.yaw = BR.vehicles.byKey(k).pose.yaw + 0.7; return 0; }, K);
+      // FE1R A1：下车那 0.5 s 对方那边照旧画坐姿（'exit'），落地以后才在落点换站姿 —— 每一帧记对方人形（坐姿 / 站姿、站姿时在车本地哪里、脚离地多高）
+      await ev(watcher, ([k, rowSrc]) => {
+        const R = window.__a1 = { rows: [], van: [], on: true };
+        const a1Row = eval('(' + rowSrc + ')');
+        const tick = () => {
+          if (!R.on) return;
+          const a = BR.coop.debugInfo().avatar, v = BR.vehicles.byKey(k);
+          if (v) R.van.push(a1Row(a, v, BR.gfx.camera));
+          if (a && v) {
+            const p = v.pose, c = Math.cos(p.yaw), sn = Math.sin(p.yaw);
+            if (a.mode === 'walk') { const dx = a.x - p.x, dz = a.z - p.z; R.rows.push({ m: 'walk', vis: a.visible, lx: +(c * dx - sn * dz).toFixed(3), lz: +(sn * dx + c * dz).toFixed(3), feet: +(a.y - BR.phys.groundY(a.x, a.z)).toFixed(3) }); }
+            else R.rows.push({ m: a.mode, ph: a.phase || null, vis: a.visible });
+          }
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+        return 0;
+      }, [K, a1Row.toString()]);
       await ev(driver, () => __v.tap('Space'));
       await waitFor(driver, () => !BR.vehicles.seated, null, 15000);
       await sleep(1500);
+      // 机器忙时房主那页 rAF 很慢、对方位姿还在插值缓冲里：落地以后再多等到看见一帧站姿（最多 6 s），别只采到坐姿就收
+      await waitFor(watcher, () => !!window.__a1 && window.__a1.rows.some(r => r.m === 'walk'), null, 6000).catch(() => {});
+      const a1 = await ev(watcher, () => { const R = window.__a1; R.on = false; return R.rows; });
+      const van7 = a1Vanish(await ev(watcher, () => window.__a1.van));
+      check('V7 FE1R A1：司机下车的整个过程房主那边对方人形没有消失超过 0.1 s（按游戏帧时长累计，最长一段 ' + van7.worst + ' s、共 ' + van7.frames + ' 帧不在画面里）',
+        van7.worst <= 0.1 + 1e-9, van7);
+      const inCar = a1.filter(r => r.m === 'walk' && r.vis && ((Math.abs(r.lx) < 0.6 + 0.3 && r.lz > -1.3 && r.lz < 1.6) || Math.abs(r.feet) > 0.02));
+      check('V7 FE1R A1：司机下车那 0.5 s 房主看到的照旧是坐姿（exit），落地以后才在落点换站姿 —— 没有一帧站着的人形插在车里、脚离地 >2 cm',
+        a1.length > 0 && inCar.length === 0 && a1.some(r => r.m === 'walk'), { n: a1.length, modes: [...new Set(a1.map(r => r.m + (r.ph ? ':' + r.ph : '')))], bad: inCar.slice(0, 6) });
       const [pd, ls, sd] = await Promise.all([ev(driver, k => __v.pose(k), K), ev(A, k => BR.levelState.getv('1', 'veh', k), K), ev(driver, () => __v.seat())]);
       check('V7 司机下车（没坐着了），房主 levelState.vehicles 和司机最后位姿差 <1 cm（on 0）', !sd.seated && !!ls && Math.hypot(ls.x - pd.x, ls.z - pd.z) < 0.01 && ls.on === 0, { pd, ls, sd });
     });
@@ -2693,17 +2779,31 @@ async function runVeh(browser, base) {
       }
       const cur0 = await ev(driver, () => __v.cur()), d1 = aimOk ? null : await ev(driver, k => __v.aimDiag(k), K);
       if (!aimOk) info('V8 客机站到车右侧 8 s 准心都没对上车（现场）', { before: d0, after: d1 });
+      // A1：上车那一下（站姿 → 'in' → 坐姿）房主那边每一帧记对方人形在不在
+      await ev(watcher, ([k, rowSrc]) => {
+        const R = window.__a1m = { van: [], on: true }, a1Row = eval('(' + rowSrc + ')');
+        const tick = () => { if (!R.on) return; const v = BR.vehicles.byKey(k); if (v) R.van.push(a1Row(BR.coop.debugInfo().avatar, v, BR.gfx.camera)); requestAnimationFrame(tick); };
+        requestAnimationFrame(tick);
+        return 0;
+      }, [K, a1Row.toString()]);
       await ev(driver, () => __v.tap('Space'));
       await ev(driver, () => __v.untilRun());
+      await sleep(1500);
+      await waitFor(watcher, () => { const r = window.__a1m.van; return r.length > 3 && r[r.length - 1].m === 'drive' && !r[r.length - 1].gone; }, null, 6000).catch(() => {});
+      {
+        const rows = await ev(watcher, () => { const R = window.__a1m; R.on = false; return R.van; }), v8 = a1Vanish(rows);
+        check('V8 FE1R A1：客机上车的整个过程房主那边对方人形没有消失超过 0.1 s（按游戏帧时长累计，最长一段 ' + v8.worst + ' s、共 ' + v8.frames + ' 帧不在画面里；看到坐姿 ' + rows.some(r => r.m === 'drive' && !r.gone) + '）',
+          rows.length > 0 && rows.some(r => r.m === 'drive' && !r.gone) && v8.worst <= 0.1 + 1e-9, Object.assign({ n: rows.length, modes: [...new Set(rows.map(r => r.m))] }, v8));
+      }
       const s0 = await ev(driver, () => __v.seat());
       if (s0.seated !== K) { check('V8 客机重新坐上车', false, Object.assign({ aimOk, cur0, before: d0, after: d1 || await ev(driver, k => __v.aimDiag(k), K) }, s0)); return; }
-      await ev(driver, k => __v.accelTo(k, 'KeyS', 1.5, 3), K);
+      await evRun(driver, 'accelTo', [K, 'KeyS', 1.5, 3]);
       const n0 = await ev(driver, () => __v.notes.length);
       await ctxB.setOffline(true);
       netDown.add('VB');
       await ev(driver, () => __t.cutPeer());
       const rc = await waitFor(driver, () => BR.coop.phase === 'reconnecting', null, 15000);
-      const ms = await ev(driver, k => __v.untilStop(k, 3), K);
+      const ms = await evRun(driver, 'untilStop', [K, 3]);
       await ev(driver, () => __v.up('KeyS'));
       const r1 = await ev(driver, a => Object.assign(__v.seat(), { notes: __v.notes.slice(a.n), pose: __v.pose(a.k) }), { k: K, n: n0 });
       check('V8 客机掉线：车停住（' + ms + ' s），人还坐在车上，提示「掉线了，车先停住」', rc && ms != null && r1.seated === K && r1.notes.some(t => /掉线了，车先停住/.test(t)), r1);
@@ -2719,7 +2819,7 @@ async function runVeh(browser, base) {
       // 等房主那边的车滑到客机的位置（差 <5 cm，最多 15 s）再量：机器很忙时房主这边一帧要好几百毫秒，固定等 3 s 可能还没滑完（返修 r4）
       const tConv = Date.now();
       let conv = null;
-      while (Date.now() - tConv < 15000) {
+      while (Date.now() - tConv < 15000 * loadK()) {
         const [g, h] = await Promise.all([ev(driver, k => __v.pose(k), K), ev(A, k => __v.pose(k), K)]);
         conv = g && h ? Math.hypot(g.x - h.x, g.z - h.z) : null;
         if (conv != null && conv < 0.05 && Date.now() - tConv > 1500) break;
@@ -2744,7 +2844,7 @@ async function runVeh(browser, base) {
       check('V8 重连后房主这边的车不瞬移（滑过去最快 ' + tr.maxSpeed.toFixed(2) + ' m/s ≤4.5，单帧最大 ' + (tr.maxStep * 100).toFixed(1) + ' cm），最后和客机差 <5 cm', tr.maxSpeed <= 4.5 && Math.hypot(r4.x - r3.pose.x, r4.z - r3.pose.z) < 0.05, { tr, r4, guest: r3.pose });
       // 接着能开
       const p0 = await ev(A, k => __v.pose(k), K);
-      await ev(driver, () => __v.hold('KeyW', 0.8));
+      await evRun(driver, 'hold', ['KeyW', 0.8]);
       await sleep(600);
       const p1 = await ev(A, k => __v.pose(k), K);
       check('V8 重连后接着开：房主看到车在动', Math.hypot(p1.x - p0.x, p1.z - p0.z) > 0.3, { p0, p1 });
@@ -2929,8 +3029,8 @@ async function runVeh(browser, base) {
       await ev(watcher, () => __v.tap('Space'));
       const ph = await ev(watcher, () => __v.untilRun());
       await sleep(500);
-      await ev(watcher, () => __v.hold('KeyW', 3.0));
-      await ev(watcher, k => __v.untilStop(k, 3), K);
+      await evRun(watcher, 'hold', ['KeyW', 3.0]);
+      await evRun(watcher, 'untilStop', [K, 3]);
       await sleep(3000);
       const [ra, rb] = await Promise.all([look(watcher, ['fkt-can2']), look(driver, ['fkt-can2'])]);
       const ta = ra.throws[0], tb = rb.throws[0];
@@ -2960,8 +3060,8 @@ async function runVeh(browser, base) {
       if (s0.seated !== K) { check('V14 客机还坐在车上', false, s0); return; }
       const n0 = await ev(driver, () => __v.notes.length);
       await ev(driver, () => __v.holdOut(true));
-      await ev(driver, () => __v.hold('KeyS', 1.0));
-      await ev(driver, k => __v.untilStop(k, 3), K);
+      await evRun(driver, 'hold', ['KeyS', 1.0]);
+      await evRun(driver, 'untilStop', [K, 3]);
       const gone = await waitFor(watcher, k => !BR.coop.debugInfo().vehLeases.some(l => l[0] === 'k:' + k), K, 20000);
       // 客机重新要租约的请求也被攒着：4 s 等不到回复，接着要。最多等 7 s，但要在客机从第一次要租约算起 15 s（REGRAB_GIVEUP）放弃之前
       // 留出 2.5 s 量「人还坐着」—— 机器很忙时房主收走租约要等很久，固定等 7 s 会等过客机放弃的时刻（返修 r4）
@@ -3005,8 +3105,8 @@ async function runVeh(browser, base) {
       if (s0.seated !== K) { check('V14b 客机重新坐上车', false, s0); return; }
       const n0 = await ev(driver, () => __v.notes.length);
       await ev(driver, () => __v.holdOut(true));
-      await ev(driver, () => __v.hold('KeyW', 0.8));
-      await ev(driver, k => __v.untilStop(k, 3), K);
+      await evRun(driver, 'hold', ['KeyW', 0.8]);
+      await evRun(driver, 'untilStop', [K, 3]);
       const out = await waitFor(driver, () => !BR.vehicles.seated, null, 30000);
       const mid = await ev(driver, a => Object.assign(__v.seat(), { notes: __v.notes.slice(a.n), pose: __v.pose(a.k) }), { n: n0, k: K });
       const host0 = await ev(watcher, k => __v.pose(k), K);
@@ -3029,8 +3129,8 @@ async function runVeh(browser, base) {
       const s0 = await ev(driver, () => __v.seat());
       if (s0.seated !== K) { check('V14c 客机还坐在车上', false, s0); return; }
       await ev(driver, () => __v.holdOut(true));
-      await ev(driver, () => __v.hold('KeyW', 0.8));
-      await ev(driver, k => __v.untilStop(k, 3), K);
+      await evRun(driver, 'hold', ['KeyW', 0.8]);
+      await evRun(driver, 'untilStop', [K, 3]);
       const gone = await waitFor(watcher, k => !BR.coop.debugInfo().vehLeases.some(l => l[0] === 'k:' + k), K, 20000);
       await sleep(500);
       const hp0 = await ev(watcher, k => __v.pose(k), K);
@@ -3099,12 +3199,12 @@ async function runVeh(browser, base) {
       // 前提不成立先照 V8 的办法重新上一次车，还不行才判失败
       if (s0.seated !== K) { info('V11 前客机没坐在车上，重新上车', s0); s0 = await remountGuest(driver, K, 'V11 前'); }
       if (s0.seated !== K) { check('V11 客机还坐在车上', false, s0); return; }
-      await ev(driver, () => __v.hold('KeyS', 1.5));
-      await ev(driver, k => __v.untilStop(k, 3), K);
-      const v = await ev(driver, k => __v.accelTo(k, 'KeyW', 3.0, 4), K);
+      await evRun(driver, 'hold', ['KeyS', 1.5]);
+      await evRun(driver, 'untilStop', [K, 3]);
+      const v = await evRun(driver, 'accelTo', [K, 'KeyW', 3.0, 4]);
       const lift0 = await ev(driver, k => __v.pose(k).lift, K);
       await ev(driver, () => { BR.player.damage({ hp: 9999, cause: '测试' }); return 0; });
-      const ms = await ev(driver, k => __v.untilStop(k, 2), K);
+      const ms = await evRun(driver, 'untilStop', [K, 2]);
       await ev(driver, () => __v.up('KeyW'));
       await sleep(1500);
       const [rd, rw] = await Promise.all([ev(driver, k => Object.assign(__v.seat(), { pose: __v.pose(k), dead: BR.player.dead, P: { x: BR.player.x, z: BR.player.z } }), K), ev(watcher, k => __v.pose(k), K)]);
@@ -3147,8 +3247,8 @@ async function runVeh(browser, base) {
       await ev(A, () => __v.tap('Space'));
       const ph = await ev(A, () => __v.untilRun());
       await sleep(500);
-      await ev(A, () => __v.hold('KeyW', 3.0));
-      await ev(A, k => __v.untilStop(k, 3), K);
+      await evRun(A, 'hold', ['KeyW', 3.0]);
+      await evRun(A, 'untilStop', [K, 3]);
       await sleep(3000);
       const [ra, rb] = await Promise.all([look(A, ['fkt-can9']), look(B, ['fkt-can9'])]);
       const ta = ra.throws[0], tb = rb.throws[0];

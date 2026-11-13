@@ -547,20 +547,23 @@ function defaultHeight() {
 // 竖直圆柱（半径 r、脚底 yFeet、高 height）在 XZ 上移动 (dx, dz)，贴墙滑动。
 // 返回 { x, z, hitX, hitZ, hit }：hitX/hitZ 表示该轴被挡过（玩家用来清速度，实体 AI 用来判断卡住）
 // 附近有 OBB 时走 moveCircleObb（同一套轴对齐扫掠，每个子步之后再做圆-OBB 推出）；没有时一行不差走原来的路径
-function moveCircle(x, z, r, dx, dz, yFeet, height) {
+// obbR（可选，FE1R A7）：对 OBB（载具）用的半径，不给 = r。玩家用 BR.config.player.vehRadius（0.377：贴着车走手套不插进车身），
+// 对墙 / 静态 AABB 照旧用 r
+function moveCircle(x, z, r, dx, dz, yFeet, height, obbR) {
   x = +x; z = +z;
   dx = +dx || 0; dz = +dz || 0;
   if (!(r > 0)) r = 0.01;
+  const rO = obbR > r ? +obbR : r;
   if (yFeet == null) yFeet = groundY(x, z);
   if (!(height > 0)) height = defaultHeight();
   const y0 = yFeet + Y_EPS, y1 = yFeet + Math.max(height, 3 * Y_EPS) - Y_EPS;
 
   const len = Math.sqrt(dx * dx + dz * dz);
   // 候选范围：位移长度 + 半径。圆角偏转是把被挡掉的位移转向，总路程不会超过 len
-  const reach = len + r + 0.05;
+  const reach = len + r + 0.05, reachO = len + rO + 0.05;
   let list = queryBox(x - reach, z - reach, x + reach, z + reach, y0, y1, candMove);
-  if (obbCount !== 0 && obbNearby(x, z, reach) && queryObb(x - reach, z - reach, x + reach, z + reach, y0, y1, candObbMove).length) {
-    return moveCircleObb(x, z, r, dx, dz, y0, y1, len, reach, list, candObbMove);
+  if (obbCount !== 0 && obbNearby(x, z, reachO) && queryObb(x - reachO, z - reachO, x + reachO, z + reachO, y0, y1, candObbMove).length) {
+    return moveCircleObb(x, z, r, dx, dz, y0, y1, len, reach, list, candObbMove, rO, reachO);
   }
   if (list.length === 0) return { x: x + dx, z: z + dz, hitX: false, hitZ: false, hit: false };
 
@@ -570,8 +573,8 @@ function moveCircle(x, z, r, dx, dz, yFeet, height) {
     // 可能被推出去好几米，原来的候选不一定覆盖新位置
     list = queryBox(px - reach, pz - reach, px + reach, pz + reach, y0, y1, candMove);
     // 被推到了 OBB 跟前：从推出后的位置改走带 OBB 的路径（depenetrate 再跑一遍是空操作）
-    if (obbCount !== 0 && obbNearby(px, pz, reach) && queryObb(px - reach, pz - reach, px + reach, pz + reach, y0, y1, candObbMove).length) {
-      return moveCircleObb(px, pz, r, dx, dz, y0, y1, len, reach, list, candObbMove);
+    if (obbCount !== 0 && obbNearby(px, pz, reachO) && queryObb(px - reachO, pz - reachO, px + reachO, pz + reachO, y0, y1, candObbMove).length) {
+      return moveCircleObb(px, pz, r, dx, dz, y0, y1, len, reach, list, candObbMove, rO, reachO);
     }
   }
 
@@ -614,24 +617,26 @@ function moveCircle(x, z, r, dx, dz, yFeet, height) {
 //   ②里推不完还压着的 OBB 只许越压越浅（往外、往旁边走都行，往里走那一步退回去），所以也穿不过车。
 const OBB_PUSH_TOL = 1e-9;
 let obHitX = false, obHitZ = false, skStamp = 0;
-function moveCircleObb(x, z, r, dx, dz, y0, y1, len, reach, list, ol) {
+function moveCircleObb(x, z, r, dx, dz, y0, y1, len, reach, list, ol, rO, reachO) {
+  if (!(rO >= r)) rO = r;
+  if (!(reachO >= reach)) reachO = reach;
   let px = x, pz = z, hitX = false, hitZ = false;
   if (list.length && depenetrate(px, pz, r, list)) {
     px = outX; pz = outZ;
     list = queryBox(px - reach, pz - reach, px + reach, pz + reach, y0, y1, candMove);
-    ol = queryObb(px - reach, pz - reach, px + reach, pz + reach, y0, y1, candObbMove);
+    ol = queryObb(px - reachO, pz - reachO, px + reachO, pz + reachO, y0, y1, candObbMove);
   }
   const sk = ++skStamp;
-  if (ol.length && obbStartPush(px, pz, r, ol, list)) {
+  if (ol.length && obbStartPush(px, pz, r, ol, list, rO)) {
     px = outX; pz = outZ;
     list = queryBox(px - reach, pz - reach, px + reach, pz + reach, y0, y1, candMove);
-    ol = queryObb(px - reach, pz - reach, px + reach, pz + reach, y0, y1, candObbMove);
+    ol = queryObb(px - reachO, pz - reachO, px + reachO, pz + reachO, y0, y1, candObbMove);
   }
   // 推了 r 还压着的：这一次调用里只记下压多深，之后只许越压越浅（AABB 的扫掠对"已经在里面"的盒子是直接不管）
   for (let i = 0; i < ol.length; i++) {
     const o = ol[i];
-    if (px + r <= o.minX || px - r >= o.maxX || pz + r <= o.minZ || pz - r >= o.maxZ) continue;
-    const pen = circlePen(o, px, pz, r);
+    if (px + rO <= o.minX || px - rO >= o.maxX || pz + rO <= o.minZ || pz - rO >= o.maxZ) continue;
+    const pen = circlePen(o, px, pz, rO);
     if (pen > PEN_TOL) { o.sk = sk; o.skPen = pen; }
   }
 
@@ -656,13 +661,13 @@ function moveCircleObb(x, z, r, dx, dz, y0, y1, len, reach, list, ol) {
     }
     pz = nz;
     if (extraX !== 0) px = sweepX(px, pz, extraX, r, list);
-    // OBB 推出
-    if (obbResolve(px, pz, r, ol, list, sk)) {
+    // OBB 推出（按对 OBB 的半径 rO）
+    if (obbResolve(px, pz, r, ol, list, sk, rO)) {
       px = outX; pz = outZ;
       if (obHitX) hitX = true;
       if (obHitZ) hitZ = true;
     }
-    if (obbBad(px, pz, r, ol, sk)) {
+    if (obbBad(px, pz, rO, ol, sk)) {
       // 推不干净（夹缝）或者往起点就压着的 OBB 里又走深了：这一步退回去。后面的子步同样的位移、同样的起点，只会一样，直接停
       px = bx; pz = bz;
       if (sx !== 0) hitX = true;
@@ -690,7 +695,8 @@ function obbBad(px, pz, r, ol, sk) {
   return false;
 }
 // 子步之后：和哪块 OBB 压着就沿推出方向推到 r + SKIN 外（多块夹着时迭代几轮）
-function obbResolve(px, pz, r, ol, list, sk) {
+function obbResolve(px, pz, r, ol, list, sk, rO) {
+  if (!(rO >= r)) rO = r;
   let any = false;
   obHitX = obHitZ = false;
   for (let iter = 0; iter < 4; iter++) {
@@ -698,8 +704,8 @@ function obbResolve(px, pz, r, ol, list, sk) {
     for (let i = 0; i < ol.length; i++) {
       const o = ol[i];
       if (o.sk === sk) continue;
-      if (px + r <= o.minX || px - r >= o.maxX || pz + r <= o.minZ || pz - r >= o.maxZ) continue;
-      const pen = circlePen(o, px, pz, r);
+      if (px + rO <= o.minX || px - rO >= o.maxX || pz + rO <= o.minZ || pz - rO >= o.maxZ) continue;
+      const pen = circlePen(o, px, pz, rO);
       if (pen <= OBB_PUSH_TOL) continue;
       const push = pen + SKIN, nX = obNX, nZ = obNZ;
       const nx = list.length ? sweepX(px, pz, nX * push, r, list) : px + nX * push;
@@ -714,15 +720,16 @@ function obbResolve(px, pz, r, ol, list, sk) {
   outX = px; outZ = pz;
   return any;
 }
-// 起点压进 OBB：沿最小穿透方向推，这一次合计最多推 r
-function obbStartPush(px, pz, r, ol, list) {
-  let budget = r, movedAny = false;
+// 起点压进 OBB：沿最小穿透方向推，这一次合计最多推 rO（对 OBB 的半径，不给 = r）
+function obbStartPush(px, pz, r, ol, list, rO) {
+  if (!(rO >= r)) rO = r;
+  let budget = rO, movedAny = false;
   for (let iter = 0; iter < 4 && budget > 0; iter++) {
     let moved = false;
     for (let i = 0; i < ol.length && budget > 0; i++) {
       const o = ol[i];
-      if (px + r <= o.minX || px - r >= o.maxX || pz + r <= o.minZ || pz - r >= o.maxZ) continue;
-      const pen = circlePen(o, px, pz, r);
+      if (px + rO <= o.minX || px - rO >= o.maxX || pz + rO <= o.minZ || pz - rO >= o.maxZ) continue;
+      const pen = circlePen(o, px, pz, rO);
       if (pen <= PEN_TOL) continue;
       let push = pen + SKIN;
       if (push > budget) push = budget;

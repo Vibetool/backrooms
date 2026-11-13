@@ -6,7 +6,7 @@
   "spawnFactor": 1,
   "radius": 2,
   "chunkSize": 32,
-  "hash": "2134f93eb2a81ce8219dc35355d7edb988f3463b655d4a8653b777d90884db16",
+  "hash": "913a074df700923d527e22ef30aab8f8998913f0094c230e1135e8d4a415e655",
   "chunks": [
     {
       "cx": -2,
@@ -497,13 +497,13 @@
     {
       "cx": 2,
       "cz": -2,
-      "hash": "695a17851f37167e",
-      "verts": 18739,
+      "hash": "bafa00e3b237bba0",
+      "verts": 15859,
       "mats": ["kit|L1:floor","kit|L1:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L1:floor",4],
         ["kit|L1:wall",3620],
-        ["kit|kit:prop",14415],
+        ["kit|kit:prop",11535],
         ["kit|kit:decal",296],
         ["kit|kit:glow",184],
         ["kit|kit:water",220]
@@ -1573,14 +1573,14 @@
     {
       "cx": 1,
       "cz": 0,
-      "hash": "45737dc6f98b3c4b",
-      "verts": 18367,
+      "hash": "544b24058c393229",
+      "verts": 15548,
       "mats": ["kit|L1:floor","kit|L1:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop","kit|kit:water"],
       "meshes": [
         ["kit|L1:floor",4],
         ["kit|L1:wall",3724],
-        ["kit|kit:prop",13365],
-        ["kit|kit:decal",424],
+        ["kit|kit:prop",10570],
+        ["kit|kit:decal",400],
         ["kit|kit:glow",232],
         ["kit|kit:water",618]
       ],
@@ -2431,15 +2431,16 @@
     {
       "cx": -2,
       "cz": 2,
-      "hash": "8396645cfaa15eb4",
-      "verts": 18184,
-      "mats": ["kit|L1:floor","kit|L1:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
+      "hash": "855119f3d329e93f",
+      "verts": 18086,
+      "mats": ["kit|L1:fkChain","kit|L1:floor","kit|L1:wall","kit|kit:decal","kit|kit:glow","kit|kit:prop"],
       "meshes": [
         ["kit|L1:floor",4],
         ["kit|L1:wall",3732],
-        ["kit|kit:prop",13786],
-        ["kit|kit:decal",376],
-        ["kit|kit:glow",286]
+        ["kit|kit:prop",13442],
+        ["kit|kit:decal",360],
+        ["kit|kit:glow",286],
+        ["kit|L1:fkChain",262]
       ],
       "solids": [
         [-60.35,0,67.65,-59.65,4,68.35],

@@ -15,7 +15,7 @@ const BR = window.BR;
 const K = BR.itemKit;
 if (!K) { console.error('[items] partygoer_cake 需要先加载 js/items/_kit.js'); return; }
 
-const R = 0.065, SEG = 14, GAP = 0.9;
+const R = 0.065, SEG = 24, GAP = 0.9;   // FE1R K8：以前 14 段（缺一角的那一圈，折成整圈 16.4 段），0.6 m 弦高 1.9 px（24 段折成整圈 28 段，0.6 px）
 const RED = 0x9e1626, ICING = 0xf6f1ea;
 // 自下而上：蛋糕胚、夹层糖霜、蛋糕胚、顶层糖霜
 const LAYERS = [[0, 0.03, RED], [0.03, 0.008, ICING], [0.038, 0.03, RED], [0.068, 0.01, ICING]];
@@ -61,7 +61,7 @@ BR.itemTypes.register({
     // 顶上一圈糖霜挤花
     for (let i = 0; i < 6; i++) {
       const a = GAP / 2 + 0.35 + i * (Math.PI * 2 - GAP - 0.7) / 5;
-      solid.push(K.paint(new T.IcosahedronGeometry(0.009, 0).translate(Math.sin(a) * R * 0.78, TOTAL_H + 0.004, Math.cos(a) * R * 0.78), ICING));
+      solid.push(K.paint(new T.SphereGeometry(0.009, 8, 5).translate(Math.sin(a) * R * 0.78, TOTAL_H + 0.004, Math.cos(a) * R * 0.78), ICING));   // 糖霜挤花：圆的（以前二十面体）
     }
     // 两个切面：从圆心到边缘的竖直面，双面材质
     const cutMat = K.mat('partygoer_cake:cut', () => {

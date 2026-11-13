@@ -287,6 +287,130 @@ function buildModel() {
   return A.wrap(group, { label: 'smiler', budget: A.TRIS.normal });
 }
 
+// ---------- 打坐在叉车上的人：脸扑过去（FE1R K6） ----------
+// 脸（smilerFace 那一组）从悬浮的位置沿直线扑到落点：蓄力时往后缩 8 cm → 脸鼓到最大那一刻（STRIKE_PEAK）脸最前面的牙正好贴到
+// 司机近侧身上最凸出来的那一点（entities.js 的 tf，已经往外让出 1.4 cm；脸朝 −z，最前面的牙在脸中心前 FACE_FRONT × 缩放）→ 收回来。落点是 entities.js 给的世界坐标。
+// 扑的这条线在前后立柱之间的开口里、发动机盖上方、护顶下方（脸宽 0.62 × 1.22，悬浮高度 1.7，落点离地 1.6 m 多）
+// 脸（这一组网格，脸的本地坐标）最前面的那些顶点：往前伸出多远（z）、在多高（y）—— 高画质的牙有厚度、沿弧往前凸 6 cm，
+// 低画质是一张平脸（牙只有 1 cm 厚）；按实际几何量一次
+function faceFront(u, face) {
+  if (u._faceFront) return u._faceFront;
+  let minZ = Infinity;
+  const pts = [], v = new THREE.Vector3();
+  face.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(face.matrixWorld).invert();
+  face.traverse(o => {
+    if (!o.isMesh || !o.geometry || !o.geometry.attributes.position) return;
+    const M = new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld), pos = o.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i++) { v.fromBufferAttribute(pos, i).applyMatrix4(M); pts.push(v.x, v.y, v.z); if (v.z < minZ) minZ = v.z; }
+  });
+  let y = 0, n = 0;
+  for (let i = 0; i < pts.length; i += 3) if (pts[i + 2] < minZ + 0.005) { y += pts[i + 1]; n++; }
+  u._faceFront = { z: Number.isFinite(minZ) ? -minZ : 0.06, y: n ? y / n : 0 };
+  return u._faceFront;
+}
+const LT = { m: null, inv: null, v: null };
+function lunTmp() { if (!LT.m) { LT.m = new THREE.Matrix4(); LT.inv = new THREE.Matrix4(); LT.root = new THREE.Matrix4(); LT.v = new THREE.Vector3(); } return LT; }
+function ease(x) { x = Math.max(0, Math.min(1, x)); return x * x * (3 - 2 * x); }
+function faceLunge(e, u, face, k, tg) {
+  const L = lunTmp(), par = face.parent;
+  if (!par) return;
+  // 世界 → 脸的父节点坐标：根节点按 e 的位置 / 朝向，往下乘 pivot、模型组
+  L.root.makeRotationY(e.yaw).setPosition(e.x, e.y, e.z);
+  L.m.identity();
+  for (let o = par; o && o !== e.obj; o = o.parent) { o.updateMatrix(); L.m.premultiply(o.matrix); }
+  L.m.premultiply(L.root);
+  L.inv.copy(L.m).invert();
+  const tf = tg.tf || tg.t1, P = L.v.set(tf.x, tf.y, tf.z).applyMatrix4(L.inv);
+  const PK = A.anim.STRIKE_PEAK, sc = face.scale.x;
+  const fr = faceFront(u, face);
+  P.z += fr.z * sc - 0.004;   // 脸中心停在落点后面（脸朝 −z）：最前面的牙正好碰到（落点本来往外让了 8 mm，牙再往前 4 mm，离人 1–1.5 cm）
+  P.y -= fr.y * sc;   // 最前面的是嘴（一排牙在脸中心下面）：嘴对准落点，不是脸中心
+  let w;
+  if (k < 0.22) w = -0.12 * ease(k / 0.22);
+  else if (k < PK) w = -0.12 + 1.12 * ease((k - 0.22) / (PK - 0.22));
+  else if (k < PK + 0.36) w = 1 - ease((k - PK) / 0.36);
+  else w = 0;
+  if (w >= 0) face.position.set(P.x * w, P.y * w, P.z * w);
+  else face.position.set(0, 0, -w * 0.08 / 0.12);   // 蓄力：往后缩
+}
+
+// ---------- 黑影不在车身、司机、地面、墙上切出硬边（FE1R A10） ----------
+// 两层黑影是面朝相机的平面精灵（渐变边），平面插进车身、坐着的人、地面、墙里的那一条线是直的硬边（孩子挑的：「黑影把车和司机竖着切了一刀」）。
+// 每帧按笑魇离周围东西的距离把黑影收小、底边抬高，保证不透明度 >0.05 的那一圈（内层 0.985、外层 0.95 的半径）谁都碰不到：
+//   把黑影当成一个绕竖轴转一圈的椭球（水平半径 = 半宽、竖直半径 = 半高；相机从哪个方向看，精灵平面都在这个椭球里）；
+//   地面：底边抬到地面上方 3 cm（顶不动，竖直方向收短）；车（14 个部件盒 + 驾驶舱里坐人的那一块）、站着的联机队友、墙（每 0.25 s 打 8 条水平射线）：
+//   按椭球尺度量到它们的距离，整体缩到碰不到为止（最小缩到 0.2）。缩小马上生效，放大每秒最多回 1.5 倍 —— 离开车和墙以后慢慢回到原来的大小。
+// 只改黑影精灵的大小和位置，不改笑魇的位置、碰撞体、行为
+const SHROUD_BASE = { smilerShroud: { sx: 2.3, sy: 3.2, py: -0.55, f: 0.985 }, smilerShroudOuter: { sx: 2.46, sy: 3.4, py: -0.6, f: 0.95 } };
+const CAB_BOX = [-0.47, 0.47, 0.6, 2.2, -0.75, 0.65];   // 驾驶舱里坐人的那一块（车本地）
+function boxDist(b, x, y, z, ax, ay) {
+  // 椭球尺度（水平 / ax、竖直 / ay）下，点 (x, y, z) 到轴对齐盒的距离（0 = 在里面）
+  const dx = Math.max(b[0] - x, 0, x - b[1]) / ax, dy = Math.max(b[2] - y, 0, y - b[3]) / ay, dz = Math.max(b[4] - z, 0, z - b[5]) / ax;
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
+}
+function shroudFit(e, u) {
+  if (!u._shr) {
+    u._shr = [];
+    for (const nm in SHROUD_BASE) { const o = u.pivot.getObjectByName(nm); if (o) u._shr.push({ o, b: SHROUD_BASE[nm], s: 1 }); }
+    u._wallAt = -1e9; u._walls = null;
+  }
+  if (!u._shr.length) return;
+  const t = A.state ? (BR.entities && BR.entities.api ? BR.entities.api.time : 0) : 0;
+  const dtS = Math.max(0, Math.min(0.2, t - (u._shrT == null ? t : u._shrT)));
+  u._shrT = t;
+  const py = u.pivot.position.y, gY = e.y;
+  // 车：附近（6 m 内）的车，部件盒（车本地）
+  const cars = [];
+  const V = BR.vehicles, G = BR.L1forklift && BR.L1forklift.geo;
+  if (V && typeof V.list === 'function' && G && typeof G.obbs === 'function') {
+    for (const v of V.list()) {
+      if (!Number.isFinite(v.x) || Math.abs(v.x - e.x) > 6 || Math.abs(v.z - e.z) > 6) continue;
+      cars.push({ v, boxes: G.obbs(v.lift || 0).map(o => [o.cx - o.hx, o.cx + o.hx, o.cy - o.hy, o.cy + o.hy, o.cz - o.hz, o.cz + o.hz]).concat([CAB_BOX]) });
+    }
+  }
+  // 站着的联机队友（竖直圆柱 r 0.37、高 1.8）
+  let peer = null;
+  try { const q = BR.coop && BR.coop.active && BR.coop.peer; if (q && Number.isFinite(q.x)) peer = q; } catch (err) { peer = null; }
+  // 墙：每 0.25 s 从黑影中心高度打 8 条水平射线
+  if (t - u._wallAt > 0.25 && BR.phys && typeof BR.phys.raycast === 'function') {
+    u._wallAt = t;
+    const y = gY + py - 0.55, out = [];
+    for (let i = 0; i < 8; i++) {
+      const a = i * Math.PI / 4, dx = Math.cos(a), dz = Math.sin(a);
+      let h = null;
+      try { h = BR.phys.raycast(e.x, y, e.z, dx, 0, dz, 3); } catch (err) { h = null; }
+      out.push(h && Number.isFinite(h.dist) ? h.dist : Infinity);
+    }
+    u._walls = out;
+  }
+  for (const S of u._shr) {
+    const b = S.b, f = b.f;
+    let ax = 0.5 * b.sx * f, ay = 0.5 * b.sy * f, cy = gY + py + b.py;
+    // 地面：底边抬到地面上方 3 cm，顶不动
+    const top = cy + ay, bot = Math.max(cy - ay, gY + 0.03);
+    ay = Math.max(0.05, (top - bot) / 2); cy = (top + bot) / 2;
+    let want = Infinity;
+    for (const c of cars) {
+      const p = c.v, co = Math.cos(p.yaw), si = Math.sin(p.yaw), dx = e.x - p.x, dz = e.z - p.z;
+      const lx = co * dx - si * dz, lz = si * dx + co * dz, ly = cy - (p.y || 0);
+      for (const B of c.boxes) want = Math.min(want, boxDist(B, lx, ly, lz, ax, ay));
+    }
+    if (peer) {
+      const feet = (+peer.y || 1.62) - 1.62, d = Math.max(0, Math.hypot(peer.x - e.x, peer.z - e.z) - 0.37) / ax;
+      const dy = Math.max(feet - cy, 0, cy - (feet + 1.8)) / ay;
+      want = Math.min(want, Math.hypot(d, dy));
+    }
+    if (u._walls) for (const d of u._walls) want = Math.min(want, d / ax);
+    want = want >= 1.04 ? 1 : Math.max(0.2, Math.min(1, want * 0.96));   // 量出来的距离留 4% 余量；周围空着（≥1.04）就是原来的大小
+    // 缩小马上生效，放大慢慢回
+    S.s = want < S.s ? want : Math.min(want, S.s * Math.pow(1.5, dtS));
+    const sx = b.sx * S.s, sy = (2 * ay / f) * S.s;
+    S.o.scale.set(sx, sy, 1);
+    S.o.position.y = cy - gY - py;
+  }
+}
+
 A.register({
   type: 'smiler', en: 'Smiler', zh: '笑魇', version: 'fandom',
   faction: 'hostile',   // 依据：hostility = hostile；「对一切生命怀有敌意（anethikas 除外）」——数值不受外观改动影响，维持原判断
@@ -300,6 +424,9 @@ A.register({
   perception: { sight: A.SIGHT.normal, hearing: A.HEARING.normal, fov: 160, avoidsLight: true },
   // 依据：「发光的眼与齿(Ardenti risu)本身是视听器官」→ 正常视听档；「可见光照到身体时会像疼痛般退缩」→ avoidsLight 标记为真，具体惧光行为见下方 lightBound
   attack: { hp: A.DAMAGE.heavy, sanity: 8, range: 1.1, cooldown: A.COOLDOWN.normal },
+  // 打坐在叉车上的人（FE1R K6）：没有胳膊，整张脸扑过去 —— 站在驾驶舱侧面（车身外面），脸鼓到最大那一刻正好贴到司机近侧肩膀
+  // （离身体外壳 4 mm）。reach = 脸能扑出去多远（米，从脸的悬浮位置量到落点），y = 脸悬浮的高度（anim.fly.cruise）
+  seatStrike: { kind: 'face', reach: 0.95, y: 1.7 },
   // 依据：具体攻击招式 unverified，只有「被称为迄今记录中最危险的非个体实体之一」的定性描述 → 取 heavy（不是明确的"一击致命/撕碎"，不给 lethal）；
   // sanity 依据「夜间猎手…用扭曲多变的声音嘲弄折磨受害者」的精神压迫描述，选中版本未给数字，取小值
   sounds: { alert: 'giggle', attack: 'screech' },
@@ -327,12 +454,19 @@ A.register({
       if (u._face === undefined) u._face = u.pivot.getObjectByName('smilerFace') || null;
       const face = u._face;
       if (!face) return;
-      if (e.state === 'attack' && !e.dead) {
+      if ((e.state === 'attack' || A.anim.striking(e, api, api.time)) && !e.dead) {
         // 相位和别的近战怪同一套（A.anim.strikePhase：从这一下起手算，STRIKE_PEAK 处扑到最前，entities.js 就在那一刻扣血）
         const cd = Math.max(0.2, num(e.def.attack && e.def.attack.cooldown, 1));
         const k = A.anim.strikePhase(e, api, api.time, u, cd);
         face.scale.setScalar(1 + 0.22 * Math.max(0, A.anim.strikeCurve(k)));
-      } else if (face.scale.x !== 1) face.scale.setScalar(1);
+        const tg = typeof api.seatTarget === 'function' ? api.seatTarget(e) : null;
+        if (tg) faceLunge(e, u, face, k, tg);
+        else if (face.position.lengthSq() > 0) face.position.set(0, 0, 0);
+      } else {
+        if (face.scale.x !== 1) face.scale.setScalar(1);
+        if (face.position.lengthSq() > 0) face.position.set(0, 0, 0);
+      }
+      shroudFit(e, u);
     },
   },
 

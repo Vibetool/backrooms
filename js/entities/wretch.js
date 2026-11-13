@@ -145,6 +145,8 @@ A.register({
   attack: ATTACK,
   sounds: SOUNDS,
   infection: CYCLE,   // 同标准型：畸形肉块变体挠到人一样会让人变成（标准型）悲尸
+  // 打坐在叉车上的人（返修 FE1R · repair-r1：以前够不到坐车的人，叉车成了安全屋）：整团扑起来，贴到司机近侧肩膀外侧（_archetypes.js seatLeap）。攻击距离、扣血、出手时机、感染不变
+  seatStrike: { kind: 'leap', reach: 1.6 },
   brain: A.stalker({ patrol: 'wander', patrolRadius: 10, onAttack: scratch }),
   // 依据：这是"变异常见"里提到的一种罕见变体，不是蜂巢群体的常态个体，用单体追猎者骨架而不是群猎
   anim: {

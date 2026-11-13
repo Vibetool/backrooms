@@ -12,7 +12,7 @@ const BR = window.BR;
 const K = BR.itemKit;
 if (!K) { console.error('[items] cookies 需要先加载 js/items/_kit.js'); return; }
 
-const R = 0.035, H = 0.01, SEG = 12;
+const R = 0.035, H = 0.01, SEG = 20;   // FE1R K8：以前 12 段，曲奇半径 7 cm，0.6 m 弦高 2 px（20 段 0.8 px）
 
 BR.itemTypes.register({
   type: 'cookies', en: 'Cookies', zh: '饼干', version: 'wikidot-en',

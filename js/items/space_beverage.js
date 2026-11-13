@@ -11,7 +11,7 @@ const BR = window.BR;
 const K = BR.itemKit;
 if (!K) { console.error('[items] space_beverage 需要先加载 js/items/_kit.js'); return; }
 
-const SEG = 12;
+const SEG = 20;   // FE1R K8：以前 12 段，0.6 m 弦高 1.1 px
 const BODY = [[0, 0.002], [0.028, 0], [0.032, 0.006], [0.032, 0.14], [0.026, 0.165], [0.015, 0.18], [0.013, 0.195]];
 
 function drawLabel(g, w, h) {

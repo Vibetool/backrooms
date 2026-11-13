@@ -303,6 +303,19 @@ function portion(player, type, total) {
 }
 
 // ---------- 投掷与范围效果 ----------
+// 坐在车上（含上下车那 0.5 s）扔不出去（FE1R F5，和坐在车上丢不了东西一致）：按 F 用火盐、瓶装闪电这类要朝前扔的东西时
+// toast「坐在车上扔不出去，下车再扔」，东西留在手里、不消耗。用 throwPoint 的物品 use 一开头先问这个：返回 true 就 return false
+const SEATED_THROW_TEXT = '坐在车上扔不出去，下车再扔';
+function seated(p) {
+  if (!p) return false;
+  const ms = p.mountState;
+  return !!(p.mounted || (ms && ms.phase));
+}
+function seatedNoThrow(p) {
+  if (!seated(p)) return false;
+  toast(SEATED_THROW_TEXT);
+  return true;
+}
 function throwPoint(p, maxDist) {
   const fx = -Math.sin(p.yaw), fz = -Math.cos(p.yaw);
   let d = maxDist;
@@ -369,6 +382,6 @@ BR.itemKit = {
   lathe, cyl, box, sphere, paint, paintByNormal, merge, assemble, tris,
   H, icon,
   apply, hurt, toast, sound, simpleUse, portion,
-  throwPoint, livingEntities, damageEntity, feetY, burstFx, boltFx,
+  throwPoint, seated, seatedNoThrow, SEATED_THROW_TEXT, livingEntities, damageEntity, feetY, burstFx, boltFx,
 };
 })();

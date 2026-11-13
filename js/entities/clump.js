@@ -49,6 +49,11 @@ A.register({
     brain.think(e, dt, api);
   },
 
+  // 打坐在叉车上的人（返修 FE1R · repair-r1：以前够不到坐车的人，叉车成了安全屋）：伸出最长的那条（梢最靠前的）肢体，梢落到司机近侧肋下外侧（_archetypes.js seatChain，at 't2'）。
+  // 攻击距离、扣血、出手时机不变
+  // 落点离人 6 mm：缺省 4 mm 时 infection k 组 8 个方向里偶尔有一趟扣血那一帧插进坐着的人 1.3–1.6 cm（细肢体梢有粗细，限 ≤1 cm）；
+  // 返修 FE1R · repair-r4 从 9 mm 收到 6 mm：坐车的人换成 hazmat.glb 的躯干以后肋下是圆的（以前是方块胯的角），梢斜着贴过去离人 2.1 cm（限 ≤2 cm）
+  seatStrike: { kind: 'chain', at: 't2', gap: 0.006 },
   anim: {
     gait: 'none',              // 不是双足/四足步态，构件本身没有对应的"甩肢体"步态选项
     sway: 0.6, swaySpeed: 2.2,  // 依据："倾向于把肢体甩向地板来移动"→ 加大肢体摆动幅度模拟甩动

@@ -21,7 +21,7 @@ const PER_BOX = 7;
 
 function berry(x, z, tilt, rotY) {
   const T = window.THREE;
-  const body = new T.ConeGeometry(0.011, 0.022, 6).rotateX(Math.PI);   // 尖朝下的草莓
+  const body = new T.ConeGeometry(0.011, 0.022, 12).rotateX(Math.PI);   // 尖朝下的草莓（FE1R K8：以前 6 段）
   const calyx = new T.CircleGeometry(0.009, 5).rotateX(-Math.PI / 2).translate(0, 0.0112, 0);
   return [K.paint(body, 0xd62a2a), K.paint(calyx, 0x3f8f3a)].map(g => g.rotateZ(tilt).rotateY(rotY).translate(x, 0.028, z));
 }

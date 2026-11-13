@@ -513,6 +513,8 @@ function clearAll() {
 
 // ---------- 列表 ----------
 function levelLabel(lv) {
+  // FE1R UI-5：已注册的层统一用 hud 的中文显示名（「Level 2 · 管道之梦」），和大标题、左上角信息块同一份
+  if (lv && BR.levels.has && BR.levels.has(String(lv.id)) && BR.hud && typeof BR.hud.levelLabel === 'function') return BR.hud.levelLabel(lv.id);
   const name = lv.name ? String(lv.name) : 'Level ' + lv.id;
   return lv.title ? name + ' · ' + lv.title : name;
 }

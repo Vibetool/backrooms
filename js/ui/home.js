@@ -812,6 +812,8 @@ function visibilitySlider(body) {
 }
 
 function levelLabel(id) {
+  // FE1R UI-5：已注册的层统一用 hud 的中文显示名（「Level 2 · 管道之梦」），和大标题、左上角信息块同一份
+  if (BR.levels && BR.levels.has && BR.levels.has(id) && BR.hud && typeof BR.hud.levelLabel === 'function') return BR.hud.levelLabel(id);
   const def = BR.levels && BR.levels.get(id);
   if (def) return def.name + (def.title ? ' · ' + def.title : '');
   return LEVEL_NAMES[id] || ('Level ' + id);

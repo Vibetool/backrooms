@@ -17,7 +17,9 @@ const K = BR.itemKit;
 if (!K) { console.error('[items] ptg_b 需要先加载 js/items/_kit.js'); return; }
 
 const PTG_A_KEY = 'ptg_a';
-const SEG = 10;
+// 段数（FE1R K8：圆的东西看起来要圆）：针筒、药液、胶头、标签 20 段（⑳a 侧面特写半径约 25 px，弦高 0.3 px）；推杆按压盘 32 段 ——
+// ⑳a2 从推杆那头顺着针筒看的特写（竖直视野 14°、0.6 m）按压盘半径约 150 px，32 段弦高 0.7 px（以前 10 段，一眼看得出是十边形）；针座 16 段，针头 8 段（直径 4 mm）
+const SEG = 20, DISC_SEG = 32, HUB_SEG = 16;
 
 function drawLabel(g, w, h) {
   g.fillStyle = 'rgba(255,255,255,1)';
@@ -65,10 +67,10 @@ BR.itemTypes.register({
       K.paint(K.cyl(0.0068, 0.0068, 0.056, SEG, 0.012), 0xeef4f8),                        // 药液
       K.paint(K.cyl(0.0074, 0.0074, 0.004, SEG, 0.064), 0x2a2a2a),                        // 活塞胶头
       K.paint(new T.BoxGeometry(0.003, 0.05, 0.003).translate(0, 0.093, 0), 0xf2f2f2),     // 推杆
-      K.paint(K.cyl(0.011, 0.011, 0.003, SEG, 0.118), 0xf2f2f2),                          // 推杆按压盘
+      K.paint(K.cyl(0.011, 0.011, 0.003, DISC_SEG, 0.118), 0xf2f2f2),                     // 推杆按压盘
       K.paint(new T.BoxGeometry(0.036, 0.003, 0.012).translate(0, 0.079, 0), 0xf2f2f2),    // 指托
-      K.paint(K.cyl(0.002, 0.0055, 0.01, 8, 0.001), 0xc9ced4),                            // 针座
-      K.paint(K.cyl(0.0007, 0.0007, 0.032, 6, -0.03, true), 0x9aa0a6),                    // 针头
+      K.paint(K.cyl(0.002, 0.0055, 0.01, HUB_SEG, 0.001), 0xc9ced4),                      // 针座
+      K.paint(K.cyl(0.0007, 0.0007, 0.032, 8, -0.03, true), 0x9aa0a6),                    // 针头
     ];
     const barrel = K.cyl(0.0085, 0.0085, 0.078, SEG, 0.0, true);
     const label = K.cyl(0.0087, 0.0087, 0.03, SEG, 0.03, true);
